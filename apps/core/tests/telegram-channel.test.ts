@@ -157,7 +157,7 @@ describe("telegram channel adapter", () => {
     });
   });
 
-  it("uses edited_message when no main message is present", async () => {
+  it("ignores an edited message, so a correction never starts a second run", async () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
@@ -173,20 +173,7 @@ describe("telegram channel adapter", () => {
       }),
     );
 
-    expect(parsed.kind).toBe("message");
-    if (parsed.kind !== "message") {
-      throw new Error("Expected Telegram edited message to be accepted");
-    }
-
-    expect(parsed.message.eventId).toBe("tg:8");
-    expect(parsed.message.content).toBe("edited");
-    expect(parsed.message.source).toEqual({
-      chatId: 123,
-      messageId: "123:99",
-      threadId: "telegram:123",
-      fromUserId: 7,
-      fromUsername: "alice",
-    });
+    expect(parsed).toEqual({ kind: "ignore" });
   });
 
   it("stores untagged group chatter as context once botUsername is set", async () => {

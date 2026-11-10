@@ -304,10 +304,11 @@ async function handleSandboxLifecycleRoute(
     return errorResponse(404, "Sandbox not found");
   }
 
-  return await handleSandboxLifecycle(accountId, record, action, request);
+  return await handleSandboxLifecycle(auth, accountId, record, action, request);
 }
 
 async function handleSandboxLifecycle(
+  auth: AuthContext,
   accountId: string,
   record: SandboxConfigRecord,
   action: SandboxLifecycleAction,
@@ -350,7 +351,7 @@ async function handleSandboxLifecycle(
     }
   }
 
-  const actor = sandboxAuditActor(body.actor);
+  const actor = sandboxAuditActor(auth, body.actor);
   const context: SandboxLifecycleContext = {
     accountId: accountId,
     audit: async (result, details = {}): Promise<void> => {
@@ -861,7 +862,15 @@ function requireAccountAuth(
   return auth.account;
 }
 
-function sandboxAuditActor(input: unknown): SandboxAuditActor {
+// Only the config plane, on the service token, may name the dashboard user it acts for.
+function sandboxAuditActor(
+  auth: AuthContext,
+  input: unknown,
+): SandboxAuditActor {
+  if (auth.kind === "role") return { source: "service", id: auth.role.roleId };
+  if (auth.kind !== "account" || !auth.viaServiceToken) {
+    return { source: "service" };
+  }
   const value = parseOr(configObject, input);
   if (!value) {
     return { source: "unknown" };

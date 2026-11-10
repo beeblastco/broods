@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { asSchema, type ToolSet } from "ai";
 import {
+  cancelScheduleTool,
   scheduleTool,
   updateScheduleTool,
 } from "../src/harness/tools/schedule.tool.ts";
+import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
 const CONTEXT = {
   accountId: "acct_1",
@@ -58,6 +60,45 @@ describe("schedule tool input", () => {
     ).toBe(false);
   });
 });
+
+describe("schedule tools on a config plane outage", () => {
+  it("fail the call instead of reporting the task missing", async (): Promise<void> => {
+    setStorageForTests({
+      crons: {
+        getById: async (): Promise<never> => {
+          throw new Error("Convex unavailable");
+        },
+      },
+    } as unknown as Storage);
+    try {
+      await expect(
+        execute(cancelScheduleTool(CONTEXT), "cancel_schedule", {
+          cronId: "cron_1",
+        }),
+      ).rejects.toThrow("Convex unavailable");
+      await expect(
+        execute(updateScheduleTool(CONTEXT), "update_schedule", {
+          cronId: "cron_1",
+          status: "paused",
+        }),
+      ).rejects.toThrow("Convex unavailable");
+    } finally {
+      setStorageForTests(null);
+    }
+  });
+});
+
+async function execute(
+  tools: ToolSet,
+  name: string,
+  input: unknown,
+): Promise<unknown> {
+  return await tools[name]!.execute!(input as never, {
+    toolCallId: "call-1",
+    messages: [],
+    context: {},
+  });
+}
 
 function validator(
   tools: ToolSet,

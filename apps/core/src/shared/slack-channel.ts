@@ -37,6 +37,7 @@ import {
 import {
   channelAttachmentBytes,
   channelAttachmentName,
+  chunkChannelText,
   isAllowedId,
   parseChannelWebhookBody,
   parseQuestionButtonId,
@@ -57,6 +58,9 @@ import {
 const REASONING_FLUSH_INTERVAL_MS = 500;
 
 const SLACK_TASK_TEXT_LIMIT = 1200;
+
+// chat.postMessage refuses markdown_text past this.
+const SLACK_TEXT_LIMIT = 12_000;
 
 const SLACK_FILE_SHARE_SUBTYPE = "file_share";
 
@@ -615,8 +619,8 @@ async function parseEventCallback(
     redelivers: true,
     ack: { statusCode: 200 },
     message: {
-      // app_mention and message both arrive for one mention; the ts key dedupes them at claim.
-      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
+      // A user install sends a mention's message copy as context; its own id keeps both.
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}${runAgent ? "" : ":context"}`,
       conversationKey: getSlackConversationKey(
         payload.team_id,
         channelId,
@@ -824,23 +828,24 @@ function createSlackActions(
     },
 
     sendText: async function (text) {
-      if (source.responseUrl) {
-        await sendSlackWebhookResponse(
-          source.responseUrl,
-          formatter.toResponseUrlText({ markdown: text }),
-        );
+      for (const chunk of chunkChannelText(text, SLACK_TEXT_LIMIT)) {
+        if (source.responseUrl) {
+          await sendSlackWebhookResponse(
+            source.responseUrl,
+            formatter.toResponseUrlText({ markdown: chunk }),
+          );
+          continue;
+        }
 
-        return;
+        await postSlackMessage({
+          ...api,
+          channel: source.channelId,
+          markdownText: chunk,
+          threadTs: source.threadTs,
+          unfurlLinks: false,
+          unfurlMedia: false,
+        });
       }
-
-      await postSlackMessage({
-        ...api,
-        channel: source.channelId,
-        markdownText: text,
-        threadTs: source.threadTs,
-        unfurlLinks: false,
-        unfurlMedia: false,
-      });
     },
 
     sendTyping: async function () {

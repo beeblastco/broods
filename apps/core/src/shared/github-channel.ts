@@ -736,12 +736,7 @@ function isPriorGitHubComment(
 }
 
 function isRelevantAction(action: string | undefined): boolean {
-  return (
-    action === "opened" ||
-    action === "edited" ||
-    action === "reopened" ||
-    action === "created"
-  );
+  return action === "opened" || action === "reopened" || action === "created";
 }
 
 function normalizePrivateKey(value: string): string {

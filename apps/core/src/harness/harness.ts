@@ -464,6 +464,70 @@ export async function runAgentLoop(
     });
   }
 
+  const stepTiming = createStepTimingTracker(traceAttribute);
+  const runAbort = new AbortController();
+  let terminalError: Error | undefined;
+  const abortRun = (): void => {
+    const reason: unknown = options.abortSignal?.reason;
+    terminalError ??=
+      reason instanceof Error ? reason : new Error(String(reason));
+    runAbort.abort(terminalError);
+  };
+  if (options.abortSignal?.aborted) {
+    abortRun();
+  } else {
+    options.abortSignal?.addEventListener("abort", abortRun, {
+      once: true,
+      signal: runAbort.signal,
+    });
+  }
+  // Finalize after terminal logs and replies: they still need the tenant and trace context.
+  const finalizer = createRunFinalizer({
+    session: session,
+    root: {
+      span: otelRootSpan,
+      traceId: traceId,
+      spanId: rootSpanId,
+      name: rootSpanName,
+      kind: rootSpanKind,
+      startTimeMs: runStartedAt,
+    },
+    rootAttributes: (): Record<string, string | number | boolean> => ({
+      ...rootRunningAttributes,
+      ...systemTraceAttributes(turnContext.system, traceAttribute),
+    }),
+    modelProvider: configuredModel.providerName,
+    modelId: agentConfig.model?.modelId,
+    taskInput: taskInput,
+    serialize: traceAttribute,
+    spans: spans,
+    stepTiming: stepTiming,
+    taskTotals: taskTotals,
+    sandboxCpu: sandboxCpu,
+    openWork: (): Promise<RunOpenWork> =>
+      openWorkAfterRun({
+        conversationKey: session.conversationKey,
+        awaitingApproval: approvalSummaries.length > 0,
+        detachedResultIds: detachedResultIds,
+        questionSummaries: questionSummaries,
+        pendingWork: options.pendingWork,
+      }),
+    publish: publishSpan,
+    recordUsage: recordTaskUsage,
+    release: (): void => {
+      options.abortSignal?.removeEventListener("abort", abortRun);
+      releaseSandboxOccupancy?.();
+    },
+    restoreObservabilityContext: (): void =>
+      setObservabilityContext(parentObservabilityContext),
+  });
+  const failSetup = async (error: unknown): Promise<never> => {
+    const failure =
+      error instanceof Error ? error : new Error(errorMessage(error));
+    await finalizer.finalize("failed", 0, Date.now() - runStartedAt, failure);
+    throw failure;
+  };
+
   let parentQuestion: AgentMessage | undefined;
   const configuredApprovals = new Map<string, true>();
   const sandboxStandIns = new Map<string, SandboxStandIn>();
@@ -537,7 +601,7 @@ export async function runAgentLoop(
           : {}),
       },
       agentConfig,
-    )),
+    ).catch(failSetup)),
   };
   // Computer actions in one step share a screen, so they run in the model's order.
   const { tools, reserve: reserveComputerTurn } = serializeToolCalls(
@@ -571,7 +635,7 @@ export async function runAgentLoop(
       mcpIdsByName: policyMcpIdsByName,
       sandboxes: sandboxes,
     },
-  );
+  ).catch(failSetup);
   const { approval: toolApproval, startStep: startApprovalStep } =
     createRuntimeToolApproval({
       configuredApprovals: configuredApprovals,
@@ -598,7 +662,6 @@ export async function runAgentLoop(
   let lastStepText = "";
 
   const toolStepNumbers = new Map<string, number | undefined>();
-  const stepTiming = createStepTimingTracker(traceAttribute);
   const toolCallSummaries = new Map<string, ToolCallSummary>();
   let failureAnnounced = false;
   const announceFailure = async (
@@ -675,62 +738,6 @@ export async function runAgentLoop(
     messages.map(
       (_message, index): string => `${responseRunKey}:${from + index}`,
     );
-  const runAbort = new AbortController();
-  let terminalError: Error | undefined;
-  const abortRun = (): void => {
-    const reason: unknown = options.abortSignal?.reason;
-    terminalError ??=
-      reason instanceof Error ? reason : new Error(String(reason));
-    runAbort.abort(terminalError);
-  };
-  if (options.abortSignal?.aborted) {
-    abortRun();
-  } else {
-    options.abortSignal?.addEventListener("abort", abortRun, {
-      once: true,
-      signal: runAbort.signal,
-    });
-  }
-  // Finalize after terminal logs and replies: they still need the tenant and trace context.
-  const finalizer = createRunFinalizer({
-    session: session,
-    root: {
-      span: otelRootSpan,
-      traceId: traceId,
-      spanId: rootSpanId,
-      name: rootSpanName,
-      kind: rootSpanKind,
-      startTimeMs: runStartedAt,
-    },
-    rootAttributes: (): Record<string, string | number | boolean> => ({
-      ...rootRunningAttributes,
-      ...systemTraceAttributes(turnContext.system, traceAttribute),
-    }),
-    modelProvider: configuredModel.providerName,
-    modelId: agentConfig.model?.modelId,
-    taskInput: taskInput,
-    serialize: traceAttribute,
-    spans: spans,
-    stepTiming: stepTiming,
-    taskTotals: taskTotals,
-    sandboxCpu: sandboxCpu,
-    openWork: (): Promise<RunOpenWork> =>
-      openWorkAfterRun({
-        conversationKey: session.conversationKey,
-        awaitingApproval: approvalSummaries.length > 0,
-        detachedResultIds: detachedResultIds,
-        questionSummaries: questionSummaries,
-        pendingWork: options.pendingWork,
-      }),
-    publish: publishSpan,
-    recordUsage: recordTaskUsage,
-    release: (): void => {
-      options.abortSignal?.removeEventListener("abort", abortRun);
-      releaseSandboxOccupancy?.();
-    },
-    restoreObservabilityContext: (): void =>
-      setObservabilityContext(parentObservabilityContext),
-  });
 
   await lifecycle.emit("agent.started", {
     modelProvider: configuredModel.providerName,

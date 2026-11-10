@@ -855,7 +855,7 @@ export class Session {
       skillPath,
       resourcePaths,
       this.defaultWorkspaceHasSandbox()
-        ? this.filesystemNamespace()
+        ? this.resolvedWorkspaces()[0]
         : undefined,
     );
     this.loadedSkillPrompts.push(loaded.prompt);

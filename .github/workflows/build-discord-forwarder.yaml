@@ -32,6 +32,12 @@ env:
 # Each job grants only the token permissions it needs.
 permissions: {}
 
+# One run per branch at a time, in push order, so the newest commit rolls last.
+# A newer push replaces a run still waiting; a running build is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -86,14 +92,15 @@ jobs:
   rollout:
     needs: build
     if: ${{ github.ref_name == 'main' || inputs.rollout }}
-    # No prerequisite gate: this image depends on neither Convex nor the
-    # AWS data plane. The grant is still required because rollout.yaml
-    # declares it and a called workflow can never hold more than its caller.
+    # Waits for Convex: the forwarder calls `channel/connections:listConnections`
+    # by name on every config plane. The gate covers this branch's plane only, so
+    # a ticked dispatch off `main` must not change that query; prod gets it at promote.
     permissions:
       actions: read
     uses: ./.github/workflows/rollout.yaml
     with:
       workflow: deploy-discord-forwarder.yaml
       tag: ${{ github.sha }}
+      awaitWorkflows: deploy-convex.yaml
     secrets:
       dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

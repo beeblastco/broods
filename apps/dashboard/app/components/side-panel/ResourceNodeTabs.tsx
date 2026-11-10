@@ -767,12 +767,12 @@ function TextField({
         defaultValue={value}
         placeholder={placeholder}
         className="h-8 font-mono text-xs"
-        onBlur={(event) => onCommit(event.currentTarget.value.trim())}
+        onBlur={(event) => {
+          const next = event.currentTarget.value.trim();
+          if (next !== value) onCommit(next);
+        }}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            onCommit(event.currentTarget.value.trim());
-            event.currentTarget.blur();
-          }
+          if (event.key === "Enter") event.currentTarget.blur();
         }}
       />
     </div>
