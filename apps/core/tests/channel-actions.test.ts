@@ -831,6 +831,30 @@ describe("slack channel actions", () => {
     });
   });
 
+  it("splits a long reply at the provider's limit (Slack direct message)", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ ok: true, ts: "1" }),
+      jsonResponse({ ok: true, ts: "2" }),
+      jsonResponse({ ok: true, ts: "3" }),
+    );
+    const text = `${"a".repeat(24_000)}\n\nTrace: https://broods.test/t/1`;
+
+    await createSlackChannel("bot-token", "signing-secret", null, null, "eyes")
+      .actions(createMessage({ teamId: "T1", channelId: "D1" }))
+      .sendText(text);
+
+    const sent = fetchMock.calls.map(
+      (call) =>
+        new URLSearchParams(requestBodyText(call.init?.body)).get(
+          "markdown_text",
+        ) ?? "",
+    );
+    expect(sent).toHaveLength(3);
+    expect(sent.every((chunk) => chunk.length <= 12_000)).toBe(true);
+    expect(sent.join("")).toBe(text);
+  });
+
   it("posts threaded Slack messages and reactions through the Web API", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
@@ -999,6 +1023,42 @@ describe("pancake channel actions", () => {
         sender_id: "sender-1",
       },
     );
+  });
+
+  it("splits a long reply at the provider's limit (Pancake)", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ success: true, id: "reply-1" }),
+      jsonResponse({ success: true, id: "reply-2" }),
+      jsonResponse({ success: true, id: "reply-3" }),
+    );
+    const text = `${"a".repeat(4000)} tail`;
+
+    await createPancakeChannel(
+      "page-1",
+      "page-token",
+      "hook-secret",
+      null,
+      null,
+    )
+      .actions(
+        createMessage({
+          pageId: "page-1",
+          conversationId: "conversation-1",
+          messageId: "message-1",
+          messageType: "INBOX",
+        }),
+      )
+      .sendText(text);
+
+    const sent = fetchMock.calls.map(
+      (call) =>
+        (JSON.parse(requestBodyText(call.init?.body)) as { message: string })
+          .message,
+    );
+    expect(sent).toHaveLength(3);
+    expect(sent.every((chunk) => chunk.length <= 2000)).toBe(true);
+    expect(sent.join("")).toBe(text);
   });
 
   it("sends comment replies with the source message id", async () => {

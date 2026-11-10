@@ -13,6 +13,7 @@ import type {
 import {
   channelAttachmentBytes,
   channelAttachmentName,
+  chunkChannelText,
   isAllowedId,
   parseChannelWebhookBody,
 } from "./channels.ts";
@@ -21,6 +22,8 @@ import { contentTypeForPath } from "./media-types.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const PANCAKE_API_BASE = "https://pages.fm/api/public_api/v1/";
+// Pancake relays to the Messenger Send API, which refuses text past 2000 characters.
+const PANCAKE_TEXT_LIMIT = 1900;
 
 interface PancakeApiResponse {
   id?: string;
@@ -110,8 +113,11 @@ export function createPancakeActions(
     );
 
   return {
-    sendText: (text) =>
-      sendPancakeMessage(pageAccessToken, source, text, senderId),
+    sendText: async function (text): Promise<void> {
+      for (const chunk of chunkChannelText(text, PANCAKE_TEXT_LIMIT)) {
+        await sendPancakeMessage(pageAccessToken, source, chunk, senderId);
+      }
+    },
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
     sendTyping: async function () {
