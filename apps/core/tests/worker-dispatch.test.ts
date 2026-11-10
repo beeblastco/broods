@@ -8,6 +8,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import * as continuation from "../src/harness/continuation.ts";
 import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
 import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
@@ -926,6 +927,41 @@ describe("streamed runs", (): void => {
         "updateAsyncToolResult",
         expect.anything(),
       );
+    });
+
+    it("stops a model that keeps choosing approval-gated tools after two re-runs", async (): Promise<void> => {
+      spyOn(Session.prototype, "persistModelMessages").mockResolvedValue([]);
+      const taken = spyOn(
+        Session.prototype,
+        "takeNextIngress",
+      ).mockResolvedValue(null);
+      let passes = 0;
+      spyOn(continuation, "runAgentLoopUntilSubagentsIdle").mockImplementation(
+        async (_session, _turn, _config, _context, reply) => {
+          passes += 1;
+          // Ends the base's unbounded loop so the test can fail instead of hang.
+          if (passes > 10) throw new Error("runaway approval loop");
+          await reply.onApprovalRequired?.([
+            { approvalId: "a", toolCallId: "c", toolName: "bash", input: {} },
+          ]);
+
+          return { didFail: false, failureText: null, questions: [] };
+        },
+      );
+
+      await handleChannelRequest(channelMessage(1));
+      await drainWorkerQueue();
+
+      expect(passes).toBe(3);
+      expect(sent).toEqual([expect.stringContaining("need approval")]);
+      expect(taken.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            status: "failed",
+            error: expect.stringContaining("need approval"),
+          }),
+        ],
+      ]);
     });
   });
 });

@@ -214,6 +214,10 @@ const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
 ]);
 const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
+// Each re-run after a denial is a paid model pass.
+const MAX_CHANNEL_APPROVAL_RETRIES = 2;
+const CHANNEL_APPROVAL_LIMIT_ERROR =
+  "Stopped: the agent kept choosing tools that need approval, which a channel cannot give.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
@@ -1795,6 +1799,7 @@ async function runChannelTurns(
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
+  let approvalRetries = 0;
   const hooks = await createAgentHookDispatcher(
     event.accountId,
     event.agentConfig ?? {},
@@ -1903,13 +1908,29 @@ async function runChannelTurns(
               CONTINUATION_DEPENDENCIES,
               hooks,
             );
-            if (approvalRequired) {
+            if (
+              approvalRequired &&
+              approvalRetries < MAX_CHANNEL_APPROVAL_RETRIES
+            ) {
+              approvalRetries += 1;
               incoming = [];
               incomingEphemeral = [];
               continue;
             }
             if (result.didFail) terminal = "failed";
-            if (awaitingInput) {
+            if (approvalRequired) {
+              await session.assertCurrentOwner();
+              const text = await applyMessageSendingHook(
+                hooks,
+                event.channelName,
+                CHANNEL_APPROVAL_LIMIT_ERROR,
+              );
+              if (text !== null) await event.channel.sendText(text);
+              settlement = {
+                status: "failed",
+                error: CHANNEL_APPROVAL_LIMIT_ERROR,
+              };
+            } else if (awaitingInput) {
               // Settled in onQuestionsPending; the answer resumes the conversation.
             } else if (terminal === "failed") {
               settlement = {
@@ -1936,6 +1957,7 @@ async function runChannelTurns(
         };
       }
 
+      approvalRetries = 0;
       // Envelopes hold only a config ref; rebuilding from live rows picks up a rotated key.
       let next = await session.takeNextIngress(settlement);
       while (next) {
