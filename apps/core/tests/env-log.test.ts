@@ -22,6 +22,10 @@ const BROODS_CREDENTIAL_PREFIXES = [
   "bsts_",
   "bdts_",
   "brt_",
+  "bsig_",
+  "buat_",
+  "bdap_",
+  "bdob_",
 ];
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;
@@ -282,6 +286,18 @@ describe("logging helpers", () => {
     expect(redactWithRunSecrets(tokens[0])).toBe(tokens[0]);
     const ids = `task-${"0f1e2d3c-4b5a-6978".repeat(2)} AKIA${"ABCDEFGHIJ234567"}XY ghp_short`;
     expect(redactSensitiveText(ids)).toBe(ids);
+  });
+
+  it("redacts a Slack hook url, which can post into the channel", () => {
+    const url =
+      "https://hooks.slack.com/commands/T0001/1234567890/AbCdEfGhIjKlMnOp";
+
+    expect(redact({ source: { responseUrl: url, channel: "C1" } })).toEqual({
+      source: {
+        responseUrl: "https://hooks.slack.com/[redacted]",
+        channel: "C1",
+      },
+    });
   });
 
   it("treats env values as secret unless the name holds a public identity", () => {

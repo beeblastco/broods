@@ -26,7 +26,7 @@ export type FileContent =
   | { kind: "text"; text: string }
   | { kind: "image"; url: string };
 
-export interface PreviewTab {
+interface PreviewTab {
   file: FileRecord;
   pinned: boolean;
 }
@@ -232,6 +232,8 @@ function FileBody({
   fileUrl: (file: FileRecord) => Promise<string>;
 }): React.JSX.Element {
   const kind = previewKind(file);
+  // A poll hands a new record each time; the parent's key remounts on a real change.
+  const [loadedFile] = useState(file);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [view, setView] = useState<"preview" | "source">("preview");
   const [copied, setCopied] = useState(false);
@@ -243,7 +245,7 @@ function FileBody({
     if (kind !== "text" && kind !== "image") return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      loadFile(file)
+      loadFile(loadedFile)
         .then((content) => {
           if (!cancelled) setState({ status: "loaded", content: content });
         })
@@ -257,7 +259,7 @@ function FileBody({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [file, kind, loadFile]);
+  }, [kind, loadFile, loadedFile]);
 
   const text =
     state.status === "loaded" && state.content.kind === "text"

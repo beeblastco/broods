@@ -87,9 +87,10 @@ export default function DashboardPage(): React.JSX.Element {
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
   const stageSession = useStageSession(projectId, activeStageId);
+  // Decrypts the permanent key, so only the tab and the dialog that show it subscribe.
   const revealedKey = useQuery(
     api.agent.deployments.revealKeyForStage,
-    activeStageId && activeTab === "api-key"
+    activeStageId && (activeTab === "api-key" || keyDialogWanted)
       ? { projectId: projectId, stageId: activeStageId }
       : "skip",
   );
