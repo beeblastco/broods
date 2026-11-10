@@ -19,6 +19,9 @@ import {
 const WINDOW_MS = 60_000;
 // Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
+// One write per account and source every few seconds: a Convex write costs the same CPU
+// whatever it adds, and parallel writes on one account collide on its usage rows.
+const USAGE_FLUSH_MS = 5_000;
 
 export interface PlanRefusal {
   kind: "budget" | "rate";
@@ -45,9 +48,25 @@ interface CachedBudget {
   expiresAt: number;
 }
 
+type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
+
+interface PendingUsage {
+  accountId: string;
+  usage: MeterUsage;
+  source: UsageSource | undefined;
+}
+
+interface ScheduledFlush {
+  timer: ReturnType<typeof setTimeout>;
+  settle: (flush: Promise<void>) => void;
+}
+
 // Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
+const pendingUsage = new Map<string, PendingUsage>();
+let scheduledFlush: ScheduledFlush | null = null;
+let flushing: Promise<void> = Promise.resolve();
 
 export async function admitRun(
   accountId: string,
@@ -119,17 +138,55 @@ export function planRefusalText(refusal: PlanRefusal): string {
     : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
 }
 
+// Flushes queue behind each other, so one account's writes never overlap across flushes.
+export async function flushUsage(): Promise<void> {
+  const due = scheduledFlush;
+  scheduledFlush = null;
+  if (due) clearTimeout(due.timer);
+  const batch = [...pendingUsage.values()];
+  pendingUsage.clear();
+  flushing = flushing.then((): Promise<void> => writeUsage(batch));
+  due?.settle(flushing);
+  await flushing;
+}
+
 export function recordUsage(
   accountId: string,
-  usage: Parameters<Storage["budgets"]["record"]>[1],
+  usage: MeterUsage,
   source?: UsageSource,
 ): void {
-  waitUntil(getStorage().budgets.record(accountId, usage, source));
+  const key = JSON.stringify([accountId, source ?? null]);
+  const pending = pendingUsage.get(key);
+  if (pending) {
+    for (const field of Object.keys(usage) as (keyof MeterUsage)[]) {
+      pending.usage[field] = (pending.usage[field] ?? 0) + (usage[field] ?? 0);
+    }
+  } else {
+    pendingUsage.set(key, {
+      accountId: accountId,
+      usage: { ...usage },
+      source: source,
+    });
+  }
+  if (scheduledFlush) return;
+  const flushed = Promise.withResolvers<void>();
+  scheduledFlush = {
+    timer: setTimeout((): void => void flushUsage(), USAGE_FLUSH_MS),
+    settle: flushed.resolve,
+  };
+  waitUntil(flushed.promise);
 }
 
 export function resetPlanLimitsForTests(): void {
   windows.clear();
   budgets.clear();
+  pendingUsage.clear();
+  if (scheduledFlush) {
+    clearTimeout(scheduledFlush.timer);
+    scheduledFlush.settle(Promise.resolve());
+    scheduledFlush = null;
+  }
+  flushing = Promise.resolve();
 }
 
 // Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
@@ -211,4 +268,20 @@ function currentWindow(
   if (open) windows.set(accountId, fresh);
 
   return fresh;
+}
+
+// One account's entries share its usage rows in Convex, so they go one after another.
+async function writeUsage(batch: PendingUsage[]): Promise<void> {
+  const byAccount = Map.groupBy(batch, (entry): string => entry.accountId);
+  await Promise.allSettled(
+    [...byAccount.values()].map(async (entries): Promise<void> => {
+      for (const entry of entries) {
+        await getStorage().budgets.record(
+          entry.accountId,
+          entry.usage,
+          entry.source,
+        );
+      }
+    }),
+  );
 }

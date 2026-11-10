@@ -4,12 +4,14 @@ import {
   describe,
   expect,
   it,
+  jest,
   setSystemTime,
 } from "bun:test";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import {
   admitRun,
   BudgetExhaustedError,
+  flushUsage,
   planRefusalResponse,
   recordUsage,
   refundRun,
@@ -22,18 +24,29 @@ import {
   resetStorageForTests,
   setStorageForTests,
   type Storage,
+  type UsageSource,
 } from "../src/shared/storage.ts";
+import { settleOnFakeClock } from "./helpers/fake-clock.ts";
 
 const { handler } = await import("../src/harness/handler.ts");
 
 type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
+
+interface MeterWrite {
+  accountId: string;
+  usage: MeterUsage;
+  source?: UsageSource;
+}
 
 const ACCOUNT_ID = "acct_1";
 const SERVICE_SECRET = "service-secret";
 
 let budget: BudgetStatus;
 let cronFailures: string[];
-let recorded: MeterUsage[];
+let held: (() => void)[];
+let holdWrites: boolean;
+let started: string[];
+let recorded: MeterWrite[];
 let warningClaims: number;
 
 beforeEach(() => {
@@ -47,6 +60,9 @@ beforeEach(() => {
     warned: false,
   };
   cronFailures = [];
+  held = [];
+  holdWrites = false;
+  started = [];
   recorded = [];
   warningClaims = 0;
   resetPlanLimitsForTests();
@@ -58,11 +74,21 @@ beforeEach(() => {
         return { ...budget };
       },
       record: async function (
-        _accountId: string,
+        accountId: string,
         usage: MeterUsage,
+        source?: UsageSource,
       ): Promise<void> {
-        await Bun.sleep(5);
-        recorded.push(usage);
+        started.push(`${accountId}:${source?.agentId}`);
+        if (holdWrites) {
+          const write = Promise.withResolvers<void>();
+          held.push(write.resolve);
+          await write.promise;
+        }
+        recorded.push({
+          accountId: accountId,
+          usage: usage,
+          ...(source ? { source: source } : {}),
+        });
       },
       claimWarning: async function (): Promise<boolean> {
         warningClaims += 1;
@@ -96,6 +122,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   setSystemTime();
   resetStorageForTests();
   delete process.env.SERVICE_AUTH_SECRET;
@@ -249,11 +276,77 @@ describe("admitRun", () => {
 });
 
 describe("recordUsage", () => {
-  it("lets shutdown drain a pending meter write", async () => {
-    recordUsage(ACCOUNT_ID, { ingressGb: 0.5 });
-    await drainInFlight();
+  it("sends one write per account and source with the amounts summed", async () => {
+    for (let call = 0; call < 3; call += 1) {
+      recordUsage(
+        ACCOUNT_ID,
+        { workerMs: 10, workerRequests: 1 },
+        { agentId: "a" },
+      );
+    }
+    recordUsage(ACCOUNT_ID, { egressGb: 0.5 }, { agentId: "a" });
+    await flushUsage();
 
-    expect(recorded).toEqual([{ ingressGb: 0.5 }]);
+    expect(recorded).toEqual([
+      {
+        accountId: ACCOUNT_ID,
+        usage: { workerMs: 30, workerRequests: 3, egressGb: 0.5 },
+        source: { agentId: "a" },
+      },
+    ]);
+  });
+
+  it("writes one account's sources in turn and different accounts in parallel", async () => {
+    holdWrites = true;
+    recordUsage(ACCOUNT_ID, { workerRequests: 1 }, { agentId: "a" });
+    recordUsage(ACCOUNT_ID, { workerRequests: 2 }, { agentId: "b" });
+    recordUsage("acct_2", { workerRequests: 3 }, { agentId: "a" });
+    const flushed = flushUsage();
+    await Bun.sleep(0);
+    expect(started).toEqual([`${ACCOUNT_ID}:a`, "acct_2:a"]);
+
+    releaseHeld();
+    await Bun.sleep(0);
+    expect(started).toEqual([`${ACCOUNT_ID}:a`, "acct_2:a", `${ACCOUNT_ID}:b`]);
+    releaseHeld();
+    await flushed;
+
+    expect(recorded).toHaveLength(3);
+  });
+
+  it("keeps usage recorded during a flush for the next one", async () => {
+    jest.useFakeTimers();
+    holdWrites = true;
+    recordUsage(ACCOUNT_ID, { ingressGb: 1 });
+    const flushed = flushUsage();
+    await Promise.resolve();
+    recordUsage(ACCOUNT_ID, { ingressGb: 2 });
+    holdWrites = false;
+    releaseHeld();
+    await flushed;
+    expect(recorded.map((write) => write.usage)).toEqual([{ ingressGb: 1 }]);
+
+    await settleOnFakeClock(drainInFlight());
+
+    expect(recorded.map((write) => write.usage)).toEqual([
+      { ingressGb: 1 },
+      { ingressGb: 2 },
+    ]);
+  });
+
+  it("lets shutdown drain a pending meter write", async () => {
+    jest.useFakeTimers();
+    recordUsage(ACCOUNT_ID, { ingressGb: 0.5 });
+    const drained = drainInFlight();
+    jest.advanceTimersByTime(4_999);
+    await Promise.resolve();
+    expect(recorded).toEqual([]);
+
+    await settleOnFakeClock(drained);
+
+    expect(recorded).toEqual([
+      { accountId: ACCOUNT_ID, usage: { ingressGb: 0.5 } },
+    ]);
   });
 });
 
@@ -332,6 +425,10 @@ describe("sandbox start", () => {
     ).rejects.toBeInstanceOf(BudgetExhaustedError);
   });
 });
+
+function releaseHeld(): void {
+  for (const release of held.splice(0)) release();
+}
 
 async function admitMany(count: number): Promise<void> {
   for (let index = 0; index < count; index += 1) {

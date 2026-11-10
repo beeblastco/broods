@@ -16,6 +16,7 @@ import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import { getStorage } from "../src/shared/storage.ts";
 import { FrameQueue, type RunnerFrame } from "../src/harness/frames.ts";
 import { listMcpTools, setMcpForTests } from "../src/harness/mcp/client.ts";
+import { flushUsage } from "../src/harness/plan-limits.ts";
 import {
   collectBatchFrames,
   hostedMcpFetch,
@@ -46,7 +47,8 @@ beforeEach(() => {
     recorded.push({ accountId: accountId, usage: usage, source: source });
   });
 });
-afterEach(() => {
+afterEach(async (): Promise<void> => {
+  await flushUsage();
   setHostedMcpSendBatchForTests(null);
   process.env = { ...savedEnv };
 });
@@ -211,6 +213,7 @@ describe("hosted MCP metering", () => {
       send.mockRestore();
     }
 
+    await flushUsage();
     expect(recorded).toEqual([
       {
         accountId: "acct_test",
@@ -301,12 +304,14 @@ describe("hosted MCP metering", () => {
       lambda.mockRestore();
     }
 
-    const charge = {
-      accountId: "acct_test",
-      usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 1 },
-      source: { projectId: "proj" },
-    };
-    expect(recorded).toEqual([charge, charge]);
+    await flushUsage();
+    expect(recorded).toEqual([
+      {
+        accountId: "acct_test",
+        usage: { hostedMcpGbSeconds: expect.any(Number), hostedMcpRequests: 2 },
+        source: { projectId: "proj" },
+      },
+    ]);
   });
 
   it("runs the batch on Lambda when the Worker was never reached, and charges only Lambda", async (): Promise<void> => {
@@ -326,6 +331,7 @@ describe("hosted MCP metering", () => {
       lambda.mockRestore();
     }
 
+    await flushUsage();
     expect(recorded).toHaveLength(1);
   });
 
@@ -446,6 +452,7 @@ describe("hosted MCP metering", () => {
       send.mockRestore();
     }
 
+    await flushUsage();
     expect(recorded).toEqual([]);
   });
 });
