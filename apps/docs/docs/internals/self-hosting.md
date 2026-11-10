@@ -417,7 +417,7 @@ broods dev
 
 ```bash
 curl https://gateway.example.com/healthz
-# {"status":"ok","activeWebSockets":0,"maxWebSockets":10000}
+# {"status":"ok"}
 
 bun run --filter broods build
 cd packages/demos/basic-stream
