@@ -4433,7 +4433,8 @@ components:
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
         nothing to resume. A prompt that was already answered is skipped
-        when another answer in the same request landed.
+        when another answer in the same request landed, and listed in
+        `alreadyAnswered`.
       required: [status, resultId]
       properties:
         status:
@@ -4447,6 +4448,11 @@ components:
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
+        alreadyAnswered:
+          type: array
+          items:
+            type: string
+          description: The `statusId`s in this request that were already answered and skipped. Present only when there were any.
 
     IngressStatus:
       type: object

@@ -849,7 +849,7 @@ async function handleDirectAnswers(
   }
 
   return last
-    ? continuationResponse(last, outcome)
+    ? continuationResponse(last, outcome, alreadyAnswered)
     : errorResponse(400, "Request body must include answers", {
         param: "answers",
       });

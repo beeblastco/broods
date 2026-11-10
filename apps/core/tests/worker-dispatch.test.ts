@@ -758,6 +758,7 @@ describe("streamed runs", (): void => {
     expect(await response.json()).toMatchObject({
       status: "accepted",
       resultId: "async_tool_a",
+      alreadyAnswered: ["async_tool_b"],
     });
   });
 
