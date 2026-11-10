@@ -149,11 +149,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         ...(request.callback ? { callback: request.callback } : {}),
       },
     );
-    const response = await sandbox.process.executeCommand(
-      script,
-      undefined,
-      callbackEnv(request.callback),
-    );
+    const response = await sandbox.process.executeCommand(script, undefined, {
+      ...mergeSandboxEnv(this.#config.envVars),
+      ...callbackEnv(request.callback),
+    });
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
