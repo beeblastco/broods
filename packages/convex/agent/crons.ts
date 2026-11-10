@@ -24,6 +24,7 @@ import {
 import {
   deleteCron,
   deleteRegistrationIfExists,
+  deleteRunWaits,
   registerSchedule,
   unregisterSchedule,
 } from "../model/cronSchedules";
@@ -52,7 +53,6 @@ const DEAD_RUN_GRACE_MS = 5 * 60 * 1000;
 const EXPIRED_RUN_GRACE_MS = 60 * 60 * 1000;
 // As long as the polling row that holds the open approval.
 const PAUSED_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const PAUSED_RUN_SCAN_LIMIT = 100;
 // Rows from before `ingressEventId` have no envelope to read, so only age can end them.
 const UNTRACKED_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEAD_RUN_ERROR = "The run stopped before it recorded an outcome.";
@@ -159,6 +159,7 @@ export const createRun = internalMutation({
     const runId = await ctx.db.insert("cronRuns", {
       ...args,
       ...(isOneTimeSchedule(cron.scheduleExpression) ? { oneShot: true } : {}),
+      waitingOn: [],
       status: "started",
       startedAt: startedAt,
     });
@@ -491,22 +492,25 @@ export const settleAnsweredRun = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const started = await ctx.db
-      .query("cronRuns")
-      .withIndex("by_ingressConversationKey_and_status", (q) =>
-        q
-          .eq("ingressConversationKey", args.conversationKey)
-          .eq("status", "started"),
-      )
-      .order("desc")
-      .take(PAUSED_RUN_SCAN_LIMIT);
-    const run = started.find((candidate): boolean =>
+    const run =
       args.answered.length > 0
-        ? (candidate.waitingOn ?? []).some((id) => args.answered.includes(id))
-        : candidate.ingressEventId === args.ownerEventId,
-    );
-    if (!run) return null;
+        ? await runWaitingOn(ctx, args.conversationKey, args.answered)
+        : await ctx.db
+            .query("cronRuns")
+            .withIndex("by_ingressEventId", (q) =>
+              q.eq("ingressEventId", args.ownerEventId),
+            )
+            .first();
+    if (run?.status !== "started") return null;
     if (args.waitingOn) {
+      await deleteRunWaits(ctx, run._id);
+      for (const promptId of args.waitingOn) {
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: args.conversationKey,
+          promptId: promptId,
+          runId: run._id,
+        });
+      }
       await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
     } else {
       await finishRun(
@@ -689,7 +693,10 @@ async function deleteRunsBatch(
       q.eq("accountId", accountId).eq("cronId", cronId),
     )
     .take(limit);
-  for (const run of runs) await ctx.db.delete(run._id);
+  for (const run of runs) {
+    await deleteRunWaits(ctx, run._id);
+    await ctx.db.delete(run._id);
+  }
 
   return runs.length;
 }
@@ -750,6 +757,33 @@ function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
+async function runWaitingOn(
+  ctx: QueryCtx,
+  conversationKey: string,
+  answered: string[],
+): Promise<Doc<"cronRuns"> | null> {
+  for (const promptId of answered) {
+    const wait = await ctx.db
+      .query("cronRunWaits")
+      .withIndex("by_conversationKey_and_promptId", (q) =>
+        q.eq("conversationKey", conversationKey).eq("promptId", promptId),
+      )
+      .first();
+    const run = wait ? await ctx.db.get(wait.runId) : null;
+    if (run?.status === "started") return run;
+  }
+  // Rows from before `waitingOn` keep the old rule. Delete 7 days after release: swept by then.
+  const newest = await ctx.db
+    .query("cronRuns")
+    .withIndex("by_ingressConversationKey_and_status", (q) =>
+      q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+    )
+    .order("desc")
+    .first();
+
+  return newest?.waitingOn === undefined ? newest : null;
+}
+
 async function settleRun(
   ctx: MutationCtx,
   ids: {
@@ -768,6 +802,7 @@ async function settleRun(
   }
   if (run.status !== "started") return null;
   const now = Date.now();
+  await deleteRunWaits(ctx, ids.runId);
   await ctx.db.patch(ids.runId, { ...outcome, completedAt: now });
   const cron = await ctx.db.get(ids.cronId);
   if (cron?.lastRunId === ids.runId) {

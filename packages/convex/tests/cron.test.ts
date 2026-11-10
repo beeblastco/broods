@@ -237,25 +237,49 @@ describe("settleAnsweredRun", () => {
   test("ends the paused run with the outcome of the turn that answered it", async () => {
     const tt = t();
     const { accountId, cronId } = await firstCron(tt);
-    const runId = await staleRun(tt, accountId, cronId, "event-paused");
-    await tt.run((ctx) =>
-      ctx.db.patch(runId, {
-        ingressConversationKey: "scoped:cron",
-        waitingOn: ["approval-1"],
-      }),
-    );
+    const runId = await pausedRun(tt, accountId, cronId, "event-paused");
 
-    await tt.mutation(internal.agent.crons.settleAnsweredRun, {
-      conversationKey: "scoped:cron",
-      ownerEventId: "answer",
-      answered: ["approval-1"],
-      status: "completed",
-      result: "approved and done",
-    });
+    await answer(tt, "approval-event-paused");
 
     expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
       status: "completed",
       result: "approved and done",
+    });
+    expect(
+      await tt.run((ctx) => ctx.db.query("cronRunWaits").collect()),
+    ).toEqual([]);
+  });
+
+  test("finds the run that asked behind more than 100 newer paused runs", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const oldest = await pausedRun(tt, accountId, cronId, "event-0");
+    for (let fire = 1; fire <= 101; fire += 1) {
+      await pausedRun(tt, accountId, cronId, `event-${fire}`);
+    }
+
+    await answer(tt, "approval-event-0");
+
+    expect(await tt.run((ctx) => ctx.db.get(oldest))).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  test("an answer settles a run paused before waitingOn existed", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-legacy");
+    await tt.run((ctx) =>
+      ctx.db.patch(runId, {
+        ingressConversationKey: "scoped:cron",
+        waitingOn: undefined,
+      }),
+    );
+
+    await answer(tt, "approval-legacy");
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
     });
   });
 });
@@ -715,6 +739,16 @@ describe("CLI cron delete", () => {
   });
 });
 
+async function answer(tt: T, approvalId: string): Promise<void> {
+  await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+    conversationKey: "scoped:cron",
+    ownerEventId: `answer-${approvalId}`,
+    answered: [approvalId],
+    status: "completed",
+    result: "approved and done",
+  });
+}
+
 async function firstCron(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; cronId: Id<"crons"> }> {
@@ -725,6 +759,29 @@ async function firstCron(
   });
 
   return { accountId: accountId, cronId: cron!._id };
+}
+
+// A run whose own turn paused on the approval `approval-<ingressEventId>`.
+async function pausedRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  ingressEventId: string,
+): Promise<Id<"cronRuns">> {
+  const runId = await staleRun(tt, accountId, cronId, ingressEventId);
+  await tt.run((ctx) =>
+    ctx.db.patch(runId, { ingressConversationKey: "scoped:cron" }),
+  );
+  await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+    conversationKey: "scoped:cron",
+    ownerEventId: ingressEventId,
+    answered: [],
+    waitingOn: [`approval-${ingressEventId}`],
+    status: "completed",
+    result: { status: "awaiting_approval" },
+  });
+
+  return runId;
 }
 
 async function seed(

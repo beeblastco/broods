@@ -182,39 +182,62 @@ theorem run_mirrors (s : State) (ts : List Step) (h : Mirrors s) :
   | nil => exact h
   | cons t ts ih => exact ih (step s t) (step_mirrors s t h)
 
-/-- A started run of one conversation and the prompt ids it waits on (`waitingOn`). -/
+/-- A started run of one conversation and the prompt ids it waits on (`waitingOn`),
+`none` on a row created before the field existed. -/
 structure Paused where
   run : Nat
-  waitingOn : List Nat
+  waitingOn : Option (List Nat)
 
-/-- `settleAnsweredRun`: of the conversation's started runs, newest first, the
-first that waits on an id the answering turn names. -/
+/-- `settleAnsweredRun` with `runWaitingOn`: of the conversation's started runs, newest
+first, one that waits on an id the answering turn names (`cronRunWaits`, any age);
+else the newest started run, only when it predates `waitingOn`. -/
 def answeredRun (started : List Paused) (answered : List Nat) : Option Nat :=
-  (started.find? (fun p => p.waitingOn.any (fun id => answered.contains id))).map (·.run)
+  match started.find? (fun p => (p.waitingOn.getD []).any (fun id => answered.contains id)) with
+  | some p => some p.run
+  | none =>
+    match started.head? with
+    | some ⟨r, none⟩ => some r
+    | _ => none
 
-/-- An answer settles only a run that waits on what it answers. -/
+/-- An answer settles only a run that waits on what it answers, or one from before
+`waitingOn`: never a newer run that waits on something else or has not paused. -/
 theorem answered_run_asked (started : List Paused) (answered : List Nat) (r : Nat)
     (h : answeredRun started answered = some r) :
-    ∃ p ∈ started, p.run = r ∧ ∃ id ∈ p.waitingOn, id ∈ answered := by
+    ∃ p ∈ started, p.run = r ∧
+      ((∃ id ∈ p.waitingOn.getD [], id ∈ answered) ∨ p.waitingOn = none) := by
   unfold answeredRun at h
-  cases hf : started.find? (fun p => p.waitingOn.any (fun id => answered.contains id)) with
-  | none => rw [hf] at h; cases h
+  cases hf : started.find? (fun p => (p.waitingOn.getD []).any (fun id => answered.contains id)) with
   | some p =>
     rw [hf] at h
-    simp only [Option.map_some, Option.some.injEq] at h
+    simp only [Option.some.injEq] at h
     have hp := List.find?_some hf
     simp only [List.any_eq_true, List.contains_iff_mem] at hp
-    exact ⟨p, List.mem_of_find?_eq_some hf, h, hp⟩
+    exact ⟨p, List.mem_of_find?_eq_some hf, h, Or.inl hp⟩
+  | none =>
+    rw [hf] at h
+    cases started with
+    | nil => cases h
+    | cons q qs =>
+      obtain ⟨run, waits⟩ := q
+      cases waits with
+      | none =>
+        simp only [List.head?_cons, Option.some.injEq] at h
+        exact ⟨⟨run, none⟩, List.mem_cons_self, h, Or.inr rfl⟩
+      | some ws => simp at h
 
 /-! ## Witnesses -/
 
 /-- Fire 1 waits on approval 10, fire 2 (newer) on approval 20. Answering 10
 settles fire 1; settling the newest started run, as it once did, hit fire 2. -/
-example : answeredRun [⟨2, [20]⟩, ⟨1, [10]⟩] [10] = some 1 := by decide
-example : ([⟨2, [20]⟩, ⟨1, [10]⟩] : List Paused).head?.map (·.run) = some 2 := by decide
+example : answeredRun [⟨2, some [20]⟩, ⟨1, some [10]⟩] [10] = some 1 := by decide
+example : ([⟨2, some [20]⟩, ⟨1, some [10]⟩] : List Paused).head?.map (·.run) = some 2 := by
+  decide
 
-/-- An answer no started run waits on settles nothing. -/
-example : answeredRun [⟨2, [20]⟩, ⟨1, [10]⟩] [30] = none := by decide
+/-- An answer no started run waits on settles nothing, not even a fire still running. -/
+example : answeredRun [⟨3, some []⟩, ⟨2, some [20]⟩, ⟨1, some [10]⟩] [30] = none := by decide
+
+/-- A run paused before `waitingOn` existed still ends by the answer, as it once did. -/
+example : answeredRun [⟨1, none⟩] [10] = some 1 := by decide
 
 /-- No run yet. -/
 def fresh : State := ⟨fun _ => none, ⟨none, none, none⟩⟩

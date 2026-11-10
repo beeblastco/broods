@@ -652,16 +652,24 @@ describe("runtime ingress", () => {
           });
         }
 
-        return await ctx.db.insert("cronRuns", {
+        const promptId = prompt === "question" ? "question-1" : "a";
+        const runId = await ctx.db.insert("cronRuns", {
           accountId: accountId,
           cronId: cronId,
           eventId: "paused",
           ingressConversationKey: conversationKey,
-          waitingOn: [prompt === "question" ? "question-1" : "a"],
+          waitingOn: [promptId],
           conversationKey: "api:cron",
           status: "started",
           startedAt: 1,
         });
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: conversationKey,
+          promptId: promptId,
+          runId: runId,
+        });
+
+        return runId;
       });
       const fence = {
         conversationKey: conversationKey,
@@ -773,6 +781,7 @@ describe("runtime ingress", () => {
             eventId: eventId,
             ingressEventId: eventId,
             ingressConversationKey: conversationKey,
+            waitingOn: [],
             conversationKey: "api:cron",
             status: "started",
             startedAt: 1,
