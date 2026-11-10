@@ -178,6 +178,7 @@ export async function handleEnvRoute(
         project: route.project,
         stage: route.stage,
         name: route.name,
+        ...cliAuditActor(auth),
       },
     );
 
@@ -195,6 +196,7 @@ export async function handleEnvRoute(
       stage: route.stage,
       name: route.name,
       value: body.value,
+      ...cliAuditActor(auth),
     });
 
     return json({ ok: true });
@@ -397,6 +399,23 @@ function base64ArrayBuffer(value: string): ArrayBuffer {
   }
 
   return bytes.buffer as ArrayBuffer;
+}
+
+function cliAuditActor(auth: CliAuth): {
+  actorKind: "cli" | "deployKey";
+  actorId: string;
+} {
+  if ("deployKeyId" in auth && auth.deployKeyId) {
+    return { actorKind: "deployKey", actorId: auth.deployKeyId };
+  }
+  const actorId =
+    "cliAuthId" in auth
+      ? auth.cliAuthId
+      : "applyAuthId" in auth
+        ? auth.applyAuthId
+        : auth.accountId;
+
+  return { actorKind: "cli", actorId: actorId };
 }
 
 function cronEvents(config: Record<string, unknown>, label: string): unknown[] {
@@ -674,15 +693,7 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: "deployKeyId" in auth ? "deployKey" : "cli",
-          actorId:
-            "deployKeyId" in auth
-              ? auth.deployKeyId
-              : "cliAuthId" in auth
-                ? auth.cliAuthId
-                : "applyAuthId" in auth
-                  ? auth.applyAuthId
-                  : accountId,
+          ...cliAuditActor(auth),
         },
       },
     );

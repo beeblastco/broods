@@ -76,7 +76,10 @@ import {
   assertEnvironmentVariableUnreferenced,
   loadEnvironmentVariableValues,
 } from "../model/environmentValues";
-import { upsertEnvironmentVariable } from "../model/environmentWrites";
+import {
+  recordEnvironmentVariableAudit,
+  upsertEnvironmentVariable,
+} from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
@@ -760,6 +763,8 @@ export const removeEnvBySecretHash = internalMutation({
     project: v.string(),
     stage: v.string(),
     name: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.object({ removed: v.boolean() }),
   handler: async (ctx, args): Promise<{ removed: boolean }> => {
@@ -799,6 +804,18 @@ export const removeEnvBySecretHash = internalMutation({
       resolved.stageDoc._id,
       normalizedName,
       undefined,
+    );
+    await recordEnvironmentVariableAudit(
+      ctx,
+      { kind: args.actorKind, id: args.actorId },
+      {
+        projectId: resolved.projectDoc._id,
+        stageId: resolved.stageDoc._id,
+        variableId: existing._id,
+        action: "deleted",
+        name: normalizedName,
+        summary: "Environment variable deleted",
+      },
     );
 
     return { removed: true };
@@ -990,6 +1007,8 @@ export const setEnvBySecretHash = internalMutation({
     stage: v.string(),
     name: v.string(),
     value: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -999,12 +1018,26 @@ export const setEnvBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
-    await upsertEnvironmentVariable(ctx, {
+    const written = await upsertEnvironmentVariable(ctx, {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
       name: name,
       value: value,
     });
+    if (written.change !== "unchanged") {
+      await recordEnvironmentVariableAudit(
+        ctx,
+        { kind: args.actorKind, id: args.actorId },
+        {
+          projectId: projectDoc._id,
+          stageId: stageDoc._id,
+          variableId: written.id,
+          action: written.change,
+          name: name,
+          summary: `Environment variable ${written.change}`,
+        },
+      );
+    }
 
     return null;
   },

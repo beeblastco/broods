@@ -24,6 +24,12 @@ import {
 import { randomToken } from "./model/accountSecrets";
 import { actorsOf, actorValidator, type Actor } from "./model/actor";
 import { requireActiveAccount } from "./model/activeAccount";
+import {
+  appendAuditEvent,
+  auditDetailsJson,
+  dashboardAuditActor,
+  type AuditResource,
+} from "./model/auditEvents";
 import { ClientError } from "./model/clientError";
 import { orgIdOf } from "./model/ownership/org";
 import { assertPolicyUnreferenced } from "./model/policyReferences";
@@ -306,8 +312,7 @@ export const createPolicy = mutation({
     const name = policyName(args.name);
     const document: PolicyDocument = { version: 1, mode: args.mode, rules: [] };
     const now = Date.now();
-
-    return await ctx.db.insert("agentPolicies", {
+    const policyId = await ctx.db.insert("agentPolicies", {
       accountId: caller.account._id,
       name: name,
       description: args.description?.trim() || undefined,
@@ -318,6 +323,15 @@ export const createPolicy = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "created",
+      { kind: "policy", id: policyId, name: name },
+      "Policy created",
+    );
+
+    return policyId;
   },
 });
 
@@ -346,6 +360,14 @@ export const updatePolicy = mutation({
       ...(document ? { document: document } : {}),
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy updated",
+      { mode: args.mode },
+    );
 
     return null;
   },
@@ -420,6 +442,14 @@ export const addRule = mutation({
       document: document,
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy rule added",
+      { rule: rule },
+    );
 
     return rule.id;
   },
@@ -446,6 +476,14 @@ export const removeRule = mutation({
       document: document,
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy rule removed",
+      { rule: dropped },
+    );
 
     return null;
   },
@@ -464,6 +502,13 @@ export const removePolicy = mutation({
       deletedAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "deleted",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy deleted",
+    );
 
     return null;
   },
@@ -569,8 +614,7 @@ export const createRole = mutation({
       await activePolicies(ctx, args.policyIds),
     );
     const now = Date.now();
-
-    return await ctx.db.insert("orgRoles", {
+    const roleId = await ctx.db.insert("orgRoles", {
       orgId: orgId,
       name: name,
       description: args.description?.trim() || undefined,
@@ -579,6 +623,16 @@ export const createRole = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "created",
+      { kind: "role", id: roleId, name: name },
+      "Role created",
+      { policyIds: args.policyIds },
+    );
+
+    return roleId;
   },
 });
 
@@ -611,6 +665,14 @@ export const updateRole = mutation({
       ...(args.policyIds !== undefined ? { policyIds: args.policyIds } : {}),
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      { kind: "role", id: role._id, name: role.name },
+      "Role updated",
+      { policyIds: args.policyIds },
+    );
 
     return null;
   },
@@ -633,6 +695,13 @@ export const removeRole = mutation({
       );
     }
     await ctx.db.delete(role._id);
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "deleted",
+      { kind: "role", id: role._id, name: role.name },
+      "Role deleted",
+    );
 
     return null;
   },
@@ -782,6 +851,28 @@ async function permissionNames(
     ...BUILT_IN.map((entry) => entry.name),
     ...custom.map((row) => row.name),
   ]);
+}
+
+async function recordAccessAudit(
+  ctx: MutationCtx,
+  caller: ActiveAccount,
+  action: string,
+  resource: AuditResource,
+  summary: string,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  await appendAuditEvent(ctx.db, {
+    accountId: caller.account._id,
+    actor: dashboardAuditActor({
+      id: caller.user.authId,
+      email: caller.user.email,
+      name: caller.user.name,
+    }),
+    action: action,
+    resource: resource,
+    summary: summary,
+    ...(details ? { detailsJson: auditDetailsJson(details) } : {}),
+  });
 }
 
 // A rule may hold any id, so only the account's own projects and stages are named.
