@@ -25,7 +25,10 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
-import { queueMirrorWrite } from "../harness/sandbox/utils.ts";
+import {
+  queueMirrorRemove,
+  queueMirrorWrite,
+} from "../harness/sandbox/mirror-writes.ts";
 import {
   extractBearerToken,
   isServiceToken,
@@ -38,7 +41,6 @@ import {
   type SandboxAuditActor,
 } from "../shared/convex/sandbox-audit-events.ts";
 import {
-  removeSandboxInstance,
   sandboxInstanceIsControllable,
   setSandboxInstanceStatus,
   type SandboxInstanceStatus,
@@ -436,11 +438,7 @@ async function execSandbox(
       outputLimitBytes: outputLimitBytes,
     }),
   );
-  await setSandboxInstanceStatus(
-    context.accountId,
-    context.reservationKey,
-    "running",
-  );
+  await queueMirrorStatus(context, "running");
   await context.audit(result.ok ? "ok" : "error", {
     status: "running",
     exitCode: result.exitCode,
@@ -487,11 +485,7 @@ async function openSandboxTerminal(
       await auditedSandboxCall(context, async () => {
         await context.executor.resume?.(context.ref);
       });
-      await setSandboxInstanceStatus(
-        context.accountId,
-        context.reservationKey,
-        "running",
-      );
+      await queueMirrorStatus(context, "running");
     }
   }
   let target: {
@@ -567,11 +561,20 @@ async function refreshSandboxStatus(
   if (!context.executor.getInstanceInfo) {
     return unsupportedSandboxAction(context, "instance status refresh");
   }
+  // Read first, so a removal of the machine it saw never takes a replacement's row.
+  const reserved = await getSandboxExternalId(
+    context.provider,
+    context.reservationKey,
+  );
   const info = await auditedSandboxCall(context, async () =>
     context.executor.getInstanceInfo?.(context.ref),
   );
   if (!info || info.state === "terminating") {
-    await removeSandboxInstance(context.accountId, context.reservationKey);
+    await queueMirrorRemove(
+      context.accountId,
+      context.reservationKey,
+      info?.externalId ?? reserved ?? undefined,
+    );
     await context.audit("ok", { status: "terminating" });
 
     return jsonResponse(200, { status: "terminated" });
@@ -582,12 +585,10 @@ async function refreshSandboxStatus(
     (info.state === "unknown"
       ? "provider reported an unrecognised state"
       : undefined);
-  const changed = await setSandboxInstanceStatus(
-    context.accountId,
-    context.reservationKey,
-    status,
-    { observed: true, errorMessage: errorMessage },
-  );
+  const changed = await queueMirrorStatus(context, status, {
+    observed: true,
+    errorMessage: errorMessage,
+  });
   if (changed) {
     await context.audit(status === "error" ? "error" : "ok", {
       status: status,
@@ -663,14 +664,7 @@ async function suspendOrResumeSandbox(
     else await context.executor.resume?.(context.ref);
   });
   const status = action === "suspend" ? "suspended" : "running";
-  // Queued behind in-flight exec upserts, or one could land after and mark it running.
-  const externalId = await getSandboxExternalId(
-    context.provider,
-    context.reservationKey,
-  );
-  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
-    setSandboxInstanceStatus(context.accountId, context.reservationKey, status),
-  );
+  await queueMirrorStatus(context, status);
   await context.audit("ok", { status: status });
 
   return jsonResponse(200, { status: status });
@@ -682,11 +676,6 @@ async function terminateSandbox(
   if (!context.executor.release) {
     return unsupportedSandboxAction(context, "terminate");
   }
-  // Read before the reservation goes, to queue behind exec upserts that could recreate the row.
-  const externalId = await getSandboxExternalId(
-    context.provider,
-    context.reservationKey,
-  );
   await auditedSandboxCall(context, async () => {
     await context.executor.release?.(context.ref);
   });
@@ -695,12 +684,32 @@ async function terminateSandbox(
     context.reservationKey,
     context.accountId,
   );
-  await queueMirrorWrite(externalId ?? context.reservationKey, () =>
-    removeSandboxInstance(context.accountId, context.reservationKey),
-  );
+  await queueMirrorRemove(context.accountId, context.reservationKey);
   await context.audit("ok", { status: "terminating" });
 
   return jsonResponse(200, { status: "terminated" });
+}
+
+// On the row's lane, so an exec upsert queued before it never lands after and undoes it.
+async function queueMirrorStatus(
+  context: SandboxLifecycleContext,
+  status: SandboxInstanceStatus,
+  options?: { observed?: boolean; errorMessage?: string },
+): Promise<boolean> {
+  let changed = false;
+  await queueMirrorWrite(context.accountId, context.reservationKey, {
+    kind: "status",
+    send: async (): Promise<void> => {
+      changed = await setSandboxInstanceStatus(
+        context.accountId,
+        context.reservationKey,
+        status,
+        options,
+      );
+    },
+  });
+
+  return changed;
 }
 
 async function unsupportedSandboxAction(

@@ -745,6 +745,7 @@ describe("createSandboxExecutor", () => {
     expect(removeSandboxInstanceMock).toHaveBeenCalledWith(
       "account-1",
       "microvm-1",
+      "microvm-1",
     );
   });
 
@@ -3368,6 +3369,20 @@ describe("createSandboxExecutor", () => {
     expect(vercelGetMock.mock.calls.at(-1)?.[0]?.name).toBe("fp-p-winner");
   });
 
+  it("drops its own sandbox and fails when the refused claim's winner is gone", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor(persistentVercelConfig());
+    claimSandboxInstanceMock.mockImplementationOnce(async () => false);
+
+    await expect(executor.run(persistentVercelRun())).rejects.toThrow(
+      "lost create race",
+    );
+
+    expect(vercelDeleteMock).toHaveBeenCalledTimes(1);
+    expect(upsertSandboxInstanceMock).not.toHaveBeenCalled();
+  });
+
   // Vercel's session timeout is a hard stop, so a busy sandbox would be cut mid-command.
   it("extends the session to one idle window past each call", async () => {
     const { VercelSandboxExecutor } =
@@ -3902,9 +3917,12 @@ describe("persistent acquire teardown", () => {
   it.each(cases)(
     "destroys the $provider sandbox it just created when the claim fails",
     async ({ provider, destroy, options }) => {
-      upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-        throw new Error("post-claim persistence failed");
-      });
+      claimSandboxInstanceMock.mockImplementationOnce(
+        async (_provider, _key, externalId): Promise<boolean> => {
+          storedSandboxExternalId = externalId;
+          throw new Error("claim response lost");
+        },
+      );
       const {
         createSandboxExecutor,
       } = require("../src/harness/sandbox/index.ts");
@@ -3921,7 +3939,7 @@ describe("persistent acquire teardown", () => {
           timeoutSeconds: 30,
           outputLimitBytes: 4096,
         }),
-      ).rejects.toThrow("post-claim persistence failed");
+      ).rejects.toThrow("claim response lost");
 
       expect(destroy).toHaveBeenCalled();
       expect(deleteSandboxInstanceMock.mock.calls[0]?.[0]).toBe(provider);

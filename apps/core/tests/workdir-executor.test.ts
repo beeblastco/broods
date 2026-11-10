@@ -1437,10 +1437,13 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
     ).toBe(false);
   });
 
-  it("cleans up a newly claimed reservation when post-claim persistence fails", async () => {
-    upsertSandboxInstanceMock.mockImplementationOnce(async () => {
-      throw new Error("post-claim persistence failed");
-    });
+  it("cleans up a reservation whose claim committed but rejected", async () => {
+    claimSandboxInstanceMock.mockImplementationOnce(
+      async (_provider, _key, externalId): Promise<boolean> => {
+        storedSandboxExternalId = externalId;
+        throw new Error("claim response lost");
+      },
+    );
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
@@ -1451,7 +1454,7 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       executor.acquireHarnessReservation({
         reservationKey: "harness:session-1",
       }),
-    ).rejects.toThrow("post-claim persistence failed");
+    ).rejects.toThrow("claim response lost");
 
     expect(
       fetchCalls.some(

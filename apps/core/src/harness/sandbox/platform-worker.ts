@@ -6,11 +6,7 @@ import {
   saveSandboxInstance,
 } from "./instance-store.ts";
 import type { SandboxProvider, SandboxReleaseRequest } from "./types.ts";
-import {
-  queueMirrorWrite,
-  sandboxNamePrefix,
-  sandboxReservationKey,
-} from "./utils.ts";
+import { sandboxNamePrefix, sandboxReservationKey } from "./utils.ts";
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
   "127.0.0.1",
@@ -93,8 +89,7 @@ export async function releasePlatformSandbox(
     request.expectedExternalId ?? (await getSandboxExternalId(provider, key));
   if (!id) return;
   await drop(id);
-  // Drain queued mirror upserts so none writes the row back after the delete.
-  await queueMirrorWrite(id, async (): Promise<void> => {});
+  // No wait on the row's lane: once the reservation goes, Convex refuses a late upsert.
   await deleteSandboxInstance(provider, key, accountId, id);
 }
 

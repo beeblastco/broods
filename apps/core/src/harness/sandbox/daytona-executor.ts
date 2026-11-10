@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { assertPublicHttpsUrl } from "../../shared/http.ts";
 import { logWarn } from "../../shared/log.ts";
@@ -45,6 +44,7 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
+import { queueMirrorUpsert } from "./mirror-writes.ts";
 import {
   assertSnapshotBootable,
   configString,
@@ -280,14 +280,14 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "daytona",
-          ns,
-          externalId,
-          request.metadata,
-          { specs: daytonaSpecs(sandbox) },
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "daytona",
+          reservationKey: ns,
+          externalId: externalId,
+          metadata: request.metadata,
+          options: { specs: daytonaSpecs(sandbox) },
+        });
 
         return sandbox;
       } catch (error) {
@@ -314,14 +314,14 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "daytona",
-          ns,
-          sandbox.id,
-          request.metadata,
-          { specs: daytonaSpecs(sandbox) },
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "daytona",
+          reservationKey: ns,
+          externalId: sandbox.id,
+          metadata: request.metadata,
+          options: { specs: daytonaSpecs(sandbox) },
+        });
 
         return sandbox;
       }
