@@ -325,7 +325,7 @@ export async function cliLoginTokenHash(req: Request): Promise<string | null> {
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
 
-// Where a `bcli_` login or AuthKit `/mcp` token lands: the active org's account, owner or admin.
+// A `bcli_` login lands on the active org, a `/mcp` sign-in on the org it names: owner or admin.
 export async function cliLoginTarget(
   ctx: QueryCtx | MutationCtx,
   authId: string,
@@ -456,7 +456,13 @@ export const resolveUserLogin = internalQuery({
         refused: `You administer several organizations. Add ?org=<slug> to the MCP URL to pick one: ${picked.map(({ slug }) => slug).join(", ")}.`,
       };
     }
-    const target = await cliLoginTarget(ctx, authId, picked[0]?._id);
+    if (picked.length === 0) {
+      return {
+        refused:
+          "Signing in to Broods needs the owner or admin role in an organization.",
+      };
+    }
+    const target = await cliLoginTarget(ctx, authId, picked[0]!._id);
     if (target instanceof ClientError) return { refused: target.message };
     const account = await ctx.db.get(target.accountId);
 

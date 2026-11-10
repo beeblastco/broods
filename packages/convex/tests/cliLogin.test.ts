@@ -215,7 +215,7 @@ describe("an AuthKit user at /mcp", () => {
     expect("account" in owner && owner.account._id).toBe(accountId);
     expect(await signIn(t, "auth_member")).toEqual({
       refused:
-        "Signing in to Broods needs the owner or admin role in beeblast. Switch organizations in the dashboard, then try again.",
+        "Signing in to Broods needs the owner or admin role in an organization.",
     });
   });
 

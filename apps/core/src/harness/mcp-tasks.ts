@@ -282,7 +282,7 @@ function createTaskServer(caller: McpCaller): Server {
       if (!agent) {
         throw new ProtocolError(
           ProtocolErrorCode.InvalidParams,
-          `No tool named ${params.name}. Tools are named after agents, so it may have been renamed. Current tools: ${[...agents.keys()].join(", ")}.`,
+          `No tool named ${params.name}. Tools are named after agents, so it may have been renamed. Current tools: ${[...agents.keys()].join(", ") || "none"}.`,
         );
       }
       const input = AGENT_ARGS.safeParse(params.arguments);

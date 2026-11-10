@@ -477,10 +477,16 @@ async function registerMcpTools(
             !authorizationHeaderName(record.headers) &&
             MCP_AUTH_FAILURE_PATTERN.test(message)
           ) {
-            const requester = context.session?.principal?.chain?.[0];
+            // Owner only: an account key started the run and its reply stays off channels.
+            const session = context.session;
+            const requester = session?.principal?.chain?.[0];
             tools[mcpToolName(record.name, "sign_in")] = mcpSignInTool(
               record,
-              requester?.kind === "api" && requester.keyKind === "account",
+              requester?.kind === "api" &&
+                requester.keyKind === "account" &&
+                !context.channel &&
+                session?.delivery?.kind !== "channel" &&
+                session?.policyDelivery?.kind !== "channel",
             );
           }
 

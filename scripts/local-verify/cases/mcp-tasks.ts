@@ -94,6 +94,25 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
     JSON.stringify(done),
   );
 
+  const renamed = await mcp(context, "tools/call", {
+    name: `${key}-old-name`,
+    arguments: { prompt: "hi" },
+  });
+  assertStep(
+    "a call with a name no agent has is told the current tool names",
+    renamed.error?.message.includes(`Current tools: `) === true &&
+      renamed.error.message.includes(key),
+    JSON.stringify(renamed),
+  );
+  const callback = await fetch(
+    `${context.edgeUrl}/v1/mcp-connections/callback?code=x&state=forged`,
+  );
+  assertStep(
+    "the edge sends an MCP sign-in callback to core, which refuses a forged state",
+    callback.status === 400 && (await callback.text()).includes("expired"),
+    String(callback.status),
+  );
+
   const unknown = await mcp(context, "tasks/get", { taskId: "run_unknown" });
   assertStep(
     "an unknown task is invalid params",
