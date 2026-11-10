@@ -157,7 +157,8 @@ export function CopilotProvider({
         typeof node.data.label === "string" ? node.data.label : node.id,
       ]),
     );
-    const repo = projects?.find((project) => project._id === projectId)?.repo;
+    const project = projects?.find((entry) => entry._id === projectId);
+    const repo = project?.repo;
     const branches = [
       repo?.productionBranch && `Production from ${repo.productionBranch}`,
       repo?.developmentBranch && `Development from ${repo.developmentBranch}`,
@@ -180,9 +181,10 @@ export function CopilotProvider({
         (edge) =>
           `${labels.get(edge.source) ?? edge.source} → ${labels.get(edge.target) ?? edge.target}`,
       ),
-      project: projects?.find((project) => project._id === projectId)?.name,
+      project: project?.name,
       repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
       ...(projectId ? { projectId: projectId } : {}),
+      ...(project ? { projectSlug: project.slug } : {}),
       stage: stage?.name,
       ...(stage ? { stageId: stage._id } : {}),
     };

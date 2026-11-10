@@ -240,6 +240,20 @@ describe("agent dock", () => {
     expect(prompt).toContain("- Nodes: search (mcp)");
   });
 
+  test("the prompt names the project slug the account tools take, apart from its display name", () => {
+    const prompt = dockPrompt("hi", WIRED, {
+      codeNodes: [],
+      connections: [],
+      project: "Tracy",
+      projectSlug: "tracy",
+      stage: "development",
+    });
+
+    expect(prompt).toContain(
+      'For account tools: project "tracy", stage "development"',
+    );
+  });
+
   test("a canvas step that touches a code-defined node is refused with the way to do it", () => {
     const plan = planFromQuery("connect search to broods", {
       ...WIRED,

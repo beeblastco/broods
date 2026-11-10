@@ -33,6 +33,8 @@ export interface DockFacts {
   page?: string;
   project?: string;
   projectId?: string;
+  /** What the account API takes as `project`; a stage's name is already its slug. */
+  projectSlug?: string;
   /** One line on what the stage runs: its source revision, how its deploy went, any drift. */
   progress?: string;
   /** `owner/name`, with the branch each stage deploys from. */
@@ -85,6 +87,11 @@ export function dockPrompt(
     ...(facts.page ? [`On page: ${facts.page}`] : []),
     ...(facts.projectId
       ? [`Ids: project ${facts.projectId}, stage ${facts.stageId ?? "default"}`]
+      : []),
+    ...(facts.projectSlug && facts.stage
+      ? [
+          `For account tools: project "${facts.projectSlug}", stage "${facts.stage}"`,
+        ]
       : []),
     pagesLine(facts),
     ...(facts.progress ? [facts.progress] : []),
