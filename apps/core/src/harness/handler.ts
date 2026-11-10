@@ -110,6 +110,7 @@ import {
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
+  releaseIngressOwner,
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
@@ -2401,12 +2402,26 @@ export async function dispatchAppliedIngress(
       await invokeAsyncWorker(event);
     }
   } catch (error) {
-    await failOwnedIngress(
-      event,
-      error instanceof Error
-        ? error.message
-        : "Failed to schedule queued ingress",
-    );
+    const owner = {
+      conversationKey: event.conversationKey,
+      ownerEventId: event.eventId,
+      ownerGeneration: next.ownerGeneration,
+    };
+    const requeued =
+      error instanceof Error &&
+      error.message === WORKER_QUEUE_FULL &&
+      (await releaseIngressOwner(owner, true).then(
+        (): boolean => true,
+        (): boolean => false,
+      ));
+    if (!requeued) {
+      await failOwnedIngress(
+        event,
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule queued ingress",
+      );
+    }
     throw error;
   }
   logInfo("Queued ingress transferred to follow-up worker", {

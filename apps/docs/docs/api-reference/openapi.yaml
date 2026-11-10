@@ -94,16 +94,10 @@ paths:
                   status:
                     type: string
                     example: ok
-                  activeWebSockets:
-                    type: integer
-                  maxWebSockets:
-                    type: integer
               examples:
                 healthy:
                   value:
                     status: ok
-                    activeWebSockets: 3
-                    maxWebSockets: 1000
 
   /v1/runs:
     post:

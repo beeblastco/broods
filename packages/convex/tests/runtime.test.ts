@@ -1556,6 +1556,40 @@ describe("sandbox reservation expiry", () => {
     });
   });
 
+  test("release target under a kept key carries the row the machine was started under", async () => {
+    const t = runtimeTest();
+    ACCOUNT = await createActiveAccount(t);
+    await t.run(async (ctx): Promise<void> => {
+      await ctx.db.insert("sandboxReservations", {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "teardown:sbx-a",
+        externalId: "sbx-a",
+        expiresAt: Math.floor(Date.now() / 1000) - 60,
+      });
+      await ctx.db.insert("sandboxInstances", {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "workspace-a",
+        externalId: "sbx-a",
+        name: "workspace-a",
+        status: "running",
+        specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      });
+    });
+
+    expect(
+      await t.query(internal.runtime.getSandboxReleaseTarget, {
+        accountId: ACCOUNT,
+        provider: "sandbox",
+        reservationKey: "teardown:sbx-a",
+        externalId: "sbx-a",
+      }),
+    ).toEqual({ externalId: "sbx-a", instance: { ownCredentials: false } });
+  });
+
   test("deferral moves a row off the head of the expiry page", async () => {
     const t = runtimeTest();
     ACCOUNT = await createActiveAccount(t);
