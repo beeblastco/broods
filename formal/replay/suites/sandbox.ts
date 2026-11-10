@@ -54,6 +54,12 @@ export const suite: Suite = {
       replace: "if (false) {",
     },
     {
+      name: "sweep ignores orphaned mirror rows",
+      file: "apps/core/src/shared/sandbox-sweeper.ts",
+      find: "for (const reservation of [...expired, ...orphaned]) {",
+      replace: "for (const reservation of [...expired]) {",
+    },
+    {
       name: "daemon parser uses wrong direction",
       file: "apps/core/src/shared/machine-socket.ts",
       find: "return parseFrame(daemonFrame, raw);",

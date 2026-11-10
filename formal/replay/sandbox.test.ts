@@ -53,9 +53,12 @@ type Vector =
       kind: "cleanup";
       retained: boolean;
       kept: boolean;
+      take: boolean;
+      first: boolean[];
+      second: boolean[];
       row: boolean;
+      mirror: boolean;
       physical: boolean;
-      outcomes: boolean[];
     }
   | {
       kind: "hello";
@@ -366,9 +369,9 @@ test("G401 cached externalId returns after concurrent provider deletion", async 
   }
 });
 
-// The take succeeds and no config can tear the machine down. `retained` false: another run
-// takes the key right after the take, so the hand-back is refused. `kept` false: the
-// teardown claim throws.
+// Two real sweeps against a stubbed Convex with no config that can tear the machine down. In the
+// first, `retained` false makes the hand-back throw and `kept` false the teardown claim; `take`
+// then gives the key and its mirror row to another run. Reservations all read as expired.
 async function replayCleanup(
   vector: Extract<Vector, { kind: "cleanup" }>,
 ): Promise<void> {
@@ -376,43 +379,69 @@ async function replayCleanup(
     await import("../../apps/core/src/shared/convex/runtime.ts");
   const { setStorageForTests } =
     await import("../../apps/core/src/shared/storage.ts");
-  const { releaseExpiredSandboxes } =
-    await import("../../apps/core/src/shared/sandbox-cleanup.ts");
-  type Args = { reservationKey: string; externalId?: string };
-  const rows = new Map<string, string>([["key-a", "sbx-a"]]);
+  const { sweepExpiredSandboxes } =
+    await import("../../apps/core/src/shared/sandbox-sweeper.ts");
+  type Args = {
+    reservationKey: string;
+    externalId?: string;
+    expectedExternalId?: string;
+  };
+  const reservations = new Map<string, string>([["key-a", "sbx-a"]]);
+  const mirrors = new Map<string, string>([["key-a", "sbx-a"]]);
+  let firstSweep = true;
+  let reached = 0;
+  const summary = (key: string, externalId: string): object => ({
+    accountId: "acct",
+    provider: "e2b",
+    reservationKey: key,
+    externalId: externalId,
+  });
   const query = spyOn(runtime, "query").mockImplementation((async (
     name: string,
     args: Args,
   ): Promise<unknown> => {
+    if (name === "listExpiredSandboxReservations") {
+      return [...reservations].map(([key, id]) => summary(key, id));
+    }
+    if (name === "listOrphanedSandboxInstances") {
+      const page = [...mirrors]
+        .filter(([key]): boolean => !reservations.has(key))
+        .map(([key, id]) => summary(key, id));
+      return { page: page, cursor: null, isDone: true };
+    }
     if (name === "getSandboxReleaseTarget") {
-      return {
-        externalId: args.externalId ?? rows.get(args.reservationKey) ?? null,
-        instance: null,
-      };
+      const externalId =
+        args.externalId ?? reservations.get(args.reservationKey) ?? null;
+      if (externalId === "sbx-a") reached += 1;
+      return { externalId: externalId, instance: null };
     }
     if (name === "getSandboxReservation") {
-      return rows.get(args.reservationKey) ?? null;
+      return reservations.get(args.reservationKey) ?? null;
     }
     throw new Error(`unstubbed query ${name}`);
   }) as typeof runtime.query);
   const mutate = spyOn(runtime, "mutate").mockImplementation((async (
     name: string,
-    args: Args & { expectedExternalId?: string },
+    args: Args,
   ): Promise<unknown> => {
+    if (name === "claimEvent") return true;
+    if (name === "releaseClaim" || name === "deferSandboxReservations") {
+      return null;
+    }
     if (name === "deleteSandboxReservation") {
-      if (rows.get(args.reservationKey) !== args.expectedExternalId) {
-        return false;
-      }
-      rows.delete(args.reservationKey);
-      if (!vector.retained) rows.set(args.reservationKey, "sbx-other");
+      const held = reservations.get(args.reservationKey);
+      if (held === undefined) return true;
+      if (held !== args.expectedExternalId) return false;
+      reservations.delete(args.reservationKey);
       return true;
     }
     if (name === "claimSandboxReservation") {
-      if (args.reservationKey.startsWith("teardown:") && !vector.kept) {
+      const teardown = args.reservationKey.startsWith("teardown:");
+      if (firstSweep && !(teardown ? vector.kept : vector.retained)) {
         throw new Error("claim failed");
       }
-      if (rows.has(args.reservationKey)) return false;
-      rows.set(args.reservationKey, args.externalId ?? "");
+      if (reservations.has(args.reservationKey)) return false;
+      reservations.set(args.reservationKey, args.externalId ?? "");
       return true;
     }
     throw new Error(`unstubbed mutation ${name}`);
@@ -421,18 +450,20 @@ async function replayCleanup(
     sandboxConfigs: { list: async (): Promise<[]> => [] },
   } as unknown as Parameters<typeof setStorageForTests>[0]);
   try {
-    const released = await releaseExpiredSandboxes("acct", [
-      {
-        provider: "e2b",
-        reservationKey: "key-a",
-        externalId: "sbx-a",
-        ttlSeconds: 600,
-      },
-    ]);
-    expect(released.map((): boolean => true)).toEqual(
-      vector.outcomes.filter((outcome): boolean => outcome),
-    );
-    expect([...rows.values()].includes("sbx-a")).toBe(vector.row);
+    const first = await sweepExpiredSandboxes();
+    expect(first).toBe(vector.first.filter(Boolean).length);
+    expect(reached > 0).toBe(vector.first.length > 0);
+    firstSweep = false;
+    if (vector.take) {
+      reservations.set("key-a", "sbx-other");
+      mirrors.set("key-a", "sbx-other");
+    }
+    reached = 0;
+    const second = await sweepExpiredSandboxes();
+    expect(second).toBe(vector.second.filter(Boolean).length);
+    expect(reached > 0).toBe(vector.second.length > 0);
+    expect([...reservations.values()].includes("sbx-a")).toBe(vector.row);
+    expect(mirrors.get("key-a") === "sbx-a").toBe(vector.mirror);
     expect(vector.physical).toBe(true);
   } finally {
     query.mockRestore();

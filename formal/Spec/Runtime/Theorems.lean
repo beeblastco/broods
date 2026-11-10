@@ -224,12 +224,12 @@ theorem tool_call_gated (cfg : Config) (s : AccountState) (a : AccountId) (id : 
             · simp at hselect
         · exact he
 
-/-- An inactive account starts nothing on any path but a non-persistent child, which skips ingress:
-no input emits a start, and every run that holds an owner lease after the step held it before.
-Ingress and recovery refuse the account, and every hand-off's `takeNext` promotes nothing there,
-whatever the hand-off. -/
+/-- An inactive account starts nothing on any path: no input emits a start, and every run that holds
+an owner lease after the step held it before. Ingress and recovery refuse the account, a
+non-persistent child's result row is refused before it starts (`detach`), and every hand-off's
+`takeNext` promotes nothing there, whatever the hand-off. -/
 theorem inactive_starts_nothing (cfg : Config) (s : AccountState) (i : Input)
-    (hs : s.active = false) (hi : ∀ a p t c arr, i ≠ .spawn a p t c false arr) :
+    (hs : s.active = false) :
     (∀ e ∈ (accountStep cfg s i).2, ∀ a r root, e ≠ .started a r root) ∧
       ∀ r ∈ (accountStep cfg s i).1.runs, r.status = .running → r ∈ s.runs := by
   by_cases via : i.viaIngress = true
@@ -255,7 +255,13 @@ theorem inactive_starts_nothing (cfg : Config) (s : AccountState) (i : Input)
   | recover a c => simp [Input.viaIngress] at via
   | spawn a pid target ch persistent arr =>
     cases persistent
-    · exact absurd rfl (hi a pid target ch arr)
+    · simp only [accountStep, ite_false, Bool.false_eq_true]
+      split
+      · exact unchanged
+      · split
+        · exact unchanged
+        · simp only [detach, hs, Bool.not_false, Bool.true_or, ite_true]
+          exact unchanged
     · simp [Input.viaIngress] at via
   | toolCall a id t sb g wt gr =>
     simp only [accountStep]

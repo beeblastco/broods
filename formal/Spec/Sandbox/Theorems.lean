@@ -39,25 +39,31 @@ theorem daemon_exclusion (p i : Option String) (force : Bool)
     (h : acceptsHello true p i force = true) :
     force = true ∨ (i.isSome = true ∧ i ≠ some "" ∧ i = p) := Proofs.hello p i force h
 
-/-- From a state where a row names the machine, a sweep completing lease, CAS and teardown removes
-the machine and its mirror. The teardown's success is an input (L402). -/
+/-- From a state where a reservation or an orphaned mirror row names the machine, a sweep
+completing lease, CAS and teardown, with the credentials the machine was started with, removes the
+machine and its mirror. The teardown's success is an input (L402). -/
 theorem cleanup_progress : Spec.Progress cleanupSystem (fun _ => True)
-    (fun _ schedule => ∃ r k, schedule = [.sweep true true true true r k])
-    (fun s => s.row = true) (fun s => s.physical = false ∧ s.mirror = false) := Proofs.progress
+    (fun _ schedule => ∃ r k, schedule = [.sweep true true true true true r k])
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) :=
+  Proofs.progress
 
-/-- When every failed teardown is handed back or kept for the sweep (`keepForSweep`'s claim
-landed), a machine still running always has a row a later sweep lists. -/
+/-- A running machine stays reachable by a later sweep, through a reservation or its orphaned
+mirror row, unless some failed teardown was neither handed back nor kept and another run took the
+machine's own key. -/
 theorem failed_teardown_stays_reachable (trace : List CleanupInput)
-    (hk : ∀ i ∈ trace, keepsFailed i = true) :
-    (cleanupSystem.final trace).physical = true → (cleanupSystem.final trace).row = true :=
-  Proofs.kept_reachable trace hk
+    (h : (∀ i ∈ trace, keepsFailed i = true) ∨ (∀ i ∈ trace, i ≠ .takeKey)) :
+    (cleanupSystem.final trace).physical = true →
+      ((cleanupSystem.final trace).row || (cleanupSystem.final trace).mirror) = true :=
+  Proofs.kept_reachable trace h
 
-/-- A failed teardown that is handed back or kept, followed by a sweep whose teardown succeeds,
-removes the machine and its mirror. The retry's success is an input (L402, G403). -/
+/-- A failed teardown that is handed back or kept, or whose mirror row is still orphan-listable,
+followed by a sweep whose teardown succeeds with the machine's credentials, removes the machine and
+its mirror. The retry's success is an input (L402, G403). -/
 theorem failed_teardown_retried : Spec.Progress cleanupSystem (fun _ => True)
-    (fun _ schedule => ∃ r k r' k', (r || k) = true ∧
-      schedule = [.sweep true true true false r k, .sweep true true true true r' k'])
-    (fun s => s.row = true) (fun s => s.physical = false ∧ s.mirror = false) := Proofs.retry
+    (fun s schedule => ∃ p cr r k r' k', (r || k || s.mirror) = true ∧
+      schedule = [.sweep true true true p cr r k, .sweep true true true true true r' k'])
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) :=
+  Proofs.retry
 
 /-- The cleanup view equals the declared leak of attempted teardown outcomes. Tautological (L22). -/
 theorem cleanup_view_is_declared_leak : Spec.Private cleanupSystem Unit (List Bool) Bool (fun _ => True)

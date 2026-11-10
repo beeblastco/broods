@@ -349,7 +349,7 @@ theorem Inv.detach {cfg : Config} {account : AccountId} {log : List Input} {s : 
   split
   · exact h
   · rename_i hf
-    have hf' : fresh s.runs n.id = true := by simpa using hf
+    have hf' : fresh s.runs n.id = true := by cases hfr : fresh s.runs n.id <;> simp_all
     exact h.append (hs.status _) (fresh_true hf') (fun hst => by cases hst)
       (fun pid hp => hpar pid hp)
 

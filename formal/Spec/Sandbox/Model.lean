@@ -104,27 +104,34 @@ def instanceStep (s : Instance) : InstanceInput → Instance
   | .delete => { s with row := false }
   | .refreshReturn => { s with returned := s.cached }
 
-/-- One machine and the reservation rows that name it (sandbox-cleanup.ts:43-170). `row`: some
-reservation the sweeper lists names the machine, under its own key or `teardown:<externalId>`. -/
+/-- One machine on the sweep path (sandbox-cleanup.ts:43-101, sandbox-sweeper.ts:57-62). `row`: a
+reservation names it, under its own key or `teardown:<externalId>`. `mirror`: its mirror row under
+its own key still names it and no other run holds that key, so `listOrphanedSandboxInstances`
+(runtime.ts:1201-1246) lists it once no reservation does. -/
 structure Cleanup where
   row : Bool := true
   physical : Bool := true
   mirror : Bool := true
   deriving DecidableEq, Repr
 
-/-- A sweep reaches the machine only through a row. After a failed teardown, `retained`: its own
-key still names it (the hand-back landed, or `releaseReservedSandboxes` could not drop the row);
-`kept`: `keepForSweep` re-reserved it under `teardown:<externalId>`. -/
+/-- `sweep`: a sweep reaches the machine through a reservation or an orphaned mirror row. The
+teardown lands only with `providerSuccess` and `credentials`: the account still holds the
+credentials the machine was started with (`releaseCandidates`, sandbox-cleanup.ts:178-208). After a
+failure, `retained`: its own key names it again (the hand-back landed); `kept`: `keepForSweep`
+re-reserved it under `teardown:<externalId>`. A failure leaves the mirror row (it goes only after
+a release, :98). `takeKey`: another run reserves the machine's own key and overwrites its mirror row. -/
 inductive CleanupInput where
-  | sweep (active lease cas providerSuccess retained kept : Bool)
+  | sweep (active lease cas providerSuccess credentials retained kept : Bool)
+  | takeKey
   deriving Repr
 
 def cleanupStep (s : Cleanup) : CleanupInput → Cleanup × List Bool
-  | .sweep active lease cas success retained kept =>
-    if active && lease && cas && s.row then
-      if success then (⟨false, false, false⟩, [true])
+  | .sweep active lease cas success credentials retained kept =>
+    if active && lease && cas && (s.row || s.mirror) then
+      if success && credentials then (⟨false, false, false⟩, [true])
       else ({ s with row := retained || kept }, [false])
     else (s, [])
+  | .takeKey => ({ s with mirror := false }, [])
 
 def cleanupSystem : Spec.System where
   State := Cleanup
@@ -133,19 +140,28 @@ def cleanupSystem : Spec.System where
   init := {}
   step := cleanupStep
 
-/-- A failed teardown in this input leaves a row naming the machine. -/
+/-- A failed teardown in this input leaves a reservation naming the machine. -/
 def keepsFailed : CleanupInput → Bool
-  | .sweep _ _ _ success retained kept => success || retained || kept
+  | .sweep _ _ _ success credentials retained kept => (success && credentials) || retained || kept
+  | .takeKey => true
 
-/-- Attempted teardown outcomes, from whether a row names the machine before the trace. -/
-def cleanupLeakFrom (row : Bool) : List CleanupInput → List Bool
+/-- This input cannot tear the machine down: the account no longer holds its credentials. -/
+def lacksCredentials : CleanupInput → Bool
+  | .sweep _ _ _ _ credentials _ _ => !credentials
+  | .takeKey => true
+
+/-- Attempted teardown outcomes, from whether a reservation and the mirror row name the machine. -/
+def cleanupLeakFrom (row mirror : Bool) : List CleanupInput → List Bool
   | [] => []
-  | .sweep a l c p r k :: rest =>
-    if a && l && c && row then p :: cleanupLeakFrom (!p && (r || k)) rest
-    else cleanupLeakFrom row rest
+  | .sweep a l c p cr r k :: rest =>
+    if a && l && c && (row || mirror) then
+      (p && cr) :: (if p && cr then cleanupLeakFrom false false rest
+        else cleanupLeakFrom (r || k) mirror rest)
+    else cleanupLeakFrom row mirror rest
+  | .takeKey :: rest => cleanupLeakFrom row false rest
 
 /-- Cleanup outcomes are visible; account identity, provider credentials and file contents are not. -/
-def cleanupLeak (trace : List CleanupInput) : List Bool := cleanupLeakFrom true trace
+def cleanupLeak (trace : List CleanupInput) : List Bool := cleanupLeakFrom true true trace
 
 /-- Arbitrarily many concurrent callers can pass the check before any creates its marker. -/
 def checkBurst (cap : Nat) : Nat → Jobs → Jobs

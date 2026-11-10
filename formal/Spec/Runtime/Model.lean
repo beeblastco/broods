@@ -194,7 +194,7 @@ def Input.account : Input → AccountId
   | .status account _ => account
 
 /-- Whether an input goes through ingress `accept` or a `recoverQueued` sweep, both of which skip an
-inactive account. A non-persistent child skips ingress (`detach`). -/
+inactive account. A non-persistent child skips ingress (`detach`), which refuses one too. -/
 def Input.viaIngress : Input → Bool
   | .request .. | .delivery .. | .recover .. => true
   | .spawn _ _ _ _ persistent _ => persistent
@@ -388,9 +388,11 @@ def arrive (s : AccountState) (run : Run) (account : AccountId) (arrival : Arriv
   else if !arrival.admitted then (s, [.refused account run.id run.root])
   else admit s run account arrival
 
-/-- A non-persistent child starts at once, outside ingress, holding no owner lease. -/
+/-- A non-persistent child starts at once, outside ingress, holding no owner lease. An inactive
+account's is refused: `launch` (`subagents.ts`) writes each child's result row before it starts the
+child, and `createAsyncAgentResult` runs `requireActiveKeyAccount`. -/
 def detach (s : AccountState) (run : Run) (account : AccountId) : AccountState × List Effect :=
-  if !fresh s.runs run.id then (s, [])
+  if !s.active || !fresh s.runs run.id then (s, [])
   else ({ s with runs := s.runs ++ [{ run with status := .detached }] }, [.started account run.id run.root])
 
 /-- Settle a run and, if it held the owner lease and `handOn`, hand its conversation on (`takeNext`).

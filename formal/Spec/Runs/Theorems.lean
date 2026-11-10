@@ -92,7 +92,10 @@ theorem inactive_promotes_nothing (s : State) (trace : List Input) (hs : s.accou
 /-- A shed dispatch loses nothing: in a reachable state, `releaseOwner` with `requeue` by the live
 owner keeps every row under its key in the same order, with no key twice; it leaves no owner, no row
 still processing under that owner and generation, and each such row queued again unowned
-(`requeueRow`). Counters are checked by replay, not modelled. -/
+(`requeueRow`). A requeued row keeps its `expiresAt`, so its time to live keeps running and G1 still
+applies to it. The code reads at most `MAX_DRAIN_ENVELOPES` rows applied to the owner; that cap does
+not bind for a shed dispatch, whose rows come from one promotion, which selects at most that many
+(`queuedEnvelopes`). Counters are checked by replay, not modelled. -/
 theorem requeue_restores_queue (s : State) (reach : system.Reachable s) (o : Owner)
     (h : s.owner = some o) :
     let t := (step s (.releaseOwner o true)).1

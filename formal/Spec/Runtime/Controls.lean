@@ -296,18 +296,33 @@ theorem drain_always_starts :
     promote, busy, nextQueued, liveRun, endRun, settledStatus, setStatus, emptyWorld,
     Input.account, rootRun, drainAlways]
 
-/-- `inactive_starts_nothing` needs its exclusion of a non-persistent child: in a suspended account
-a running run's child still starts outside ingress. -/
-theorem inactive_detached_child_starts :
+/-- `detach` without the account check: a non-persistent child starts in any account. -/
+def detachUnchecked (cfg : Config) (s : AccountState) : Input → AccountState × List Effect
+  | .spawn account parent target child false _ =>
+    match liveRun s.runs parent with
+    | none => (s, [])
+    | some p =>
+      match childRun cfg account p target child with
+      | none => (s, [])
+      | some c =>
+        if !fresh s.runs c.id then (s, [])
+        else ({ s with runs := s.runs ++ [{ c with status := .detached }] },
+          [.started account c.id c.root])
+  | i => accountStep cfg s i
+
+/-- With `detachUnchecked`, a running run's non-persistent child starts in a suspended account, so
+`inactive_starts_nothing` needs `detach` to check the account; the real step starts nothing. -/
+theorem detach_without_check_starts :
     let key : Access.Credential := { kind := .account, account := 1 }
     let conversation : Conversation := { account := 1, agent := 2, name := 0 }
     let delegating : Config :=
       [{ account := 1, agent := 2, tools := [3], sandboxes := [4], subagents := some [] }]
     let pre := (system delegating).final [.request key {} {} 2 conversation 7 {}, .status 1 false]
-    Effect.started 1 9 7 ∈ (accountStep delegating (pre 1) (.spawn 1 7 (.virtual 5) 9 false {})).2 := by
+    Effect.started 1 9 7 ∈ (detachUnchecked delegating (pre 1) (.spawn 1 7 (.virtual 5) 9 false {})).2 ∧
+      (accountStep delegating (pre 1) (.spawn 1 7 (.virtual 5) 9 false {})).2 = [] := by
   simp [System.final, System.runFrom, system, step, accountStep, requestRun, startAuth,
     Access.resolve, Access.authAccount, mayStart, Config.lookup, arrive, fresh, admit, promote, busy,
-    nextQueued, liveRun, emptyWorld, Input.account, rootRun, childRun, detach]
+    nextQueued, liveRun, emptyWorld, Input.account, rootRun, childRun, detach, detachUnchecked]
 
 /-- A shed dispatch strands nothing for good: 7 owns, 8 queues, 7's dispatch is shed and requeued, so
 both wait with no owner; the next recovery sweep promotes 7 again, ahead of 8. -/

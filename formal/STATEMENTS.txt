@@ -467,13 +467,11 @@ Spec.Runtime.inactive_admits_nothing
 Spec.Runtime.inactive_starts_nothing
   ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (i : Spec.Runtime.Input),
   s.active = false →
-    (∀ (a : Spec.Runtime.AccountId) (p : Spec.Runtime.RunId) (t : Spec.Runtime.SpawnTarget) (c : Spec.Runtime.RunId)
-        (arr : Spec.Runtime.Arrival), i ≠ Spec.Runtime.Input.spawn a p t c false arr) →
-      (∀ (e : Spec.Runtime.Effect),
-          e ∈ (Spec.Runtime.accountStep cfg s i).snd →
-            ∀ (a : Spec.Runtime.AccountId) (r root : Spec.Runtime.RunId), e ≠ Spec.Runtime.Effect.started a r root) ∧
-        ∀ (r : Spec.Runtime.Run),
-          r ∈ (Spec.Runtime.accountStep cfg s i).fst.runs → r.status = Spec.Runtime.Status.running → r ∈ s.runs
+    (∀ (e : Spec.Runtime.Effect),
+        e ∈ (Spec.Runtime.accountStep cfg s i).snd →
+          ∀ (a : Spec.Runtime.AccountId) (r root : Spec.Runtime.RunId), e ≠ Spec.Runtime.Effect.started a r root) ∧
+      ∀ (r : Spec.Runtime.Run),
+        r ∈ (Spec.Runtime.accountStep cfg s i).fst.runs → r.status = Spec.Runtime.Status.running → r ∈ s.runs
 
 Spec.Runtime.inductive_world
   ∀ (cfg : Spec.Runtime.Config), Spec.Inductive (Spec.Runtime.system cfg) (Spec.Runtime.WorldInv cfg)
@@ -630,8 +628,8 @@ Spec.Sandbox.check_guard_reads_running
 
 Spec.Sandbox.cleanup_progress
   Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
-  (fun x schedule => ∃ r k, schedule = [Spec.Sandbox.CleanupInput.sweep true true true true r k])
-  (fun s => s.row = true) fun s => s.physical = false ∧ s.mirror = false
+  (fun x schedule => ∃ r k, schedule = [Spec.Sandbox.CleanupInput.sweep true true true true true r k])
+  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false ∧ s.mirror = false
 
 Spec.Sandbox.cleanup_view_is_declared_leak
   Spec.Private Spec.Sandbox.cleanupSystem Unit (List Bool) Bool (fun x => True) (fun x x_1 => []) Spec.Sandbox.cleanupLeak
@@ -646,18 +644,20 @@ Spec.Sandbox.daemon_exclusion
 
 Spec.Sandbox.failed_teardown_retried
   Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
-  (fun x schedule =>
-    ∃ r k r' k',
-      (r || k) = true ∧
+  (fun s schedule =>
+    ∃ p cr r k r' k',
+      (r || k || s.mirror) = true ∧
         schedule =
-          [Spec.Sandbox.CleanupInput.sweep true true true false r k,
-            Spec.Sandbox.CleanupInput.sweep true true true true r' k'])
-  (fun s => s.row = true) fun s => s.physical = false ∧ s.mirror = false
+          [Spec.Sandbox.CleanupInput.sweep true true true p cr r k,
+            Spec.Sandbox.CleanupInput.sweep true true true true true r' k'])
+  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false ∧ s.mirror = false
 
 Spec.Sandbox.failed_teardown_stays_reachable
   ∀ (trace : List Spec.Sandbox.CleanupInput),
-  (∀ (i : Spec.Sandbox.CleanupInput), i ∈ trace → Spec.Sandbox.keepsFailed i = true) →
-    (Spec.Sandbox.cleanupSystem.final trace).physical = true → (Spec.Sandbox.cleanupSystem.final trace).row = true
+  ((∀ (i : Spec.Sandbox.CleanupInput), i ∈ trace → Spec.Sandbox.keepsFailed i = true) ∨
+      ∀ (i : Spec.Sandbox.CleanupInput), i ∈ trace → i ≠ Spec.Sandbox.CleanupInput.takeKey) →
+    (Spec.Sandbox.cleanupSystem.final trace).physical = true →
+      ((Spec.Sandbox.cleanupSystem.final trace).row || (Spec.Sandbox.cleanupSystem.final trace).mirror) = true
 
 Spec.Sandbox.launch_conserves_admissions
   ∀ (cap : Nat) (s : Spec.Sandbox.Jobs),

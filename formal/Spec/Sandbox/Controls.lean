@@ -25,18 +25,32 @@ theorem unchecked_hello_breaks_exclusion :
     acceptsHello true (some "first") (some "second") false = false := by cbv <;> decide
 
 /-- An inactive account can retain a physical sandbox through arbitrarily many sweeps. -/
-theorem inactive_cleanup_stalls (s : Cleanup) (r k : Bool) :
-    cleanupStep s (.sweep false true true true r k) = (s, []) := by rfl
+theorem inactive_cleanup_stalls (s : Cleanup) (cr r k : Bool) :
+    cleanupStep s (.sweep false true true true cr r k) = (s, []) := by rfl
 
-/-- A failed teardown that neither the hand-back nor `keepForSweep` keeps (both claims failed)
-leaves a running machine no later sweep reaches. -/
-theorem unkept_teardown_strands (rest : List CleanupInput) :
-    let s := (cleanupSystem.runFrom {} (.sweep true true true false false false :: rest)).1
-    s.physical = true ∧ s.row = false := by
-  have h := Proofs.stranded ⟨false, true, true⟩ rfl rest
-  change (cleanupSystem.runFrom ⟨false, true, true⟩ rest).1.physical = true ∧
-    (cleanupSystem.runFrom ⟨false, true, true⟩ rest).1.row = false
-  rw [h]; exact ⟨rfl, rfl⟩
+/-- G403: a failed teardown that neither the hand-back nor `keepForSweep` keeps, after which another
+run takes the machine's own key, leaves a running machine no later sweep reaches. -/
+theorem unkept_taken_key_strands (cr : Bool) (rest : List CleanupInput) :
+    let s := (cleanupSystem.runFrom {} (.sweep true true true false cr false false :: .takeKey :: rest)).1
+    s.physical = true ∧ s.row = false ∧ s.mirror = false := by
+  have h := Proofs.stranded ⟨false, true, false⟩ rfl rfl rest
+  change (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.physical = true ∧
+    (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.row = false ∧
+    (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.mirror = false
+  rw [h]; exact ⟨rfl, rfl, rfl⟩
+
+/-- With the key untaken, the orphaned mirror row lets the next sweep tear an unkept machine down. -/
+theorem unkept_orphan_retried (r k : Bool) :
+    (cleanupSystem.final [.sweep true true true false true false false,
+      .sweep true true true true true r k]).physical = false := by
+  cases r <;> cases k <;> rfl
+
+/-- G403: once the account no longer holds the credentials the machine was started with, no sweep
+tears it down, though its rows stay intact when every hand-back lands. -/
+theorem lost_credentials_keep_machine (trace : List CleanupInput)
+    (h : ∀ i ∈ trace, lacksCredentials i = true) :
+    (cleanupSystem.final trace).physical = true :=
+  Proofs.no_credentials cleanupSystem.init trace h rfl
 
 /-- Selection, confinement, daemon reclaim, launch and sweep each have a successful case. -/
 theorem successful_cases :
@@ -46,7 +60,7 @@ theorem successful_cases :
 
 /-- Successful cleanup emits an observable teardown outcome. -/
 theorem cleanup_nonvacuous : Spec.NonVacuous cleanupSystem (fun _ => True) (fun e => e = true) := by
-  exact ⟨[.sweep true true true true false false], trivial, true,
+  exact ⟨[.sweep true true true true true false false], trivial, true,
     by change true ∈ ([true] : List Bool); simp, rfl⟩
 
 end Spec.Sandbox.Controls
@@ -73,30 +87,34 @@ theorem hidden_outcomes_break_privacy :
     ¬ Spec.Private cleanupSystem Unit Unit Bool (fun _ => True)
       (fun _ _ => []) (fun _ => ()) (fun _ effects => effects) := by
   intro h
-  have bad := h () [] [.sweep true true true true false false] trivial trivial rfl rfl
+  have bad := h () [] [.sweep true true true true true false false] trivial trivial rfl rfl
   change ([] : List Bool) = [true] at bad
   contradiction
 
 /-- Cleanup that never calls the provider cannot satisfy the stated progress schedule. -/
 theorem disabled_sweep_breaks_progress :
     ¬ Spec.Progress { cleanupSystem with step := fun s _ => (s, []) }
-      (fun _ => True) (fun _ schedule => ∃ r k, schedule = [.sweep true true true true r k])
-      (fun s => s.row = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+      (fun _ => True) (fun _ schedule => ∃ r k, schedule = [.sweep true true true true true r k])
+      (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) := by
   intro h
-  have bad := h [] trivial rfl [.sweep true true true true false false] ⟨false, false, rfl⟩
+  have bad := h [] trivial rfl [.sweep true true true true true false false] ⟨false, false, rfl⟩
   exact Bool.noConfusion bad.1
 
-/-- A broken sweep that drops the row on every failed teardown. -/
+/-- A broken sweep that drops the reservation and the mirror row on every failed teardown. -/
 def droppedRowStep (s : Cleanup) : CleanupInput → Cleanup × List Bool
-  | .sweep a l c p _ _ => cleanupStep s (.sweep a l c p false false)
+  | .sweep a l c p cr _ _ =>
+    let next := cleanupStep s (.sweep a l c p cr false false)
+    ({ next.1 with mirror := next.1.mirror && next.1.row }, next.2)
+  | .takeKey => cleanupStep s .takeKey
 
 /-- `droppedRowStep` makes `failed_teardown_stays_reachable` false. -/
 theorem dropped_row_breaks_reachability :
-    ¬ ∀ trace : List CleanupInput, (∀ i ∈ trace, keepsFailed i = true) →
+    ¬ ∀ trace : List CleanupInput, (∀ i ∈ trace, i ≠ .takeKey) →
       (trace.foldl (fun s i => (droppedRowStep s i).1) ({} : Cleanup)).physical = true →
-      (trace.foldl (fun s i => (droppedRowStep s i).1) ({} : Cleanup)).row = true := by
+      ((trace.foldl (fun s i => (droppedRowStep s i).1) ({} : Cleanup)).row ||
+        (trace.foldl (fun s i => (droppedRowStep s i).1) ({} : Cleanup)).mirror) = true := by
   intro h
-  have bad := h [.sweep true true true false true true] (by decide) rfl
+  have bad := h [.sweep true true true false true true true] (by simp) rfl
   exact Bool.noConfusion bad
 
 /-- No in-flight read admits an ordinary successful fresh lookup followed by teardown. -/

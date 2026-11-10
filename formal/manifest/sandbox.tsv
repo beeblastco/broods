@@ -64,7 +64,7 @@ apps/core/src/shared/s3.ts	adapter	open			Whole-file model and replay not comple
 apps/core/src/shared/sandbox-cleanup.ts	decision	open	Spec.Sandbox.cleanupSystem		Conditional single-machine progress, failed-teardown reachability and retry, and declared-outcome privacy proved; provider candidates and concurrent transitions open (L402, G403).
 apps/core/src/shared/sandbox-sizes.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/shared/sandbox-snapshot-builds.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
-apps/core/src/shared/sandbox-sweeper.ts	decision	open	Spec.Sandbox.cleanupSystem		Single-reservation abstract sweep only; lease/pages/deferral/clock completeness open.
+apps/core/src/shared/sandbox-sweeper.ts	decision	open	Spec.Sandbox.cleanupSystem		Abstract sweep of one machine, reached through a reservation or an orphaned mirror row (replayed by the sandbox cleanup vectors); lease/pages/deferral/clock completeness open.
 apps/core/src/shared/workspaces.ts	decision	open			Account-scoped loading and reservation key preimages read; full resolver and isolation model/proofs remain open (L403,L404).
 packages/convex/model/sandboxProviders.ts	decision	replayed	Spec.Sandbox.providers; capabilities; holdsWorkspace	formal/replay/sandbox.test.ts	All providers and all boolean workspace capability combinations; constants compared as sets.
 packages/convex/model/sandboxRules.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.

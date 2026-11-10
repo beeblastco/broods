@@ -347,6 +347,29 @@ test.failing(
   },
 );
 
+// Runtime's `detach` refuses an inactive account: `launch` writes this row before any child starts.
+test("a child's result row is refused for a disabled account", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const accountId = await t.run(
+    async (ctx) =>
+      await ctx.db.insert("accounts", {
+        orgId: "child",
+        username: "child",
+        secretHash: "unused",
+        status: "disabled",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
+  const parent = `acct:${accountId}:agent:test:api:parent`;
+  await expect(
+    t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child-turn",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: parent },
+    }),
+  ).rejects.toThrow("not active");
+});
 test("pure continuation identity and runnable inputs", (): void => {
   expect(rootEventId("run:async-tools:r:async-question:q")).toBe("run");
   expect(rootEventId("async-tools:human")).toBe("async-tools:human");

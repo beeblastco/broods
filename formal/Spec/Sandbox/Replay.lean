@@ -37,12 +37,17 @@ def run (_args : List String) : IO Unit := do
       for mounted in [false, true] do
         IO.println (Json.mkObj [("kind", "bash"), ("attached", toJson attached), ("mounted", toJson mounted),
           ("requested", toJson requested), ("expected", toJson (selectBash attached mounted requested))]).compress
-  -- One expired reservation whose teardown fails; `retained` and `kept` are the two claims.
+  -- Two sweeps with no usable credentials; between them another run may take the key, which it
+  -- can only while the hand-back did not land.
   for retained in [false, true] do
     for kept in [false, true] do
-      let (s, effects) := cleanupStep {} (.sweep true true true false retained kept)
-      IO.println (Json.mkObj [("kind", "cleanup"), ("retained", toJson retained),
-        ("kept", toJson kept), ("row", toJson s.row), ("physical", toJson s.physical),
-        ("outcomes", toJson effects)]).compress
+      for take in (if retained then [false] else [false, true]) do
+        let (s1, first) := cleanupStep {} (.sweep true true true false false retained kept)
+        let s2 := if take then (cleanupStep s1 .takeKey).1 else s1
+        let (s3, second) := cleanupStep s2 (.sweep true true true false false true true)
+        IO.println (Json.mkObj [("kind", "cleanup"), ("retained", toJson retained),
+          ("kept", toJson kept), ("take", toJson take), ("first", toJson first),
+          ("second", toJson second), ("row", toJson s3.row), ("mirror", toJson s3.mirror),
+          ("physical", toJson s3.physical)]).compress
 
 end Spec.Sandbox.Replay

@@ -377,6 +377,8 @@ private def parseThreadEvent (kind : Kind) (call : Json) : Prog Json := do
     return ← openedMessage kind call payload number
   let relevant ← Prog.effect "isRelevantAction" [action]
   if !jsTruthy relevant then return ignored
+  let senderBot ← Prog.effect "isBotActor" [get (get payload "sender") "type"]
+  if jsTruthy senderBot then return ignored
   if get (Twin.callArg call 6) kind.optionKey == .bool false then return ignored
   openedMessage kind call payload number
 
