@@ -539,6 +539,70 @@ describe("streamed runs", (): void => {
     }
   });
 
+  it("fails a streamed run whose place a recovered envelope took, instead of leaving it owned", async (): Promise<void> => {
+    spyOn(ingress, "loadAppliedIngressConfig").mockResolvedValue({});
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue(1);
+
+        return {
+          outcome: "owner",
+          ownerGeneration: 1,
+          recovered: {
+            eventId: "recovered-event",
+            events: [{ role: "user", content: "earlier" }],
+            delivery: {
+              kind: "async",
+              publicEventId: "recovered-event",
+              publicConversationKey: "conversation-1",
+              statusUrl: "/v1/runs/recovered",
+            },
+            requestedMode: "followup",
+            appliedMode: "followup",
+            appliedToEventId: "recovered-event",
+            contributingEventIds: ["recovered-event"],
+            ownerGeneration: 2,
+            configRef: {},
+          },
+        };
+      },
+    );
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("In-process worker queue is full");
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
+  it("fails a WebSocket run on a core without WebSocket instead of leaving it owned", async (): Promise<void> => {
+    const response = await handler(
+      coreRequest(
+        "POST",
+        "/v1/runs",
+        {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_1",
+        },
+        {
+          agentId: "agent_1",
+          eventId: "event-1",
+          conversationKey: "conversation-1",
+          connectionId: "connection-1",
+          events: [{ role: "user", content: "hi" }],
+        },
+      ),
+    );
+    await drainWorkerQueue();
+
+    expect(response.status).toBe(202);
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
   it("admits only as many concurrent requests as the queue has places", async (): Promise<void> => {
     spyOn(ingress, "acceptIngress").mockImplementation(
       async (): Promise<ingress.IngressAdmission> => {

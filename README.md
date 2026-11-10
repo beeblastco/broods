@@ -21,7 +21,7 @@ This is the source-available engine behind [Broods](https://github.com/beeblastc
 - **Multi-tenant.** Each account has its own encrypted config, hashed API secret, and isolated data.
 - **Bring your own model.** Google, OpenAI, AWS Bedrock, Vercel AI Gateway, or custom providers via the Vercel AI SDK.
 - **Multi-channel.** Telegram, Discord, Slack, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Facebook Messenger and Instagram DMs are built in.
-- **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and custom uploaded tools.
+- **Extensible.** Skills, subagents, workspaces, sandboxes, cron jobs, async tools, and hosted MCP servers.
 
 ---
 

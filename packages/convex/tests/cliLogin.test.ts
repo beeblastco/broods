@@ -95,6 +95,25 @@ describe("CLI login code exchange with PKCE", () => {
     });
   });
 
+  test("a code whose account was disabled is refused with a reason, not a server error", async () => {
+    const t = loginTest();
+    const codeId = await seedCode(t, await pkceChallenge(VERIFIER));
+    await t.run(async (ctx) => {
+      const code = (await ctx.db.get(codeId))!;
+      await ctx.db.patch(code.accountId, { status: "disabled" });
+    });
+
+    const response = await t.fetch("/v1/account/auth/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: CODE, code_verifier: VERIFIER }),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error: { message: "Account is not active" },
+    });
+  });
+
   test("a code under an old prefix is refused even when its hash is stored", async () => {
     const t = loginTest();
     const legacy = "fp_code_test-code";

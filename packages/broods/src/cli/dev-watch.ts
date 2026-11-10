@@ -6,9 +6,11 @@ import { GENERATED_DIR } from "../config.ts";
 
 const SYNC_DEBOUNCE_MS = 150;
 
+// `everyFile`: a sync uploads skill files and imports of any extension, not only `.ts`/`.md`.
 export async function collectSourceFiles(
   dir: string,
   files: string[],
+  everyFile = false,
 ): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -20,12 +22,12 @@ export async function collectSourceFiles(
         entry.name === ".cache"
       )
         continue;
-      await collectSourceFiles(full, files);
+      await collectSourceFiles(full, files, everyFile);
       continue;
     }
     if (
       entry.isFile() &&
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))
+      (everyFile || entry.name.endsWith(".ts") || entry.name.endsWith(".md"))
     )
       files.push(full);
   }
@@ -43,7 +45,7 @@ export function watchSource(
   let lastSourceSignature: string | undefined;
   let lastSyncFailed = false;
   // A change after the signature may be in what the child read, so that sync records none.
-  // Any event counts: a folder rename names no `.ts`/`.md` file yet moves them all.
+  // Any event counts: a folder rename names no file yet moves them all.
   let savedSinceSignature = false;
   const syncChanged = async (): Promise<void> => {
     savedSinceSignature = false;
@@ -97,7 +99,7 @@ function isGeneratedPath(path: string): boolean {
 
 async function sourceSignature(root: string): Promise<string> {
   const files: string[] = [];
-  await collectSourceFiles(root, files);
+  await collectSourceFiles(root, files, true);
   const hash = createHash("sha256");
   for (const file of files.sort()) {
     hash.update(relative(root, file));

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type {
   BroodsAccountClient,
@@ -71,6 +71,42 @@ describe("connectInBrowser", (): void => {
   });
 });
 
+test("connect lists a connection type this CLI does not know", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response =>
+      Response.json({
+        connections: [{ type: "future-plan", clientId: "client-1" }],
+      }),
+  });
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "connect",
+        "--base-url",
+        `http://127.0.0.1:${server.port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        BROODS_ACCOUNT_SECRET: "bsa_test",
+      },
+    });
+    const [exitCode, stdout] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/future-plan +client-1/);
+  } finally {
+    await server.stop(true);
+  }
+});
 async function runConnect(type: ConnectionType): Promise<Connection> {
   let redirectUri = "";
   let state = "";

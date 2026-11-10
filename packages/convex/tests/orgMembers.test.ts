@@ -3,6 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { clientErrorData } from "../model/clientError";
 import type { OrgRole } from "../model/ownership/org";
 import schema from "../schema";
 
@@ -37,6 +38,30 @@ describe("owner role changes", () => {
         role: "owner",
       }),
     ).rejects.toThrow("Only an owner");
+  });
+
+  test("an admin changing the owner is refused with a reason the dashboard shows", async () => {
+    const t = membersTest();
+    const org = await seedOrg(t);
+    const ownerMembership = await t.run(async (ctx) => {
+      const owner = await ctx.db
+        .query("orgMembers")
+        .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org.orgId))
+        .filter((q) => q.eq(q.field("role"), "owner"))
+        .first();
+
+      return owner!._id;
+    });
+    caller.authId = "auth_admin";
+
+    const refusal = await t
+      .mutation(api.org.members.remove, { membershipId: ownerMembership })
+      .then(
+        (): null => null,
+        (error: unknown) => clientErrorData(error),
+      );
+
+    expect(refusal?.code).toBe("forbidden");
   });
 
   test("an admin cannot add a new owner", async () => {

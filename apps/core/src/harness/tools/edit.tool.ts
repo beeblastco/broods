@@ -152,7 +152,7 @@ function editScript(
     "const count = data.split(oldString).length - 1;",
     "if (count === 0) fail(`Error: old_string not found in ${path}`);",
     "if (!replaceAll && count > 1) fail(`Error: old_string is not unique (${count} matches); add context or set replace_all`);",
-    "const updated = replaceAll ? data.split(oldString).join(newString) : data.replace(oldString, newString);",
+    "const updated = replaceAll ? data.split(oldString).join(newString) : data.replace(oldString, () => newString);",
     // fsync so the mount uploads before the sandbox can freeze; see docs/internals/storage.md.
     "const fd = fs.openSync(path, 'w');",
     "try { fs.writeSync(fd, updated, null, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }",

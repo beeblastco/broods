@@ -279,6 +279,12 @@ async function sendUpstreamMessage(
   }
 }
 
+// 1005 and 1006 report a close without a frame; a WebSocket may not send them.
 function validCloseCode(code: number): number {
-  return code >= 1000 && code <= 4999 ? code : 1011;
+  if (code === 1005) return 1000;
+  const sendable =
+    (code >= 1000 && code <= 1014 && (code < 1004 || code > 1006)) ||
+    (code >= 3000 && code <= 4999);
+
+  return sendable ? code : 1011;
 }

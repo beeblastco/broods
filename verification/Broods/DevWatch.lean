@@ -3,8 +3,8 @@
 
 `watchSource` in `packages/broods/src/cli/dev-watch.ts`, which `dev()` runs. A watcher event
 arms a debounce timer; one sync runs at a time with one queued rerun, and a child may fail
-midway. The source (`α`) is the `.ts` and `.md` files under `broods/`, the ones
-`sourceSignature` hashes. `watch()` is armed before the first `runSync()`, so every change
+midway. The source (`α`) is every file under `broods/` outside the generated folders, the
+ones `sourceSignature` hashes. `watch()` is armed before the first `runSync()`, so every change
 reaches the timer. Any number of changes.
 -/
 
@@ -41,7 +41,7 @@ def Init (s : State α) : Prop :=
 
 inductive Step : State α → State α → Prop where
   /-- Any watcher event outside the generated folders: a save (possibly of identical bytes),
-  a folder rename, a non-source file. Each sets `savedSinceSignature`, whatever its filename. -/
+  a folder rename. Each sets `savedSinceSignature`, whatever its filename. -/
   | edit (s : State α) (x : α) : Step s { s with src := x, timer := true, dirty := true }
   /-- `runSync` from the debounce timer: queue a rerun, or start. -/
   | timerFires (s : State α) (h : s.timer = true) :

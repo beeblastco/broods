@@ -192,6 +192,23 @@ describe("sweepDeadRuns", () => {
     });
   });
 
+  test("pages through one window, so the cursor stays valid for the next page", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    for (let i = 0; i <= 100; i += 1) {
+      await staleRun(tt, accountId, cronId, undefined);
+    }
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+    const scheduled = await tt.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+
+    expect(
+      scheduled.find((job) => job.name.includes("sweepDeadRuns"))?.args[0],
+    ).toMatchObject({ now: expect.any(Number) });
+  });
+
   test("retires a job only when the dead run fired it as one-time", async () => {
     vi.useFakeTimers();
     const tt = t();
