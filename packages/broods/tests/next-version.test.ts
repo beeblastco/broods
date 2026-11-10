@@ -62,6 +62,17 @@ test("release candidates ship as declared and lead to the stable cut", async ():
   expect(await run(repo)).toMatchObject({ bump: "major", next: "2.0.0" });
 });
 
+test("a change to core code bundled into the package bumps it", async (): Promise<void> => {
+  repo = await releasedRepo("0.40.0");
+  const domain = join(repo, "apps/core/src/shared/domain");
+  await mkdir(domain, { recursive: true });
+  await writeFile(join(domain, "agent-config.ts"), "export type A = 1;\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "feat(core): add an agent config field"]);
+
+  expect(await run(repo)).toMatchObject({ bump: "minor", next: "0.41.0" });
+});
+
 test("a stale declared version behind the tag is ignored", async (): Promise<void> => {
   repo = await releasedRepo("0.40.0");
   await commit(repo, "0.26.0", "feat(broods): add a flag");
