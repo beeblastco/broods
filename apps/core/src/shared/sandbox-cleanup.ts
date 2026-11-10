@@ -123,10 +123,13 @@ export async function releaseReservedSandboxes(
         namespace,
       );
       if (outcome?.released) machines.push(outcome.externalId);
-      await deleteSandboxInstance(provider, namespace, accountId).catch(
-        () => {},
-      );
-      if (outcome && !outcome.released) {
+      // Refused for an account being deleted: its row then still names the machine.
+      const dropped = await deleteSandboxInstance(
+        provider,
+        namespace,
+        accountId,
+      ).catch(() => false);
+      if (dropped && outcome && !outcome.released) {
         await keepForSweep(accountId, provider, namespace, outcome.externalId);
       }
     }
