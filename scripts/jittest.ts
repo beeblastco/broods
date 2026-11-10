@@ -13,17 +13,19 @@ import { git } from "./comment-density.ts";
 import { verify } from "./comment-only-diff.ts";
 
 // The policy a maintainer tunes from the aggregate report: nobody reviews single tests.
-const GENERATOR_MODEL = "claude-sonnet-5-5";
+const GENERATOR_MODEL = "cc/claude-sonnet-5-5";
 const GENERATOR_EFFORT = "medium";
-// Asked in this order until two agree. A judge that is not installed, has no key,
-// is out of quota or answers off schema abstains.
+// Asked in this order until two agree. A judge that errors or answers off schema abstains.
 const JUDGES: Judge[] = [
-  { cli: "opencode", model: "opencode/muse-ember-1.0" },
-  { cli: "codex", model: "gpt-6.1-sol", effort: "high" },
-  { cli: "claude", model: "claude-sonnet-5-5", effort: "medium" },
+  { model: "oc/deepseek-v4.1-flash-free", effort: "medium" },
+  { model: "cx/gpt-6.1-sol", effort: "high" },
+  { model: "cc/claude-sonnet-5-5", effort: "medium" },
 ];
 const GENERATOR_BUDGET_USD = 2;
-const JUDGE_BUDGET_USD = 0.25;
+const JUDGE_MAX_TOKENS = 8000;
+// Every model call goes through one 9router: its Anthropic endpoint for Claude Code,
+// its OpenAI endpoint for the judges. It spends the subscriptions connected to it.
+const ROUTER_URL = process.env.JITTEST_ROUTER_URL ?? "http://localhost:20128";
 const MAX_FILES = 12;
 const MAX_TESTS_PER_WORKFLOW = 2;
 const MAX_JUDGED = 3;
@@ -32,12 +34,6 @@ const REPORT_AT = 0.5;
 const PATTERN_BONUS = 0.5;
 const RUN_TIMEOUT_MS = 180_000;
 const CLIP = 12_000;
-const NO_TOOLS = JSON.stringify({
-  edit: "deny",
-  bash: "deny",
-  webfetch: "deny",
-});
-
 const WORKSPACES: Record<string, Workspace> = {
   "apps/core": {
     prepare: ["bun", "run", "scripts/compaction-prompt.ts"],
@@ -220,9 +216,8 @@ export interface Generation {
 }
 
 export interface Judge {
-  cli: "opencode" | "codex" | "claude";
   model: string;
-  effort?: "low" | "medium" | "high";
+  effort: "low" | "medium" | "high";
 }
 
 export interface Answer {
@@ -285,13 +280,22 @@ interface ClaudeResult<T> {
   total_cost_usd?: number;
 }
 
+interface Completion {
+  choices: { message: { content: string | null } }[];
+  usage?: { cost?: number };
+}
+
 interface Run {
   ok: boolean;
   output: string;
 }
 
 /** Generates catching tests for the change against `base` and reports behavior it broke. */
-export function jittest(root: string, base: string, args: Args): void {
+export async function jittest(
+  root: string,
+  base: string,
+  args: Args,
+): Promise<void> {
   const files = targets(root, base);
   if (files.length === 0) {
     console.log("jittest: no runtime change in a tested workspace, skipped");
@@ -317,12 +321,8 @@ export function jittest(root: string, base: string, args: Args): void {
 
     const generated = claude<Generation>({
       cwd: parent,
-      model: GENERATOR_MODEL,
-      effort: GENERATOR_EFFORT,
-      budget: GENERATOR_BUDGET_USD,
       prompt: generatorPrompt(files),
       schema: GENERATION_SCHEMA,
-      tools: ["--allowedTools", "Bash,Read,Edit,Write,Glob,Grep"],
     });
     cost += generated.cost;
     const generation = generated.output;
@@ -330,7 +330,7 @@ export function jittest(root: string, base: string, args: Args): void {
     const candidates = generation.tests
       .slice(0, 2 * MAX_TESTS_PER_WORKFLOW)
       .map((test): Candidate => harvest(test, parent, root));
-    cost += assess(generation, diff, candidates);
+    cost += await assess(generation, diff, candidates);
 
     publish(
       args.out,
@@ -367,12 +367,8 @@ export function diagnose(root: string, report: string, out: string): void {
     copyFileSync(report, join(tree, ".jittest/report.md"));
     const generated = claude<Diagnosis>({
       cwd: tree,
-      model: GENERATOR_MODEL,
-      effort: GENERATOR_EFFORT,
-      budget: GENERATOR_BUDGET_USD,
       prompt: reproPrompt(),
       schema: DIAGNOSIS_SCHEMA,
-      tools: ["--allowedTools", "Bash,Read,Edit,Write,Glob,Grep"],
     });
     const repros = generated.output.tests
       .slice(0, MAX_TESTS_PER_WORKFLOW)
@@ -393,13 +389,13 @@ export function diagnose(root: string, report: string, out: string): void {
 }
 
 /** Asks judges in order until two agree; `ask` returns undefined when a judge abstains. */
-export function poll(
+export async function poll(
   judges: Judge[],
-  ask: (judge: Judge) => Answer | undefined,
-): { verdicts: Verdict[]; duplicate: boolean } {
+  ask: (judge: Judge) => Promise<Answer | undefined>,
+): Promise<{ verdicts: Verdict[]; duplicate: boolean }> {
   const verdicts: Verdict[] = [];
   for (const judge of judges) {
-    const answer = ask(judge);
+    const answer = await ask(judge);
     if (answer === undefined) continue;
     if (answer.duplicate) return { verdicts: verdicts, duplicate: true };
     verdicts.push({
@@ -543,11 +539,11 @@ export function workspaceOf(path: string): string | undefined {
 }
 
 // Rules first, then at most MAX_JUDGED catches go to the judges. Returns the model cost.
-function assess(
+async function assess(
   generation: Generation,
   diff: string,
   candidates: Candidate[],
-): number {
+): Promise<number> {
   const pattern = TRUE_POSITIVE_PATTERNS[generation.kind];
   const reported: string[] = [];
   let judged = 0;
@@ -561,8 +557,8 @@ function assess(
     } else if (rule === undefined) {
       judged += 1;
       const prompt = judgePrompt(generation, diff, candidate, reported);
-      const polled = poll(JUDGES, (judge) => {
-        const voted = vote(judge, prompt);
+      const polled = await poll(JUDGES, async (judge) => {
+        const voted = await vote(judge, prompt);
         cost += voted?.cost ?? 0;
 
         return voted?.answer;
@@ -598,33 +594,39 @@ function clip(text: string): string {
   return text.length > CLIP ? `${text.slice(0, CLIP)}\n[clipped]` : text;
 }
 
-function claude<T>(options: {
-  cwd: string;
-  model: string;
-  effort: string;
-  budget: number;
-  prompt: string;
-  schema: object;
-  tools: string[];
-}): { output: T; cost: number } {
+// A headless Claude Code session through the router, with tools, answering on `schema`.
+function claude<T>(options: { cwd: string; prompt: string; schema: object }): {
+  output: T;
+  cost: number;
+} {
   const result = Bun.spawnSync(
     [
       "claude",
       "-p",
       "--model",
-      options.model,
+      GENERATOR_MODEL,
       "--effort",
-      options.effort,
+      GENERATOR_EFFORT,
       "--output-format",
       "json",
       "--strict-mcp-config",
       "--max-budget-usd",
-      String(options.budget),
+      String(GENERATOR_BUDGET_USD),
       "--json-schema",
       JSON.stringify(options.schema),
-      ...options.tools,
+      "--allowedTools",
+      "Bash,Read,Edit,Write,Glob,Grep",
     ],
-    { cwd: options.cwd, stdin: Buffer.from(options.prompt) },
+    {
+      cwd: options.cwd,
+      stdin: Buffer.from(options.prompt),
+      env: {
+        ...process.env,
+        ANTHROPIC_BASE_URL: ROUTER_URL,
+        ANTHROPIC_AUTH_TOKEN: routerKey(),
+        ANTHROPIC_API_KEY: "",
+      },
+    },
   );
   const stdout = result.stdout.toString();
   if (!result.success && stdout.trim() === "") {
@@ -633,7 +635,7 @@ function claude<T>(options: {
   const parsed = JSON.parse(stdout) as ClaudeResult<T> | ClaudeResult<T>[];
   const last = Array.isArray(parsed) ? parsed.at(-1) : parsed;
   if (last?.structured_output === undefined || last.is_error === true) {
-    throw new Error(`claude ${options.model}: ${last?.result ?? "no result"}`);
+    throw new Error(`claude: ${last?.result ?? "no result"}`);
   }
 
   return { output: last.structured_output, cost: last.total_cost_usd ?? 0 };
@@ -665,16 +667,13 @@ function culprit(test: ReproTest, tree: string): string | undefined {
   return undefined;
 }
 
-// The model keys stay out of generated tests.
+// The router key stays out of generated tests.
 function exec(command: string[], cwd: string): Run {
   const result = Bun.spawnSync(command, {
     cwd: cwd,
     env: {
       ...process.env,
-      ANTHROPIC_API_KEY: undefined,
-      CODEX_API_KEY: undefined,
-      OPENAI_API_KEY: undefined,
-      OPENCODE_API_KEY: undefined,
+      JITTEST_ROUTER_KEY: undefined,
     },
     timeout: RUN_TIMEOUT_MS,
   });
@@ -997,75 +996,61 @@ function representative(verdicts: Verdict[]): Verdict | undefined {
   );
 }
 
-// One judge's answer and its cost, or undefined when it cannot or will not answer on schema.
-function vote(
+function routerKey(): string {
+  const key = process.env.JITTEST_ROUTER_KEY;
+  if (key === undefined || key === "") {
+    throw new Error("JITTEST_ROUTER_KEY is not set");
+  }
+
+  return key;
+}
+
+// One judge's answer and its cost, or undefined when it errors or answers off schema.
+async function vote(
   judge: Judge,
   prompt: string,
-): { answer: Answer; cost: number } | undefined {
-  if (Bun.which(judge.cli) === null) return undefined;
-  const cwd = mkdtempSync(join(tmpdir(), "jittest-judge-"));
+): Promise<{ answer: Answer; cost: number } | undefined> {
   try {
-    if (judge.cli === "claude") {
-      const judged = claude<Answer>({
-        cwd: cwd,
+    const response = await fetch(`${ROUTER_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${routerKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         model: judge.model,
-        effort: judge.effort ?? "medium",
-        budget: JUDGE_BUDGET_USD,
-        prompt: prompt,
-        schema: VERDICT_SCHEMA,
-        tools: ["--tools", ""],
-      });
-
-      return { answer: judged.output, cost: judged.cost };
-    }
-    let text: string;
-    if (judge.cli === "codex") {
-      writeFileSync(join(cwd, "schema.json"), JSON.stringify(VERDICT_SCHEMA));
-      Bun.spawnSync(
-        [
-          "codex",
-          "exec",
-          "--skip-git-repo-check",
-          "--ephemeral",
-          "--sandbox",
-          "read-only",
-          "--model",
-          judge.model,
-          "--config",
-          `model_reasoning_effort=${judge.effort ?? "medium"}`,
-          "--output-schema",
-          "schema.json",
-          "--output-last-message",
-          "answer.json",
-          "-",
-        ],
-        { cwd: cwd, stdin: Buffer.from(prompt), timeout: RUN_TIMEOUT_MS },
-      );
-      text = readFileSync(join(cwd, "answer.json"), "utf8");
-    } else {
-      text = Bun.spawnSync(
-        ["opencode", "run", "--model", judge.model, prompt],
-        {
-          cwd: cwd,
-          env: { ...process.env, OPENCODE_PERMISSION: NO_TOOLS },
-          timeout: RUN_TIMEOUT_MS,
+        stream: false,
+        messages: [{ role: "user", content: prompt }],
+        reasoning: { effort: judge.effort },
+        max_tokens: JUDGE_MAX_TOKENS,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "verdict",
+            strict: true,
+            schema: VERDICT_SCHEMA,
+          },
         },
-      ).stdout.toString();
+      }),
+      signal: AbortSignal.timeout(RUN_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${await response.text()}`);
     }
+    const completion = (await response.json()) as Completion;
+    const text = completion.choices[0]?.message.content ?? "";
     const answer = JSON.parse(
       text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1),
     ) as Answer;
     if (!(answer.likelihood in LIKELIHOOD_SCORE)) throw new Error("off schema");
 
-    return { answer: answer, cost: 0 };
+    return { answer: answer, cost: completion.usage?.cost ?? 0 };
   } catch (error) {
     console.error(
       `judge ${judge.model} abstained: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
     );
 
     return undefined;
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
   }
 }
 
@@ -1094,7 +1079,7 @@ if (import.meta.main) {
           : ["rev-parse", "--verify", `${args.base}^{commit}`],
         root,
       ).trim();
-      jittest(root, base, args);
+      await jittest(root, base, args);
     } else {
       diagnose(root, args.report, args.out);
     }

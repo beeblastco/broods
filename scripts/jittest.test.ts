@@ -93,45 +93,42 @@ describe("score", () => {
 });
 
 describe("poll", () => {
-  const judges: Judge[] = ["free", "plan", "billed"].map((model) => ({
-    cli: "claude",
+  const judges: Judge[] = ["first", "second", "third"].map((model) => ({
     model: model,
+    effort: "medium",
   }));
-  const answers = (
+  const asked = async (
     ...likelihoods: (Verdict["likelihood"] | undefined)[]
-  ): string[] => {
-    const asked: string[] = [];
-    poll(judges, (judge) => {
-      asked.push(judge.model);
-      const likelihood = likelihoods[asked.length - 1];
+  ): Promise<string[]> => {
+    const models: string[] = [];
+    await poll(judges, (judge) => {
+      models.push(judge.model);
+      const likelihood = likelihoods[models.length - 1];
 
-      return likelihood === undefined
-        ? undefined
-        : { ...verdict(likelihood), duplicate: false };
+      return Promise.resolve(
+        likelihood === undefined
+          ? undefined
+          : { ...verdict(likelihood), duplicate: false },
+      );
     });
 
-    return asked;
+    return models;
   };
 
-  test("two judges that agree settle it, the billed one is never asked", () => {
-    expect(answers("high", "high")).toEqual(["free", "plan"]);
-    expect(answers("low", "low")).toEqual(["free", "plan"]);
+  test("two judges that agree settle it, the third is never asked", async () => {
+    expect(await asked("high", "high")).toEqual(["first", "second"]);
+    expect(await asked("low", "low")).toEqual(["first", "second"]);
   });
 
-  test("a split vote or an abstention asks the next judge", () => {
-    expect(answers("high", "low", "high")).toEqual(["free", "plan", "billed"]);
-    expect(answers("high", undefined, "high")).toEqual([
-      "free",
-      "plan",
-      "billed",
-    ]);
+  test("a split vote or an abstention asks the next judge", async () => {
+    expect(await asked("high", "low", "high")).toHaveLength(3);
+    expect(await asked("high", undefined, "high")).toHaveLength(3);
   });
 
-  test("a duplicate stops the poll with no vote", () => {
-    const polled = poll(judges, () => ({
-      ...verdict("high"),
-      duplicate: true,
-    }));
+  test("a duplicate stops the poll with no vote", async () => {
+    const polled = await poll(judges, () =>
+      Promise.resolve({ ...verdict("high"), duplicate: true }),
+    );
     expect(polled).toEqual({ verdicts: [], duplicate: true });
   });
 });

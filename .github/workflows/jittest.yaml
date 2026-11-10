@@ -3,7 +3,8 @@ name: JiTTest
 # Just-in-time catching tests (arXiv 2601.22832): Claude Code writes tests that pass on
 # the base and target what this change could break, scripts/jittest.ts runs them on both
 # sides, and a failure that survives the rules and the judges becomes one question on the
-# pull request. Never blocks a merge. Billed per run, so it runs only on request: the
+# pull request. Never blocks a merge. Models are reached through a 9router tunnel, which
+# spends the subscriptions connected to it, so it runs only on request: the
 # jittest label (remove and add it again to re-run), or a manual run on a branch.
 # The same label on an issue reproduces the report with a failing test on dev and names
 # the commit that broke it, when a maintainer wrote the issue.
@@ -39,19 +40,17 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      - name: Install Claude Code and the judge CLIs
-        run: npm install --global @anthropic-ai/claude-code@2.1.322 @openai/codex@0.167.1 opencode-ai@1.19.5
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.322
 
       - name: Generate, run and assess catching tests
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Judges only. One without its key abstains and the next is asked.
-          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          JITTEST_ROUTER_URL: ${{ vars.JITTEST_ROUTER_URL }}
+          JITTEST_ROUTER_KEY: ${{ secrets.JITTEST_ROUTER_KEY }}
           JITTEST_TITLE: ${{ github.event.pull_request.title }}
           JITTEST_SUMMARY: ${{ github.event.pull_request.body }}
         run: |
-          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          test -n "$JITTEST_ROUTER_URL" -a -n "$JITTEST_ROUTER_KEY" || { echo "JITTEST_ROUTER_URL variable or JITTEST_ROUTER_KEY secret is not set" >&2; exit 1; }
           bun run jittest
 
       - name: Ask the author about what it caught
@@ -101,11 +100,12 @@ jobs:
 
       - name: Reproduce the report and find the commit that broke it
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          JITTEST_ROUTER_URL: ${{ vars.JITTEST_ROUTER_URL }}
+          JITTEST_ROUTER_KEY: ${{ secrets.JITTEST_ROUTER_KEY }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          test -n "$JITTEST_ROUTER_URL" -a -n "$JITTEST_ROUTER_KEY" || { echo "JITTEST_ROUTER_URL variable or JITTEST_ROUTER_KEY secret is not set" >&2; exit 1; }
           printf '# %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > "$RUNNER_TEMP/report.md"
           bun run jittest -- --report "$RUNNER_TEMP/report.md"
 
