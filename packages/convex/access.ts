@@ -303,8 +303,7 @@ export const createPolicy = mutation({
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     const caller = await requireAccessWriter(ctx);
-    const name = args.name.trim();
-    if (!name) throw new ClientError("A policy needs a name");
+    const name = policyName(args.name);
     const document: PolicyDocument = { version: 1, mode: args.mode, rules: [] };
     const now = Date.now();
 
@@ -340,7 +339,7 @@ export const updatePolicy = mutation({
       await assertPolicyWithinReach(ctx, caller, policy, document);
     }
     await ctx.db.patch(policy._id, {
-      ...(args.name !== undefined ? { name: args.name.trim() } : {}),
+      ...(args.name !== undefined ? { name: policyName(args.name) } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
@@ -364,6 +363,7 @@ export const addRule = mutation({
   handler: async (ctx, args): Promise<string> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
+    await assertOwnedScope(ctx, caller.account, args.scope);
     const known = await permissionNames(ctx, caller.account._id);
     if (!known.has(args.permission)) {
       throw new ClientError(`${args.permission} is not a permission`);
@@ -560,11 +560,7 @@ export const createRole = mutation({
     const caller = await requireAccessWriter(ctx);
     const orgId = orgIdOf(ctx, caller.account);
     if (!orgId) throw new ClientError("No organization");
-    const name = args.name.trim();
-    if (!name) throw new ClientError("A role needs a name");
-    if (BUILT_IN_ROLE_NAMES.has(name.toLowerCase())) {
-      throw new ClientError(`${name} is a built-in role`);
-    }
+    const name = roleName(args.name);
     await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
     await assertGrantsWithinReach(
       ctx,
@@ -608,7 +604,7 @@ export const updateRole = mutation({
       );
     }
     await ctx.db.patch(role._id, {
-      ...(args.name !== undefined ? { name: args.name.trim() } : {}),
+      ...(args.name !== undefined ? { name: roleName(args.name) } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
@@ -743,6 +739,23 @@ async function assertOwnedPolicies(
   );
 }
 
+// Else a rule could name another org's project or stage, and the policy list would show it.
+async function assertOwnedScope(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  scope: Infer<typeof scopeValidator>,
+): Promise<void> {
+  const stage = scope.stageId ? await ctx.db.get(scope.stageId) : null;
+  const projectId = scope.projectId ?? stage?.projectId;
+  const project = projectId ? await ctx.db.get(projectId) : null;
+  const owned = !projectId || project?.orgId === orgIdOf(ctx, account);
+  const stageFits =
+    !scope.stageId || (stage !== null && stage.projectId === projectId);
+  if (!owned || !stageFits) {
+    throw new ClientError("Project or stage not found", "not_found");
+  }
+}
+
 async function ownedRole(
   ctx: Ctx,
   account: Doc<"accounts">,
@@ -839,6 +852,23 @@ function policyRow(
     createdAt: policy.createdAt,
     createdBy: policy.createdBy ? creators.get(policy.createdBy) : undefined,
   };
+}
+
+function policyName(raw: string): string {
+  const name = raw.trim();
+  if (!name) throw new ClientError("A policy needs a name");
+
+  return name;
+}
+
+function roleName(raw: string): string {
+  const name = raw.trim();
+  if (!name) throw new ClientError("A role needs a name");
+  if (BUILT_IN_ROLE_NAMES.has(name.toLowerCase())) {
+    throw new ClientError(`${name} is a built-in role`);
+  }
+
+  return name;
 }
 
 function ruleScope(rule: PolicyRule, names: Map<string, string>): string {

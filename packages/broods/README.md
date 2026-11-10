@@ -45,11 +45,12 @@ A hosted MCP server (`defineMcp` with a `handler`) needs
 ## Invoke an agent
 
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
 const client = new BroodsClient({
   apiKey: process.env.BROODS_API_KEY,
+  userToken: await signUserToken({ userId: "me" }),
 });
 
 const result = await client.run(api.agents.myAgent, {
@@ -62,6 +63,10 @@ console.log(result.text);
 Runtime calls use a runtime key. After `broods deploy`, the CLI
 writes `BROODS_API_KEY` to `.env.local`; the SDK also accepts `apiKey`,
 `BROODS_API_KEY`, `baseUrl`, and `BROODS_BASE_URL`.
+
+A new agent requires a user token beside the runtime key. `signUserToken`
+reads `BROODS_USER_TOKEN_SECRET`, which the CLI also writes; on a real site
+your server signs one per user and hands it to the browser.
 
 ## Two ways to configure agents
 
@@ -76,7 +81,7 @@ that provisions one agent per customer creates and mutates config while it runs.
 For that, use the account config client with your account key. It is the
 complete typed client for the account config plane: agents, sandboxes (config +
 suspend/resume/terminate/snapshot/terminal), workspaces (config + file
-upload/rename/delete/download), tools, policies, skills, crons (+ run history),
+upload/rename/delete/download), MCP servers, policies, skills, crons (+ run history),
 and the account itself (metadata, key rotation, deletion). It is a separate,
 dependency-free entry point (`broods/account`) built on plain `fetch`, so it
 also works in edge runtimes such as Convex actions and Cloudflare Workers where
@@ -122,7 +127,7 @@ const { accountId } = await account.getAccount();
 const url = account.webhookUrl(accountId, "slack");
 
 // The same client covers the rest of the config plane: standalone sandboxes and
-// workspaces, uploaded tools, reusable policies, skills, and cron run history.
+// workspaces, hosted MCP servers, reusable policies, skills, and cron run history.
 const sandbox = await account.createSandbox({
   name: "reserved",
   config: { provider: "lambda", persistent: true, permissionMode: "ask" },

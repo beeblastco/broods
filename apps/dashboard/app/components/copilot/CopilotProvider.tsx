@@ -101,6 +101,11 @@ interface DockSeed {
   revision: number | null;
 }
 
+interface SeededFolder {
+  seed: DockSeed;
+  stageId: string;
+}
+
 interface ProposedNodes {
   failed: boolean;
   nodes: readonly ProposedNode[];
@@ -277,8 +282,8 @@ export function CopilotProvider({
         : null,
     [driftState, syncing],
   );
-  // Seeded once per stage in a conversation; null when the agent has no workspace to seed.
-  const seeds = useRef<Record<string, DockSeed | null>>({});
+  // The conversation has one folder, so only the last stage written to it is trusted.
+  const folder = useRef<SeededFolder | null>(null);
 
   // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
   const settled = settleApplies(applies, deploys);
@@ -462,23 +467,28 @@ export function CopilotProvider({
             : source;
         if (
           currentStageId &&
-          !(currentStageId in seeds.current) &&
+          folder.current?.stageId !== currentStageId &&
           stored?.url
         ) {
-          seeds.current[currentStageId] = await readSource(stored.url)
-            .then(async (files): Promise<DockSeed> => {
+          folder.current = await readSource(stored.url)
+            .then(async (files): Promise<SeededFolder> => {
               await seedConversation(session, conversationKey, files);
 
               return {
-                files: files,
-                revision: stored.revision,
-                ...(dockFacts.branch ? { branch: dockFacts.branch } : {}),
+                seed: {
+                  files: files,
+                  revision: stored.revision,
+                  ...(dockFacts.branch ? { branch: dockFacts.branch } : {}),
+                },
+                stageId: currentStageId,
               };
             })
             .catch((): null => null);
         }
         const seeded =
-          (currentStageId && seeds.current[currentStageId]) || undefined;
+          currentStageId && folder.current?.stageId === currentStageId
+            ? folder.current.seed
+            : undefined;
         // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
         const repo =
           !seeded && dockFacts.repo && projectId && currentStageId
@@ -744,10 +754,13 @@ export function CopilotProvider({
           stageId: currentStageId,
         });
         // The next ask builds on what landed, as the agent's folder already does.
-        seeds.current[currentStageId] = {
-          files: files,
-          revision: applied.revision,
-          ...(via.branch ? { branch: via.branch } : {}),
+        folder.current = {
+          seed: {
+            files: files,
+            revision: applied.revision,
+            ...(via.branch ? { branch: via.branch } : {}),
+          },
+          stageId: currentStageId,
         };
 
         return applied.phase === "verifying"

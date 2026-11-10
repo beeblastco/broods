@@ -173,6 +173,14 @@ describe("MCP connections", () => {
     expect(response.status).toBe(401);
   });
 
+  it("answers a malformed escape in the server id as not found", async () => {
+    const response = await handleMcpConnectionRequest(
+      request("GET", "/v1/mcp-connections/%E0"),
+    );
+
+    expect(response.status).toBe(404);
+  });
+
   it("saves the refresh token a rotating server hands back", async () => {
     const stored: StoredMcpConnection = {
       clientId: "client_1",
