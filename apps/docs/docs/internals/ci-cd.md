@@ -183,7 +183,7 @@ flowchart TD
   A --> C["production-*: dispatch<br/>drift-cleanup on main"]
   C --> P["production stage job"]
   B --> R
-  P --> R["checkout the stage's ref,<br/>sst refresh, sst diff"]
+  P --> R["checkout the commit deploy.yaml<br/>last shipped, sst refresh, sst diff"]
   R -->|diff exits non-zero| F[Fail, apply nothing]
   R -->|"plan says No changes"| OK[No drift]
   R -->|drift| D{production?}
@@ -191,11 +191,12 @@ flowchart TD
   D -->|yes| REP["Fail the job,<br/>report only"]
 ```
 
-| Stage                  | Checked out from | Environment   | On drift     |
-| ---------------------- | ---------------- | ------------- | ------------ |
-| `dev`                  | `dev`            | `development` | `sst deploy` |
-| `production-eu-west-1` | `main`           | `production`  | job fails    |
+| Stage                  | Checked out from                      | Environment   | On drift     |
+| ---------------------- | ------------------------------------- | ------------- | ------------ |
+| `dev`                  | last successful `deploy.yaml` on dev  | `development` | `sst deploy` |
+| `production-eu-west-1` | last successful `deploy.yaml` on main | `production`  | job fails    |
 
+- The commit is the newest successful `deploy.yaml` run on the branch that shipped this stage, never the branch head, so a commit that failed validation or is still deploying is neither reported as drift nor deployed here. Push runs count (dev), and so do manual runs (promote ships `main` that way) unless they named another stage, which `deploy.yaml` puts in the run title (`Deploy to <stage>`). No such run fails the job.
 - A production dispatch from any ref but `main` fails fast. Reconcile production drift through `deploy.yaml` from `main`.
 - The job resolves `SANDBOX_IMAGE_READY` per stage the way `deploy.yaml` does, so `sst.config.ts` imports the sandbox ECR repo in both. SST ignores tag changes on an imported resource; a plan without the import reports the repo's tags as drift every night.
 - Each job takes the same `sst-<stage>` lock as `deploy.yaml`. A lock left by a crashed run fails the job; clear it by hand after checking nothing runs.
