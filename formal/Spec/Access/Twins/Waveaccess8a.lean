@@ -21,10 +21,9 @@ def setModule (call : Json) (name : String) (value : Json) : Prog Unit := do
 private def parseCursor (args : Json) : Json :=
   let value := (Twin.arg args 0).getStr?.toOption.getD ""
   let parts := value.splitOn ":"
-  let parsed : Option (String × String × Option String) := match parts with
-    | ["ws-responses", generation, sequence] => some (generation, sequence, none)
+  let parsed : Option (String × String × String) := match parts with
     | ["ws-responses", generation, sequence, eventKey] =>
-      if eventKey.isEmpty then none else some (generation, sequence, some eventKey)
+      if eventKey.isEmpty then none else some (generation, sequence, eventKey)
     | _ => none
   match parsed with
   | none => Json.null
@@ -36,7 +35,7 @@ private def parseCursor (args : Json) : Json :=
       | some sequence =>
         if sequence > 9007199254740991 then Json.null
         else Json.mkObj ([("generation", toJson generation), ("sequence", toJson sequence)] ++
-          (eventKey.toList.map fun key => ("eventKey", toJson key)))
+          [("eventKey", toJson eventKey)])
 
 private def undefinedField (value : Json) (name : String) : Json :=
   (value.getObjVal? name).toOption.getD Twin.undefinedJson

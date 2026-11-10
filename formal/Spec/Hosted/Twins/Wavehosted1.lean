@@ -1,6 +1,7 @@
 import Spec.Twin
 import Spec.Hosted.Twins.Wavehosted8a
 import Spec.Config.Twins.Js
+import Spec.Channels.Twins.Wavechannels8a
 
 namespace Spec.Hosted.Wavehosted1
 
@@ -739,13 +740,11 @@ private def parseLogStream (call : Json) : Prog Json := do
   return result
 
 private def agentTool (call : Json) : Prog Json := do
-  let agent := Twin.callArg call 0
+  let agent := Twin.callArg call 1
   let description := field agent "description"
-  return obj [("name", field agent "agentId"), ("title", field agent "name"),
+  return obj [("name", Twin.callArg call 0), ("title", field agent "name"),
     ("description", if nil description then toJson s!"Ask the {text (field agent "name")} agent." else description),
-    ("inputSchema", obj [("type", toJson "object"),
-      ("properties", obj [("prompt", obj [("type", toJson "string"), ("description", toJson "What to ask the agent.")])]),
-      ("required", .arr #[toJson "prompt"])])]
+    ("inputSchema", Twin.moduleValue call "AGENT_INPUT_SCHEMA")]
 
 private def sendRunRequest (call : Json) : Prog Json := do
   let caller := Twin.callArg call 0
@@ -973,8 +972,9 @@ private def taskFromRuns (call : Json) : Prog Json := do
   let runs := Twin.callArg call 0
   let root := field runs "root"
   let current := field runs "current"
-  let base := obj [("taskId", field root "runId"), ("createdAt", field root "createdAt"),
-    ("lastUpdatedAt", field current "lastUpdatedAt"), ("ttlMs", .null), ("pollIntervalMs", toJson (2000 : Nat))]
+  let base := obj ([("taskId", field root "runId"), ("createdAt", field root "createdAt"),
+    ("lastUpdatedAt", field current "lastUpdatedAt"), ("ttlMs", .null), ("pollIntervalMs", toJson (2000 : Nat))].filter
+      fun entry => !undef entry.2)
   let status := text (field current "status")
   let withStatus (value : String) : Json := Js.set base "status" (toJson value)
   if status == "awaiting_input" || status == "awaiting_approval" then
@@ -991,9 +991,7 @@ private def taskFromRuns (call : Json) : Prog Json := do
     let response := field current "response"
     if undef response && truthy (field current "error") then
       return ← Prog.effect "failedTask" [base, field current "error"]
-    if !undef response && !Js.isStr response then
-      return ← Prog.unsupported "JSON.stringify key order is lost in Lean JSON"
-    let result ← Prog.effect "toolResult" [if undef response then toJson "" else response, toJson false]
+    let result ← Prog.effect "answerResult" [current, field root "conversationKey"]
     return Js.set (withStatus "completed") "result" result
   if status == "failed" then
     if truthy (field current "stoppedByUser") then return withStatus "cancelled"
@@ -1172,11 +1170,14 @@ private def responseOk (response : Json) : Bool :=
   let status := responseStatus response
   status ≥ 200 && status < 300
 
-private def refreshTokenGrant (call : Json) : Prog Json := do
-  let form := (Js.entries (Twin.callArg call 1)).map fun (key, value) => formEncode key ++ "=" ++ formEncode (text value)
+private def tokenGrant (call : Json) : Prog Json := do
+  let given := (insertionEntries (Twin.callArg call 1)).filter (·.1 != "$keys")
+  let grant := ((given.find? (·.1 == "grant_type")).map (·.2)).getD (toJson "refresh_token")
+  let pairs := ("grant_type", grant) :: given.filter (·.1 != "grant_type")
+  let form := pairs.map fun (key, value) => formEncode key ++ "=" ++ formEncode (text value)
   let response ← Prog.effect "fetchToken" [Twin.callArg call 0, obj [("method", toJson "POST"),
     ("headers", obj [("Content-Type", toJson "application/x-www-form-urlencoded")]),
-    ("body", toJson ("&".intercalate ("grant_type=refresh_token" :: form)))]]
+    ("body", toJson ("&".intercalate form))]]
   let body ← Prog.effect "response.text"
   if !responseOk response then
     let head := String.ofList ((text body).toList.take 512)
@@ -1202,14 +1203,29 @@ private def refreshTokenGrant (call : Json) : Prog Json := do
     let base := [("accessToken", access), ("expiresAt", toJson ((Js.nat? now).getD 0 + seconds * 1000))]
     return obj (if Js.isStr refresh && truthy refresh then ("refreshToken", refresh) :: base else base)
 
+/-- `MAX_TOKEN_CACHE_ENTRIES` in `oauth.ts`. -/
+private def maxTokenCacheEntries : Nat := 256
+
 private def mintAccessToken (call : Json) : Prog Json := do
   let name := text (Twin.callArg call 0)
   let oauth := Twin.callArg call 1
-  let outcome ← Prog.attempt "refreshTokenGrant" [field oauth "tokenUrl", obj
+  let key := Twin.callArg call 2
+  let rotatedMap := Twin.moduleValue call "rotatedRefreshTokens"
+  let rotated := (Spec.Channels.Wavechannels8a.mapEntries rotatedMap).find? fun entry => Twin.arg entry 0 == key
+  let outcome ← Prog.attempt "tokenGrant" [field oauth "tokenUrl", obj
     [("client_id", field oauth "clientId"), ("client_secret", field oauth "clientSecret"),
-     ("refresh_token", field oauth "refreshToken")], fn "publicHostFetch"]
+     ("refresh_token", match rotated with
+       | some entry => Twin.arg entry 1
+       | none => field oauth "refreshToken")], fn "publicHostFetch"]
   match outcome with
   | .ok token =>
+    if truthy (field token "refreshToken") then
+      let entries := Spec.Channels.Wavechannels8a.mapEntries rotatedMap
+      let known := rotated.isSome
+      let trimmed := if !known && entries.length >= maxTokenCacheEntries then entries.drop 1 else entries
+      let next := Spec.Channels.Wavechannels8a.mapSet (Spec.Channels.Wavechannels8a.mapValue trimmed) key
+        (field token "refreshToken")
+      if next != rotatedMap then Prog.setState "module.rotatedRefreshTokens" next
     match Js.int? (field token "expiresAt") with
     | some expiresAt =>
       return obj [("accessToken", field token "accessToken"), ("expiresAt", toJson (expiresAt - 60000))]
@@ -1270,7 +1286,7 @@ private def cacheKeyFor (call : Json) : Prog Json := do
   let sandbox := field (field connection "sandbox") "config"
   let orNull := fun (value : Json) => if nil value then Json.null else value
   let server ← if truthy sandbox then do
-      let env ← Prog.effect "mergeSandboxEnv" [field sandbox "envVars", Twin.undefinedJson]
+      let env ← Prog.effect "mergeSandboxEnv" [field sandbox "envVars"]
       pure (Json.arr #[orNull (field sandbox "image"), orNull (field sandbox "snapshot"),
         orNull (field sandbox "onCreate"), orNull (field sandbox "onResume"), env])
     else pure .null
@@ -1306,37 +1322,6 @@ private def updateTask (call : Json) : Prog Json := do
   else if status == toJson "awaiting_approval" then
     let _ ← Prog.effect "answerApprovals" [caller, current, Twin.callArg call 2]
   return Twin.undefinedJson
-
-private def startTask (call : Json) : Prog Json := do
-  let caller := Twin.callArg call 0
-  let agentId := Twin.callArg call 1
-  let uuid ← Prog.effect "crypto.randomUUID"
-  let id := toJson ("mcp-" ++ text uuid)
-  let request ← Prog.effect "runRequest" [caller, toJson "POST", toJson "/v1/runs", obj
-    [("agentId", agentId), ("eventId", id), ("conversationKey", id), ("background", toJson true),
-     ("events", .arr #[obj [("role", toJson "user"), ("content", Twin.callArg call 2)]])]]
-  let started ← Prog.effect "caller.replay" [request]
-  if responseStatus started == 404 then
-    let error ← Prog.effect "new ProtocolError" [toJson (-32602 : Int), toJson ("Unknown tool: " ++ text agentId)]
-    return ← .fail error
-  if !responseOk started then
-    let message ← Prog.effect "errorText" [started]
-    return ← Prog.effect "toolResult" [message, toJson true]
-  let accepted ← Prog.effect "started.json"
-  let outcome ← Prog.attempt "readRun" [caller, field accepted "runId"]
-  let run := match outcome with
-    | .ok value => value
-    | _ => Json.null
-  let now ← Prog.effect "new Date"
-  let stamp := toJson (isoOfMillis ((Js.nat? now).getD 0))
-  let status ← if truthy run then do
-      let task ← Prog.effect "taskFromRuns" [obj [("root", run), ("current", run)]]
-      pure (field task "status")
-    else pure (toJson "working")
-  let orNow := fun (value : Json) => if nil value then stamp else value
-  return obj [("resultType", toJson "task"), ("taskId", field accepted "runId"), ("status", status),
-    ("createdAt", orNow (field run "createdAt")), ("lastUpdatedAt", orNow (field run "lastUpdatedAt")),
-    ("ttlMs", .null), ("pollIntervalMs", toJson (2000 : Nat))]
 
 private def guardedFetchWithDeadline (call : Json) : Prog Json := do
   let init := Twin.callArg call 1
@@ -1505,7 +1490,7 @@ private def sandboxMcpRequest (call : Json) : Prog Json := do
       s!"MCP server {serverName} needs a lambda sandbox; {text (field config "provider")} has no MCP host"
   let seconds ← Prog.effect "sandboxTimeoutSeconds" [config, toJson (120 : Nat)]
   let timeoutMs := (Js.nat? seconds).getD 0 * 1000
-  let env ← Prog.effect "mergeSandboxEnv" [field config "envVars", Twin.undefinedJson]
+  let env ← Prog.effect "mergeSandboxEnv" [field config "envVars"]
   let uuid ← Prog.effect "randomUUID"
   let rpc := obj ([("jsonrpc", toJson "2.0"), ("id", uuid), ("method", field message "method")] ++
     (if undef (field message "params") then [] else [("params", field message "params")]))
@@ -1677,13 +1662,12 @@ def twins : List Spec.Twin :=
    Twin.traced "packages/convex/model/envelope.ts#AccountCipher.digest" digest,
    Twin.traced "packages/convex/model/envelope.ts#AccountCipher.decryptEnvelope" decryptEnvelope,
    Twin.traced "packages/convex/model/envelope.ts#AccountCipher.decrypt" decrypt,
-   Twin.traced "apps/core/src/harness/mcp/oauth.ts#refreshTokenGrant" refreshTokenGrant,
+   Twin.traced "apps/core/src/harness/mcp/oauth.ts#tokenGrant" tokenGrant,
    Twin.traced "apps/core/src/harness/mcp/oauth.ts#mintAccessToken" mintAccessToken,
    Twin.traced "apps/core/src/harness/mcp/client.ts#mcpConnection" mcpConnection,
    Twin.traced "apps/core/src/harness/mcp/client.ts#cacheKeyFor" cacheKeyFor,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#cancelTask" cancelTask,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#updateTask" updateTask,
-   Twin.traced "apps/core/src/harness/mcp-tasks.ts#startTask" startTask,
    Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#guardedFetchWithDeadline" guardedFetchWithDeadline,
    Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#guardedFetch" guardedFetch,
    Twin.traced "apps/core/src/accounts/mcp-service.ts#parseProbe" parseProbe,

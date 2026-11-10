@@ -11,50 +11,30 @@ open Lean
 
 private def commandsSource : String := "apps/core/src/shared/commands.ts"
 
-/-- One Discord option of a command. -/
-structure CommandOption where
-  name : String
-  description : String
-  required : Bool
-
 /-- One entry of `commands`. -/
 structure CommandEntry where
   aliases : List String
   queued : Bool := false
   rewriteMode : Option String := none
   discordNames : List String
-  discordDescription : String
-  options : List CommandOption := []
 
 /-- The `commands` array, in order. -/
 def commandTable : List CommandEntry :=
   [ { aliases := ["/new", "/clear"]
-      discordNames := ["new", "clear"]
-      discordDescription := "Clear conversation context and start fresh" },
+      discordNames := ["new", "clear"] },
     { aliases := ["/compact"]
       queued := true
-      discordNames := ["compact"]
-      discordDescription := "Compact conversation context into a summary"
-      options := [{ name := "instructions", description := "What the summary should focus on",
-                    required := false }] },
+      discordNames := ["compact"] },
     { aliases := ["/steer"]
       rewriteMode := some "steer"
-      discordNames := ["steer"]
-      discordDescription := "Steer the active turn at the next model boundary"
-      options := [{ name := "text", description := "Guidance for the active turn",
-                    required := true }] },
+      discordNames := ["steer"] },
     { aliases := ["/stop", "/cancel"]
-      discordNames := ["stop"]
-      discordDescription := "Stop the active run" },
+      discordNames := ["stop"] },
     { aliases := ["/queue"]
       rewriteMode := some "followup"
-      discordNames := ["queue"]
-      discordDescription := "Queue a follow-up message"
-      options := [{ name := "text", description := "Message to run after the active turn",
-                    required := true }] },
+      discordNames := ["queue"] },
     { aliases := ["/help"]
-      discordNames := ["help"]
-      discordDescription := "Show available commands" } ]
+      discordNames := ["help"] } ]
 
 /-- `INLINE_COMMAND_CHANNELS` in `apps/core/src/shared/channels.ts:33`. -/
 def inlineCommandChannels : List String :=
@@ -129,27 +109,6 @@ private def resolveDiscordTwin : Spec.Twin where
             optEntry "commandToken" (entry.aliases.head?.map Json.str))
     | _, _ => Spec.Twin.unsupported "name or option text is not a string"
 
-private def optionJson (option : CommandOption) : Json :=
-  Json.mkObj
-    [("type", toJson (3 : Nat)), ("name", toJson option.name),
-      ("description", toJson option.description), ("required", toJson option.required)]
-
-private def registrationsTwin : Spec.Twin where
-  source := commandsSource ++ "#getDiscordCommandRegistrations"
-  run := fun args =>
-    let global := match Spec.Twin.arg args 0 with
-      | .str "global" | .null => true
-      | _ => false
-    jarr <| commandTable.flatMap fun entry =>
-      entry.discordNames.map fun name =>
-        Json.mkObj
-          ([("name", toJson name), ("description", toJson entry.discordDescription)] ++
-            (if entry.options.isEmpty then []
-             else [("options", jarr (entry.options.map optionJson))]) ++
-            (if global then
-               [("integration_types", toJson [(0 : Nat)]), ("contexts", toJson [(0 : Nat), 1])]
-             else []))
-
 private def resolveChannelTwin : Spec.Twin where
   source := commandsSource ++ "#resolveChannelCommand"
   run := fun args =>
@@ -216,7 +175,7 @@ private def queuedCommandTwin : Spec.Twin where
 
 /-- The twins in this file. -/
 def commandTwins : List Spec.Twin :=
-  [stripTwin, parseCommandTwin, resolveDiscordTwin, registrationsTwin, resolveChannelTwin,
+  [stripTwin, parseCommandTwin, resolveDiscordTwin, resolveChannelTwin,
     queuedCommandTwin]
 
 end Spec.Channels

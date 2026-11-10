@@ -553,28 +553,12 @@ private def renderTwilioText (call : Json) : Prog Json := do
   let formatted ← Prog.effect "TWILIO_FORMAT.fromMarkdown" [Twin.callArg call 0]
   Prog.effect "chunkChannelText" [formatted, toJson (1600 : Nat)]
 
-private def getExecutableCommands (_args : Json) : Json :=
-  jarr (commandTable.map fun command =>
-    let description := if command.aliases.contains "/stop" then "Stop the active run at the next model boundary"
-      else if command.aliases.contains "/queue" then "Queue one message as an explicit follow-up"
-      else command.discordDescription
-    Json.mkObj ([("aliases", jstrs command.aliases), ("description", .str description),
-      ("discord", Json.mkObj ([("names", jstrs command.discordNames), ("description", .str command.discordDescription)] ++
-        (if command.options.isEmpty then [] else [("options", jarr (command.options.map fun option =>
-          Json.mkObj [("type", toJson (3 : Nat)), ("name", .str option.name),
-            ("description", .str option.description), ("required", .bool option.required)]))]))),
-      ("execute", Json.mkObj [("$fn", .str "execute")])] ++
-      (if command.queued then [("queued", .bool true)] else []) ++
-      optEntry "rewriteMode" (command.rewriteMode.map Json.str)))
-
 private def executeCommand (call : Json) : Prog Json := do
-  let handlers ← Prog.effect "getExecutableCommands"
-  let handler := (items handlers).find? fun candidate =>
-    (items (get candidate "aliases")).contains (Twin.callArg call 0)
+  let handler := commandTable.find? fun candidate =>
+    (jstrs candidate.aliases |> items).contains (Twin.callArg call 0)
   match handler with
   | none => pure Twin.undefinedJson
-  | some handler =>
-    if !jsTruthy (get handler "execute") then return Twin.undefinedJson
+  | some _ =>
     let outcome ← Prog.attempt "handler.execute" [Twin.callArg call 1]
     let result ← match outcome with
       | .ok reply => pure (Json.mkObj [("reply", reply)])
@@ -677,8 +661,6 @@ def twins : List Twin :=
    Twin.traced "apps/core/src/shared/zalo-channel.ts#zaloMessageMedia" zaloMessageMedia,
    Twin.traced "apps/core/src/shared/linear-channel.ts#webhookTimestamp" webhookTimestamp,
    Twin.traced "apps/core/src/shared/twilio-channel.ts#renderTwilioText" renderTwilioText,
-   Twin.traced "apps/core/src/shared/commands.ts#getExecutableCommands" (fun _ =>
-     pure (getExecutableCommands .null)),
    Twin.traced "apps/core/src/shared/commands.ts#executeCommand" executeCommand,
    Twin.traced "apps/core/src/shared/github-channel.ts#BroodsGitHubAdapter.verifyWebhookSignature" (fun call =>
      Prog.effect "this.verifySignature" [Twin.callArg call 0, Twin.callArg call 1]),

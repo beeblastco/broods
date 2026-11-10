@@ -516,7 +516,6 @@ def utilTwins : List Spec.Twin := [
     pure (Json.bool (isFatalSandboxSetupError value))),
   tool file "toolError" (fun a => textArg (arg a 0) "value" fun value =>
     jsThrow (if isFatalSandboxSetupError value then s!"Sandbox setup failed: {value}" else value)),
-  tool file "toolText" fun a => pure (arg a 0),
   tool file "subagentNotFound" fun a =>
     pure (Json.str s!"Error: no subagent task found for {text (arg a 0)}"),
   tool file "textPart" fun a => pure (textPart (arg a 0) (arg a 1)),

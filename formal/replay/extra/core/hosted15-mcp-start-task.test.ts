@@ -1,8 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { AuthContext } from "../../../../apps/core/src/shared/auth.ts";
 import * as authModule from "../../../../apps/core/src/shared/auth.ts";
+import * as integrationsModule from "../../../../apps/core/src/harness/integrations.ts";
 import * as runtimeModule from "../../../../apps/core/src/shared/convex/runtime.ts";
 import type { CoreRequest } from "../../../../apps/core/src/shared/http.ts";
+import type { AgentRecord } from "../../../../apps/core/src/shared/domain/agents.ts";
 import type { AccountRecord } from "../../../../apps/core/src/shared/domain/accounts.ts";
 
 const ACCOUNT: AccountRecord = {
@@ -12,6 +14,14 @@ const ACCOUNT: AccountRecord = {
   status: "active",
   createdAt: "2026-06-01T00:00:00.000Z",
   updatedAt: "2026-06-01T00:00:00.000Z",
+};
+const AGENT: AgentRecord = {
+  accountId: "acct_1",
+  agentId: "agent_1",
+  name: "agent_1",
+  config: { publicAccess: true },
+  createdAt: "2026-11-01T00:00:00.000Z",
+  updatedAt: "2026-11-01T00:00:00.000Z",
 };
 const CORE_DIR = `${import.meta.dir}/../../../../apps/core/src/harness`;
 const { TASKS_EXTENSION_ID_V2 } = (await import(
@@ -26,6 +36,13 @@ await mock.module("../../../../apps/core/src/shared/auth.ts", (): object => ({
     account: ACCOUNT,
   }),
 }));
+await mock.module(
+  "../../../../apps/core/src/harness/integrations.ts",
+  (): object => ({
+    ...integrationsModule,
+    listRunnableAgents: async (): Promise<AgentRecord[]> => [AGENT],
+  }),
+);
 await mock.module(
   "../../../../apps/core/src/shared/convex/runtime.ts",
   (): object => ({
@@ -71,9 +88,8 @@ function call(agentId: string): CoreRequest {
         },
       },
     }),
-    cookies: [],
     clientIp: "127.0.0.1",
-  } as CoreRequest;
+  };
 }
 
 function replayWith(started: Response, read: () => Promise<Response>): Replay {

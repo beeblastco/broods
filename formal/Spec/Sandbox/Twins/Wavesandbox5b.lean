@@ -108,19 +108,15 @@ private def httpRun (call : Json) : Prog Json := do
     Prog.throwError "Error"
       "custom sandbox token or header still carries a ${NAME} ref: refs resolve when the sandbox syncs from code, not through the API"
   let env ← Prog.effect "mergeSandboxEnv"
-    [field config "envVars", field request "envVars", field request "principal"]
+    [field config "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
   let some timeoutMs := scale (field request "timeoutSeconds") 1000
     | Prog.unsupported "a timeout that is not a number"
-  let runtime := field request "runtime"
-  let args := field request "args"
-  let withArgs := !(elems args).isEmpty
-  let payloadKeys := ["runtime", "code", "timeout_ms"] ++ (if withArgs then ["args"] else []) ++ ["env"]
   let payload := Json.mkObj
-    ([("runtime", if nullish runtime then toJson "bash" else runtime),
-      ("code", field request "code"),
-      ("timeout_ms", .num timeoutMs),
-      ("env", env),
-      ("$keys", toJson payloadKeys)] ++ (if withArgs then [("args", args)] else []))
+    [("runtime", toJson "bash"),
+     ("code", field request "code"),
+     ("timeout_ms", .num timeoutMs),
+     ("env", env),
+     ("$keys", toJson ["runtime", "code", "timeout_ms", "env"])]
   let graceValue := field seams "graceMs"
   let grace : Int := match graceValue with
     | .num n => if n.exponent == 0 then n.mantissa else execGraceMs
@@ -329,8 +325,39 @@ private structure McpServer where
   connection : Json
   remoteTools : List Json
 
+/-- `\b401\b`: a `401` with no word character on either side. -/
+private def hasWord401 (message : String) : Bool :=
+  let chars := message.toList.toArray
+  let isWord (c : Char) : Bool := c.isAlphanum || c == '_'
+  (List.range chars.size).any fun i =>
+    chars[i]? == some '4' && chars[i + 1]? == some '0' && chars[i + 2]? == some '1' &&
+      !(i > 0 && (chars[i - 1]?.map isWord).getD false) &&
+      !((chars[i + 3]?.map isWord).getD false)
+
+/-- `MCP_AUTH_FAILURE_PATTERN`, case-insensitive. -/
+private def isAuthFailure (message : String) : Bool :=
+  let lower := message.toLower
+  let has (needle : String) : Bool := (lower.splitOn needle).length > 1
+  hasWord401 lower || has "requires authorization" || has "sign in again" || has "has no connection"
+
+/-- The sign-in tool registered when a keyless HTTP server rejects the listing. -/
+private def registerSignIn (tools record context : Json) : Prog Unit := do
+  let session := field context "session"
+  let requester :=
+    match field (field session "principal") "chain" with
+    | .arr items => items[0]?.getD undef
+    | _ => undef
+  let owner :=
+    field requester "kind" == toJson "api" && field requester "keyKind" == toJson "account" &&
+      !truthy (field context "channel") &&
+      field (field session "delivery") "kind" != toJson "channel" &&
+      field (field session "policyDelivery") "kind" != toJson "channel"
+  let name ← Prog.effect "mcpToolName" [field record "name", toJson "sign_in"]
+  let tool ← Prog.effect "mcpSignInTool" [record, toJson owner]
+  Prog.setChanged s!"args.0.{str name}" (field tools (str name)) tool
+
 /-- The async body run for one configured MCP server. -/
-private def resolveMcpServer (accountId context : Json) (serverId : String) (serverConfig : Json) :
+private def resolveMcpServer (tools accountId context : Json) (serverId : String) (serverConfig : Json) :
     Prog (Option McpServer) := do
   let _ ← Prog.effect "getStorage"
   let record ← Prog.effect "getStorage().mcp.getById" [accountId, toJson serverId]
@@ -354,7 +381,16 @@ private def resolveMcpServer (accountId context : Json) (serverId : String) (ser
       !truthy allowed ||
         (elems allowed).any fun name => name.compress == (field item "name").compress
     return some ⟨serverId, serverConfig, connection, remote⟩
-  | .threw .. => return none
+  | .threw cause _ =>
+    let wrapped := field cause "$error"
+    let message := if isUndef wrapped then str cause else str (field wrapped "message")
+    if isUndef wrapped && !(cause.getStr?).isOk then
+      return ← Prog.unsupported "a listing failure that is not an Error"
+    if field record "transport" == toJson "http" && !truthy (field record "oauth") then
+      let header ← Prog.effect "authorizationHeaderName" [field record "headers"]
+      if !truthy header && isAuthFailure message then
+        registerSignIn tools record context
+    return none
   | .pending => Prog.unsupported "an MCP listing that never finished"
 
 /-- `registerMcpTools`. More than one server overlaps, which this sequential model does not cover. -/
@@ -374,7 +410,7 @@ private def registerMcpTools (call : Json) : Prog Json := do
       Prog.throwError "Error" s!"config.mcp.{first.1} requires an account-scoped session"
     if !rest.isEmpty then
       Prog.unsupported "several MCP servers resolve concurrently"
-    let server ← resolveMcpServer accountId context first.1 first.2
+    let server ← resolveMcpServer (Twin.callArg call 0) accountId context first.1 first.2
     match server with
     | none => pure undef
     | some server =>

@@ -72,14 +72,6 @@ private def currentWindow (call : Json) : Prog Json := do
       (mapSet (Twin.moduleValue call "windows") (Twin.callArg call 0) fresh)
   return fresh
 
-/-- `consumeColdStart`. The span arithmetic needs `PROCESS_START_MS`, a constant nothing records. -/
-private def consumeColdStart (call : Json) : Prog Json :=
-  if truth (Twin.moduleValue call "coldStartConsumed") ||
-      undef (Twin.moduleValue call "coldStartWindow") then
-    pure Json.null
-  else
-    Prog.unsupported "needs PROCESS_START_MS"
-
 /-- The capture of `/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/`. -/
 private def frontmatterCapture (markdown : String) : Option String :=
   let closes (rest : List Char) : Bool :=
@@ -307,7 +299,6 @@ private def core (path : String) : String := s!"apps/core/src/{path}"
 def twins : List Spec.Twin :=
   [ Twin.traced (core "harness/plan-limits.ts#currentWindow") currentWindow,
     Twin.traced (core "harness/plan-limits.ts#budgetFor") budgetFor,
-    Twin.traced (core "shared/cold-start.ts#consumeColdStart") consumeColdStart,
     Twin.traced (core "shared/skills.ts#parseSkillMarkdown") parseSkillMarkdown,
     Twin.traced (core "shared/skills.ts#isSupportedTextFile") isSupportedTextFile,
     Twin.traced (core "harness/skills.ts#ownedSkillPaths") ownedSkillPaths,

@@ -903,10 +903,9 @@ private def toCore (call : Json) : Prog Json := do
   let clientIp := if truth forwarded then
       j (((s forwarded).splitOn ",").map Js.trim |>.reverse |>.find? (· != "") |>.getD "")
     else orElse (Twin.callArg call 2) (j "")
-  let cookies := ((s (lookup "cookie")).splitOn ";").map Js.trim |>.filter (· != "")
   pure (Json.mkObj [("method", f request "method"), ("path", j path), ("search", j search),
     ("query", Json.mkObj [("$params", queryParams search)]), ("headers", Json.mkObj headers),
-    ("body", body), ("cookies", toJson cookies), ("clientIp", clientIp)])
+    ("body", body), ("clientIp", clientIp)])
 
 /-- Workers share the cursor; every item starts once, and overlapping calls settle independently. -/
 private def mapConcurrent (call : Json) : Prog Json := do

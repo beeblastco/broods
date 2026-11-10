@@ -43,7 +43,7 @@ class FakeConvexClient {
 
 await mock.module("convex/browser", () => ({ ConvexClient: FakeConvexClient }));
 
-const { configPlanesEnv, forwarderConfigFromEnv } =
+const { forwarderConfigFromEnv } =
   await import("../../../../apps/discord-forwarder/src/config.ts");
 const { watchChannelConnections } =
   await import("../../../../apps/discord-forwarder/src/connections.ts");
@@ -73,13 +73,14 @@ describe("forwarder config", () => {
   test("each plane names its deploy key", (): void => {
     process.env.BROODS_CONFIG_PLANES = PLANES;
     process.env.CONVEX_DEPLOY_KEY_DEV_ONE = "secret";
-    expect(configPlanesEnv()[0]?.deployKey).toBe("secret");
-    expect(forwarderConfigFromEnv().identifyLimit).toBe(500);
+    const config = forwarderConfigFromEnv();
+    expect(config.planes[0]?.deployKey).toBe("secret");
+    expect(config.identifyLimit).toBe(500);
   });
 
   test("a plane without its key refuses to start", (): void => {
     process.env.BROODS_CONFIG_PLANES = PLANES;
-    expect(() => configPlanesEnv()).toThrow("CONVEX_DEPLOY_KEY_DEV_ONE");
+    expect(() => forwarderConfigFromEnv()).toThrow("CONVEX_DEPLOY_KEY_DEV_ONE");
   });
 });
 

@@ -4,7 +4,6 @@ import { CloudflareSandboxExecutor } from "../../../../apps/core/src/harness/san
 import * as instanceStore from "../../../../apps/core/src/harness/sandbox/instance-store.ts";
 import type { SandboxExecutorConfig } from "../../../../apps/core/src/harness/sandbox/types.ts";
 import * as sandboxInstances from "../../../../apps/core/src/shared/convex/sandbox-instances.ts";
-import { drainInFlight } from "../../../../apps/core/src/shared/in-flight.ts";
 
 interface BridgeCall {
   method: string;
@@ -118,60 +117,6 @@ afterEach((): void => {
   for (const restore of restores.splice(0)) restore();
   delete process.env.CLOUDFLARE_SANDBOX_URL;
   delete process.env.CLOUDFLARE_SANDBOX_API_KEY;
-});
-
-describe("cloudflare prewarm", () => {
-  test("starts a reserved container ahead of use and mirrors it", async (): Promise<void> => {
-    await new CloudflareSandboxExecutor(config()).prewarm({
-      reservationKey: KEY,
-    });
-    await drainInFlight();
-
-    expect(bridge).toHaveLength(1);
-    expect(bridge[0]?.path).toBe(`/v1/sandboxes/${stored}/exec`);
-    expect(bridge[0]?.body).toMatchObject({
-      argv: ["true"],
-      timeoutMs: 30_000,
-      outputLimitBytes: 1024,
-      instance: "standard-2",
-    });
-    expect(mirrored).toEqual([`upsert ${KEY}`]);
-  });
-
-  test("does nothing for an ephemeral sandbox", async (): Promise<void> => {
-    await new CloudflareSandboxExecutor(config({ persistent: false })).prewarm({
-      reservationKey: KEY,
-    });
-
-    expect(bridge).toEqual([]);
-  });
-
-  test("does nothing without a reservation key", async (): Promise<void> => {
-    await new CloudflareSandboxExecutor(config()).prewarm({});
-
-    expect(bridge).toEqual([]);
-  });
-
-  test("does nothing when no container can be reserved without an account", async (): Promise<void> => {
-    await new CloudflareSandboxExecutor(
-      config({ controlPlane: undefined }),
-    ).prewarm({
-      reservationKey: KEY,
-    });
-
-    expect(bridge).toEqual([]);
-  });
-
-  test("mirrors nothing when the container never answered", async (): Promise<void> => {
-    execStatus = 401;
-
-    await expect(
-      new CloudflareSandboxExecutor(config()).prewarm({ reservationKey: KEY }),
-    ).rejects.toThrow("failed (401)");
-    await drainInFlight();
-
-    expect(mirrored).toEqual([]);
-  });
 });
 
 describe("cloudflare instance info", () => {

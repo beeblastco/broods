@@ -1172,8 +1172,9 @@ private def reservedEnvKeys : List String :=
 
 private def mergeSandboxEnv (call : Json) : Prog Json := do
   let account ← Prog.effect "stringRecord" [Twin.callArg call 0]
-  let principal := Twin.callArg call 2
-  let request := Twin.callArg call 1
+  let layers := Twin.callArg call 1
+  let principal := get layers "principal"
+  let request := get layers "requestEnv"
   let requestPairs := if missing request then [] else Tools.entries request
   let overrides := requestPairs.filter (!reservedEnvKeys.contains ·.1)
   let accountPairs := (Tools.entries account).filter (!identityEnvKeys.contains ·.1)
@@ -1371,10 +1372,10 @@ private def upsertSandboxInstance (call : Json) : Prog Json := do
 private def executorMethods (className : String) : Option (List String) :=
   match className with
   | "E2BSandboxExecutor" | "DaytonaSandboxExecutor" => some ["runBackground"]
-  | "VercelSandboxExecutor" => some ["runBackground", "prewarm"]
+  | "VercelSandboxExecutor" => some ["runBackground"]
   | "MicrovmSandboxExecutor" => some ["runBackground", "resume", "postReserved"]
-  | "CloudflareSandboxExecutor" => some ["prewarm"]
-  | "WorkdirSandboxExecutor" => some ["runBackground", "resume", "prewarm"]
+  | "CloudflareSandboxExecutor" => some []
+  | "WorkdirSandboxExecutor" => some ["runBackground", "resume"]
   | "HttpSandboxExecutor" | "MachineSandboxExecutor" | "WorkerSandboxExecutor" => some []
   | _ => none
 
@@ -1496,7 +1497,7 @@ private def daytonaCreateOptions (call : Json) : Prog Json := do
   let request := Twin.callArg call 1
   let options := get config "options"
   let _ ← Prog.effect "assertSnapshotBootable" [get config "controlPlane", get config "snapshot"]
-  let baseEnv ← Prog.effect "mergeSandboxEnv" [get config "envVars", get request "envVars"]
+  let baseEnv ← Prog.effect "mergeSandboxEnv" [get config "envVars"]
   let envVars ← Prog.effect "daytonaEnvVars" [config, request, baseEnv]
   let lifecycle ← Prog.effect "resolveSandboxLifecycle" [get config "lifecycle"]
   let imageOnce ← Prog.effect "configString" [get options "image"]
@@ -1523,9 +1524,6 @@ private def mountAwsS3Buckets (call : Json) : Prog Json := do
   let root := Rt.dropTrailingSlashes (text (fallback (get request "workspaceRoot") (toJson "/mnt/workspaces")))
   let _ ← Prog.effect "mountS3Bucket"
     [Twin.callArg call 0, identity, toJson s!"{root}/{text (get request "namespace")}"]
-  let skills ← Prog.effect "configString" [get options "skillsBucketName"]
-  if !truthy skills then
-    let _ ← Prog.effect "optionalEnv" [toJson "SKILLS_BUCKET_NAME"]
   return voidJson
 
 private def workdirClient (call : Json) : Prog Json := do

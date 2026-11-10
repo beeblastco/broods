@@ -218,8 +218,7 @@ private def runBackground (call : Json) : Prog Json := do
   let sandbox ← acquire cfg request
   let _ ← Prog.effect "mountAwsS3Buckets" [sandbox, request, cfg]
   runLifecycle cfg sandbox (← workDir cfg ns)
-  let given := field request "jobId"
-  let jobId ← if nullish given then Prog.effect "generateJobId" else pure given
+  let jobId := field request "jobId"
   let jobs ← jobsDir cfg ns
   let work ← workDir cfg ns
   let callback := field request "callback"
@@ -257,7 +256,7 @@ private def execute (cfg request sandbox startedAt : Json) (isPersistent : Bool)
     runLifecycle cfg sandbox (← workDir cfg (str key))
   let cwd ← Prog.effect "workspacePath" [request]
   let env ← Prog.effect "mergeSandboxEnv"
-    [field cfg "envVars", field request "envVars", field request "principal"]
+    [field cfg "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
   let response ← Prog.effect "sandbox.process.executeCommand"
     [field request "code", cwd, if isEmptyObject env then nothing else env,
      field request "timeoutSeconds"]
@@ -268,7 +267,7 @@ private def execute (cfg request sandbox startedAt : Json) (isPersistent : Bool)
   let finished ← Prog.effect "Date.now"
   return Json.mkObj
     [("ok", toJson (!exitedNonZero response)),
-     ("runtime", orElse (field request "runtime") (jsStr "bash")),
+     ("runtime", jsStr "bash"),
      ("exitCode", orElse exitCode Json.null),
      ("stdout", field stdout "value"),
      ("stderr", jsStr ""),
@@ -390,7 +389,7 @@ private def cfInstance : String → Option String
 /-- `#exec` for the warm-up command: reserved, 30 second timeout, 1 KiB of output. -/
 private def cfWarmExec (cfg id : Json) : Prog Unit := do
   let connection ← Prog.effect "cloudflareConnection"
-  let env ← Prog.effect "mergeSandboxEnv" [field cfg "envVars", nothing, nothing]
+  let env ← Prog.effect "mergeSandboxEnv" [field cfg "envVars"]
   let lifecycle ← Prog.effect "resolveSandboxLifecycle" [field cfg "lifecycle"]
   let size := match field cfg "size" with
     | .str name => name
@@ -410,33 +409,6 @@ private def cfWarmExec (cfg id : Json) : Prog Unit := do
   let text ← Prog.effect "response.text"
   let _ ← Prog.effect "parseExecResponse" [text, cfLabel]
 
-private def cfPrewarm (call : Json) : Prog Json := do
-  let cfg := config call
-  let request := Twin.callArg call 0
-  let key ← Prog.effect "sandboxReservationKey" [request]
-  if field cfg "persistent" != toJson true || !truthy key then return nothing
-  let plane := field cfg "controlPlane"
-  let id ← Prog.effect "reservePlatformSandbox" [jsStr "cloudflare", field plane "accountId", key]
-  if !truthy id then return nothing
-  cfWarmExec cfg id
-  Prog.spawn "queueMirrorWrite" [id, Json.mkObj [("$fn", jsStr "")]]
-  Prog.drain (fun label _ =>
-    if label == "arg1" then do
-      let specs ← Prog.effect "configuredSandboxSpecs" [cfg]
-      Prog.spawn "upsertSandboxInstance"
-        [plane, jsStr "cloudflare", key, id, nothing,
-         Json.mkObj (if undef specs then [] else [("specs", specs)])]
-    else Prog.unsupported s!"callback {label}") 4
-  return nothing
-
-/-- `prewarm`: a failed warm-up is dropped. -/
-private def wdPrewarm (call : Json) : Prog Json := do
-  let request := Twin.callArg call 0
-  if !(← Wavesandbox8a.persistent call request) then return nothing
-  let _ ← catching (do let _ ← Wavesandbox8a.acquireWithState call request; pure ())
-    fun _ => pure ()
-  return nothing
-
 private def source (name : String) : String :=
   "apps/core/src/harness/sandbox/daytona-executor.ts#DaytonaSandboxExecutor." ++ name
 
@@ -453,8 +425,6 @@ def twins : List Spec.Twin :=
    Twin.traced (source "stopJob") stopJob,
    Twin.traced (wdSource "jobStatus") wdJobStatus,
    Twin.traced (wdSource "jobLogs") wdJobLogs,
-   Twin.traced (wdSource "stopJob") wdStopJob,
-   Twin.traced (wdSource "prewarm") wdPrewarm,
-   Twin.traced (cfSource "prewarm") cfPrewarm]
+   Twin.traced (wdSource "stopJob") wdStopJob]
 
 end Spec.Sandbox.Wave11

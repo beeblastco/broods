@@ -156,12 +156,13 @@ private def listMcpTools (call : Json) : Prog Json := do
   return field listing "tools"
 
 /-- `makeClient` inside `connectClient`. -/
-private def makeClient (connection onCpuUsec discover : Json) (info : Json) : Prog Json := do
+private def makeClient (connection onCpuUsec prior : Json) (info : Json) : Prog Json := do
   let record := field connection "record"
   let hosted := field record "transport" == toJson "hosted"
   let headers ← Prog.effect "mcpRequestHeaders" [connection]
   let fetcher ←
     if hosted then Prog.effect "hostedMcpFetch" [connection, onCpuUsec]
+    else if truthy (field record "connected") then Prog.effect "mcpConnectionFetch" [record]
     else pure (fnValue "publicHostFetch")
   let url := if hosted then toJson "http://mcp-hosted.internal/mcp" else field record "url"
   let transport ← Prog.effect "new StreamableHTTPClientTransport"
@@ -169,12 +170,11 @@ private def makeClient (connection onCpuUsec discover : Json) (info : Json) : Pr
      obj [("requestInit", obj [("headers", headers)]), ("fetch", fetcher)]]
   let client ← Prog.effect "new Client"
     [info,
-     obj [("supportedProtocolVersions", .arr #[toJson "2026-07-28"]),
-          ("versionNegotiation", obj [("mode", obj [("pin", toJson "2026-07-28")])])]]
-  let connectOptions :=
-    if truthy discover then
-      obj [("prior", obj [("kind", toJson "modern"), ("discover", discover)])]
-    else obj []
+     if hosted then
+       obj [("supportedProtocolVersions", .arr #[toJson "2026-07-28"]),
+            ("versionNegotiation", obj [("mode", obj [("pin", toJson "2026-07-28")])])]
+     else obj [("versionNegotiation", obj [("mode", toJson "auto")])]]
+  let connectOptions := if truthy prior then obj [("prior", prior)] else obj []
   let _ ← Prog.effect "client.connect" [transport, connectOptions]
   return client
 
@@ -199,7 +199,7 @@ private def connectClient (call : Json) : Prog Json := do
       let now ← Prog.effect "Date.now"
       if numGt (field entry "expiresAt") now then pure (true, cache)
       else pure (false, mapDelete cache key)
-  let prior := if fresh then (cached.map (field · "discover")).getD Twin.undefinedJson
+  let prior := if fresh then (cached.map (field · "prior")).getD Twin.undefinedJson
     else Twin.undefinedJson
   let (client, cache) ←
     Prog.catchFail
@@ -212,12 +212,15 @@ private def connectClient (call : Json) : Prog Json := do
           let made ← makeClient connection onCpuUsec Twin.undefinedJson info
           pure (made, mapDelete cache key))
   let discover ← Prog.effect "client.getDiscoverResult"
-  if truthy discover && (mapGet cache key).isNone then
+  if (mapGet cache key).isNone then
     let _ ← Prog.effect "pruneCache" [cache]
     let now ← Prog.effect "Date.now"
     let ttl ← Prog.effect "clampTtlMs" [field discover "ttlMs"]
+    let remembered :=
+      if truthy discover then obj [("kind", toJson "modern"), ("discover", discover)]
+      else obj [("kind", toJson "legacy")]
     Prog.setState "module.discoverCache"
-      (mapSet cache key (obj [("discover", discover), ("expiresAt", addNumbers now ttl)]))
+      (mapSet cache key (obj [("prior", remembered), ("expiresAt", addNumbers now ttl)]))
   else if cache != Twin.moduleValue call "discoverCache" then
     Prog.setState "module.discoverCache" cache
   return client
@@ -433,20 +436,22 @@ private def requestHeaderPairs (headers : Json) : Json :=
 /-- `handleMcpRequest`. The factory runs inside `mcp.fetch`, entered as a callback. -/
 private def handleMcpRequest (call : Json) : Prog Json := do
   let request := Twin.callArg call 0
-  let auth ← Prog.effect "resolveBearerAuth" [field request "headers"]
-  if !truthy auth || field auth "kind" == toJson "admin" then
-    return ← Prog.effect "errorResponse" [toJson (401 : Nat), toJson "Unauthorized"]
-  let caller := obj [("auth", auth), ("request", request), ("replay", Twin.callArg call 1)]
+  let auth ← Prog.effect "mcpAuth" [request]
+  if !undef (field auth "$response") then return auth
+  let caller := obj [("auth", auth), ("request", request), ("replay", fnValue "replay")]
   let mcp ← Prog.effect "createMcpHandler" [fnValue "", obj [("legacy", toJson "reject")]]
   let _ := mcp
   let incoming := obj [("$request", obj [("method", field request "method"),
     ("url", toJson "http://core/mcp"), ("headers", requestHeaderPairs (field request "headers")),
     ("body", if field request "method" == toJson "GET" || field request "method" == toJson "HEAD"
       then Json.null else field request "body")])]
-  Prog.drain (fun label _ =>
+  Prog.drain (fun label args =>
     match label with
     | "arg0" => do
       let _ ← Prog.attempt "createTaskServer" [caller]
+      pure ()
+    | "replay" => do
+      let _ ← Prog.attempt "replay" [Twin.arg args 0, auth]
       pure ()
     | other => Prog.unsupported s!"callback {other}") 64
   let outcome ← Prog.attempt "mcp.fetch" [incoming]

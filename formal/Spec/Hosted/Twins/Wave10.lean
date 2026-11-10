@@ -145,10 +145,12 @@ private def setHostedMcpSendBatchForTests (call : Json) : Prog Json := do
     Prog.setState "module.unloadableOnWorker" (Spec.Channels.Wavechannels8a.mapValue [])
   return Twin.undefinedJson
 
-/-- `clearMcpOauthTokens`: the token cache is emptied. -/
+/-- `clearMcpOauthTokens`: the token cache and the rotated refresh tokens are emptied. -/
 private def clearMcpOauthTokens (call : Json) : Prog Json := do
   if !(mapPairs (Twin.moduleValue call "tokenCache")).isEmpty then
     Prog.setState "module.tokenCache" (Spec.Channels.Wavechannels8a.mapValue [])
+  if !(mapPairs (Twin.moduleValue call "rotatedRefreshTokens")).isEmpty then
+    Prog.setState "module.rotatedRefreshTokens" (Spec.Channels.Wavechannels8a.mapValue [])
   return Twin.undefinedJson
 
 /-- This file's twins. -/

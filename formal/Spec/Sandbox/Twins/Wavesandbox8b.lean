@@ -303,7 +303,7 @@ private def vercelRun (call : Json) : Prog Json := do
       vercelLifecycle config sandbox (string key)
       vercelKeepAlive self sandbox seconds
     let env ← Prog.effect "mergeSandboxEnv"
-      [field config "envVars", field request "envVars", field request "principal"]
+      [field config "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
     let result ← Prog.effect "sandbox.runCommand" [Json.mkObj
       ([("cmd", toJson "bash"), ("args", toJson [toJson "-lc", field request "code"])] ++
         (if truthy cwd then [("cwd", cwd)] else []) ++
@@ -327,10 +327,9 @@ private def vercelRun (call : Json) : Prog Json := do
   let err ← Prog.effect "truncateText" [rawErr, limit]
   let finishedAt := intOf (← Prog.effect "Date.now")
   let exitCode := field result "exitCode"
-  let runtime := field request "runtime"
   return Json.mkObj
     [("ok", toJson (exitCode == toJson (0 : Nat))),
-     ("runtime", if isUndef runtime || runtime == .null then toJson "bash" else runtime),
+     ("runtime", toJson "bash"),
      ("exitCode", exitCode), ("stdout", field out "value"), ("stderr", field err "value"),
      ("durationMs", toJson (finishedAt - startedAt)),
      ("truncated", toJson (truthy (field out "truncated") || truthy (field err "truncated"))),
@@ -387,18 +386,6 @@ private def vercelStopJob (call : Json) : Prog Json := do
   let stdout ← vercelShell config sandbox (string script) none []
   Prog.effect "parseJobStatus" [field request "jobId", stdout]
 
-private def vercelPrewarm (call : Json) : Prog Json := do
-  let self := Twin.self call
-  let config := Twin.field self "#config"
-  let request := Twin.callArg call 0
-  if !(← vercelPersistent config request) then return Twin.undefinedJson
-  if isUndef (Twin.field self "#sandboxClass") then
-    Prog.setState "self.#sandboxClass" (Json.mkObj [("$opaque", toJson "Promise")])
-  let base := merged (Json.mkObj [("code", toJson "")]) (spread request)
-  let _ ← vercelAcquire self config
-    (merged base [("timeoutSeconds", toJson (30 : Nat)), ("outputLimitBytes", toJson (1024 : Nat))])
-  return Twin.undefinedJson
-
 private def vercelRunBackground (call : Json) : Prog Json := do
   let self := Twin.self call
   let config := Twin.field self "#config"
@@ -414,8 +401,7 @@ private def vercelRunBackground (call : Json) : Prog Json := do
   vercelEnsureMount self config sandbox request true
   let quoted ← Prog.effect "shellQuote" [toJson workDir]
   let _ ← vercelShell config sandbox ("mkdir -p " ++ string quoted) (some "/") []
-  let given := field request "jobId"
-  let jobId ← if isUndef given || given == .null then Prog.effect "generateJobId" else pure given
+  let jobId := field request "jobId"
   vercelKeepAlive self sandbox seconds
   vercelLifecycle config sandbox ns
   vercelKeepAlive self sandbox seconds
@@ -451,7 +437,6 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.jobStatus" vercelJobStatus,
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.jobLogs" vercelJobLogs,
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.stopJob" vercelStopJob,
-   Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.prewarm" vercelPrewarm,
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#commandError" commandError,
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.run" vercelRun,
    Twin.traced "apps/cloudflare-worker/src/vfs-state.ts#decodeState" decodeState,

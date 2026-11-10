@@ -382,23 +382,24 @@ def stopIngressRecovery (call : Json) : Prog Json := do
 /-- `CACHE_TTL_MS` in `connections.ts`. -/
 private def connectionCacheTtl : Nat := 300000
 
-/-- `loadFresh`: the stored connection, refreshed if near expiry or already refused. -/
+/-- The call-site text of the digest step in `acceptIngress`, whitespace collapsed. -/
+private def digestLabel : String :=
+  "createHash(\"sha256\") .update( JSON.stringify({ events: candidate.events, requestedMode: candidate.requestedMode, deliveryKind: candidate.delivery.kind, activeOwnerOnly: candidate.activeOwnerOnly, expectedOwnerTaskId: candidate.expectedOwnerTaskId, ownerTaskId: candidate.ownerTaskId, configRef: candidate.configRef, ephemeralSystem: candidate.ephemeralSystem, }), ) .digest"
+
+/-- `loadFresh`: the stored tokens, refreshed if near expiry or already refused. -/
 def loadFresh (call : Json) : Prog Json := do
-  let accountId := Twin.callArg call 0
-  let kind := Twin.callArg call 1
-  let key := Json.str s!"{text accountId}:{text kind}"
-  let _ ← Prog.effect "getStorage"
-  let stored ← Prog.effect "getStorage().connections.load" [accountId, kind]
+  let source := Twin.callArg call 0
+  let key := field source "key"
+  let stored ← Prog.effect "source.load"
   if !truthy stored then
     let cache := Twin.moduleValue call "cache"
     Waveruns8a.changed "module.cache" cache (Waveruns8a.mapDelete cache key)
-    Prog.throwError "Error"
-      s!"This account has no {text kind} connection. Run `broods connect {text kind}` to sign in."
+    Prog.throwError "Error" (text (field source "missing"))
   let soon ← Prog.effect "expiresSoon" [stored]
   let refused := mapGet (Twin.moduleValue call "rejected") key == some (field stored "accessToken")
   let connection ←
     if truthy soon || refused then
-      Prog.effect "refreshAndSave" [accountId, kind, stored]
+      Prog.effect "refreshAndSave" [source, stored]
     else pure stored
   let now ← Prog.effect "Date.now"
   let cache := Twin.moduleValue call "cache"
@@ -411,9 +412,8 @@ def loadFresh (call : Json) : Prog Json := do
 /-- `accessToken`: from the cache while young, else a shared load. Joining another caller's load
 yields a value only the promise holds, so that call is out of the model. -/
 def accessToken (call : Json) : Prog Json := do
-  let accountId := Twin.callArg call 0
-  let kind := Twin.callArg call 1
-  let key := Json.str s!"{text accountId}:{text kind}"
+  let source := Twin.callArg call 0
+  let key := field source "key"
   if let some cached := mapGet (Twin.moduleValue call "cache") key then
     let now ← Prog.effect "Date.now"
     if nat now - nat (field cached "loadedAt") < connectionCacheTtl then
@@ -422,7 +422,7 @@ def accessToken (call : Json) : Prog Json := do
         return field (field cached "connection") "accessToken"
   if (mapGet (Twin.moduleValue call "inFlight") key).isSome then
     Prog.unsupported "joined another caller's load"
-  let connection ← Prog.effect "loadFresh" [accountId, kind]
+  let connection ← Prog.effect "loadFresh" [source]
   return field connection "accessToken"
 
 /-- Ingress limits from `ingress.ts`, in the order `acceptIngress` sends them. -/
@@ -458,7 +458,9 @@ def acceptIngress (call : Json) : Prog Json := do
      ("deliveryKind", field delivery "kind"), ("activeOwnerOnly", look "activeOwnerOnly"),
      ("expectedOwnerTaskId", look "expectedOwnerTaskId"), ("ownerTaskId", look "ownerTaskId"),
      ("configRef", look "configRef"), ("ephemeralSystem", look "ephemeralSystem")])
-  let digest ← Prog.effect "sha256Hex" [toJson digestSource]
+  let _ ← Prog.effect "createHash" [toJson "sha256"]
+  let _ ← Prog.effect "createHash(\"sha256\") .update" [toJson digestSource]
+  let digest ← Prog.effect digestLabel [toJson "hex"]
   let target := look "channelTarget"
   let source := field delivery "source"
   let channelPart : List (String × Json) :=
@@ -580,23 +582,6 @@ def directAdmissionResponse (call : Json) : Prog Json := do
       ("requestedMode", field event "requestedMode")] ++
      (if truthy statusUrl then [("statusUrl", statusUrl)] else []))]
 
-/-- `asyncAdmissionResponse`. -/
-def asyncAdmissionResponse (call : Json) : Prog Json := do
-  let event := Twin.callArg call 0
-  let admission := Twin.callArg call 1
-  if let some (status, message, code) := refusal (field admission "outcome") then
-    return ← refusalJson status message code
-  let publicEventId ← Prog.effect "publicEventIdFromScoped" [field admission "eventId", event]
-  let runId := orElse (field admission "runId") (field event "runId")
-  let statusUrl ← Prog.effect "directStatusUrl" [Json.mkObj [("runId", runId)]]
-  Prog.effect "acceptedAsyncResponse"
-    [runId, orElse statusUrl (field event "statusUrl"),
-     Json.mkObj
-       [("publicEventId", publicEventId),
-        ("publicConversationKey", field event "publicConversationKey"),
-        ("requestedMode", field event "requestedMode")],
-     orElse (field admission "status") "queued"]
-
 /-- `publicEventIdFromScoped`. -/
 def publicEventIdFromScoped (call : Json) : Prog Json :=
   let event := Twin.callArg call 1
@@ -679,7 +664,6 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/harness/continuation.ts#waitUntilMs" waitUntilMs,
    Twin.traced "apps/core/src/harness/responses.ts#natsStartResponse" natsStartResponse,
    Twin.traced "apps/core/src/harness/responses.ts#directAdmissionResponse" directAdmissionResponse,
-   Twin.traced "apps/core/src/harness/responses.ts#asyncAdmissionResponse" asyncAdmissionResponse,
    Twin.traced "apps/core/src/harness/responses.ts#publicEventIdFromScoped" publicEventIdFromScoped,
    Twin.traced "apps/core/src/harness/async-tool-result.ts#bindAsyncToolResultSandbox" bindAsyncToolResultSandbox,
    Twin.traced "apps/core/src/harness/async-tool-result.ts#markAsyncToolResultCompleted" markAsyncToolResultCompleted,

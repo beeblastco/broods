@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { NatsConnection } from "nats.ws";
 
@@ -7,6 +9,12 @@ import {
   type AgentTestGatewayData,
 } from "../../../../apps/gateway/src/agent.ts";
 import type { GatewayLimits } from "../../../../apps/gateway/src/utils.ts";
+
+// The gateway keys a cursor by the attach's event id: the first 16 base64url chars of its sha256.
+const EVENT_KEY = createHash("sha256")
+  .update("event")
+  .digest("base64url")
+  .slice(0, 16);
 
 type AgentSocket = Bun.ServerWebSocket<AgentTestGatewayData>;
 type Frame = Record<string, unknown>;
@@ -306,7 +314,7 @@ describe("attachCoreStream", (): void => {
         retainedSubject: retained,
       });
       attach(socket, async (): Promise<NatsConnection> => connection(fake), {
-        afterCursor: `ws-responses:${GENERATION}:${sequence}`,
+        afterCursor: `ws-responses:${GENERATION}:${sequence}:${EVENT_KEY}`,
       });
       await until((): boolean => frames.length > 0);
 
@@ -331,7 +339,7 @@ describe("attachCoreStream", (): void => {
         ]),
     });
     attach(socket, async (): Promise<NatsConnection> => connection(fake), {
-      afterCursor: `ws-responses:${GENERATION}:10`,
+      afterCursor: `ws-responses:${GENERATION}:10:${EVENT_KEY}`,
     });
     await until((): boolean =>
       frames.some((frame): boolean => {

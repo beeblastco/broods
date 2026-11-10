@@ -28,7 +28,7 @@ external	^matcher\.match$	Glob match; the trace checks each candidate and the tw
 external	^(getHarnessPublicUrl|requireSecretsEnv|sealMediaTicket)$	Configuration and ticket sealing; the trace checks the sealed payload and secret.
 external	^executor \.run$	Sandbox provider run; the trace checks the whole request and the result is returned unchanged.
 external	^(runSandboxOn|resolveSandboxSpecs|toErrorMessage|options\?\.onSandboxCpu)$	Traced helper or formatter; the trace checks the arguments.
-external	^(resolveWorkspace|workspaceAttachment|channelAttachmentName|contentTypeForPath|toolError|toolText)$	Tool helpers; the trace checks their inputs and passes their answers through.
+external	^(resolveWorkspace|workspaceAttachment|channelAttachmentName|contentTypeForPath|toolError)$	Tool helpers; the trace checks their inputs and passes their answers through.
 external	^(sandboxConfigs|deleteSandboxInstance|claimSandboxInstance|removeSandboxInstance|releaseOnProvider)$	Persistence and provider release; the trace checks each call and its args.
 opaque	Glob	Bun glob matcher token, used only through match.
 opaque	MicrovmHarnessSession	Session handle returned unchanged.

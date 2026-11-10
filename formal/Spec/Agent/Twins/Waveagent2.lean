@@ -627,15 +627,6 @@ private def recordUsage (call : Json) : Prog Json := do
     [Twin.callArg call 0, Twin.callArg call 1, Twin.callArg call 2]
   Prog.effect "waitUntil" [Json.mkObj [("$opaque", toJson "Promise")]]
 
-private def recordTaskUsage (call : Json) : Prog Json :=
-  Prog.catchFail
-    (do
-      let storage ← Prog.effect "getStorage"
-      if undef (field (field storage "taskUsage") "record") then return Twin.undefinedJson
-      let _ ← Prog.effect "getStorage().taskUsage.record" [Twin.callArg call 0]
-      return Twin.undefinedJson)
-    (fun _ => pure Twin.undefinedJson)
-
 private def hookMutableFields (event : String) : List String :=
   match event with
   | "agent.started" => ["system", "messages"]
@@ -858,7 +849,6 @@ private def moreTwins : List Twin :=
    traced limits "planRefusalResponse" planRefusalResponse,
    traced limits "claimWarning" claimWarning,
    traced limits "recordUsage" recordUsage,
-   traced "shared/telemetry.ts" "recordTaskUsage" recordTaskUsage,
    traced hooks "sanitizeHookResult" sanitizeHookResult,
    traced hooks "sanitizeHookState" sanitizeHookState,
    traced hooks "runCodeHook" runCodeHook,
@@ -1036,7 +1026,6 @@ def twins : List Twin :=
    { source := "apps/core/src/harness/compaction.ts#stringifyMessageContent", run := fun args => match Twin.arg args 0 with | .str s => toJson s | _ => Twin.unsupported "JSON property insertion order is not retained by Lean Json" },
    pureTwin "harness/ai-sdk-harness/provider.ts" "resolveHarnessProviderBaseUrl" (fun args => fallback (field (Twin.arg args 0) "base_url") (field (Twin.arg args 0) "baseURL")),
    pureTwin "shared/sandbox.ts" "resolveSandboxLifecycle" resolveSandboxLifecycle,
-   pureTwin "shared/sandbox.ts" "workspaceNamespacePrefix" (fun args => Twin.arg args 0),
    pureTwin "harness/ai-sdk-harness/adapters/index.ts" "harnessSteersMidTurn" (fun args => toJson (["claude-code", "codex", "opencode", "pi"].contains (text (Twin.arg args 0)))),
    pureTwin "harness/ai-sdk-harness/adapters/index.ts" "harnessSessionParking" (fun args => toJson (if Twin.arg args 0 == toJson "deepagents" then "detach" else "stop")),
    pureTwin "harness/ai-sdk-harness/adapters/index.ts" "harnessSharesSandbox" (fun args => toJson (Twin.arg args 0 == toJson "pi")),

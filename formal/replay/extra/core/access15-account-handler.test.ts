@@ -113,11 +113,10 @@ afterEach((): void => {
 });
 
 describe("handleAccountRequest", (): void => {
-  test("answers the health probe without auth", async (): Promise<void> => {
+  test("refuses the root path without auth", async (): Promise<void> => {
     const response = await handler(request("GET", "/", undefined, {}));
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ok" });
+    expect(response.status).toBe(401);
   });
 
   test("answers an unknown account delete with 404", async (): Promise<void> => {

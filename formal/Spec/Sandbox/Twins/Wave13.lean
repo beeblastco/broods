@@ -553,8 +553,12 @@ private def whileWarming (id : Json) (budgetMs : Int) (attempt : M Warm) : M Jso
   unsupported "more warm-up attempts than the model allows"
 
 /-- `#sandboxEnvVars`. -/
-private def sandboxEnv (cfg envVars principal : Json) : M Json :=
-  effect "mergeSandboxEnv" [field cfg "envVars", envVars, principal]
+private def sandboxEnv (cfg layers : Json) : M Json :=
+  effect "mergeSandboxEnv" [field cfg "envVars", layers]
+
+/-- One layer object; a key whose value is undefined is left out. -/
+private def envLayer (key : String) (value : Json) : Json :=
+  Json.mkObj (if value == undef then [] else [(key, value)])
 
 /-- `#reportBurst`. -/
 private def reportBurst (cfg id burst : Json) : M Unit := do
@@ -588,7 +592,7 @@ private def exec (cfg id endpoint payload : Json) (budgetMs : Int := warmupBudge
 private def shell (cfg id endpoint : Json) (script : String) (timeoutSeconds : Int := 60)
     (budgetMs : Int := warmupBudgetMs) (extraEnv : Json := undef) (home : Json := undef) :
     M (Json × Json × Json) := do
-  let merged ← sandboxEnv cfg undef undef
+  let merged ← sandboxEnv cfg undef
   let homeVars ← effect "homeEnv" [home]
   let payload := ordered
     [("runtime", toJson "bash"), ("code", toJson script), ("timeout_ms", toJson (timeoutSeconds * 1000)),
@@ -870,15 +874,13 @@ private def execPayload (cfg request : Json) : M Json := do
     if truthy (field request "namespace") then
       pure [("namespace", ← effect "microvmLocalNamespace" [field request "namespace"])]
     else pure []
-  let merged ← sandboxEnv cfg (field request "envVars") (field request "principal")
+  let merged ← sandboxEnv cfg (envLayer "principal" (field request "principal"))
   let homeVars ← effect "homeEnv" [home]
-  let args := items (field request "args")
   return ordered
-    ([("runtime", orElse (field request "runtime") (toJson "bash")), ("code", field request "code")] ++
+    ([("runtime", toJson "bash"), ("code", field request "code")] ++
      localNs ++
      (if truthy (field request "workspaceRoot") then [("workspace_root", field request "workspaceRoot")] else []) ++
      [("timeout_ms", toJson (intOf (field request "timeoutSeconds") * 1000))] ++
-     (if args.isEmpty then [] else [("args", field request "args")]) ++
      [("env", ordered (spreadAll [merged, homeVars]))])
 
 /-- `#execReserved`: a run on a cached VM, or nothing when the cache was stale. -/
@@ -999,7 +1001,7 @@ def runHarnessCommand (call : Json) : Prog Json :=
     let cfg := cfgOf call
     let request := Twin.callArg call 0
     abortCheck request
-    let merged ← sandboxEnv cfg (field request "env") undef
+    let merged ← sandboxEnv cfg (envLayer "requestEnv" (field request "env"))
     let homeVars ← effect "homeEnv" [toJson (← workDirOf cfg (str (field request "reservationKey")))]
     let seconds := intOf (orElse (field request "timeoutSeconds")
       (orElse (field cfg "timeout") (toJson (120 : Nat))))
@@ -1333,7 +1335,7 @@ def runBackground (call : Json) : Prog Json :=
     let workDir ← workDirOf cfg (← workspaceKey cfg request)
     prepareWorkspaceMount cfg request acquired workDir
     runLifecycle cfg acquired.id acquired.endpoint workDir
-    let jobId ← if nullish (field request "jobId") then effect "generateJobId" [] else pure (field request "jobId")
+    let jobId := field request "jobId"
     let callback := field request "callback"
     let script ← effect "launchScript"
       [toJson (← jobsDirOf cfg (str key)), jobId, toJson workDir, field request "code",

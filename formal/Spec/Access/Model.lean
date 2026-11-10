@@ -67,8 +67,12 @@ def routeMatches (m path : String) (r : Route) : Bool :=
     | "" :: "v1" :: "webhooks" :: xs => xs != [] && m == "GET"
     | _ => false
   | .webhooks => match p with | "" :: "v1" :: "webhooks" :: xs => xs != [] | _ => false
-  | .media => match p with | "" :: "v1" :: "media" :: xs => xs != [] && ["GET", "HEAD"].contains m | _ => false
-  | .core => (normalized path) == "/mcp" || (match p with | "" :: "v1" :: _ => true | _ => false)
+  | .media => match p with
+    | "" :: "v1" :: "media" :: xs => xs != [] && ["GET", "HEAD"].contains m
+    | ["", "v1", "mcp-connections", "callback"] => m == "GET"
+    | _ => false
+  | .core => (normalized path) == "/mcp" || (normalized path) == "/.well-known/oauth-protected-resource" ||
+      (normalized path) == "/.well-known/oauth-protected-resource/mcp" || (match p with | "" :: "v1" :: _ => true | _ => false)
 
 def routeOrder : List Route := [.health, .sockets, .downloads, .config, .secretWebhooks, .webhooks, .media, .core]
 

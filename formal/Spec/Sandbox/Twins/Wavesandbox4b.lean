@@ -362,7 +362,7 @@ private def machineExecutorRun (call : Json) : Prog Json := do
   let id ← Prog.effect "crypto.randomUUID"
   let cwd ← Prog.effect "configString" [field (field cfg "options") "cwd"]
   let env ← Prog.effect "mergeSandboxEnv"
-    [field cfg "envVars", field request "envVars", field request "principal"]
+    [field cfg "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
   let seconds := field request "timeoutSeconds"
   let some whole := wholeNumber seconds | Prog.unsupported "a fractional timeout"
   let frame := obj
@@ -373,10 +373,9 @@ private def machineExecutorRun (call : Json) : Prog Json := do
   let limit := field request "outputLimitBytes"
   let stdout ← Prog.effect "truncateText" [field reply "stdout", limit]
   let stderr ← Prog.effect "truncateText" [field reply "stderr", limit]
-  let runtime := field request "runtime"
   return Json.mkObj
     [("ok", toJson (field reply "exitCode" == toJson (0 : Nat))),
-     ("runtime", if nullish runtime then jsStr "bash" else runtime),
+     ("runtime", jsStr "bash"),
      ("exitCode", field reply "exitCode"), ("stdout", field stdout "value"),
      ("stderr", field stderr "value"), ("durationMs", field reply "durationMs"),
      ("timedOut", field reply "timedOut"),
@@ -451,10 +450,9 @@ private def workerExec (cfg request : Json) (id : String) (persist : Bool) : Pro
       let connection ← Prog.effect "workerConnection"
       let cwd ← Prog.effect "requiredWorkspacePath" [request, jsStr "/workspace"]
       let env ← Prog.effect "mergeSandboxEnv"
-        [field cfg "envVars", field request "envVars", field request "principal"]
-      let args := field request "args"
+        [field cfg "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
       let body := Json.mkObj
-        [("script", field request "code"), ("args", if nullish args then .arr #[] else args),
+        [("script", field request "code"), ("args", .arr #[]),
          ("cwd", cwd), ("env", env), ("timeoutMs", toJson timeoutMs),
          ("outputLimitBytes", toJson (minNat limit 1048576)),
          ("enableInternet", toJson (field (field cfg "network") "mode" == jsStr "allow-all")),
@@ -578,7 +576,7 @@ private def e2bRun (call : Json) : Prog Json := do
   let answer ← Prog.catchFail
     (do
       let envs ← Prog.effect "mergeSandboxEnv"
-        [field cfg "envVars", field request "envVars", field request "principal"]
+        [field cfg "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
       let result ← Prog.effect "sandbox.commands.run" [field request "code",
         Json.mkObj [("timeoutMs", toJson (seconds * 1000)), ("envs", envs)]]
       let limit := field request "outputLimitBytes"
@@ -590,11 +588,10 @@ private def e2bRun (call : Json) : Prog Json := do
       let now ← Prog.effect "Date.now"
       let exitCode := field result "exitCode"
       let code := if nullish exitCode then Json.null else exitCode
-      let runtime := field request "runtime"
       let elapsed := (now.getInt?.toOption.getD 0) - (startedAt.getInt?.toOption.getD 0)
       pure (Json.mkObj
         [("ok", toJson (code == toJson (0 : Nat))),
-         ("runtime", if nullish runtime then jsStr "bash" else runtime),
+         ("runtime", jsStr "bash"),
          ("exitCode", code), ("stdout", field stdout "value"), ("stderr", field stderr "value"),
          ("durationMs", toJson elapsed),
          ("truncated", toJson (truthy (field stdout "truncated") || truthy (field stderr "truncated"))),
@@ -611,10 +608,9 @@ private def e2bRunBackground (call : Json) : Prog Json := do
   if !(← persistent cfg request) then
     return ← fail "background jobs require a persistent e2b sandbox reservation key"
   let sandbox ← e2bAcquire cfg request
-  let given := field request "jobId"
-  let jobId ← if nullish given then Prog.effect "generateJobId" else pure given
+  let jobId := field request "jobId"
   let command ← Prog.effect "e2bBackgroundCommand" [request, jobId]
-  let merged ← Prog.effect "mergeSandboxEnv" [field cfg "envVars", field request "envVars"]
+  let merged ← Prog.effect "mergeSandboxEnv" [field cfg "envVars"]
   let callback ← Prog.effect "callbackEnv" [field request "callback"]
   let some seconds := wholeNumber (field request "timeoutSeconds")
     | Prog.unsupported "a fractional timeout"

@@ -105,12 +105,10 @@ private def drainRoute : Nat → Prog Unit
         Prog.catchFail (handleRouteCallback label args) (fun _ => pure ()) |>.bind
           fun _ => drainRoute limit
 
-/-- `handleRequest`: picks a worker, an internal path, or the public router. -/
+/-- `handleRequest`: picks a worker, an internal path, an MCP path, or the public router. -/
 def handleRequest (call : Json) : Prog Json := do
   let event := Twin.callArg call 0
   let context := Twin.callArg call 1
-  let now ← Prog.effect "Date.now"
-  let _ ← Prog.effect "markHandlerEntry" [now]
   if truthy (← Prog.effect "isAsyncWorkerInvocation" [event]) then
     let _ ← Prog.effect "handleAsyncWorkerRequest" [field event "event", context]
     return noContent
@@ -125,8 +123,19 @@ def handleRequest (call : Json) : Prog Json := do
     return ← Prog.effect "handleCronHttpRequest" [event]
   if path == .str "/v1/apply-runs" then
     return ← Prog.effect "handleApplyRunRequest" [event]
+  if truthy (← Prog.effect "routesToMcpConnection" [path]) then
+    return ← Prog.effect "handleMcpConnectionRequest" [event]
+  if truthy (← Prog.effect "routesToProtectedResource" [← Prog.effect "normalizePath" [path]]) then
+    return ← Prog.effect "handleProtectedResourceRequest"
   if (← Prog.effect "normalizePath" [path]) == .str "/mcp" then
     return ← Prog.effect "handleMcpRequest" [event, anon]
+  Prog.effect "routeCoreRequest" [event, context]
+
+/-- `routeCoreRequest`: hands the request to the public router with the route handlers. -/
+def routeCoreRequest (call : Json) : Prog Json := do
+  let event := Twin.callArg call 0
+  let context := Twin.callArg call 1
+  let authResolver := Twin.callArg call 2
   let waitUntil := field context "waitUntil"
   let bound ←
     if truthy waitUntil then
@@ -141,7 +150,8 @@ def handleRequest (call : Json) : Prog Json := do
      ("handleChannelRequest", named "handleChannelRequest"),
      ("handleChannelContext", named "handleChannelContext")]
   let options := Json.mkObj
-    ([("directApiEnabled", toJson true), ("cacheAgentLists", toJson true)] ++ bound)
+    ([("directApiEnabled", toJson true), ("cacheAgentLists", toJson true)] ++
+      (if truthy authResolver then [("authResolver", anon)] else []) ++ bound)
   drainRoute callbackLimit
   let routed ← Prog.attempt "routeIncomingEvent" [event, handlers, options]
   match routed with
@@ -326,7 +336,7 @@ def admitChannelMessage (call : Json) : Prog Json := do
           ("configRef", Json.mkObj
             [("channel", spread channelTarget [("channelName", channelName)])]),
           ("channelTarget", channelTarget)]]
-  let publicKey ← Prog.effect "eventPublicConversationKey" [conversationKey, accountId, agentId]
+  let publicKey ← Prog.effect "publicConversationKeyFromScoped" [conversationKey, accountId, agentId]
   let scope := obj
     [("accountId", accountId),
      ("agentId", agentId),
@@ -371,8 +381,8 @@ def admitChannelMessage (call : Json) : Prog Json := do
 
 /-- This author's twins. -/
 def twins : List Spec.Twin :=
-  [Twin.traced "apps/core/src/shared/cold-start.ts#markHandlerEntry" (fun _ => pure Twin.undefinedJson),
-   Twin.traced "apps/core/src/harness/handler.ts#handleRequest" handleRequest,
+  [Twin.traced "apps/core/src/harness/handler.ts#handleRequest" handleRequest,
+   Twin.traced "apps/core/src/harness/handler.ts#routeCoreRequest" routeCoreRequest,
    Twin.traced "apps/core/src/harness/handler.ts#handleScheduledCron" handleScheduledCron,
    Twin.traced "apps/core/src/harness/handler.ts#directTurnResponse" directTurnResponse,
    Twin.traced "apps/core/src/harness/handler.ts#admitChannelMessage" admitChannelMessage]

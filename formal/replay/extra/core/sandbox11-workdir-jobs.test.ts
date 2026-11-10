@@ -191,30 +191,6 @@ describe("workdir job calls", () => {
   });
 });
 
-describe("workdir prewarm", () => {
-  test("does nothing for an ephemeral sandbox", async (): Promise<void> => {
-    await new WorkdirSandboxExecutor(config({ persistent: false })).prewarm({
-      reservationKey: KEY,
-    });
-
-    expect(calls).toEqual([]);
-  });
-
-  test("creates the reserved sandbox ahead of use", async (): Promise<void> => {
-    await new WorkdirSandboxExecutor(config()).prewarm({ reservationKey: KEY });
-
-    expect(calls).toEqual(["POST /v1/sandboxes"]);
-  });
-
-  test("swallows a failed warm-up", async (): Promise<void> => {
-    createStatus = 500;
-
-    await new WorkdirSandboxExecutor(config()).prewarm({ reservationKey: KEY });
-
-    expect(claim).toHaveBeenCalledTimes(0);
-  });
-});
-
 describe("workdir acquire race", () => {
   const launch = (
     executor: WorkdirSandboxExecutor,

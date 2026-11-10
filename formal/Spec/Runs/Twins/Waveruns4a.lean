@@ -186,7 +186,7 @@ def handleAsyncRequest (call : Json) : Prog Json := do
   let admission ← Prog.effect "acceptIngress" [ingressRequest event delivery]
   let _ ← Prog.effect "dispatchRecoveredIngress" [event, admission]
   if text (field admission "outcome") != "owner" then
-    return ← Prog.effect "asyncAdmissionResponse" [event, admission]
+    return ← Prog.effect "directAdmissionResponse" [event, admission, .bool true]
   let _ ← Prog.effect "startOwnedAsyncRun"
     [spread event [("ownerGeneration", field admission "ownerGeneration")]]
   Prog.effect "acceptedAsyncResponse"
@@ -718,8 +718,22 @@ def runChannelTurns (call : Json) : Prog Json := do
 /-- `ownerCheckForStream` only builds its closure; the closure body is not compared. -/
 def ownerCheckForStream (_call : Json) : Prog Json := pure anon
 
-/-- `connectionFetch` only builds its closure; the closure body is not compared. -/
-def connectionFetch (_call : Json) : Prog Json := pure anon
+/-- `connectionFetch`: the account's token source, wrapped by `tokenFetch`. -/
+def connectionFetch (call : Json) : Prog Json := do
+  let source ← Prog.effect "connectionSource" [Twin.callArg call 0, Twin.callArg call 1]
+  Prog.effect "tokenFetch" [source, Twin.callArg call 2]
+
+/-- `tokenFetch` only builds its closure; the closure body is not compared. -/
+def tokenFetch (_call : Json) : Prog Json := pure anon
+
+/-- `connectionSource`: where one account's connection tokens live; the callbacks are closures. -/
+def connectionSource (call : Json) : Prog Json := do
+  let _ ← Prog.effect "getStorage"
+  pure (Json.mkObj
+    [("key", .str s!"{text (Twin.callArg call 0)}:{text (Twin.callArg call 1)}"),
+     ("missing", .str s!"This account has no {text (Twin.callArg call 1)} connection. Run `broods connect {text (Twin.callArg call 1)}` to sign in."),
+     ("load", named "load"), ("refresh", named "refresh"),
+     ("refreshFailed", named "refreshFailed"), ("save", named "save")])
 
 /-- `createRunFinalizer` builds the two closures that share `settling`. -/
 def createRunFinalizer (_call : Json) : Prog Json :=
@@ -743,6 +757,8 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/harness/handler.ts#runChannelTurns" runChannelTurns,
    Twin.traced "apps/core/src/harness/handler.ts#ownerCheckForStream" ownerCheckForStream,
    Twin.traced "apps/core/src/harness/connections.ts#connectionFetch" connectionFetch,
+   Twin.traced "apps/core/src/harness/connections.ts#tokenFetch" tokenFetch,
+   Twin.traced "apps/core/src/harness/connections.ts#connectionSource" connectionSource,
    Twin.traced "apps/core/src/harness/run-finalizer.ts#createRunFinalizer" createRunFinalizer,
    Twin.traced "apps/core/src/harness/run-spans.ts#createRunSpanTracker" createRunSpanTracker]
 

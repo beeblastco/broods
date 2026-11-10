@@ -352,11 +352,6 @@ private def moreTwins : List Twin := [
             match (items (get value "contacts")).find? (fun ct => get ct "wa_id" == get message "from") with
             | some contact => [("contact", contact)]
             | none => []))),
-  Twin.traced (forwarder "connections" "combinePlaneAnswers") (fun c => do
-    let answers := items (a c 1)
-    if answers.all (· == .null) then
-      return ← Prog.throwError "Error" ("No config plane answered: " ++ String.intercalate ", " ((items (a c 0)).map text))
-    return jarr (answers.flatMap items)),
   pureTwin (forwarder "connections" "planeConnections") (fun c => jarr ((items (a c 1)).map fun row =>
     Json.mkObj [("agentId", get row "agentId"), ("agentName", get row "agentName"), ("botToken", get row "botToken"),
       ("webhookUrl", .str (text (get (a c 0) "webhookBaseUrl") ++ text (get row "webhookPath")))])),

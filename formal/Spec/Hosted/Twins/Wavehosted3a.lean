@@ -281,7 +281,7 @@ private def remapKeys (call : Json) : Prog Json :=
 
 /-! ### `mcp.ts` -/
 
-private def toolNamePattern : String := "/^[A-Za-z0-9_-]{1,64}$/"
+private def toolNamePattern : String := "/^[A-Za-z0-9_.-]{1,128}$/"
 
 private def assertMcpRow (call : Json) : Prog Json := do
   let row := Twin.callArg call 0
@@ -323,8 +323,8 @@ private def normalizeAllowedTools (call : Json) : Prog Json := do
     refuseIf (items.size > 256) "allowedTools must list at most 256 tools"
     for item in items.toList do
       let name := text item
-      let good := !name.isEmpty && jsLength name <= 64 &&
-        name.all (fun c => isAlnum c || c == '_' || c == '-')
+      let good := !name.isEmpty && jsLength name <= 128 &&
+        name.all (fun c => isAlnum c || c == '_' || c == '.' || c == '-')
       refuseIf (!good) s!"allowedTools entries must match {toolNamePattern}: {name}"
     return value
   | _ => failClient "allowedTools must be an array of tool names"

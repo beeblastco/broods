@@ -233,9 +233,7 @@ def resolveS3MountIdentity (call : Json) : Prog Json := do
       let normalized ← Prog.effect "normalizeWorkspacePrefix" [field storage "prefix"]
       let suffix ← Prog.effect "namespaceIsolationSuffix" [field ctx "namespace"]
       Prog.effect "joinPrefix" [normalized, suffix]
-    else do
-      let base ← Prog.effect "workspaceNamespacePrefix" [field ctx "namespace"]
-      pure (toJson (str base ++ "/"))
+    else pure (toJson (str (field ctx "namespace") ++ "/"))
   let region := orElse (field storage "region") (field ctx "region")
   let endpoint := orElse (field storage "endpoint") (field ctx "endpoint")
   return Json.mkObj ([("bucket", bucket), ("prefix", keyPrefix)] ++
@@ -765,7 +763,7 @@ def s3ReadNumbered (call : Json) : Prog Json := do
     let selected := (lines.drop (start - 1)).take count
     let numbered := "\n".intercalate (selected.zipIdx.map fun (line, index) =>
       padStart6 (toString (start + index)) ++ "\t" ++ line)
-    Prog.effect "toolText" [toJson (if numbered.isEmpty then "" else numbered ++ "\n")]
+    pure (toJson (if numbered.isEmpty then "" else numbered ++ "\n"))
   | .threw cause _ =>
     let missing ← Prog.effect "isMissingS3Error" [cause]
     if truthy missing then
@@ -799,8 +797,7 @@ def s3Glob (call : Json) : Prog Json := do
         if truthy matched then
           kept := kept ++ [(rel, str (orElse (field object "lastModified") (toJson "")))]
     let matches_ := (sortNewestFirst kept).map (·.1)
-    Prog.effect "toolText"
-      [toJson (if matches_.isEmpty then "No files found\n" else "\n".intercalate matches_ ++ "\n")]
+    pure (toJson (if matches_.isEmpty then "No files found\n" else "\n".intercalate matches_ ++ "\n"))
   | .threw cause _ => Prog.effect "toolError" [toJson (errorMessage cause)]
   | .pending => Prog.unsupported "listing never settled"
 

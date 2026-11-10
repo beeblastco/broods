@@ -335,7 +335,7 @@ private def runCommand (call request sandbox : Json) (startedAt : Int) : Prog Js
     else pure none
   let quoted ← Prog.effect "shellQuote" [field request "code"]
   let env ← Prog.effect "mergeSandboxEnv"
-    [field (config call) "envVars", field request "envVars", field request "principal"]
+    [field (config call) "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
   let timeout := (field request "timeoutSeconds").compress
   let result ← Prog.effect "sandbox.exec"
     [toJson s!"timeout -k 5 {timeout} bash -c {str quoted}",
@@ -350,7 +350,7 @@ private def runCommand (call request sandbox : Json) (startedAt : Int) : Prog Js
     | none => Prog.unsupported "a clock that is not an integer"
   return Json.mkObj
     [("ok", toJson (same exitCode (toJson (0 : Nat)))),
-     ("runtime", orElse (field request "runtime") (toJson "bash")),
+     ("runtime", toJson "bash"),
      ("exitCode", exitCode),
      ("stdout", field stdout "value"),
      ("stderr", field stderr "value"),
@@ -445,8 +445,7 @@ def workdirRunBackground (call : Json) : Prog Json := do
   if (← mountStrategy call request) == "exec" then
     ensureS3Mount call request isFirstCreate none
   runLifecycle call (← workDir call key)
-  let jobId ← if isNullish (field request "jobId") then Prog.effect "generateJobId"
-    else pure (field request "jobId")
+  let jobId := field request "jobId"
   let jobsDir := s!"{str (← workspaceRoot call)}/.fp-jobs/{str key}"
   let dir ← workDir call key
   let callback := field request "callback"
@@ -454,7 +453,7 @@ def workdirRunBackground (call : Json) : Prog Json := do
     [toJson jobsDir, jobId, toJson dir, field request "code",
      objWhen [("maxConcurrentJobs", toJson (10 : Nat), true),
               ("callback", callback, truthy callback)]]
-  let merged ← Prog.effect "mergeSandboxEnv" [field (config call) "envVars", field request "envVars"]
+  let merged ← Prog.effect "mergeSandboxEnv" [field (config call) "envVars"]
   let callbackVars ← Prog.effect "callbackEnv" [callback]
   let entries (value : Json) : List (String × Json) :=
     match value with

@@ -192,19 +192,3 @@ describe("vercel background jobs", () => {
     ).rejects.toThrow("a persistent sandbox reservation key is required");
   });
 });
-
-describe("vercel prewarm", () => {
-  test("acquires a reserved sandbox", async (): Promise<void> => {
-    useStoredName("vercel-box");
-
-    await new VercelSandboxExecutor(config(true)).prewarm({
-      reservationKey: KEY,
-    });
-  });
-
-  test("does nothing for an ephemeral sandbox", async (): Promise<void> => {
-    await new VercelSandboxExecutor(config(false)).prewarm({
-      reservationKey: KEY,
-    });
-  });
-});

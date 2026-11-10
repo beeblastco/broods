@@ -255,9 +255,7 @@ test("a missing bundle source fails the run", async (): Promise<void> => {
     dieAfterRejection(),
   );
 
-  expect(text).toContain(
-    "mcp runner event needs one of bundleSourceB64 or bundleUrl",
-  );
+  expect(text).toContain("mcp runner event needs bundleUrl");
   expect(killSpy).toHaveBeenCalled();
 });
 

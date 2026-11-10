@@ -18,3 +18,5 @@ apps/lambda/sandbox-log-forwarder.mjs	adapter	contract	Spec.Hosted.Contracts.Log
 packages/convex/model/mcp.ts	decision	open	Spec.Hosted.Model	formal/replay/hosted.test.ts	Cross-field assertMcpRow replayed. OPEN: complete normalization grammar/order; headers/env refs; OAuth fields; upload/source constraints; storage key.
 packages/convex/model/skillLimits.ts	glue	excluded			Constant/schema/tool wrapping and tool-name formatting; no execution decision claimed.
 packages/convex/model/skillRules.ts	decision	open	Spec.Hosted.Model	formal/replay/hosted.test.ts	skillPath replayed; skillName modelled. OPEN: Unicode trim; description/XML validation; simple YAML grammar; GitHub URL validation/encoding.
+apps/core/src/harness/mcp/authkit.ts	decision	open			Added by #1435. No model or twin yet: AuthKit token checks and protected-resource metadata remain.
+apps/core/src/harness/mcp/connection.ts	decision	open			Added by #1435. No model or twin yet: the MCP connection sign-in flow, its callback and stored tokens remain.

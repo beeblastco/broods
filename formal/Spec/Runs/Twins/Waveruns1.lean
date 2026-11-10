@@ -305,11 +305,6 @@ private def applyScripts (args : Json) : Json :=
     return (finished ++ [batch ++ deploy]).map ("\n".intercalate ·)
   match result with | .ok scripts => toJson scripts | .error error => Twin.threw error
 
-private def sha256Hex (call : Json) : Prog Json := do
-  let digest ← Prog.effect "crypto.subtle.digest" [.str "SHA-256",
-    obj [("$bytes", .str (base64 (text (Twin.callArg call 0))))]]
-  return .str (Access.Crypto.hex (Access.Crypto.base64Decode (text (field digest "$bytes"))))
-
 private def runScripts (call : Json) : Prog Json := do
   let scripts := items (Twin.callArg call 1)
   for script in scripts.take (scripts.length - 1) do
@@ -776,7 +771,7 @@ private def handleStatusRequest (call : Json) : Prog Json := do
         field result "status" != .str "expired")) then held
     else field result "status"
   let scope := [field event "accountId", field event "agentId"]
-  let key ← Prog.effect "eventPublicConversationKey" ([field result "conversationKey"] ++ scope)
+  let key ← Prog.effect "publicConversationKeyFromScoped" ([field result "conversationKey"] ++ scope)
   let applied ← if undef (field result "appliedToEventId") then pure Twin.undefinedJson else
     Prog.effect "publicEventIdForScope" ([field result "appliedToEventId"] ++ scope ++ [field event "publicEventId"])
   let some updated := (field result "updatedAt").getNat?.toOption
@@ -835,7 +830,7 @@ private def loadReentryTarget (call : Json) : Prog Json := do
   let _ ← Prog.effect "getStorage"
   let agent ← Prog.effect "getStorage().agents.getById" [account, agentId]
   if !truthy agent then return .null
-  let key ← Prog.effect "eventPublicConversationKey" [Twin.callArg call 2, account, agentId]
+  let key ← Prog.effect "publicConversationKeyFromScoped" [Twin.callArg call 2, account, agentId]
   let config ← Prog.effect "toRuntimeAgentConfig" [field agent "config"]
   Prog.effect "resolveReentryTarget" [obj [("accountId", account), ("agentId", agentId),
     ("publicConversationKey", key), ("agentConfig", config)]]
@@ -966,40 +961,26 @@ private def errorMessageOr (fallback : String) (error : Json) : String :=
   | .str message => message
   | _ => fallback
 
-private def chatgptIssuer : String := "https://auth.openai.com"
-
 private def refreshAndSave (call : Json) : Prog Json := do
-  let account := Twin.callArg call 0
-  let kind := Twin.callArg call 1
-  let stored := Twin.callArg call 2
-  if kind != .str "chatgpt" then return ← Prog.unsupported "connection type outside the model"
-  let handle (label : String) (args : Json) : Prog Unit := do
-    if label != "arg2" then return ← Prog.unsupported s!"callback {label}"
-    let signal ← Prog.effect "AbortSignal.timeout" [toJson (15000 : Nat)]
-    let _ ← Prog.effect "fetch" [Twin.arg args 0, spread (Twin.arg args 1) [("signal", signal)]]
-    pure ()
-  Prog.drain handle 4
-  let grant ← Prog.attempt "refreshTokenGrant" [.str (chatgptIssuer ++ "/api/accounts/oauth/token"),
-    obj [("client_id", field stored "clientId"), ("refresh_token", field stored "refreshToken"),
-      ("resource", .str "https://api.openai.com/v1")], obj [("$fn", .str "")]]
+  let source := Twin.callArg call 0
+  let stored := Twin.callArg call 1
+  let grant ← Prog.attempt "source.refresh" [stored]
   match grant with
   | .pending => Prog.unsupported "refresh is unfinished"
   | .threw error _ =>
-    let _ ← Prog.effect "getStorage"
-    let latest ← Prog.effect "getStorage().connections.load" [account, kind]
+    let latest ← Prog.effect "source.load"
     if truthy latest && field latest "updatedAt" != field stored "updatedAt" then
-      return ← Prog.effect "loadFresh" [account, kind]
+      return ← Prog.effect "loadFresh" [source]
     let reason ← Prog.effect "toErrorMessage" [error]
-    Prog.throwError "Error" ("ChatGPT plan connection could not refresh: " ++ text reason ++
-      ". Run `broods connect chatgpt` to sign in again.")
+    let failed ← Prog.effect "source.refreshFailed" [reason]
+    Prog.throwError "Error" (text failed)
   | .ok refreshed =>
     let next := field refreshed "refreshToken"
     let rotated := obj [("accessToken", field refreshed "accessToken"),
       ("refreshToken", if undef next || next == .null then field stored "refreshToken" else next),
       ("expiresAt", field refreshed "expiresAt")]
-    let _ ← Prog.effect "getStorage"
-    let saved ← Prog.effect "getStorage().connections.saveRefreshed" [account, kind, stored, rotated]
-    if !truthy saved then return ← Prog.effect "loadFresh" [account, kind]
+    let saved ← Prog.effect "source.save" [stored, rotated]
+    if !truthy saved then return ← Prog.effect "loadFresh" [source]
     let now ← Prog.effect "Date.now"
     return spread (spread stored (Access.Js.entries rotated)) [("updatedAt", now)]
 
@@ -1241,7 +1222,7 @@ private def resumeConversation (call : Json) : Prog Json := do
       Prog.effect "loadReentryTarget" [account, agent, key]
     else pure given
   if !truthy target then return obj [("kind", .str "skip")]
-  let publicKey ← Prog.effect "eventPublicConversationKey" [key, account, agent]
+  let publicKey ← Prog.effect "publicConversationKeyFromScoped" [key, account, agent]
   let runId ← Prog.effect "createRunId"
   let event := obj (
     [("accountId", account), ("agentId", agent), ("runId", runId),
@@ -1420,7 +1401,6 @@ def twins : List Twin := [
   traced "harness/handler" "scheduledFireTime" scheduledFireTime,
 
   plain "harness/apply-runs" "applyScripts" applyScripts,
-  traced "harness/ingress" "sha256Hex" sha256Hex,
   traced "harness/apply-runs" "fileWrites" fileWrites,
   traced "harness/apply-runs" "runScripts" runScripts,
   traced "harness/continuation" "turnSettlement" turnSettlement,
@@ -1442,8 +1422,6 @@ def twins : List Twin := [
     let row := Twin.callArg c 0
     let root ← Prog.effect "rootEventId" [field row "parentEventId"]
     return .str (text root ++ ":async-tools:" ++ text (field row "resultId"))),
-  traced "harness/handler" "eventPublicConversationKey" (fun c =>
-    Prog.effect "publicConversationKeyFromScoped" [Twin.callArg c 0, Twin.callArg c 1, Twin.callArg c 2]),
 
   traced "harness/async-tools" "resumeLostAsyncToolResult" resumeLostAsyncToolResult,
   traced "harness/questions" "openWorkAfterRun" openWorkAfterRun,

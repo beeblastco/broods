@@ -284,21 +284,18 @@ private def responseOk (response : Json) : Bool :=
   let status := responseStatus response
   200 ≤ status && status ≤ 299
 
-/-- `readBundleSource`: inline bytes win over a download. -/
+/-- `readBundleSource`: the bundle is always downloaded from `bundleUrl`. -/
 def readBundleSource (call : Json) : Prog Json := do
   let event := Twin.callArg call 0
-  match (field event "bundleSourceB64").getStr? with
-  | .ok inline => pure (bytesJson (base64Decode inline))
-  | .error _ =>
-    let url := field event "bundleUrl"
-    if ((url.getStr?).toOption).isNone then
-      Prog.throwError "Error" "mcp runner event needs one of bundleSourceB64 or bundleUrl"
+  let url := field event "bundleUrl"
+  if ((url.getStr?).toOption).isNone then
+    Prog.throwError "Error" "mcp runner event needs bundleUrl"
+  else
+    let response ← Prog.effect "fetch" [url]
+    if !responseOk response then
+      Prog.throwError "Error" s!"mcp server bundle fetch failed with HTTP {responseStatus response}"
     else
-      let response ← Prog.effect "fetch" [url]
-      if !responseOk response then
-        Prog.throwError "Error" s!"mcp server bundle fetch failed with HTTP {responseStatus response}"
-      else
-        Prog.effect "response.arrayBuffer"
+      Prog.effect "response.arrayBuffer"
 
 private def promiseArg : Json := obj [("$opaque", toJson "Promise")]
 

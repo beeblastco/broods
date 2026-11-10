@@ -320,7 +320,7 @@ private def workspaceReadContext (call : Json) : Prog Json := do
     ("managedBucket", bucket), ("region", region)]
 
 private def assertSafeJobId (call : Json) : Prog Json := do
-  let id := str (Twin.callArg call 0)
+  let id := jsString (Twin.callArg call 0)
   if id.isEmpty || !id.toList.all (fun c => c.isAlphanum || c == '_' || c == '-') then
     return ← Prog.throwError "Error" ("Invalid job id: " ++ id)
   return Twin.undefinedJson
@@ -693,8 +693,8 @@ private def quoteVia (label path : String) : Prog String := do
 
 private def statusScript (call : Json) : Prog Json := do
   let dir := str (Twin.callArg call 0)
-  let id := str (Twin.callArg call 1)
-  let _ ← Prog.effect "assertSafeJobId" [toJson id]
+  let id := jsString (Twin.callArg call 1)
+  let _ ← Prog.effect "assertSafeJobId" [Twin.callArg call 1]
   let f := fun ext => quoteVia "shellQuote" (dir ++ "/" ++ id ++ "." ++ ext)
   let exit1 ← f "exit"
   let exit2 ← f "exit"
@@ -736,9 +736,9 @@ private def callbackSnippet (call : Json) : Prog Json := do
 
 private def launchScript (call : Json) : Prog Json := do
   let dir := str (Twin.callArg call 0)
-  let id := str (Twin.callArg call 1)
+  let id := jsString (Twin.callArg call 1)
   let options := Twin.callArg call 4
-  let _ ← Prog.effect "assertSafeJobId" [toJson id]
+  let _ ← Prog.effect "assertSafeJobId" [Twin.callArg call 1]
   let f := fun ext => quoteVia "q" (dir ++ "/" ++ id ++ "." ++ ext)
   let pid ← f "pid"
   let work ← quoteVia "q" (str (Twin.callArg call 2))
@@ -1182,8 +1182,8 @@ private def spokenContents (call : Json) : Prog Json := do
     return ← Prog.effect "toolError" [toJson ("Error: " ++ str rel ++ " could not be transcribed: " ++
       jsString (field transcript "reason") ++ ". " ++ str advice)]
   let text := field transcript "text"
-  Prog.effect "toolText" [toJson (if truthy text then "Transcript of " ++ str rel ++ ":\n\n" ++ str text
-    else str rel ++ " contains no speech.")]
+  pure (toJson (if truthy text then "Transcript of " ++ str rel ++ ":\n\n" ++ str text
+    else str rel ++ " contains no speech."))
 
 private def deliverFiles (call : Json) : Prog Json := do
   let context := Twin.callArg call 0
@@ -1197,12 +1197,12 @@ private def deliverFiles (call : Json) : Prog Json := do
       str (field file "name") ++ ": " ++ str (field file "url"))
     let _ ← Prog.effect "actions.sendText"
       [toJson (if truthy caption then str caption ++ "\n" ++ lines else lines)]
-    Prog.effect "toolText" [toJson s!"{channel} could not attach documents, so {count} download link(s) were sent as text instead. Do not send them again."]
+    pure (toJson s!"{channel} could not attach documents, so {count} download link(s) were sent as text instead. Do not send them again.")
   if !truthy (field actions "sendFiles") then return ← links
   Prog.catchFail (do
     let _ ← Prog.effect "actions.sendFiles"
       [files, if truthy caption then caption else Twin.undefinedJson]
-    Prog.effect "toolText" [toJson s!"{count} file(s) sent to the current {channel} conversation."])
+    pure (toJson s!"{count} file(s) sent to the current {channel} conversation."))
     (fun _ => links)
 
 private def workspaceAttachment (call : Json) : Prog Json := do
@@ -1361,7 +1361,7 @@ private def vercelCreateOptions (call : Json) : Prog Json := do
   let seconds := if persistent then (field lifecycle "idleTimeoutSeconds").getInt?.toOption.getD 0
     else (field request "timeoutSeconds").getInt?.toOption.getD 0 + 300
   let policy ← Prog.effect "vercelNetworkPolicy" [config, request]
-  let env ← Prog.effect "mergeSandboxEnv" [field config "envVars", field request "envVars"]
+  let env ← Prog.effect "mergeSandboxEnv" [field config "envVars"]
   return merge auth (source ++ optionalKey "networkId" networkId ++
     [("persistent", toJson persistent), ("timeout", toJson (seconds * 1000)), ("networkPolicy", policy),
      ("env", env), ("tags", obj [("app", toJson "broods"), ("provider", toJson "vercel")])])
@@ -1484,7 +1484,6 @@ def twins : List Twin :=
    Twin.traced "apps/core/src/shared/sandbox-cleanup.ts#releaseCandidates" releaseCandidates,
    pureTwin "apps/core/src/harness/sandbox/machine-executor.ts#registryKey" (fun c => toJson (str (Twin.callArg c 0) ++ ":" ++ str (Twin.callArg c 1))),
    pureTwin "apps/core/src/harness/tools/utils.ts#subagentNotFound" (fun c => toJson ("Error: no subagent task found for " ++ str (Twin.callArg c 0))),
-   pureTwin "apps/core/src/harness/tools/utils.ts#toolText" (fun c => Twin.callArg c 0),
    pureTwin "apps/core/src/harness/tools/index.ts#isToolEnabled" (fun c => toJson (!undef (Twin.callArg c 0) && field (Twin.callArg c 0) "enabled" != toJson false)),
    pureTwin "apps/core/src/harness/sandbox/vercel-executor.ts#mountsWorkspace" (fun c => toJson (truthy (field (Twin.callArg c 0) "namespace"))),
    pureTwin "apps/core/src/harness/tools/channel.tool.ts#toChannelFile" (fun c => merge (Twin.callArg c 0) [("type", toJson "file")]),

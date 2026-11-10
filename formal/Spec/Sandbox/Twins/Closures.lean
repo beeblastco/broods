@@ -170,7 +170,7 @@ private def bashExecute (call : Json) : Prog Json := do
          ("principal", principal)]]
     let seconds ← Prog.effect "sandboxTimeoutSeconds" [sandbox]
     let text ← Prog.effect "formatRunText" [ran, seconds]
-    Prog.effect "toolText" [toJson (ignored ++ render text)])
+    pure (toJson (ignored ++ render text)))
 
 
 /-! ## memory.tool.ts -/
@@ -226,7 +226,7 @@ private def memoryExecute (call : Json) : Prog Json := do
     if !truthy (get result "ok") then
       let output := trimText (textOr (get result "stderr") ++ textOr (get result "stdout"))
       return ← toolError (if output == "" then "Error: memory save failed" else output)
-    Prog.effect "toolText" [toJson (trimText (textOr (get result "stdout")))])
+    pure (toJson (trimText (textOr (get result "stdout")))))
 
 /-! ## schedule.tool.ts -/
 
@@ -252,8 +252,7 @@ private def cancelScheduleExecute (call : Json) : Prog Json := do
   let existing ← ownedCron context cronId
   let _ ← Prog.effect "getStorage" []
   let _ ← Prog.effect "getStorage().crons.remove" [get context "accountId", cronId]
-  Prog.effect "toolText"
-    [toJson s!"Cancelled scheduled task '{render (get existing "name")}' ({render cronId})."]
+  pure (toJson s!"Cancelled scheduled task '{render (get existing "name")}' ({render cronId}).")
 
 /-- `ScheduleSummary`: the optional fields appear when truthy. -/
 private def scheduleSummary (cron : Json) : Json :=
@@ -287,8 +286,7 @@ private def scheduleExecute (call : Json) : Prog Json := do
          ("input", get input "instructions"), ("conversationKey", get context "conversationKey"),
          ("scheduleExpression", get input "schedule")] ++
         if truthy (get input "timezone") then [("timezone", get input "timezone")] else [])]
-  Prog.effect "toolText"
-    [toJson s!"Scheduled task '{render (get created "name")}' ({render (get created "cronId")}) on {render (get created "scheduleExpression")}{zoneSuffix created}. It runs in this conversation."]
+  pure (toJson s!"Scheduled task '{render (get created "name")}' ({render (get created "cronId")}) on {render (get created "scheduleExpression")}{zoneSuffix created}. It runs in this conversation.")
 
 /-- `updateScheduleTool/execute`: only the fields passed go into the patch. -/
 private def updateScheduleExecute (call : Json) : Prog Json := do
@@ -312,8 +310,7 @@ private def updateScheduleExecute (call : Json) : Prog Json := do
   let updated ← Prog.effect "getStorage().crons.update" [get context "accountId", cronId, patch]
   if !truthy updated then
     return ← toolError s!"Scheduled task {render cronId} no longer exists"
-  Prog.effect "toolText"
-    [toJson s!"Updated scheduled task '{render (get updated "name")}' ({render (get updated "cronId")}): {render (get updated "scheduleExpression")}{zoneSuffix updated}, {render (get updated "status")}."]
+  pure (toJson s!"Updated scheduled task '{render (get updated "name")}' ({render (get updated "cronId")}): {render (get updated "scheduleExpression")}{zoneSuffix updated}, {render (get updated "status")}.")
 
 /-! ## glob.tool.ts -/
 
@@ -354,16 +351,15 @@ private def globExecute (call : Json) : Prog Json := do
       let cut := if truthy (get listed "truncated") then
           "(listing cut at the sandbox's output limit; narrow the path)\n"
         else ""
-      return ← Prog.effect "toolText"
-        [toJson (if sorted.size > 0 then s!"{"\n".intercalate sorted.toList}\n{cut}"
-          else s!"No files found\n{cut}")]
+      return ← pure (toJson (if sorted.size > 0 then s!"{"\n".intercalate sorted.toList}\n{cut}"
+          else s!"No files found\n{cut}"))
     let patternB64 ← Prog.effect "toBase64" [pattern]
     let rootB64 ← Prog.effect "toBase64" [root]
     let code ← Prog.effect "globScript" [patternB64, rootB64]
     let result ← runWithMetadata runner context ws (render code)
     if !truthy (get result "ok") then
       return ← toolError (failureText result "Error: glob failed")
-    Prog.effect "toolText" [get result "stdout"])
+    pure (get result "stdout"))
 
 /-! ## async-status.tool.ts -/
 
@@ -550,7 +546,7 @@ private def readExecute (call : Json) : Prog Json := do
     let result ← runWithMetadata runner context ws code
     if !truthy (get result "ok") then
       return ← toolError (failureText result "Error: read failed")
-    Prog.effect "toolText" [get result "stdout"])
+    pure (get result "stdout"))
 
 /-- `searchCommand`'s count filter: drops lines that are `0` or end in `:0`. -/
 private def dropZeroCounts (output : String) : String :=
@@ -574,14 +570,13 @@ private def grepExecute (call : Json) : Prog Json := do
       [get ws "sandbox", get ws "namespace", code, runOptions context metadata]
     if get result "exitCode" == toJson (1 : Nat) then
       let stderr := trimText (textOr (get result "stderr"))
-      return ← Prog.effect "toolText"
-        [toJson ("\n".intercalate (["No matches found", stderr].filter fun part => part != ""))]
+      return ← pure (toJson ("\n".intercalate (["No matches found", stderr].filter fun part => part != "")))
     if !truthy (get result "ok") then
       return ← toolError (failureText result "Error: grep failed")
     let stdout := textOr (get result "stdout")
     let output := if get input "output_mode" == toJson "count" then dropZeroCounts stdout else stdout
     let trimmed := trimText output
-    Prog.effect "toolText" [toJson (if trimmed == "" then "No matches found" else trimmed)])
+    pure (toJson (if trimmed == "" then "No matches found" else trimmed)))
 
 /-- `writeTool/execute`: writes base64 content through the workspace sandbox. -/
 private def writeExecute (call : Json) : Prog Json := do
@@ -606,7 +601,7 @@ private def writeExecute (call : Json) : Prog Json := do
       [sandbox, get ws "namespace", toJson code, runOptions context metadata]
     if !truthy (get result "ok") then
       return ← toolError (failureText result "Error: write failed")
-    Prog.effect "toolText" [toJson (trimText (textOr (get result "stdout")))])
+    pure (toJson (trimText (textOr (get result "stdout")))))
 
 /-- `editTool/execute`: replaces text in one file, on the shell or with an `editScript`. -/
 private def editExecute (call : Json) : Prog Json := do
@@ -627,7 +622,7 @@ private def editExecute (call : Json) : Prog Json := do
     if isShellOnly sandbox then
       let edited ← Prog.effect "editOnShell"
         [Json.mkObj [("$fn", toJson "")], rel, oldText, newText, replaceAll]
-      return ← Prog.effect "toolText" [edited]
+      return ← pure (edited)
     let pathB64 ← Prog.effect "toBase64" [rel]
     let oldB64 ← Prog.effect "toBase64" [oldText]
     let newB64 ← Prog.effect "toBase64" [newText]
@@ -636,7 +631,7 @@ private def editExecute (call : Json) : Prog Json := do
       [sandbox, get ws "namespace", code, runOptions context metadata]
     if !truthy (get result "ok") then
       return ← toolError (failureText result "Error: edit failed")
-    Prog.effect "toolText" [toJson (trimText (textOr (get result "stdout")))])
+    pure (toJson (trimText (textOr (get result "stdout")))))
 
 /-! ## computer.tool.ts -/
 
@@ -854,7 +849,7 @@ private def sendFilesExecute (call : Json) : Prog Json := do
   let files ← allValues (paths.map fun path => ("workspaceAttachment", [toJson "file", ws, path, accountId]))
   let transformed ← Prog.effect "context.transformText" [orElse (get input "caption") (toJson "")]
   if transformed == Json.null then
-    return ← Prog.effect "toolText" [toJson "Files blocked by the outbound message hook."]
+    return ← pure (toJson "Files blocked by the outbound message hook.")
   Prog.effect "deliverFiles" [context, .arr files.toArray, transformed]
 
 /-- `toChannelFile`: an image attachment sent as a file. -/
@@ -872,43 +867,38 @@ private def sendImagesExecute (call : Json) : Prog Json := do
      get input "urls", get input "file_paths", get input "workspace"]
   let transformed ← Prog.effect "context.transformText" [orElse (get input "caption") (toJson "")]
   if transformed == Json.null then
-    return ← Prog.effect "toolText" [toJson "Images blocked by the outbound message hook."]
+    return ← pure (toJson "Images blocked by the outbound message hook.")
   if truthy (get actions "sendImages") then
     let sent ← Prog.attempt "actions.sendImages"
       [images, if truthy transformed then transformed else undef]
     match sent with
     | .ok _ =>
-      return ← Prog.effect "toolText"
-        [toJson s!"{(listOf images).length} image(s) sent to the current {render (Twin.moduleValue call "channelName")} conversation."]
+      return ← pure (toJson s!"{(listOf images).length} image(s) sent to the current {render (Twin.moduleValue call "channelName")} conversation.")
     | _ => pure ()
   Prog.effect "deliverFiles" [context, .arr ((listOf images).map toChannelFile).toArray, transformed]
 
 /-- `sendMessageTool/execute`. -/
 private def sendMessageExecute (call : Json) : Prog Json := do
   let result ← Prog.effect "dispatch" [Twin.callArg call 0]
-  Prog.effect "toolText"
-    [toJson s!"Message {render (get result "status")} for conversation {render (get result "conversationKey")}."]
+  pure (toJson s!"Message {render (get result "status")} for conversation {render (get result "conversationKey")}.")
 
 /-- `sendReactionsTool/execute`. -/
 private def sendReactionsExecute (call : Json) : Prog Json := do
   let _ ← Prog.effect "actions.reactToMessage" [get (Twin.callArg call 0) "emoji"]
-  Prog.effect "toolText"
-    [toJson s!"Reaction added to the inbound {render (Twin.moduleValue call "channelName")} message."]
+  pure (toJson s!"Reaction added to the inbound {render (Twin.moduleValue call "channelName")} message.")
 
 /-- `sendStickerTool/execute`. -/
 private def sendStickerExecute (call : Json) : Prog Json := do
   let _ ← Prog.effect "sendSticker" [get (Twin.callArg call 0) "sticker"]
-  Prog.effect "toolText"
-    [toJson s!"Sticker sent to the current {render (Twin.moduleValue call "channelName")} conversation."]
+  pure (toJson s!"Sticker sent to the current {render (Twin.moduleValue call "channelName")} conversation.")
 
 /-- `sendUpdateTool/execute`: sends a progress note unless the outbound hook blocks it. -/
 private def sendUpdateExecute (call : Json) : Prog Json := do
   let transformed ← Prog.effect "context.transformText" [get (Twin.callArg call 0) "message"]
   if transformed == Json.null then
-    return ← Prog.effect "toolText" [toJson "Update blocked by the outbound message hook."]
+    return ← pure (toJson "Update blocked by the outbound message hook.")
   let _ ← Prog.effect "actions.sendText" [transformed]
-  Prog.effect "toolText"
-    [toJson s!"Update sent to the current {render (Twin.moduleValue call "channelName")} conversation. The final reply is still owed."]
+  pure (toJson s!"Update sent to the current {render (Twin.moduleValue call "channelName")} conversation. The final reply is still owed.")
 
 /-! ## load-skill, stop-subagent, run-subagent and small wiring closures -/
 

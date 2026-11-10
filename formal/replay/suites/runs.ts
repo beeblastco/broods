@@ -26,7 +26,7 @@ export const suite: Suite = {
     },
     {
       name: "continuation accepts empty tool input",
-      file: "apps/core/src/harness/continuation.ts",
+      file: "apps/core/src/harness/pruning.ts",
       find: "message.content.length > 0 &&",
       replace: "true &&",
     },

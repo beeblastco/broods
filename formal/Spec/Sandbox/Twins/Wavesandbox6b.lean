@@ -315,11 +315,6 @@ private def cloudflareLabel : String := "cloudflare sandbox bridge"
 private def runInCwd : String :=
   "mkdir -p -- \"$1\" && cd -- \"$1\" && exec bash -lc \"$2\" bash \"${@:3}\""
 
-private def withDefaultAndArgs (values : List Json) (extra : Json) : Json :=
-  match extra with
-  | .arr items => .arr (values.toArray ++ items)
-  | _ => .arr values.toArray
-
 private def bridgeExec (config request id : Json) (workspace : Json) (reserved : Bool) :
     Prog Json := do
   let timeoutMs : Int := match asInt (field request "timeoutSeconds") with
@@ -328,15 +323,14 @@ private def bridgeExec (config request id : Json) (workspace : Json) (reserved :
   if timeoutMs == 0 then Prog.unsupported "a fractional or missing timeout"
   let connection ← Prog.effect "cloudflareConnection"
   let env ← Prog.effect "mergeSandboxEnv"
-    [field config "envVars", field request "envVars", field request "principal"]
+    [field config "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
   let idle ←
     if reserved then do
       let lifecycle ← Prog.effect "resolveSandboxLifecycle" [field config "lifecycle"]
       pure (field lifecycle "idleTimeoutSeconds")
     else pure (toJson (timeoutMs / 1000 + (if timeoutMs % 1000 == 0 then 0 else 1) + 60))
-  let argv := withDefaultAndArgs
-    [toJson "bash", toJson "-c", toJson runInCwd, toJson "bash", workspace, field request "code"]
-    (field request "args")
+  let argv := Json.arr
+    #[toJson "bash", toJson "-c", toJson runInCwd, toJson "bash", workspace, field request "code"]
   let outputLimit : Int := match asInt (field request "outputLimitBytes") with
     | some limit => min limit maxOutputBytes
     | none => 0

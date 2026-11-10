@@ -612,12 +612,8 @@ private def normalizeUpdateWorkspaceConfigInput (call : Json) : Prog Json := do
 /-- `workspaceNamespace`: the first 40 hex digits of a SHA-256 over the scoped id. -/
 private def workspaceNamespace (call : Json) : Prog Json := do
   let text := s!"filesystem-namespace\x00{str (Twin.callArg call 0)}:{str (Twin.callArg call 1)}"
-  let digest ← Prog.effect "crypto.subtle.digest"
-    [toJson "SHA-256", Json.mkObj [("$bytes", toJson (base64Encode text.toUTF8.toList))]]
-  match base64Decode (str (field digest "$bytes")) with
-  | none => Prog.unsupported "a digest the recorder did not encode as base64"
-  | some bytes =>
-    pure (toJson ("fs-" ++ String.ofList (("".intercalate (bytes.map hexByte)).toList.take 40)))
+  let hex ← Prog.effect "sha256Hex" [toJson text]
+  pure (toJson ("fs-" ++ String.ofList ((str hex).toList.take 40)))
 
 /-- `isWorkspaceIsolation`. -/
 private def isWorkspaceIsolation (call : Json) : Prog Json :=

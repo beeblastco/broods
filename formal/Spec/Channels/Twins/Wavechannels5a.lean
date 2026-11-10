@@ -366,10 +366,8 @@ private def onCallback (c plane : Json) (latest : Latest) (label : String) (args
     let resolved ← Prog.effect "resolve" [plane, Twin.arg args 0]
     let next := setLatest latest name resolved
     let planes := items (a c 1)
-    let names := planes.map (get · "name")
     let answers := planes.map fun entry => latestOf next (text (get entry "name"))
-    let combined ← Prog.effect "combinePlaneAnswers" [.arr names.toArray, .arr answers.toArray]
-    let _ ← Prog.effect "onChange" [combined]
+    let _ ← Prog.effect "onChange" [jarr (answers.flatMap items)]
     pure next
   | "arg3" => pure latest
   | other => Prog.unsupported s!"callback {other}"

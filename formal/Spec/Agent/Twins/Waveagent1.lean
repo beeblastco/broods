@@ -772,11 +772,9 @@ private def callerTwins : List Twin :=
      let _ ← Prog.effect "validateSkillName" [Twin.callArg c 1]
      pure (toJson s!"{str (Twin.callArg c 0)}/{str (Twin.callArg c 1)}")),
    Twin.traced "apps/core/src/harness/skills.ts#canonicalStagePrefix" (fun c => do
-     let prefixText ← Prog.effect "workspaceNamespacePrefix" [Twin.callArg c 0]
-     pure (toJson s!"{str prefixText}/.claude/skills/{str (Twin.callArg c 1)}/")),
+     pure (toJson s!"{str (Twin.callArg c 0)}/.claude/skills/{str (Twin.callArg c 1)}/")),
    Twin.traced "apps/core/src/harness/skills.ts#mirrorStagePrefixes" (fun c => do
-     let prefixText ← Prog.effect "workspaceNamespacePrefix" [Twin.callArg c 0]
-     pure (toJson [s!"{str prefixText}/.agents/skills/{str (Twin.callArg c 1)}/"])),
+     pure (toJson [s!"{str (Twin.callArg c 0)}/.agents/skills/{str (Twin.callArg c 1)}/"])),
    Twin.traced "apps/core/src/shared/skills.ts#readSkillText" (fun c => do
      let bucket ← Prog.effect "skillsBucketName"
      let path ← Prog.effect "normalizeBundlePath" [Twin.callArg c 1]

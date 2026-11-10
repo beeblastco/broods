@@ -351,21 +351,21 @@ describe("workspace and channel rows", (): void => {
       createdAt: CREATED_ISO,
       updatedAt: UPDATED_ISO,
     });
-    answer("channel/records:listActive", [
-      {
-        ...row,
-        workspaceRef: "ref",
-        description: "d",
-        config: { agentBindings: [{ agentId: "a" }] },
-      },
-    ]);
-    expect(await convexStorage.channelRecords.list(ACCOUNT)).toEqual([
+    answer("channel/records:getById", {
+      ...row,
+      workspaceRef: "ref",
+      description: "d",
+      config: { agentBindings: [{ agentId: "a" }] },
+    });
+    expect(
+      await convexStorage.channelRecords.getById(ACCOUNT, "chan_1"),
+    ).toEqual(
       expect.objectContaining({
         workspaceRef: "ref",
         description: "d",
         config: { agentBindings: [{ agentId: "a" }] },
       }),
-    ]);
+    );
     answer("channel/records:getById", null);
     expect(
       await convexStorage.channelRecords.getById(ACCOUNT, "none"),

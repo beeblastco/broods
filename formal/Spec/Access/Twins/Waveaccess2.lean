@@ -144,10 +144,6 @@ private def userScoped (args : Json) : Json :=
   let pre := field (field (Twin.arg args 0) "data") "conversationPrefix"
   let value := text (Twin.arg args 1)
   .str (if truth pre && !startsWith value (text pre) then text pre ++ value else value)
-private def ackNatsMessage (call : Json) : Prog Json := do
-  if truth (field (Twin.callArg call 0) "ack") then
-    let _ ← Prog.attempt "message.ack"
-  return Twin.undefinedJson
 private def routerMiddlewares (args : Json) : Json :=
   let limit := text (field (Twin.arg args 0) "limit")
   toJson (["headers"] ++ (if !truth (Twin.arg args 1) || limit == "none" then [] else ["limit-" ++ limit]) ++ ["strip-trailing-slash"])
@@ -710,8 +706,9 @@ private def routers : List Json :=
     [rule s!"/v1/webhooks/{segment}(?:/dev/{segment})?/pancake",
      rule "/v1/webhooks/.*[^/]" ["GET"]] true,
    router "webhooks" "core" "none" [rule "/v1/webhooks/.*[^/]"],
-   router "media" "core" "none" [rule "/v1/media/.*[^/]" ["GET", "HEAD"]] true,
-   router "core" "core" "http" [rule "/v1(?:/.*)?", rule "/mcp"]]
+   router "media" "core" "none" [rule "/v1/media/.*[^/]" ["GET", "HEAD"], rule "/v1/mcp-connections/callback" ["GET"]] true,
+   router "core" "core" "http"
+    [rule "/v1(?:/.*)?", rule "/mcp", rule "/\\.well-known/oauth-protected-resource(?:/mcp)?"]]
 
 private inductive CharClass where
   | lit (c : Char)
@@ -754,6 +751,7 @@ mutual
           | _ => (false, afterClose)
         let (nodes, final) := parseSequence fuel rest
         (.group alternatives optional :: nodes, final)
+      | '\\' :: escaped :: more => parseQuantified fuel (.lit escaped) more
       | '[' :: '^' :: '/' :: ']' :: more => parseQuantified fuel .notSlash more
       | '.' :: more => parseQuantified fuel .notLineEnd more
       | _ => parseQuantified fuel (.lit c) tail
@@ -932,8 +930,6 @@ private def handleAccountRequest (call : Json) : Prog Json := do
   let rawPath ← Prog.effect "normalizePath" [field request "path"]
   let path := text rawPath
   Prog.catchFail (do
-    if method == "GET" && path == "/" then
-      return ← Prog.effect "jsonResponse" [toJson (200 : Nat), obj [("status", .str "ok")]]
     let selfDelete := method == "DELETE" && path == "/v1/account"
     let auth ← Prog.effect "resolveBearerAuth" [field request "headers", obj [("allowDisabledAccountSecret", .bool selfDelete)]]
     if !truth auth then
@@ -1211,7 +1207,7 @@ private def attachBody (call socket message active timer statusUrl : Json) : Pro
   let cursorKey := field cursor "eventKey"
   if (truth afterCursor && !hasCursor) ||
       (hasCursor && field cursor "generation" != field snapshot "generation") ||
-      (hasCursor && cursorKey != Twin.undefinedJson && cursorKey != eventKey) then
+      (hasCursor && cursorKey != eventKey) then
     return ← unavailable state
   let scope := [("accountId", field (field socket "data") "accountId"),
     ("agentId", field message "agentId"), ("conversationKey", conversation)]
@@ -1347,7 +1343,6 @@ def twins : List Spec.Twin :=
    plain (principal ++ "runPrincipal") runPrincipal,
    plain (principal ++ "principalLinkLabel") principalLinkLabel,
    Twin.traced (gateway ++ "userScoped") (fun c => pure (userScoped (field c "args"))),
-   Twin.traced (gateway ++ "ackNatsMessage") ackNatsMessage,
    plain (gateway ++ "hasAnswerInput") (fun a => toJson (hasAnswerInput (Twin.arg a 0))),
    plain (gateway ++ "hasEventInput") (fun a => toJson (hasEventInput (Twin.arg a 0))),
    plain (gateway ++ "isAttachMessage") isAttachMessage,

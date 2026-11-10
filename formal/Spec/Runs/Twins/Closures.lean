@@ -303,10 +303,9 @@ private def headerPairs (headers : Json) : List (String × String) :=
     | _, _ => []
   pairs
 
-/-- `connectionFetch`'s returned fetch: sends with the account's token, and on a 401 refreshes once. -/
+/-- `tokenFetch`'s returned fetch: sends with the account's token, and on a 401 refreshes once. -/
 def connectionFetchReturn (call : Json) : Prog Json := do
-  let accountId := Twin.moduleValue call "accountId"
-  let type := Twin.moduleValue call "type"
+  let source := Twin.moduleValue call "source"
   let input := Twin.callArg call 0
   let init := Twin.callArg call 1
   let spread := if undef init then obj [] else init
@@ -317,10 +316,10 @@ def connectionFetchReturn (call : Json) : Prog Json := do
     Prog.effect "baseFetch"
       [input, merge spread (obj [("headers", Json.mkObj [("$headers",
         toJson (pairs.map fun pair => toJson [pair.1, pair.2]))])])]
-  let token ← Prog.effect "accessToken" [accountId, type]
+  let token ← Prog.effect "accessToken" [source]
   let response ← send token
   if field (field response "$response") "status" != toJson 401 then return response
-  let fresh ← Prog.effect "accessToken" [accountId, type]
+  let fresh ← Prog.effect "accessToken" [source]
   send fresh
 
 /-- This file's twins. -/
@@ -331,7 +330,7 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/harness/handler.ts#invokeHarnessWorker/arg1" invokeWorker,
    Twin.traced "apps/core/src/harness/handler.ts#directTurnResponse/cancel" cancelStream,
    Twin.traced "apps/core/src/harness/handler.ts#directTurnResponse/arg0~2" directTurnBody,
-   Twin.traced "apps/core/src/harness/connections.ts#connectionFetch/return" connectionFetchReturn,
+   Twin.traced "apps/core/src/harness/connections.ts#tokenFetch/return" connectionFetchReturn,
    Twin.traced "apps/core/src/harness/run-spans.ts#createRunSpanTracker/close" close,
    Twin.traced "apps/core/src/harness/run-spans.ts#createRunSpanTracker/closeOrphans" closeOrphans,
    Twin.traced "apps/core/src/harness/run-spans.ts#createRunSpanTracker/get" get,

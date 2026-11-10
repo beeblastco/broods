@@ -38,7 +38,7 @@ opaque	ZodMiniCustom	Schema object passed unchanged to the separately twinned pa
 external	^factory$	Provider SDK tool factory; the twin checks it is called with an empty object and reads only type and id.
 external	^crypto\.subtle\.digest$	WebCrypto SHA-256 is trusted cryptography; the twin checks algorithm and input bytes.
 external	^executor\.exec$	Shell execution in the sandbox; the twin checks the exact command and parses exit code and output.
-external	^executor\.(run\.bind|runBackground\?\.bind|resume\?\.bind|postReserved\?\.bind|prewarm\?\.bind)$	Function.prototype.bind on the checked executor; the bound wrappers run later and are outside this call.
+external	^executor\.(run\.bind|runBackground\?\.bind|resume\?\.bind|postReserved\?\.bind)$	Function.prototype.bind on the checked executor; the bound wrappers run later and are outside this call.
 internal	apps/core/src/harness/sandbox/live-status.ts#sandboxNeighbours	Its answer depends on the module-level occupant map, which no recording exposes, so no twin of it can exist.
 internal	apps/core/src/shared/convex/client.ts#adminMutation	Convex admin transport; the twin checks the payload and ignores the outcome because the mirror write is best effort.
 external	^new Client$	Workdir SDK client constructor; the twin checks the URL and key and returns it unchanged.

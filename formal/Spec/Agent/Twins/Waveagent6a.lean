@@ -554,9 +554,6 @@ def runAgentLoop (call : Json) : Prog Json := do
      ("conversationKey", conversationKey), ("attributes", attributes)]
   let _ ← Prog.effect "otelRootSpan.setAttributes" [running]
   Prog.spawn "publishSpan" [runningRow running]
-  let coldStart ← Prog.effect "consumeColdStart" [startedAt]
-  if truthy coldStart then
-    Prog.unsupported "a cold start phase"
   if truthy (get turnContext "timings") then
     Prog.unsupported "prepared context timings"
   let deliveryValue := sessionField session "delivery"
@@ -753,7 +750,7 @@ def runAgentLoop (call : Json) : Prog Json := do
   if isClass then
     return stream
   pure (Json.mkObj (entries stream ++
-    ["ensureFinalized", "didFail", "yielded", "failureText", "approvalSummaries",
+    ["ensureFinalized", "didFail", "yielded", "failureText",
      "questionSummaries", "parentQuestion", "hasStructuredOutput", "finalResponse",
      "traceId"].map (fun name => (name, fn name)) ++
     [("consumeStream", fn "wrappedConsumeStream")]))

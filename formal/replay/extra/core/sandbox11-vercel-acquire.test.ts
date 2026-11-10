@@ -18,8 +18,16 @@ interface FakeSnapshot {
   snapshotId: string;
 }
 
+interface FakeResult {
+  exitCode: number;
+  stdout: () => Promise<string>;
+  stderr: () => Promise<string>;
+}
+
 interface FakeSandbox {
   name: string;
+  runCommand: (input: unknown) => Promise<FakeResult>;
+  extendTimeout: (ms: number) => Promise<void>;
   createdAt: Date;
   networkId?: string;
   deleted: number;
@@ -42,6 +50,12 @@ let createCalls: unknown[] = [];
 function fakeSandbox(name: string, ageMs = 0): FakeSandbox {
   const box: FakeSandbox = {
     name: name,
+    runCommand: async (): Promise<FakeResult> => ({
+      exitCode: 0,
+      stdout: async (): Promise<string> => "",
+      stderr: async (): Promise<string> => "",
+    }),
+    extendTimeout: async (): Promise<void> => {},
     createdAt: new Date(Date.now() - ageMs),
     deleted: 0,
     deleteFails: false,
@@ -126,7 +140,12 @@ afterEach((): void => {
 });
 
 async function warm(executor: VercelSandboxExecutor): Promise<void> {
-  await executor.prewarm({ reservationKey: KEY });
+  await executor.run({
+    code: "true",
+    reservationKey: KEY,
+    timeoutSeconds: 30,
+    outputLimitBytes: 1024,
+  });
 }
 
 describe("vercel acquire", () => {

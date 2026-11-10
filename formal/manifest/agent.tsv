@@ -29,7 +29,6 @@ apps/core/src/harness/tool-execute.ts	decision	open			Remaining: complete functi
 apps/core/src/harness/transcribe.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
 apps/core/src/harness/usage-metering.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	TaskTotals replayed; remaining: cache-write extraction, CPU ledger, timing tracker and attribute projection model/replay.
 apps/core/src/shared/cache-digest.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
-apps/core/src/shared/cold-start.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/discord-wire.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/domain/account-hooks.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/domain/accounts.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
@@ -51,7 +50,6 @@ apps/core/src/shared/otel.ts	glue	excluded			Manifest-classified wiring, formatt
 apps/core/src/shared/paths.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/sandbox.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
 apps/core/src/shared/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
-apps/core/src/shared/telemetry.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 apps/core/src/shared/webhook.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
 packages/convex/model/accountHooks.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/harnessSessionEntries.ts	decision	replayed	Spec.Agent.Model	formal/replay/agent.test.ts	Pure byte/row batch decisions replayed; indexed lookup is EntryStore.find under trusted Convex contract.
