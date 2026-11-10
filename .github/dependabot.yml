@@ -54,6 +54,10 @@ updates:
       # fails on our api 1.9 at load. Lift with the OpenTelemetry hold above.
       - dependency-name: "@daytona/sdk"
         versions: [">=0.230.0"]
+      # 4.17 adds the Workspace API to its one-file module, and Turbopack ships all of
+      # it: +15 KB dashboard first-load JS. Lift once the perf baseline has room.
+      - dependency-name: react-resizable-panels
+        versions: [">=4.17.0"]
       # @convex-dev/workos-authkit takes @workos-inc/node up to 10; a newer
       # major installs a second copy beside it.
       - dependency-name: "@workos-inc/node"
