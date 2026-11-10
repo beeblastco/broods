@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { discordForwarderToken } from "../src/shared/discord-wire.ts";
+import { requestBodyText } from "./helpers/http.ts";
 
 const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 
@@ -584,7 +585,158 @@ describe("discord channel adapter", () => {
 
     expect(parsed.kind).toBe("ignore");
   });
+
+  it("posts a slash command's later replies as follow-ups, keeping the first", async () => {
+    const sent = await sendSlashCommandReplies([
+      "first update",
+      "final answer",
+    ]);
+
+    expect(sent).toEqual([
+      "PATCH /webhooks/app-1/token-1/messages/@original first update",
+      "POST /webhooks/app-1/token-1?wait=true final answer",
+    ]);
+  });
+
+  it("splits a reply longer than Discord's 2000 characters, keeping its end", async () => {
+    const answer = `${"x".repeat(5000)}\n\nTrace: https://broods.test/t/1`;
+    const sent = await sendSlashCommandReplies([answer]);
+    const contents = sent.map((line) => line.split(" ").slice(2).join(" "));
+
+    expect(sent).toHaveLength(3);
+    expect(contents.every((content) => content.length <= 2000)).toBe(true);
+    expect(contents.join("")).toBe(answer);
+  });
+
+  it("waits out Discord's rate limit and still delivers every piece", async () => {
+    const answer = `${"word ".repeat(1200)}\n\nTrace: https://broods.test/t/1`;
+    const sent = await sendSlashCommandReplies([answer], {
+      rateLimited: (call) =>
+        call === 2 || call === 3 ? discordRateLimit(0.01) : undefined,
+    });
+    const delivered = sent.filter((line) => !line.startsWith("429"));
+
+    expect(sent.filter((line) => line.startsWith("429"))).toHaveLength(2);
+    expect(delivered).toHaveLength(4);
+    expect(delivered.at(-1)).toEndWith("Trace: https://broods.test/t/1");
+  });
+
+  it("reads a 429 from its status and Retry-After header, not the error text", async () => {
+    const sent = await sendSlashCommandReplies(["final answer"], {
+      rateLimited: (call) =>
+        call === 0
+          ? new Response("<html>slow down</html>", {
+              status: 429,
+              headers: { "Retry-After": "0" },
+            })
+          : undefined,
+    });
+
+    expect(sent).toEqual([
+      "429 PATCH /webhooks/app-1/token-1/messages/@original final answer",
+      "PATCH /webhooks/app-1/token-1/messages/@original final answer",
+    ]);
+  });
+
+  it("retries a rate limited channel message sent with the bot token", async () => {
+    const sent = await sendSlashCommandReplies(["final answer"], {
+      rateLimited: (call) => (call === 0 ? discordRateLimit(0.01) : undefined),
+      slashCommand: false,
+    });
+
+    expect(sent).toEqual([
+      "429 POST /channels/channel-1/messages final answer",
+      "POST /channels/channel-1/messages final answer",
+    ]);
+  });
+
+  it("fails at once when Discord asks for a wait longer than the cap", async () => {
+    const sent: string[] = [];
+    const reply = sendSlashCommandReplies(["final answer"], {
+      rateLimited: () => discordRateLimit(600),
+      sent: sent,
+      slashCommand: false,
+    });
+
+    await expect(reply).rejects.toThrow("429");
+    expect(sent).toEqual([
+      "429 POST /channels/channel-1/messages final answer",
+    ]);
+  });
 });
+
+async function sendSlashCommandReplies(
+  texts: string[],
+  options: {
+    rateLimited?: (call: number) => Response | undefined;
+    sent?: string[];
+    slashCommand?: boolean;
+  } = {},
+): Promise<string[]> {
+  const sent = options.sent ?? [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async function (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const body = JSON.parse(requestBodyText(init?.body)) as {
+        content: string;
+      };
+      const line = `${init?.method} ${url.pathname.replace(/^\/api(\/v10)?/, "")}${url.search} ${body.content}`;
+      const rateLimit = options.rateLimited?.(sent.length);
+      if (rateLimit) {
+        sent.push(`429 ${line}`);
+
+        return rateLimit;
+      }
+      sent.push(line);
+
+      return Response.json({ id: `message-${sent.length}` });
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  try {
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+      null,
+    ).actions({
+      eventId: "discord:interaction-1",
+      conversationKey: "discord:guild-1:channel-1",
+      channelName: "discord",
+      content: "",
+      source: {
+        applicationId: "app-1",
+        ...(options.slashCommand === false
+          ? {}
+          : { interactionToken: "token-1", interactionId: "interaction-1" }),
+        guildId: "guild-1",
+        channelId: "channel-1",
+      },
+    });
+    for (const text of texts) {
+      await actions.sendText(text);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  return sent;
+}
+
+function discordRateLimit(retryAfter: number): Response {
+  return Response.json(
+    {
+      message: "You are being rate limited.",
+      retry_after: retryAfter,
+      global: false,
+    },
+    { status: 429 },
+  );
+}
 
 async function parseGatewayMedia(
   id: string,

@@ -1478,7 +1478,7 @@ export default defineSchema({
       "status",
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
-    .index("by_endpointId", ["endpointId"])
+    .index("by_accountId_and_endpointId", ["accountId", "endpointId"])
     .index("by_status", ["status"])
     .index("by_accountId_and_status", ["accountId", "status"]),
   channelEndpoints: defineTable(channelEndpointsFields)
@@ -1755,27 +1755,29 @@ export default defineSchema({
     ]),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
-    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
-    .index("by_endpointId_and_modelProvider_and_modelId_and_finishedAt", [
+    .index("by_accountId_and_endpointId_and_finishedAt", [
+      "accountId",
+      "endpointId",
+      "finishedAt",
+    ])
+    .index("by_accountId_endpointId_modelProvider_modelId_finishedAt", [
+      "accountId",
       "endpointId",
       "modelProvider",
       "modelId",
       "finishedAt",
     ]),
-  usageRollups: defineTable(usageRollupsFields)
-    .index("by_endpointId_and_grain_and_bucketStart", [
-      "endpointId",
-      "grain",
-      "bucketStart",
-    ])
-    .index("by_accountId_endpointId_grain_bucketStart_modelProvider_modelId", [
+  usageRollups: defineTable(usageRollupsFields).index(
+    "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
+    [
       "accountId",
       "endpointId",
       "grain",
       "bucketStart",
       "modelProvider",
       "modelId",
-    ]),
+    ],
+  ),
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
     "month",

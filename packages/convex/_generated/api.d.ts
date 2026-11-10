@@ -4245,7 +4245,7 @@ export declare const internal: {
       getById: FunctionReference<
         "query",
         "internal",
-        { accountId: Id<"accounts">; cronId: Id<"crons"> },
+        { accountId: Id<"accounts">; cronId: string },
         {
           _creationTime: number;
           _id: Id<"crons">;
@@ -8094,6 +8094,7 @@ export declare const internal: {
         accountId: Id<"accounts">;
         agentId: string;
         conversationKey: string;
+        expectedOwnerEventId?: string;
         expectedOwnerTaskId?: string;
       },
       { queuedCount: number; stopped: boolean }

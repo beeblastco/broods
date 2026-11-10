@@ -539,10 +539,10 @@ function approvalRequest(approvals: ToolApprovalSummary[]): ElicitRequestV2 {
 }
 
 /**
- * Stops the task's conversation at its next model step, like `/stop`. Only a
- * key that may start runs may stop one. A task waiting on input has no live
- * run, so it stays where it is, and a finished task stops nothing: its
- * conversation may belong to a newer run by then.
+ * Stops the task's run at its next model step, like `/stop`. Only a key that
+ * may start runs may stop one. A task waiting on input or queued behind
+ * another run owns no live turn, so it stays where it is: the fence on its
+ * event id keeps the stop off whichever run owns the conversation.
  */
 async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
   const { auth } = caller;
@@ -558,6 +558,11 @@ async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
       auth.account.accountId,
       root.agentId,
       root.conversationKey,
+    ),
+    expectedOwnerEventId: scopedDirectEventId(
+      auth.account.accountId,
+      current.agentId,
+      current.eventId,
     ),
   });
 }

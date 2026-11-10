@@ -245,10 +245,11 @@ export const listForEndpoint = internalQuery({
   handler: async (ctx, args): Promise<Doc<"agents">[]> => {
     const deployment = await ctx.db
       .query("agentDeployments")
-      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
+      .withIndex("by_accountId_and_endpointId", (q) =>
+        q.eq("accountId", args.accountId).eq("endpointId", args.endpointId),
+      )
       .first();
     if (!deployment) return [];
-    if (deployment.accountId !== args.accountId) return [];
     if (deployment.status !== "active") return [];
 
     return await agentsInStage(

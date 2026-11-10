@@ -9,7 +9,11 @@ import type {
   ChannelParseResult,
   InboundMessage,
 } from "./channels.ts";
-import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import {
+  chunkChannelText,
+  isAllowedId,
+  parseChannelWebhookBody,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TEAMS_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -19,6 +23,8 @@ const BOT_FRAMEWORK_ISSUER = "https://api.botframework.com";
 const BOT_FRAMEWORK_KEYS_URL =
   "https://login.botframework.com/v1/.well-known/keys";
 const BEARER_PREFIX = "Bearer ";
+// Teams refuses a message past about 28 KB; 3 UTF-8 bytes per code unit keeps this under.
+const TEAMS_TEXT_LIMIT = 7000;
 // A validator caches the signing keys, and adapters are rebuilt per request.
 const TOKEN_VALIDATOR_CACHE_MAX = 100;
 const tokenValidators = new Map<string, JwtValidator>();
@@ -162,7 +168,9 @@ export function createTeamsChannel(
 
       return {
         sendText: async function (text): Promise<void> {
-          await transport.postMessage(source.threadId, { markdown: text });
+          for (const chunk of chunkChannelText(text, TEAMS_TEXT_LIMIT)) {
+            await transport.postMessage(source.threadId, { markdown: chunk });
+          }
         },
         sendTyping: function (): Promise<void> {
           return transport.startTyping(source.threadId);

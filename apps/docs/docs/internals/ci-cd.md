@@ -63,7 +63,7 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `dependency-watch.yaml`        | Mondays 06:00 UTC; manual                                                         | Reports AI SDK family and esbuild releases into one rolling issue                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `promote.yaml`                 | manual only                                                                       | See [promote](#promote)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
-Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked; that serves prod traffic too.
+Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked; that serves prod traffic too. The forwarder reads `channel/connections:listConnections` from every config plane, and the rollout waits only for this branch's Convex deploy, so a ticked branch must not change that query.
 
 ## Lean verification
 
@@ -101,11 +101,12 @@ sequenceDiagram
 | core              | `deploy-core-dev.yaml` / `deploy-core.yaml`            | `deploy-convex.yaml`, `deploy.yaml` |
 | gateway           | `deploy-gateway-dev.yaml` / `deploy-gateway.yaml`      | `build-core.yaml`, core's rollout   |
 | dashboard         | `deploy-dashboard-dev.yaml` / `deploy-dashboard.yaml`  | `deploy-convex.yaml`                |
-| discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | nothing                             |
+| discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | `deploy-convex.yaml`                |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
 - The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
+- Each build workflow runs one at a time per branch, in push order, and a newer push replaces a run still waiting, so the newest commit rolls last. An awaited run cancelled that way is judged by the newer run that replaced it, so an image whose prerequisite was replaced still rolls once the newer one succeeds. A manual `deploy.yaml` run titled for another stage (`Deploy to <stage>`) never counts, by the same rule as drift cleanup.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 
 ## Deploy pipeline
@@ -116,8 +117,7 @@ flowchart TD
   B -->|no| V["validate: check, test, build"]
   B -->|yes| T
   V --> T["Resolve targets:<br/>stage, region, sandbox flag"]
-  T --> L["sst unlock each target"]
-  L --> S{"SANDBOX_IMAGE_READY_*<br/>true and ECR image missing?"}
+  T --> S{"SANDBOX_IMAGE_READY_*<br/>true and ECR image missing?"}
   S -->|yes| S1["sst deploy without sandbox,<br/>crane copy latest-arm64"]
   S1 --> D
   S -->|no| D["sst deploy, 3 tries, 15 s apart"]
@@ -135,7 +135,7 @@ flowchart TD
 | manual, other stage         | that stage             | `DEV_AWS_REGION`                      | `development`      |
 
 - Production stages deploy only from `main`. `production_targets()` in `deploy.yaml` lists `eu-west-1` alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM pieces in `ap-southeast-1`.
-- The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once.
+- The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once. Neither runs `sst unlock`: a lock left by a crashed run, or held by a deploy started outside CI, fails the deploy. Clear it by hand after checking nothing runs.
 - With a Cloudflare token, `sst deploy` itself ships the [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs), the [sandbox bridge](sandboxes.md#cloudflare) and the [V8 Worker](sandboxes.md#worker), each named per stage, by running its workspace's `deploy` script (`deployCloudflareWorker` in `sst.config.ts`). A Worker redeploys only when its files or a var it gets change, or `bun.lock` for the MCP and V8 Workers. The MCP script creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket; the V8 Worker's script creates `broods-worker-state`; the bridge's script builds its Container image with the runner's Docker only when the registry lacks `broods-sandbox:<Dockerfile hash>` (first deploy to the account, or a `Dockerfile` change), shared by every stage, and deploys it by digest. They ship code only: the infra repo generates each key and writes it to the Worker and to core. A failed Worker deploy fails the stage deploy like any other resource.
 
 ## Secrets and variables
@@ -186,7 +186,7 @@ flowchart TD
   A --> C["production-*: dispatch<br/>drift-cleanup on main"]
   C --> P["production stage job"]
   B --> R
-  P --> R["checkout the stage's ref,<br/>sst refresh, sst diff"]
+  P --> R["checkout the commit deploy.yaml<br/>last shipped, sst refresh, sst diff"]
   R -->|diff exits non-zero| F[Fail, apply nothing]
   R -->|"plan says No changes"| OK[No drift]
   R -->|drift| D{production?}
@@ -194,11 +194,12 @@ flowchart TD
   D -->|yes| REP["Fail the job,<br/>report only"]
 ```
 
-| Stage                  | Checked out from | Environment   | On drift     |
-| ---------------------- | ---------------- | ------------- | ------------ |
-| `dev`                  | `dev`            | `development` | `sst deploy` |
-| `production-eu-west-1` | `main`           | `production`  | job fails    |
+| Stage                  | Checked out from                      | Environment   | On drift     |
+| ---------------------- | ------------------------------------- | ------------- | ------------ |
+| `dev`                  | last successful `deploy.yaml` on dev  | `development` | `sst deploy` |
+| `production-eu-west-1` | last successful `deploy.yaml` on main | `production`  | job fails    |
 
+- The commit is the newest successful `deploy.yaml` run on the branch that shipped this stage, never the branch head, so a commit that failed validation or is still deploying is neither reported as drift nor deployed here. Push runs count (dev), and so do manual runs (promote ships `main` that way) unless they named another stage, which `deploy.yaml` puts in the run title (`Deploy to <stage>`). No such run fails the job.
 - A production dispatch from any ref but `main` fails fast. Reconcile production drift through `deploy.yaml` from `main`.
 - The job resolves `SANDBOX_IMAGE_READY` per stage the way `deploy.yaml` does, so `sst.config.ts` imports the sandbox ECR repo in both. SST ignores tag changes on an imported resource; a plan without the import reports the repo's tags as drift every night.
 - Each job takes the same `sst-<stage>` lock as `deploy.yaml`. A lock left by a crashed run fails the job; clear it by hand after checking nothing runs.

@@ -23,12 +23,16 @@ export type ContinuationOutcome =
 export function continuationResponse(
   settled: AsyncToolResultRecord,
   outcome: ContinuationOutcome,
+  alreadyAnswered: string[] = [],
 ): Response {
+  const skipped =
+    alreadyAnswered.length > 0 ? { alreadyAnswered: alreadyAnswered } : {};
   if (outcome.kind === "skip") {
     return jsonResponse(202, {
       status: "accepted",
       resultId: settled.resultId,
       invoked: false,
+      ...skipped,
     });
   }
 
@@ -37,6 +41,7 @@ export function continuationResponse(
     resultId: settled.resultId,
     eventId: outcome.publicEventId,
     invoked: outcome.invoked,
+    ...skipped,
   });
 }
 
