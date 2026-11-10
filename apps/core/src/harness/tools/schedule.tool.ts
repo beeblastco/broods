@@ -90,10 +90,10 @@ export function cancelScheduleTool(context: ScheduleContext): ToolSet {
         "Cancels one of your scheduled tasks for good, by the cronId that schedule or list_schedules reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
       inputSchema: cancelScheduleInput,
       execute: async function ({ cronId }): Promise<string> {
-        // The config plane rejects a malformed id rather than missing it.
-        const existing = await getStorage()
-          .crons.getById(context.accountId, cronId)
-          .catch(() => null);
+        const existing = await getStorage().crons.getById(
+          context.accountId,
+          cronId,
+        );
         if (!existing || existing.agentId !== context.agentId) {
           return toolError(`No scheduled task ${cronId} belongs to this agent`);
         }
@@ -181,9 +181,10 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
         }
 
         // The config plane fences only on account; the agent fence is here.
-        const existing = await getStorage()
-          .crons.getById(context.accountId, cronId)
-          .catch(() => null);
+        const existing = await getStorage().crons.getById(
+          context.accountId,
+          cronId,
+        );
         if (!existing || existing.agentId !== context.agentId) {
           return toolError(`No scheduled task ${cronId} belongs to this agent`);
         }
