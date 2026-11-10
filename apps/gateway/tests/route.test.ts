@@ -30,7 +30,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("healthz reports the socket count against the ceiling", async () => {
+test("healthz says only that the gateway is up", async () => {
   const gateway = createGateway(
     gatewayConfig({ limits: limits({ maxConnections: 7 }) }),
   );
@@ -40,11 +40,7 @@ test("healthz reports the socket count against the ceiling", async () => {
     fakeServer().server,
   );
 
-  expect(await response!.json()).toEqual({
-    status: "ok",
-    activeWebSockets: 0,
-    maxWebSockets: 7,
-  });
+  expect(await response!.json()).toEqual({ status: "ok" });
 });
 
 test("a disallowed origin is refused before the auth-failure budget is read", async () => {
