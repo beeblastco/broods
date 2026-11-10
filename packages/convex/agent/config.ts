@@ -20,6 +20,7 @@ import {
   syncAgentRowFields,
 } from "../model/agentSync";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import {
   accountIdForProject,
   auditDetailsJson,
@@ -102,7 +103,7 @@ export const create = mutation({
       projectId,
       "admin",
     );
-    if (!project) throw new Error(AGENT_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(AGENT_ADMIN_REQUIRED, "forbidden");
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
@@ -631,7 +632,7 @@ async function assertAgentConfigAdmin(
   config: { projectId: Id<"projects"> },
 ): Promise<void> {
   if (!(await getProjectForWrite(ctx, authId, config.projectId, "admin"))) {
-    throw new Error(AGENT_ADMIN_REQUIRED);
+    throw new ClientError(AGENT_ADMIN_REQUIRED, "forbidden");
   }
 }
 

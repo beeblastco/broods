@@ -11,6 +11,7 @@ import { authKit, type AuthUser } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { requireActiveOrgAccount } from "./model/activeAccount";
 import { purgeProject } from "./model/cascade";
+import { ClientError } from "./model/clientError";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import {
   getProjectForRole,
@@ -162,7 +163,10 @@ export const create = mutation({
     const orgId = await getCallerActiveOrgId(ctx, authUser.id);
     if (!orgId) throw new Error("Join or create an organization first.");
     if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
-      throw new Error("Projects can only be created by an org admin.");
+      throw new ClientError(
+        "Projects can only be created by an org admin.",
+        "forbidden",
+      );
     }
     await requireActiveOrgAccount(ctx, orgId);
     const projectId = await ctx.db.insert("projects", {

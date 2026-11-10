@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { readyStageDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
 import {
   deleteAgentRow,
   ensureAgentsRowForConfig,
@@ -55,7 +56,7 @@ export const create = mutation({
       projectId,
       "admin",
     );
-    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(STAGE_ADMIN_REQUIRED, "forbidden");
 
     if (duplicateFromId) {
       const source = await getOwnedStage(ctx, authUser.id, duplicateFromId);
@@ -175,7 +176,7 @@ export const initializeProduction = mutation({
       projectId,
       "admin",
     );
-    if (!project) throw new Error(STAGE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(STAGE_ADMIN_REQUIRED, "forbidden");
 
     if (!LIVE_DEPLOYMENT_REGIONS.includes(deploymentRegion)) {
       throw new Error(`Region ${deploymentRegion} is not available yet.`);

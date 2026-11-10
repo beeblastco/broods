@@ -7,6 +7,7 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { requireActiveAccount } from "../model/activeAccount";
 import { deleteWorkspaceFile } from "../model/cascade";
 import {
@@ -100,7 +101,7 @@ export const create = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const blob = storageId ? await claimUploadedBlob(ctx, storageId) : null;
     if (blob && blob.size > MAX_WORKSPACE_FILE_BYTES) {
@@ -170,7 +171,7 @@ export const generateUploadUrl = mutation({
       throw new Error("User not found or not authenticated");
     }
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const grant = await grantUpload(ctx, account._id, "workspace");
     if ("retryAt" in grant) throw new Error(uploadQuotaMessage(grant.retryAt));
@@ -256,7 +257,7 @@ export const remove = mutation({
       file.projectId,
       "admin",
     );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     await deleteWorkspaceFile(ctx, file);
 
@@ -280,7 +281,7 @@ export const removeFolder = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const descendants = await ctx.db
       .query("workspaceFiles")
@@ -325,7 +326,7 @@ export const rename = mutation({
       file.projectId,
       "admin",
     );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const trimmed = newName.trim();
     if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
