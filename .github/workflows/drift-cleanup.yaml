@@ -4,9 +4,13 @@
 # On production-* stages the run is report-only: drift fails the job so the
 # failure notification reaches a human, who reconciles through deploy.yaml.
 # This is the safety net for stages that did not get reconciled at the time of
-# a code change (e.g. a failed deploy on `dev`). It is the second line of
-# defence against billable orphans (NAT Gateways, EIPs, unused log groups,
-# deprecated Lambda functions).
+# a code change (e.g. a deploy that failed partway on `dev`). It is the second
+# line of defence against billable orphans (NAT Gateways, EIPs, unused log
+# groups, deprecated Lambda functions).
+#
+# Code: each stage is checked and reconciled at the commit deploy.yaml last
+# shipped from its branch, never the branch head, which may have failed
+# validation or not be deployed yet.
 #
 # Refs: the `production` environment only deploys from `main`, and the schedule
 # runs on the default branch (`dev`). So the scheduled run checks the non-
@@ -118,6 +122,7 @@ jobs:
     if: needs.plan.outputs.matrix != '[]'
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       id-token: write
     strategy:
@@ -166,10 +171,27 @@ jobs:
       - name: Mask AWS account id
         run: echo "::add-mask::${AWS_ACCOUNT_ID}"
 
+      # Push runs only: a manual run can name another stage.
+      - name: Find the commit deploy.yaml last shipped
+        id: deployed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ matrix.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yaml/runs?branch=$BRANCH&event=push&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // empty')
+          if [[ -z "$SHA" ]]; then
+            echo "::error::No successful deploy.yaml push run on $BRANCH; nothing to reconcile against."
+            exit 1
+          fi
+          echo "Checking $BRANCH at $SHA, the last commit deploy.yaml shipped"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ steps.deployed.outputs.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
