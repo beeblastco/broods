@@ -39,12 +39,15 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/bun-install
 
-      - name: Install Claude Code
-        run: npm install --global @anthropic-ai/claude-code@2.1.322
+      - name: Install Claude Code and the judge CLIs
+        run: npm install --global @anthropic-ai/claude-code@2.1.322 @openai/codex@0.167.1 opencode-ai@1.19.5
 
       - name: Generate, run and assess catching tests
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Judges only. One without its key abstains and the next is asked.
+          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           JITTEST_TITLE: ${{ github.event.pull_request.title }}
           JITTEST_SUMMARY: ${{ github.event.pull_request.body }}
         run: |
