@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Access.Twins.Js
 
 namespace Spec.Agent.Waveagent2
 
@@ -291,13 +292,9 @@ private def positiveIntegerEnv (call : Json) : Prog Json := do
   let name := Twin.callArg call 0
   let value ← Prog.effect "optionalEnv" [name]
   if undef value then return Twin.callArg call 1
-  let spelling := (text value).trimAscii.toString
-  let parsed := spelling.toInt?
-  match parsed with
-  | some n =>
-    if n >= 1 && n <= 9007199254740991 then return toJson n
-    else Prog.throwError "Error" s!"{str name} must be a positive integer"
-  | none => Prog.unsupported "non-decimal environment number requires JavaScript Number conversion"
+  let parsed := Access.Js.numberOfString (text value)
+  if Access.Js.isSafeInteger parsed && parsed >= 1 then return toJson parsed.toUInt64.toNat
+  else Prog.throwError "Error" s!"{str name} must be a positive integer"
 
 private def outlivedMaxLifetime (call : Json) : Prog Json := do
   let limit := field (Twin.callArg call 0) "maxLifetimeSeconds"

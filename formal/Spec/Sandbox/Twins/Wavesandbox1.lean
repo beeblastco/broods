@@ -621,12 +621,16 @@ private def burstHeader (call : Json) : Prog Json := do
       let checked ← Prog.effect "burstTotals.safeParse" [parsed]
       if get checked "success" == toJson true then return get checked "data" else return voidJson
 
-/-- `assertSandboxReachesWorkspace`. The disk hint text has no recording. -/
+/-- `assertSandboxReachesWorkspace`. -/
 private def assertSandboxReachesWorkspace (call : Json) : Prog Json := do
   let name := text (Twin.callArg call 0)
   let sandbox := Twin.callArg call 1
   if Twin.callArg call 3 == toJson true then
-    return ← Prog.unsupported "disk workspace has no recording"
+    if truthy sandbox then
+      let holds ← Prog.effect "sandboxHoldsWorkspace" [toJson "disk", sandbox]
+      if truthy holds then return voidJson
+    return ← Prog.throwError "Error"
+      s!"Workspace \"{name}\": a \"disk\" workspace lives on its sandbox's own disk: give it a worker sandbox with persistent: true"
   let denied (provider : String) : Prog Json :=
     Prog.throwError "Error"
       s!"Workspace \"{name}\" cannot run on a {provider} sandbox; give it its own sandbox or set sandbox: null"

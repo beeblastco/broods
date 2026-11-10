@@ -88,7 +88,9 @@ private def boundedInteger (args : Json) : Json :=
 private def requireAccountAuth (call : Json) : Prog Json := do
   let auth := Twin.callArg call 0
   let kind := text (field auth "kind")
-  if ["deployment", "role", "agent"].contains kind then return ← Prog.throwError "Error" "Unauthorized"
+  if ["deployment", "role", "agent"].contains kind then
+    let error ← Prog.effect "new AccountEndpointUnauthorizedError"
+    return ← Prog.fail error
   if kind != "account" then return ← Prog.throwError "Error" "Admin must use account-specific endpoints"
   if truth (field auth "viaServiceToken") && field (Twin.callArg call 1) "allowServiceToken" != .bool true then
     return ← Prog.throwError "Error" "Service token is not allowed for this account endpoint"
@@ -518,6 +520,7 @@ private def retiredImageOptionsRefusal (call : Json) : Prog Json := do
   | .pending => Prog.unsupported "check never settled"
   | .threw err _ =>
     let refusal ← Prog.effect "clientErrorData" [err]
+    if !truth refusal then discard <| Prog.effect "errorText" [err]
     Prog.effect "errorResponse" [toJson (400 : Nat),
       if truth refusal then field refusal "message" else .str "Invalid sandbox configuration"]
 
@@ -1173,7 +1176,7 @@ private def followAttachedExecution (call : Json) : Prog Json := do
   | .threw error _ => Prog.fail error
   | .pending => Prog.unsupported "follow never settled"
 
-private def attachBody (socket message active timer statusUrl : Json) : Prog Unit := do
+private def attachBody (call socket message active timer statusUrl : Json) : Prog Unit := do
   let unavailable (status : Json) : Prog Unit := do
     let _ ← Prog.effect "sendAgentTest" [socket, obj
       [("type", .str "replay_unavailable"), ("requestId", field message "requestId"),
@@ -1187,10 +1190,20 @@ private def attachBody (socket message active timer statusUrl : Json) : Prog Uni
   if field status "agentId" != field message "agentId" || field status "conversationKey" != conversation ||
       field status "eventId" != eventId then
     return ← unavailable state
-  let connection ← Prog.effect "getNatsConnection"
+  let _ ← Prog.drain (fun _ _ => do
+    let _ ← Prog.effect "sendAgentTest" [socket, obj [("type", .str "error"), ("error", .str "Attach timed out")]]
+    let _ ← Prog.effect "stopActiveRun" [socket, active]
+    pure ()) 1
+  let connected ← Prog.attempt "getNatsConnection"
+  let connection ← match connected with
+    | .ok value => pure value
+    | .threw error _ => Prog.fail error
+    | .pending => Prog.unsupported "the connection never settled"
+  if Twin.abortedRead call 0 then return ()
   let snapshot ← Prog.effect "conversationReplaySnapshot" [obj
     [("connection", connection), ("accountId", field (field socket "data") "accountId"),
      ("agentId", field message "agentId"), ("conversationKey", conversation)]]
+  if Twin.abortedRead call 1 then return ()
   let afterCursor := field message "afterCursor"
   let cursor ← if truth afterCursor then Prog.effect "parseCursor" [afterCursor] else pure Json.null
   let eventKey ← Prog.effect "cursorEventKey" [eventId]
@@ -1210,6 +1223,7 @@ private def attachBody (socket message active timer statusUrl : Json) : Prog Uni
     let wanted ← Prog.effect "streamResponseSubject"
       [field (field socket "data") "accountId", field message "agentId", conversation]
     if subject != wanted then return ← unavailable state
+  if Twin.abortedRead call 2 then return ()
   let replayFrom : Json := if hasCursor then toJson (sequence + 1) else .null
   let buffered := (field snapshot "bufferedCount").getNat?.toOption.getD 0 > 0
   let from_ ← if buffered && hasCursor then do
@@ -1228,6 +1242,14 @@ private def attachBody (socket message active timer statusUrl : Json) : Prog Uni
     [socket, active, message, statusUrl, status, connection, snapshot, replayFrom, eventKey]
   return ()
 
+/-- The catch's read of `abort.signal.aborted`, the last one the call made. -/
+private def lastAbortedRead (call : Json) : Bool :=
+  match call.getObjVal? "aborted" with
+  | .ok (.arr items) => match items.back? with
+    | some (.bool value) => value
+    | _ => false
+  | _ => false
+
 private def attachCoreStream (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let message := Twin.callArg call 1
@@ -1240,9 +1262,9 @@ private def attachCoreStream (call : Json) : Prog Json := do
      ("publicEventId", eventId), ("controls", toJson (0 : Nat))]
   let _ ← Prog.effect "activeRuns.set" [socket, active]
   let statusUrl := Json.str ("/v1/runs/" ++ encodeURIComponent (text (field message "runId")))
-  Prog.catchFail (attachBody socket message active timer statusUrl) fun err =>
+  Prog.catchFail (attachBody call socket message active timer statusUrl) fun err =>
     if isUnsupportedError err then Prog.fail err
-    else if Twin.abortedRead call 0 then pure ()
+    else if lastAbortedRead call then pure ()
     else do
       let text ← Prog.effect "errorMessage" [err]
       let _ ← Prog.effect "sendAgentTest" [socket, obj [("type", .str "error"), ("error", text)]]

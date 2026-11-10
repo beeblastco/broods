@@ -354,7 +354,6 @@ private def callMcpToolResult (call : Json) : Prog Json := do
         s!"MCP tool {str (field record "name")}.{str toolName} answered with a result this SDK does not accept"
     return relayed
   let signal := field options "abortSignal"
-  let outcome ← Prog.attempt "withClient" [connection, fn "", field options "onCpuUsec"]
   let enter : Prog Unit := .input fun
     | some ("arg1", entered) =>
       Prog.catchFail
@@ -367,6 +366,7 @@ private def callMcpToolResult (call : Json) : Prog Json := do
     | some (other, _) => Prog.unsupported s!"callback {other}"
     | none => pure ()
   enter
+  let outcome ← Prog.attempt "withClient" [connection, fn "", field options "onCpuUsec"]
   match outcome with
   | .ok value => return value
   | .threw error _ => .fail error

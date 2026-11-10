@@ -38,7 +38,7 @@ to cover a lot of logic, and the same calls can later grade a port.
   only if at least 90% of its recorded calls are compared and none mismatches. A call too big to record is left out of that count when a compared call reached everything it did.
 - A mismatch is a finding. Fix the twin if it is wrong. If the function is wrong per `DECISIONS.md`, set
   `gaps` on the twin to the `GAPS.md` id.
-- First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 15 minutes.
+- First run `bun formal/scripts/conform.ts --all` once: recordings are not committed, so a fresh checkout has none and every twin comes back UNCHECKED. It takes about 10 minutes on four cores: test files run in several processes at once (`--jobs=N` or `SPEC_JOBS`).
 - A function no test reaches needs a test first. Put it in `replay/extra/<workspace>/` and record it with `conform.ts --record-extra=<workspace>`. Assert real behaviour there: these tests are also what the twin is graded on. A run that fails adds nothing to the recordings.
 - Register a twin by adding it to its file's list and importing that file from `Spec/<Sub>/Twins.lean`. `Wave*` files are batches of twins from earlier work: a new file can have any name. `bun formal/scripts/worklist.ts` lists what to do next, callees first, so a twin's dependencies earn credit before it does.
 - Then check with `bun formal/scripts/conform.ts --reuse --sub=<sub>`, which rebuilds the twins itself. If it prints STALE, source or tooling changed since recording, so it writes no results: run `--all` again.

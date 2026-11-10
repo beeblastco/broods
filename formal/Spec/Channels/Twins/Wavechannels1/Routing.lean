@@ -31,9 +31,12 @@ private def drainList (context accountId endpointId : Json) : Nat → Prog Unit
         let _ ← listerCall context accountId endpointId
         drainList context accountId endpointId fuel
 where
-  listerCall (context accountId endpointId : Json) : Prog Json :=
-    if jsTruthy endpointId then Prog.effect "context.stageAgentLister" [accountId, endpointId]
-    else Prog.effect "context.agentLister" [accountId]
+  /-- A failing lister is attempted, not required: the cached lookup it ran under reports the error. -/
+  listerCall (context accountId endpointId : Json) : Prog Unit := do
+    let _ ←
+      if jsTruthy endpointId then Prog.attempt "context.stageAgentLister" [accountId, endpointId]
+      else Prog.attempt "context.agentLister" [accountId]
+    pure ()
 
 private def listNow (context accountId endpointId : Json) : Prog Json :=
   .input fun

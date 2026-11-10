@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FAULTS } from "../replay/twin-faults.ts";
 import { ROOT } from "./functions.ts";
+import { JOBS, launch, pooled } from "./pool.ts";
 
 const OUT = join(ROOT, "formal/.lake/conform");
 const TRACES = join(OUT, "traces");
@@ -131,7 +131,7 @@ const DAMAGES: Record<string, Damage> = {
 // Shows that the comparison can fail. Each kind of damage to a recording must be caught for every
 // sampled twin, and each source fault in `twin-faults.ts` must make its twin disagree when the
 // tests run again against the faulty code, with the same tests passing cleanly first.
-function main(): void {
+async function main(): Promise<void> {
   const twins = readResults().filter(
     (twin) =>
       twin.traced &&
@@ -145,40 +145,59 @@ function main(): void {
   const sample = twins.filter((_, index) => index % step === 0);
   let failed = 0;
   let caught = 0;
-  for (const [name, damage] of Object.entries(DAMAGES)) {
-    for (const twin of sample) {
-      const verdict = damagedVerdict(twin.source, damage);
-      if (verdict === undefined) continue;
-      if (verdict) caught += 1;
-      else {
-        failed += 1;
-        console.log(`MISSED ${name}: ${twin.source}`);
-      }
+  const damaged = Object.entries(DAMAGES).flatMap(([name, damage]) =>
+    sample.map((twin) => ({ name: name, damage: damage, source: twin.source })),
+  );
+  const verdicts = await pooled(damaged, JOBS, (item) =>
+    damagedVerdict(item.source, item.damage),
+  );
+  verdicts.forEach((verdict, index) => {
+    if (verdict === undefined) return;
+    if (verdict) caught += 1;
+    else {
+      failed += 1;
+      console.log(`MISSED ${damaged[index]?.name}: ${damaged[index]?.source}`);
     }
-  }
+  });
   const plain = readResults().filter(
     (twin) => !twin.traced && twin.compared > 0,
   );
   const plainStep = Math.max(1, Math.floor(plain.length / SAMPLE));
-  for (const twin of plain.filter((_, index) => index % plainStep === 0)) {
-    if (damagedPlainVerdict(twin.source)) caught += 1;
+  const plainSample = plain.filter((_, index) => index % plainStep === 0);
+  const plainVerdicts = await pooled(plainSample, JOBS, (twin) =>
+    damagedPlainVerdict(twin.source),
+  );
+  plainVerdicts.forEach((verdict, index) => {
+    if (verdict) caught += 1;
     else {
       failed += 1;
-      console.log(`MISSED change a plain result: ${twin.source}`);
+      console.log(
+        `MISSED change a plain result: ${plainSample[index]?.source}`,
+      );
     }
-  }
+  });
   console.log(`${caught} damaged recordings caught`);
-  for (const fault of FAULTS) {
-    const clean = runFault(fault, false);
-    const faulty = runFault(fault, true);
+  const faultRuns = await pooled(
+    FAULTS.flatMap((fault) => [
+      { fault: fault, active: false },
+      { fault: fault, active: true },
+    ]),
+    JOBS,
+    (run) => runFault(run.fault, run.active),
+  );
+  for (const [index, fault] of FAULTS.entries()) {
+    const clean = faultRuns[2 * index];
+    const faulty = faultRuns[2 * index + 1];
     if (
+      !clean ||
+      !faulty ||
       clean.mismatches > 0 ||
       clean.compared === 0 ||
       faulty.mismatches === 0
     ) {
       failed += 1;
       console.log(
-        `FAULT NOT CAUGHT ${fault.name}: clean ${clean.compared}/${clean.mismatches}, faulty ${faulty.compared}/${faulty.mismatches}`,
+        `FAULT NOT CAUGHT ${fault.name}: clean ${clean?.compared}/${clean?.mismatches}, faulty ${faulty?.compared}/${faulty?.mismatches}`,
       );
     } else {
       caught += 1;
@@ -218,7 +237,7 @@ function readResults(): Result[] {
 }
 
 // A plain twin is compared on its return value alone, so that comparison must be able to fail too.
-function damagedPlainVerdict(source: string): boolean {
+async function damagedPlainVerdict(source: string): Promise<boolean> {
   const encoded = `${encodeURIComponent(source)}.jsonl`;
   const lines = readFileSync(join(OUT, "corpus", encoded), "utf8")
     .split("\n")
@@ -232,13 +251,16 @@ function damagedPlainVerdict(source: string): boolean {
     join(directory, encoded),
     `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
   );
-  const result = conform(source, directory, "corpus");
+  const result = await conform(source, directory, "corpus");
   rmSync(directory, { recursive: true, force: true });
 
   return result.mismatches > 0;
 }
 
-function damagedVerdict(source: string, damage: Damage): boolean | undefined {
+async function damagedVerdict(
+  source: string,
+  damage: Damage,
+): Promise<boolean | undefined> {
   const encoded = `${encodeURIComponent(source)}.jsonl`;
   const path = join(TRACES, encoded);
   if (!existsSync(path)) return undefined;
@@ -254,30 +276,35 @@ function damagedVerdict(source: string, damage: Damage): boolean | undefined {
     join(directory, encoded),
     `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
   );
-  const result = conform(source, directory);
+  const result = await conform(source, directory);
   rmSync(directory, { recursive: true, force: true });
 
   return result.mismatches > 0 || result.stateUnmodelled > 0;
 }
 
-function conform(
+// Each run writes its own result file, so runs beside each other do not overwrite one another.
+async function conform(
   source: string,
   recordings: string,
   kind: "traces" | "corpus" = "traces",
-): Result {
-  spawnSync(
+): Promise<Result> {
+  const out = `${recordings}.result.json`;
+  await launch(
     "bun",
     [
       "formal/scripts/conform.ts",
       "--reuse",
+      "--jobs=1",
       `--${kind}=${recordings}`,
       `--only=${source}`,
+      `--out=${out}`,
     ],
-    { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 26 },
+    { cwd: ROOT },
   );
-  const parsed = JSON.parse(
-    readFileSync(join(OUT, "results-control.json"), "utf8"),
-  ) as { twins: Result[] };
+  const parsed = existsSync(out)
+    ? (JSON.parse(readFileSync(out, "utf8")) as { twins: Result[] })
+    : { twins: [] };
+  rmSync(out, { force: true });
 
   return (
     parsed.twins[0] ?? {
@@ -289,7 +316,10 @@ function conform(
   );
 }
 
-function runFault(fault: (typeof FAULTS)[number], active: boolean): Result {
+async function runFault(
+  fault: (typeof FAULTS)[number],
+  active: boolean,
+): Promise<Result> {
   const directory = mkdtempSync(join(tmpdir(), "spec-twin-fault-"));
   const corpus = join(directory, "corpus");
   const traces = join(directory, "traces");
@@ -297,31 +327,34 @@ function runFault(fault: (typeof FAULTS)[number], active: boolean): Result {
   mkdirSync(traces);
   const sources = join(directory, "sources.txt");
   writeFileSync(sources, fault.twin);
-  const run = spawnSync("bun", ["test", "--preload", PRELOAD, ...fault.tests], {
-    cwd: join(ROOT, fault.cwd),
-    encoding: "utf8",
-    // A fault can turn a loop infinite, and the recorder would then fill the machine's memory.
-    timeout: FAULT_RUN_LIMIT_MS,
-    maxBuffer: 1 << 28,
-    env: {
-      ...process.env,
-      SPEC_CORPUS: corpus,
-      SPEC_TRACES: traces,
-      SPEC_RECORD_SOURCES: sources,
-      ...(active
-        ? {
-            SPEC_FAULT_FILE: fault.file,
-            SPEC_FAULT_FIND: fault.find,
-            SPEC_FAULT_REPLACE: fault.replace,
-          }
-        : {}),
+  const run = await launch(
+    "bun",
+    ["test", "--preload", PRELOAD, ...fault.tests],
+    {
+      cwd: join(ROOT, fault.cwd),
+      // A fault can turn a loop infinite, and the recorder would then fill the machine's memory.
+      timeout: FAULT_RUN_LIMIT_MS,
+      quiet: true,
+      env: {
+        ...process.env,
+        SPEC_CORPUS: corpus,
+        SPEC_TRACES: traces,
+        SPEC_RECORD_SOURCES: sources,
+        ...(active
+          ? {
+              SPEC_FAULT_FILE: fault.file,
+              SPEC_FAULT_FIND: fault.find,
+              SPEC_FAULT_REPLACE: fault.replace,
+            }
+          : {}),
+      },
     },
-  });
+  );
   if (run.status === null) console.log(`  run did not finish: ${fault.name}`);
-  const result = conform(fault.twin, traces);
+  const result = await conform(fault.twin, traces);
   rmSync(directory, { recursive: true, force: true });
 
   return result;
 }
 
-main();
+await main();

@@ -71,11 +71,26 @@ private def send (call : Json) : Prog Json := do
       Prog.setState "self.socket" (sentSocket socket (Twin.callArg call 1))
   return undef
 
+/-- `start`: a stopped socket becomes `connecting` and dials. `dial` writes `connecting` again, so the
+field is stated here only when the IDENTIFY budget certainly lets `dial` through; a spent budget leaves
+`exhausted`, which is `dial`'s own write. Whether a nonzero budget has aged stamps is not modelled. -/
 private def start (call : Json) : Prog Json := do
   let self := Twin.self call
   if Twin.field self "state" == .str "stopped" then
-    socketFields self [("state", .str "connecting")]
     let _ ← Prog.effect "this.dial"
+    let options := Twin.field self "options"
+    let budget := get options "budget"
+    let limit := (Twin.field budget "limit").getNat?.toOption.getD 0
+    let stamps := match (mapEntries (Twin.field budget "stamps")).find?
+        (fun entry => (entry.getArrVal? 0).toOption == some (get options "botToken")) with
+      | some entry => ((entry.getArrVal? 1).toOption.bind (·.getArr?.toOption)).getD #[] |>.size
+      | none => 0
+    if jsTruthy (Twin.field self "sessionId") && jsTruthy (Twin.field self "resumeUrl") then
+      Prog.unsupported "whether the stored resume URL is valid"
+    else if stamps < limit then
+      socketFields self [("state", .str "connecting")]
+    else if limit != 0 then
+      Prog.unsupported "whether the stamps in a spent budget have aged out"
   return undef
 
 private def stop (call : Json) : Prog Json := do

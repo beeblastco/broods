@@ -277,7 +277,7 @@ private def handleMcpServiceRpc (call : Json) : Prog Json := do
       else
         let base ← Prog.effect "mcpConnection" [record, Twin.undefinedJson]
         let sandbox ← Prog.effect "explorerSandboxTarget" [accountId, record]
-        pure (Sum.inr (set base "sandbox" sandbox))
+        pure (Sum.inr (if undef sandbox then base else set base "sandbox" sandbox))
     else do
       let probe ← Prog.effect "parseProbe" [field body "probe"]
       if isStr probe then

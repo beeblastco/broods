@@ -627,6 +627,18 @@ private def e2bRunBackground (call : Json) : Prog Json := do
 private def sandboxSource (file name : String) : String :=
   s!"apps/core/src/harness/sandbox/{file}.ts#{name}"
 
+/-- `workdirError`. The first non-empty of stderr and stdout, else the exit code. -/
+private def workdirError (call : Json) : Prog Json := do
+  let result := Twin.callArg call 1
+  let stderr := str (field result "stderr")
+  let stdout := str (field result "stdout")
+  if stderr != "" then return errorOf "Error" stderr
+  if stdout != "" then return errorOf "Error" stdout
+  match (field result "exit_code").getInt? with
+  | .ok code =>
+    return errorOf "Error" s!"Workdir failed to {str (Twin.callArg call 0)} (exit {code})"
+  | .error _ => Prog.unsupported "exit code is not an integer"
+
 /-- This author's twins. -/
 def twins : List Spec.Twin :=
   [Twin.traced (sandboxSource "e2b-executor" "E2BSandboxExecutor.release") e2bRelease,
@@ -635,6 +647,7 @@ def twins : List Spec.Twin :=
    Twin.traced (sandboxSource "daytona-executor" "DaytonaSandboxExecutor.snapshot") daytonaSnapshot,
    Twin.traced (sandboxSource "workdir-executor" "WorkdirSandboxExecutor.resumeHarnessReservation") workdirResume,
    Twin.traced (sandboxSource "workdir-executor" "WorkdirSandboxExecutor.release") workdirRelease,
+   Twin.traced (sandboxSource "workdir-harness-driver" "workdirError") workdirError,
    Twin.traced (sandboxSource "workdir-harness-driver" "WorkdirHarnessSession.stop")
      (endSession "suspend" "Workdir Harness reservation cannot be suspended"),
    Twin.traced (sandboxSource "workdir-harness-driver" "WorkdirHarnessSession.destroy")

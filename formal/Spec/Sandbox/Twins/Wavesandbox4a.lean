@@ -86,18 +86,69 @@ def platformAwsAccountId (call : Json) : Prog Json := do
     roleArnAccount (if isUndef arn then "" else str arn)
   return (found.map toJson).getD undef
 
-/-- `positiveIntegerEnv`. Only all-digit text is modelled, the rest of `Number()` is not. -/
+private def numberWhite (c : Char) : Bool :=
+  c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == Char.ofNat 11 || c == Char.ofNat 12
+
+/-- A decimal `StrDecimalLiteral` without sign: `1`, `1.`, `.5`, `1.5e3`. -/
+private def decimalLiteral (cs : List Char) : Bool :=
+  let (whole, afterWhole) := cs.span Char.isDigit
+  let hasDot := afterWhole.head? == some '.'
+  let (frac, tail) := if hasDot then afterWhole.tail.span Char.isDigit else ([], afterWhole)
+  let exponentOk :=
+    match tail with
+    | [] => true
+    | e :: more =>
+      let digits :=
+        match more with
+        | sign :: rest => if sign == '+' || sign == '-' then rest else more
+        | [] => []
+      (e == 'e' || e == 'E') && !digits.isEmpty && digits.all Char.isDigit
+  (!whole.isEmpty || !frac.isEmpty) && exponentOk
+
+/-- `0x`, `0o` and `0b` literals; digits must fit the radix. -/
+private def radixLiteral (cs : List Char) : Bool :=
+  match cs with
+  | '0' :: marker :: digits =>
+    let fits : Char → Bool :=
+      if marker == 'x' || marker == 'X' then Char.isAlphanum
+      else if marker == 'o' || marker == 'O' then fun c => '0' ≤ c && c ≤ '7'
+      else if marker == 'b' || marker == 'B' then fun c => c == '0' || c == '1'
+      else fun _ => false
+    !digits.isEmpty && digits.all fun c =>
+      fits c && (!(marker == 'x' || marker == 'X') || c.isDigit || ('a' ≤ c.toLower && c.toLower ≤ 'f'))
+  | _ => false
+
+/-- Whether `Number(text)` is NaN or infinite, so the value is refused. Literal forms that may
+be integers are reported as `none`. -/
+private def numberRefused (cs : List Char) : Option Bool :=
+  let body := match cs with
+    | sign :: rest => if sign == '+' || sign == '-' then rest else cs
+    | [] => []
+  if cs.isEmpty then some true
+  else if String.ofList body == "Infinity" then some true
+  else if radixLiteral cs || decimalLiteral body then none
+  else some true
+
+/-- `positiveIntegerEnv`. Plain digits are parsed; other `Number()` literals are not modelled,
+and text that is no number literal is refused as NaN. -/
 def positiveIntegerEnv (call : Json) : Prog Json := do
   let name := str (Twin.callArg call 0)
   let value := Twin.env call name
   if isUndef value || value == toJson "" then return Twin.callArg call 1
-  match (str value).toNat? with
-  | some parsed =>
-    if parsed < 1 || parsed > 9007199254740991 then
-      clientError s!"{name} must be a positive integer"
-    else
-      return toJson parsed
-  | none => Prog.unsupported "non-decimal env value"
+  let refusal : Prog Json := clientError s!"{name} must be a positive integer"
+  let chars := (str value).toList
+  if chars.any (fun c => c.toNat > 127) then
+    return ← Prog.unsupported "non-ascii env value"
+  let trimmed := (chars.dropWhile numberWhite).reverse.dropWhile numberWhite |>.reverse
+  if !trimmed.isEmpty && trimmed.all Char.isDigit then
+    match (String.ofList trimmed).toNat? with
+    | some parsed =>
+      if parsed < 1 || parsed > 9007199254740991 then refusal else return toJson parsed
+    | none => Prog.unsupported "non-decimal env value"
+  else
+    match numberRefused trimmed with
+    | some _ => refusal
+    | none => Prog.unsupported "non-integer number literal"
 
 /-- `assertStorageEndpoint`. -/
 def assertStorageEndpoint (call : Json) : Prog Json := do

@@ -334,7 +334,8 @@ private def otelAttributes (call : Json) : Prog Json := do
   for attr in xs (Twin.callArg call 0) do
     if truth (f attr "key") then
       let value ← Prog.effect "otelValue" [f attr "value"]
-      entries := entries.filter (fun e => e.1 != s (f attr "key")) ++ [(s (f attr "key"), value)]
+      entries := entries.filter (fun e => e.1 != s (f attr "key")) ++
+        (if u value then [] else [(s (f attr "key"), value)])
   pure (Json.mkObj entries)
 
 private def stringValue (call : Json) : Prog Json := do

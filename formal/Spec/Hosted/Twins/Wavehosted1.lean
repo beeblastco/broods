@@ -1381,7 +1381,12 @@ private def guardedFetch (call : Json) : Prog Json := do
   | some ("arg0", _) => pure ()
   | _ => return ← Prog.unsupported "the promise executor did not run first"
   let timer ← Prog.effect "setTimeout" [fn "", toJson timeoutMs]
-  let sanitized ← Prog.effect "sanitizeFetchInit" [init]
+  let sanitized ← match ← Prog.attempt "sanitizeFetchInit" [init] with
+    | .ok value => pure value
+    | .threw error _ =>
+      let _ ← Prog.effect "clearTimeout" [timer]
+      return ← .fail error
+    | .pending => return ← Prog.unsupported "sanitizeFetchInit never finished"
   let now ← Prog.effect "Date.now"
   let limit := match field opts "redirectLimit" with
     | .num n => match Js.int? (.num n) with

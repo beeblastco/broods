@@ -229,6 +229,8 @@ def getConnection (call : Json) : Prog Json := do
     return Twin.resolved held
   let connection ← Prog.effect "getSharedNatsConn"
   Prog.setState "self.connectionPromise" promiseTag
+  if connection == Json.null then
+    return ← Prog.throwError "Error" "NATS_URL is not configured"
   return connection
 
 /-- `LiveNatsPublisher.close`. -/

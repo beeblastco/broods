@@ -49,14 +49,35 @@ private def abortController : Json :=
 private def terminalStatus (status : Json) : Bool :=
   status == str "completed" || status == str "failed" || status == str "expired"
 
-private def corePost (socket headers body : Json) : Prog Json :=
+/-- Marks a failure that happened after the start timer fired, where `startTimedOut` was set. -/
+private def timedOutError (error : Json) : Json :=
+  Json.mkObj [("$startTimedOut", .bool true), ("error", error)]
+
+private def isTimedOut (error : Json) : Bool :=
+  (error.getObjVal? "$startTimedOut").isOk
+
+/-- The start timer's callback, if it ran while a request was in flight: it aborts the run.
+The recording orders it before the request's own settlement. -/
+private def timerFired : Prog Bool :=
+  .input fun
+    | none => pure false
+    | some _ => do
+      let _ ← Prog.effect "abort.abort"
+      pure true
+
+private def corePost (socket headers body : Json) : Prog Json := do
   let data := field socket "data"
   let url := match field data "coreBaseUrl", field data "corePath" with
     | .str base, .str path => base ++ path
     | _, _ => ""
-  Prog.effect "fetch"
+  let fired ← timerFired
+  let outcome ← Prog.attempt "fetch"
     [str url, Json.mkObj
       [("method", str "POST"), ("headers", headers), ("body", body), ("signal", liveSignal)]]
+  match outcome with
+  | .ok response => pure response
+  | .threw error _ => Prog.fail (if fired then timedOutError error else error)
+  | .pending => Prog.unsupported "the request never settled"
 
 private def responseOk (response : Json) : Bool :=
   match natOf (field (field response "$response") "status") with
@@ -122,6 +143,8 @@ private def startRun (socket : Json) (body : Json) (active scope : Json)
   let lastSequence ← match natOf (field snapshot "lastSequence") with
     | some value => pure value
     | none => Prog.unsupported "a replay snapshot with no sequence"
+  let _ ← Prog.drain
+    (fun label _ => if label == "isReplay" then pure () else Prog.unsupported s!"callback {label}") 4096
   let _ ← Prog.effect "followExecution"
     [socket, liveSignal, Json.mkObj
       ([("connection", connection),
@@ -138,7 +161,9 @@ private def startRun (socket : Json) (body : Json) (active scope : Json)
         whenTruthy "runId" (field payload "runId") ++
         whenTruthy "statusUrl" (field payload "statusUrl"))]
 
-/-- `runCoreStream`. Its `catch` decides on the abort signal, so a throw is outside the model. -/
+/-- `runCoreStream`. Its `catch` reads the abort signal once; a timer that fired mid-request means a
+start timeout. Only a timer firing during the POST is modelled: one that fires later, while the
+response is read or the stream is followed, is a call this twin does not match. -/
 private def runCoreStream (call : Json) : Prog Json := do
   let socket := Twin.callArg call 0
   let message := Twin.callArg call 1
@@ -167,7 +192,11 @@ private def runCoreStream (call : Json) : Prog Json := do
     let run := startRun socket body active scope (Prog.effect "getNatsConnection")
     Prog.catchFail run fun error =>
       if isUnsupported error then .fail error
-      else Prog.unsupported "the catch branches on abort.signal.aborted, which is not recorded"
+      else if !Twin.abortedRead call 0 then do
+        let text ← Prog.effect "errorMessage" [error]
+        sendFrame socket [("type", str "error"), ("error", text)]
+      else if isTimedOut error then sendError socket "Run start timed out"
+      else pure ()
     let _ ← Prog.effect "stopActiveRun" [socket, active]
     undefinedResult
 

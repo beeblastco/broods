@@ -53,9 +53,9 @@ describe("withImageLimits", (): void => {
         pngPart(1, 1),
       ),
     );
-    expect(parts.filter((part) => part.type === "image-data")).toHaveLength(
-      MAX_RESULT_IMAGES,
-    );
+    expect(
+      parts.filter((part): boolean => part.type === "image-data"),
+    ).toHaveLength(MAX_RESULT_IMAGES);
     expect(parts.at(-1)?.type).toBe("text");
   });
 

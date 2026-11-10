@@ -3,13 +3,13 @@
     "statements": 18697,
     "excluded": 603,
     "verifiable": 18094,
-    "verified": 10983,
-    "byTwin": 10517,
-    "byReplay": 466,
+    "verified": 11504,
+    "byTwin": 11050,
+    "byReplay": 454,
     "arms": 13655,
-    "armsVerified": 7819
+    "armsVerified": 8376
   },
-  "twins": 2028,
+  "twins": 2025,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -47,11 +47,8 @@
     "apps/core/src/accounts/handler.ts#errorResponseForError",
     "apps/core/src/accounts/handler.ts#errorText",
     "apps/core/src/accounts/handler.ts#execSandbox",
-    "apps/core/src/accounts/handler.ts#handleAccountRequest",
-    "apps/core/src/accounts/handler.ts#handleMcpServiceRoute",
     "apps/core/src/accounts/handler.ts#handleSandboxLifecycle",
     "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
-    "apps/core/src/accounts/handler.ts#handler",
     "apps/core/src/accounts/handler.ts#lambdaBaseImage",
     "apps/core/src/accounts/handler.ts#openSandboxTerminal",
     "apps/core/src/accounts/handler.ts#refreshSandboxStatus",
@@ -757,6 +754,7 @@
     "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessSession.spawnCommand",
     "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessSession.stop",
     "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessSession.writeFile",
+    "apps/core/src/harness/sandbox/workdir-harness-driver.ts#workdirError",
     "apps/core/src/harness/sandbox/workdir-harness-driver.ts#workdirPreviewKey",
     "apps/core/src/harness/sandbox/worker-executor.ts#WorkerSandboxExecutor.getInstanceInfo",
     "apps/core/src/harness/sandbox/worker-executor.ts#WorkerSandboxExecutor.release",
@@ -884,7 +882,6 @@
     "apps/core/src/harness/tools/async-status.tool.ts#sandboxForNamespace",
     "apps/core/src/harness/tools/async-status.tool.ts#sandboxJobRef",
     "apps/core/src/harness/tools/async-status.tool.ts#settleTerminalJob",
-    "apps/core/src/harness/tools/async-status.tool.ts#settledResult",
     "apps/core/src/harness/tools/bash.tool.ts#backgroundAvailable",
     "apps/core/src/harness/tools/bash.tool.ts#backgroundNote",
     "apps/core/src/harness/tools/bash.tool.ts#bashTool",
@@ -2060,15 +2057,15 @@
       "by replay",
       "branch arms"
     ],
-    ["access", "1977", "133", "1844", "74.2%", "1351", "17", "970/1357"],
-    ["agent", "3902", "139", "3763", "49.5%", "1768", "96", "1323/2744"],
-    ["channels", "3676", "3", "3673", "66.8%", "2405", "50", "1880/3046"],
-    ["config", "617", "0", "617", "85.6%", "450", "78", "338/509"],
-    ["hosted", "1962", "320", "1642", "50.9%", "733", "102", "550/1084"],
-    ["runs", "1682", "8", "1674", "39.2%", "651", "5", "485/1154"],
-    ["sandbox", "4789", "0", "4789", "66.8%", "3114", "83", "2260/3729"],
-    ["workers", "92", "0", "92", "87.0%", "45", "35", "13/32"],
-    ["all", "18697", "603", "18094", "60.7%", "10517", "466", "7819/13655"]
+    ["access", "1977", "133", "1844", "77.6%", "1416", "15", "1035/1357"],
+    ["agent", "3902", "139", "3763", "51.5%", "1841", "98", "1415/2744"],
+    ["channels", "3676", "3", "3673", "71.6%", "2586", "45", "2036/3046"],
+    ["config", "617", "0", "617", "89.5%", "489", "63", "379/509"],
+    ["hosted", "1962", "320", "1642", "53.8%", "774", "109", "593/1084"],
+    ["runs", "1682", "8", "1674", "40.9%", "680", "5", "510/1154"],
+    ["sandbox", "4789", "0", "4789", "68.9%", "3218", "84", "2394/3729"],
+    ["workers", "92", "0", "92", "88.0%", "46", "35", "14/32"],
+    ["all", "18697", "603", "18094", "63.6%", "11050", "454", "8376/13655"]
   ],
   "largestUnverified": [
     {
@@ -2109,7 +2106,7 @@
     },
     {
       "source": "apps/core/src/harness/isolate/executor.ts#streamViaOneShot",
-      "count": 65
+      "count": 64
     },
     {
       "source": "apps/core/src/harness/handler.ts#handleNatsWorkerRequest",
@@ -2152,19 +2149,19 @@
       "count": 39
     },
     {
-      "source": "apps/core/src/harness/tools/index.ts#registerMcpTools",
-      "count": 37
+      "source": "apps/core/src/accounts/handler.ts#handleAccountRequest",
+      "count": 38
     },
     {
-      "source": "apps/core/src/harness/isolate/executor.ts#streamViaPool",
-      "count": 35
+      "source": "apps/core/src/harness/tools/index.ts#registerMcpTools",
+      "count": 37
     },
     {
       "source": "apps/core/src/harness/provider.ts#<unlisted>",
       "count": 34
     },
     {
-      "source": "apps/core/src/harness/mcp/client.ts#listMcpTools",
+      "source": "apps/core/src/harness/isolate/executor.ts#streamViaPool",
       "count": 34
     },
     {
@@ -2172,7 +2169,7 @@
       "count": 33
     },
     {
-      "source": "apps/gateway/src/observability.ts#startSandboxLogPoll",
+      "source": "apps/core/src/harness/mcp/client.ts#listMcpTools",
       "count": 33
     },
     {
@@ -2186,6 +2183,10 @@
     {
       "source": "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#MicrovmWebSocketProxy.#connectUpstream",
       "count": 31
+    },
+    {
+      "source": "apps/gateway/src/observability.ts#startSandboxLogPoll",
+      "count": 30
     },
     {
       "source": "apps/core/src/harness/isolate/executor.ts#IsolateWorker.runCall",
@@ -2232,10 +2233,6 @@
       "count": 27
     },
     {
-      "source": "apps/gateway/src/terminal.ts#openTerminalUpstream",
-      "count": 26
-    },
-    {
       "source": "apps/core/src/harness/subagents.ts#resumeLostSubagentResults",
       "count": 26
     },
@@ -2254,10 +2251,6 @@
     {
       "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.postReserved",
       "count": 26
-    },
-    {
-      "source": "apps/core/src/harness/compaction.ts#summarizeConversation",
-      "count": 25
     },
     {
       "source": "apps/core/src/harness/harness.ts#watchModelStream",
@@ -2292,6 +2285,10 @@
       "count": 24
     },
     {
+      "source": "apps/core/src/harness/compaction.ts#summarizeConversation",
+      "count": 24
+    },
+    {
       "source": "apps/core/src/harness/handler.ts#handleRequest",
       "count": 24
     },
@@ -2316,6 +2313,10 @@
       "count": 23
     },
     {
+      "source": "apps/gateway/src/terminal.ts#openTerminalUpstream",
+      "count": 23
+    },
+    {
       "source": "apps/core/src/harness/hook-runner.ts#createHookRunnerPayload",
       "count": 23
     },
@@ -2330,10 +2331,6 @@
     {
       "source": "apps/core/src/harness/tools/browse.tool.ts#browseTool",
       "count": 23
-    },
-    {
-      "source": "apps/core/src/harness/provider.ts#retryingMiddleware",
-      "count": 22
     },
     {
       "source": "apps/core/src/shared/commands.ts#<unlisted>",
@@ -2408,6 +2405,10 @@
       "count": 20
     },
     {
+      "source": "apps/core/src/harness/provider.ts#retryingMiddleware",
+      "count": 20
+    },
+    {
       "source": "apps/core/src/shared/skills.ts#validateSkillBundle",
       "count": 20
     },
@@ -2473,10 +2474,6 @@
     },
     {
       "source": "apps/core/src/shared/telegram-channel.ts#readCappedFile",
-      "count": 18
-    },
-    {
-      "source": "apps/discord-forwarder/src/socket.ts#GatewaySocket.handlePayload",
       "count": 18
     },
     {
@@ -2564,10 +2561,6 @@
       "count": 16
     },
     {
-      "source": "apps/gateway/src/agent.ts#attachCoreStream",
-      "count": 15
-    },
-    {
       "source": "apps/core/src/harness/harness.ts#readAgentFullStream",
       "count": 15
     },
@@ -2648,10 +2641,6 @@
       "count": 13
     },
     {
-      "source": "apps/core/src/harness/channel-media.ts#withOldMediaOmitted",
-      "count": 13
-    },
-    {
       "source": "apps/core/src/shared/gchat-channel.ts#googleChatTransport",
       "count": 13
     },
@@ -2669,10 +2658,6 @@
     },
     {
       "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#guardedFetchWithDeadline",
-      "count": 13
-    },
-    {
-      "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#writeRequestBody",
       "count": 13
     },
     {
@@ -2732,10 +2717,6 @@
       "count": 12
     },
     {
-      "source": "apps/core/src/harness/usage-metering.ts#extractCacheWriteTokens",
-      "count": 12
-    },
-    {
       "source": "apps/core/src/harness/channel-media.ts#resolveMediaReference",
       "count": 12
     },
@@ -2744,15 +2725,7 @@
       "count": 12
     },
     {
-      "source": "apps/core/src/shared/slack-channel.ts#fetchSlackFile",
-      "count": 12
-    },
-    {
-      "source": "packages/convex/model/agentConfigCodec.ts#extractModelFields",
-      "count": 12
-    },
-    {
-      "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#normalizeRequestHeaders",
+      "source": "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#writeRequestBody",
       "count": 12
     },
     {
@@ -2800,10 +2773,6 @@
       "count": 11
     },
     {
-      "source": "apps/discord-forwarder/src/socket.ts#GatewaySocket.dial",
-      "count": 11
-    },
-    {
       "source": "apps/cloudflare-mcp/src/index.ts#loadBundle",
       "count": 11
     },
@@ -2821,10 +2790,6 @@
     },
     {
       "source": "apps/core/src/harness/handler.ts#resumeConversation",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/handler.ts#settleChannelQuestion",
       "count": 11
     },
     {
@@ -2868,7 +2833,39 @@
       "count": 11
     },
     {
-      "source": "apps/gateway/src/observability.ts#otelValue",
+      "source": "apps/core/src/harness/session.ts#Session.buildSystemPromptParts",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/harness/session.ts#Session.loadMemoryFiles",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/harness/skills.ts#skillReadLimit",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.detachPending",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/harness/channel-media.ts#rehydrateToolMessage",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/shared/pancake-channel.ts#uploadPancakeContent",
+      "count": 10
+    },
+    {
+      "source": "apps/core/src/shared/telegram-channel.ts#BroodsTelegramAdapter.downloadFile",
+      "count": 10
+    },
+    {
+      "source": "apps/discord-forwarder/src/socket.ts#GatewaySocket.dial",
+      "count": 10
+    },
+    {
+      "source": "apps/discord-forwarder/src/socket.ts#GatewaySocket.reserveIdentify",
       "count": 10
     }
   ]

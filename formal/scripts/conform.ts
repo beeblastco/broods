@@ -9,9 +9,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { analyzeFile, listFunctions, ROOT } from "./functions.ts";
 import { inputsHash, manifestSources, sourcesHash } from "./inputs.ts";
+import { JOBS, launch, pooled } from "./pool.ts";
 
 const FORMAL = join(ROOT, "formal");
 const subsystem = option("sub");
@@ -27,6 +28,10 @@ const ONLY = option("only");
 const PRELOAD = join(FORMAL, "replay/record-preload.ts");
 const BASELINE = join(FORMAL, ".lake/conform-baseline");
 const RUN_LIMIT_MS = 1_500_000;
+const FILES_PER_RUN = 8;
+const TEST_FILES = new Bun.Glob(
+  "**/*{.test,.spec,_test,_spec}.{ts,tsx,js,jsx}",
+);
 // Each workspace runs its own test command from its own folder, so its bunfig preloads still apply.
 const TEST_DIRS = [
   "apps/core",
@@ -117,7 +122,7 @@ interface TwinResult {
 // Records real calls under the repository's own tests, then checks each against its Lean twin.
 // `--reuse` skips recording, which makes editing a twin fast. A mismatch outside a twin's declared
 // gaps fails the command. Writes `.lake/conform/results.json`, bound to a hash of its inputs.
-function main(): void {
+async function main(): Promise<void> {
   const extra = option("record-extra");
   if (extra) {
     recordExtra(extra);
@@ -129,9 +134,12 @@ function main(): void {
   const twins = readTwins().filter((twin) => !ONLY || twin.source === ONLY);
   console.log(`${twins.length} twins`);
   let brokenRecording = false;
-  if (process.argv.includes("--all")) brokenRecording = record(allFunctions());
+  const started = Date.now();
+  if (process.argv.includes("--all"))
+    brokenRecording = await record(allFunctions());
   else if (!process.argv.includes("--reuse"))
-    brokenRecording = record(twins.map((t) => t.source));
+    brokenRecording = await record(twins.map((t) => t.source));
+  const recorded = Date.now();
   if (!option("traces") && !option("corpus") && !recordingIsCurrent()) {
     console.log(
       "STALE: source or tooling changed since these recordings were captured",
@@ -139,14 +147,17 @@ function main(): void {
     brokenRecording = true;
   }
   const opaqueAllowed = declaredOpaque();
-  const results = twins.map((twin) => {
+  const results = await pooled(twins, JOBS, async (twin) => {
     const result = twin.traced
-      ? checkTraced(twin, opaqueAllowed)
-      : checkPlain(twin);
+      ? await checkTraced(twin, opaqueAllowed)
+      : await checkPlain(twin);
 
     // A twin with nothing compared says nothing about whether the function gave an answer.
     return { ...result, hollow: result.compared > 0 && result.hollow };
   });
+  console.log(
+    `recorded in ${seconds(recorded - started)}s, compared in ${seconds(Date.now() - recorded)}s, ${JOBS} at a time`,
+  );
   // Credit is bound to this file's hash, so a recording that cannot be trusted must not write it.
   if (control || !brokenRecording)
     writeFileSync(
@@ -187,6 +198,8 @@ function option(name: string): string | undefined {
 }
 
 function resultsPath(): string {
+  const out = option("out");
+  if (out) return out;
   if (option("traces") || option("corpus") || ONLY)
     return join(OUT, "results-control.json");
 
@@ -260,68 +273,96 @@ function declaredOpaque(): Set<string> {
 
 // Returns true when instrumentation changed a test's result or a run did not finish, either of
 // which makes the recording untrustworthy.
-function record(wanted: string[]): boolean {
+async function record(wanted: string[]): Promise<boolean> {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(CORPUS, { recursive: true });
   mkdirSync(TRACES, { recursive: true });
+  rmSync(BASELINE, { recursive: true, force: true });
   mkdirSync(BASELINE, { recursive: true });
   const sources = join(OUT, "sources.txt");
   writeFileSync(sources, wanted.join("\n"));
-  let broken = false;
-  for (const directory of TEST_DIRS) {
-    if (!existsSync(join(ROOT, directory))) continue;
-    const before = baselineFailures(directory);
-    const name = directory.replaceAll("/", "-");
-    const coverage = join(OUT, "coverage", name);
-    const report = join(OUT, `${name}.junit.xml`);
-    const run = spawnSync(
-      "bun",
-      [
-        "test",
-        "--isolate",
-        "--max-concurrency=1",
-        "--timeout=60000",
-        "--preload",
-        PRELOAD,
-        "--coverage",
-        "--coverage-reporter=lcov",
-        `--coverage-dir=${coverage}`,
-        "--reporter=junit",
-        `--reporter-outfile=${report}`,
-        ...extraTests(directory),
-      ],
-      {
-        cwd: join(ROOT, directory),
-        encoding: "utf8",
-        maxBuffer: 1 << 28,
-        timeout: RUN_LIMIT_MS,
-        env: {
-          ...process.env,
-          SPEC_CORPUS: CORPUS,
-          SPEC_TRACES: TRACES,
-          SPEC_RECORD_SOURCES: sources,
+  const directories = TEST_DIRS.filter((directory) =>
+    existsSync(join(ROOT, directory)),
+  );
+  const recorder = {
+    ...process.env,
+    SPEC_CORPUS: CORPUS,
+    SPEC_TRACES: TRACES,
+    SPEC_RECORD_SOURCES: sources,
+  };
+  // Every run goes once with the recorder and once without, and the two are compared file by file.
+  const runs = directories.flatMap((directory) =>
+    inRuns(testFiles(directory)).flatMap((files, index) => {
+      const name = `${directory.replaceAll("/", "-")}.${index}.junit.xml`;
+
+      return [
+        {
+          directory: directory,
+          files: files,
+          report: join(OUT, name),
+          env: recorder,
         },
-      },
+        {
+          directory: directory,
+          files: files,
+          report: join(BASELINE, name),
+          env: process.env,
+        },
+      ];
+    }),
+  );
+  const finished = await pooled(runs, JOBS, (run) =>
+    testRun(run.directory, run.files, run.report, run.env),
+  );
+  let broken = false;
+  for (const directory of directories) {
+    const mine = runs.filter((run) => run.directory === directory);
+    const cases = (env: NodeJS.ProcessEnv): Map<string, Cases> =>
+      mergeCases(
+        mine
+          .filter((run) => run.env === env)
+          .map((run) => casesByFile(directory, run.report)),
+      );
+    const recorded = cases(recorder);
+    const plain = cases(process.env);
+    const failing = (entries: Map<string, Cases>): string[] =>
+      [...entries.values()].flatMap((entry) => [...entry.failing]);
+    // A test that fails without the recorder only because other runs were loading the machine
+    // must not excuse a failure the recorder caused, so it is run once more on its own.
+    const before = new Set(
+      stillFailing(directory, failing(plain), process.env),
     );
-    const after = failingTests(report);
+    const after = failing(recorded);
     const introduced = stillFailing(
       directory,
-      [...after].filter((test) => !before.has(test)),
-      sources,
+      after.filter((test) => !before.has(test)),
+      recorder,
+    );
+    const files = new Set(mine.flatMap((run) => run.files));
+    const ran = [...recorded.values()].reduce(
+      (sum, entry) => sum + entry.total,
+      0,
     );
     console.log(
-      `${directory}: ${after.size} failing, baseline ${before.size}, ${introduced.length} introduced by recording`,
+      `${directory}: ${ran} tests in ${files.size} files, ${after.length} failing, ${before.size} of them without the recorder too, ${introduced.length} introduced by recording`,
     );
     for (const test of introduced.slice(0, 40))
       console.log(`  INTRODUCED ${test}`);
-    const ran = testCount(report);
-    const expected = testCount(join(BASELINE, `${name}.junit.xml`));
-    if (ran < 0.99 * expected) {
-      console.log(`  ONLY ${ran} OF ${expected} TESTS RAN`);
+    for (const file of files) {
+      const path = resolve(ROOT, directory, file);
+      const got = recorded.get(path)?.total ?? 0;
+      const expected = plain.get(path)?.total ?? 0;
+      if (got < expected) {
+        console.log(`  ONLY ${got} OF ${expected} TESTS RAN IN ${file}`);
+        broken = true;
+      }
+    }
+    if (ran === 0) {
+      console.log("  NO TESTS RAN");
       broken = true;
     }
-    if (run.status === null || !existsSync(report)) {
-      console.log(`  RUN DID NOT FINISH: ${run.signal ?? run.error?.message}`);
+    if (mine.some((run) => !finished[runs.indexOf(run)])) {
+      console.log("  A RUN DID NOT FINISH");
       broken = true;
     }
     if (introduced.length > 0) broken = true;
@@ -336,17 +377,104 @@ function record(wanted: string[]): boolean {
   return broken;
 }
 
-// Tests written for the specification, in `replay/extra/<workspace>/`. Bun runs these with the
-// workspace's own tests when both are named, so the workspace's tests are named too.
-function extraTests(directory: string): string[] {
-  const folder = join(
-    FORMAL,
-    "replay/extra",
-    directory.split("/").at(-1) ?? "",
-  );
-  if (!existsSync(folder)) return [];
+interface Cases {
+  total: number;
+  failing: Set<string>;
+}
 
-  return [join(ROOT, directory), folder];
+// One `bun test` over some files of a workspace. False when it did not run to the end. Bun writes
+// no report when every file fails to load, which the per-file comparison then shows.
+async function testRun(
+  directory: string,
+  files: string[],
+  report: string,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  const recording = env["SPEC_TRACES"] !== undefined;
+  const done = await launch(
+    "bun",
+    [
+      "test",
+      "--isolate",
+      "--max-concurrency=1",
+      "--timeout=60000",
+      "--reporter=junit",
+      `--reporter-outfile=${report}`,
+      ...(recording ? ["--preload", PRELOAD] : []),
+      ...files,
+    ],
+    {
+      cwd: join(ROOT, directory),
+      timeout: RUN_LIMIT_MS,
+      env: env,
+      quiet: true,
+    },
+  );
+
+  return done.status !== null;
+}
+
+// How many tests each file ran in one report, and which failed, by the file's full path.
+function casesByFile(directory: string, report: string): Map<string, Cases> {
+  const cases = new Map<string, Cases>();
+  if (!existsSync(report)) return cases;
+  const failing = failingTests(report);
+  for (const match of readFileSync(report, "utf8").matchAll(
+    /<testcase\b[^>]*?\bfile="([^"]*)"/g,
+  )) {
+    const path = resolve(ROOT, directory, match[1] ?? "");
+    const entry = cases.get(path) ?? { total: 0, failing: new Set<string>() };
+    cases.set(path, entry);
+    entry.total += 1;
+  }
+  for (const test of failing) {
+    const path = resolve(ROOT, directory, test.split(" ")[0] ?? "");
+    const entry = cases.get(path) ?? { total: 0, failing: new Set<string>() };
+    cases.set(path, entry);
+    entry.failing.add(test);
+  }
+
+  return cases;
+}
+
+function mergeCases(parts: Map<string, Cases>[]): Map<string, Cases> {
+  const merged = new Map<string, Cases>();
+  for (const part of parts) {
+    for (const [path, entry] of part) {
+      const sum = merged.get(path) ?? { total: 0, failing: new Set<string>() };
+      merged.set(path, sum);
+      sum.total += entry.total;
+      for (const test of entry.failing) sum.failing.add(test);
+    }
+  }
+
+  return merged;
+}
+
+function inRuns(files: string[]): string[][] {
+  const runs: string[][] = [];
+  for (let at = 0; at < files.length; at += FILES_PER_RUN)
+    runs.push(files.slice(at, at + FILES_PER_RUN));
+
+  return runs;
+}
+
+// The workspace's test files and the specification's own. The pattern is Bun's own for finding
+// tests.
+function testFiles(directory: string): string[] {
+  const root = join(ROOT, directory);
+  const extra = join(FORMAL, "replay/extra", directory.split("/").at(-1) ?? "");
+
+  return [root, extra]
+    .filter((folder) => existsSync(folder))
+    .flatMap((folder) =>
+      [...TEST_FILES.scanSync({ cwd: folder, absolute: true })].filter(
+        (file) => !file.includes("/node_modules/"),
+      ),
+    )
+    .map((file) => relative(root, file))
+    .map((file) => (file.startsWith(".") ? file : `./${file}`))
+    .sort();
 }
 
 // Runs one specification test and adds what it recorded to the shared recordings.
@@ -390,47 +518,24 @@ function mergeRecordings(from: string, to: string): void {
     appendFileSync(join(to, file), readFileSync(join(from, file)));
 }
 
-function baselineFailures(directory: string): Set<string> {
-  const name = directory.replaceAll("/", "-");
-  const report = join(BASELINE, `${name}.junit.xml`);
-  if (!existsSync(report)) {
-    spawnSync(
-      "bun",
-      [
-        "test",
-        "--isolate",
-        "--max-concurrency=1",
-        "--reporter=junit",
-        `--reporter-outfile=${report}`,
-        ...extraTests(directory),
-      ],
-      {
-        cwd: join(ROOT, directory),
-        encoding: "utf8",
-        maxBuffer: 1 << 28,
-        timeout: RUN_LIMIT_MS,
-      },
-    );
-  }
-
-  return existsSync(report) ? failingTests(report) : new Set();
-}
-
-function testCount(report: string): number {
-  if (!existsSync(report)) return 0;
-
-  return [...readFileSync(report, "utf8").matchAll(/<testcase\b/g)].length;
-}
-
-// Coverage slows tests that assert on elapsed time. A test that passes once more under the
-// recorder, without coverage, was not changed by recording.
+// Runs beside each other slow tests that assert on elapsed time. A test that fails again in a run
+// of its own, with the same recorder or lack of one, fails for a reason other than load.
 function stillFailing(
   directory: string,
   tests: string[],
-  sources: string,
+  env: NodeJS.ProcessEnv,
 ): string[] {
   if (tests.length === 0) return [];
-  const report = join(OUT, `${directory.replaceAll("/", "-")}.retry.xml`);
+  const recording = env["SPEC_TRACES"] !== undefined;
+  const report = join(
+    OUT,
+    `${directory.replaceAll("/", "-")}.${recording ? "retry" : "plain-retry"}.xml`,
+  );
+  const files = new Set(
+    tests
+      .map((test) => test.split(" ")[0] ?? "")
+      .map((file) => (/^[./]/.test(file) ? file : `./${file}`)),
+  );
   spawnSync(
     "bun",
     [
@@ -438,25 +543,20 @@ function stillFailing(
       "--isolate",
       "--max-concurrency=1",
       "--timeout=60000",
-      "--preload",
-      PRELOAD,
+      ...(recording ? ["--preload", PRELOAD] : []),
       "--reporter=junit",
       `--reporter-outfile=${report}`,
-      ...new Set(tests.map((test) => test.split(" ")[0] ?? "")),
+      ...files,
     ],
     {
       cwd: join(ROOT, directory),
       encoding: "utf8",
       maxBuffer: 1 << 28,
       timeout: RUN_LIMIT_MS,
-      env: {
-        ...process.env,
-        SPEC_CORPUS: CORPUS,
-        SPEC_TRACES: TRACES,
-        SPEC_RECORD_SOURCES: sources,
-      },
+      env: env,
     },
   );
+  // Bun writes no report when every file fails to load: those tests did fail again.
   if (!existsSync(report)) return tests;
   const again = failingTests(report);
 
@@ -478,7 +578,7 @@ function failingTests(report: string): Set<string> {
   return failing;
 }
 
-function checkPlain(twin: TwinRow): TwinResult {
+async function checkPlain(twin: TwinRow): Promise<TwinResult> {
   const result = emptyResult(twin);
   const path = join(CORPUS, `${encodeURIComponent(twin.source)}.jsonl`);
   if (!existsSync(path)) return result;
@@ -495,7 +595,7 @@ function checkPlain(twin: TwinRow): TwinResult {
   const input = calls
     .map((call) => JSON.stringify({ fn: call.fn, args: call.args }))
     .join("\n");
-  const outputs = runTwin(input);
+  const outputs = await runTwin(input);
   const hits = new Set<number>();
   const sets: number[][] = [];
   calls.forEach((call, index) => {
@@ -541,7 +641,10 @@ function readTraced(source: string): Traced[] {
   ].map((line) => JSON.parse(line) as Traced);
 }
 
-function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
+async function checkTraced(
+  twin: TwinRow,
+  opaqueAllowed: Set<string>,
+): Promise<TwinResult> {
   const result = emptyResult(twin);
   const all = readTraced(twin.source);
   result.recorded = all.length;
@@ -575,7 +678,7 @@ function checkTraced(twin: TwinRow, opaqueAllowed: Set<string>): TwinResult {
       }),
     )
     .join("\n");
-  const outputs = calls.length > 0 ? runTwin(input) : [];
+  const outputs = calls.length > 0 ? await runTwin(input) : [];
   const hits = new Set<number>();
   const sets: number[][] = [];
   const internal = new Set<string>();
@@ -839,14 +942,14 @@ function noteMismatch(
   };
 }
 
-function runTwin(input: string): string[] {
-  const run = spawnSync(BINARY, ["twin-run"], {
-    input: `${input}\n`,
-    encoding: "utf8",
-    maxBuffer: 1 << 28,
-  });
+async function runTwin(input: string): Promise<string[]> {
+  const run = await launch(BINARY, ["twin-run"], { input: `${input}\n` });
 
   return run.stdout.split("\n").filter(Boolean);
+}
+
+function seconds(milliseconds: number): number {
+  return Math.round(milliseconds / 1000);
 }
 
 // Reasons a recording cannot be compared: a value was too big or
@@ -990,4 +1093,4 @@ function canonical(value: unknown): string {
   });
 }
 
-main();
+await main();

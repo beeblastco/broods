@@ -9,6 +9,7 @@ const TOOLING = [
   "replay/record-preload.ts",
   "scripts/functions.ts",
   "scripts/conform.ts",
+  "scripts/pool.ts",
 ];
 
 const LEAN_ROOTS = [

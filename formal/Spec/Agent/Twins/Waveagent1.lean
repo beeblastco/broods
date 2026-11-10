@@ -888,13 +888,39 @@ private def contentTypeForPath (args : Json) : Json :=
   let extension := (((str (Twin.arg args 0)).splitOn ".").getLast?.getD "").toLower
   toJson ((mediaExtensionTypes.lookup extension).getD "application/octet-stream")
 
-/-- `compareSkillBundlePath`. `localeCompare` needs ICU collation, so that branch is not modelled. -/
+/-- ASCII punctuation and digits in the order ICU's root collation ranks them, below every letter. -/
+private def icuSymbolOrder : List Char := " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789".toList
+
+/-- The primary weight of an ASCII character under ICU root collation, letters ignoring case. -/
+private def icuPrimary (c : Char) : Option Nat :=
+  if c.isAlpha && c.toNat < 128 then some (icuSymbolOrder.length + c.toLower.toNat - 97)
+  else (icuSymbolOrder.idxOf? c)
+
+/-- `a.localeCompare(b)` on ASCII text: primary weights first, then lowercase before uppercase. -/
+private def localeCompareAscii (a b : String) : Json :=
+  let weights := fun (text : String) => text.toList.map icuPrimary
+  let rec go : List Nat → List Nat → Int
+    | [], [] => 0
+    | [], _ => -1
+    | _, [] => 1
+    | x :: xs, y :: ys => if x < y then -1 else if y < x then 1 else go xs ys
+  if (weights a ++ weights b).any Option.isNone then
+    Twin.unsupported "localeCompare on characters outside ASCII collation"
+  else
+    let primary := go ((weights a).filterMap id) ((weights b).filterMap id)
+    if primary != 0 then toJson primary
+    else
+      match (a.toList.zip b.toList).find? fun (x, y) => x != y with
+      | some (x, _) => toJson (if x.isLower then (-1 : Int) else 1)
+      | none => toJson (0 : Int)
+
+/-- `compareSkillBundlePath`: `SKILL.md` first, then `localeCompare`. -/
 private def compareSkillBundlePath (args : Json) : Json :=
   let a := str (Twin.arg args 0)
   let b := str (Twin.arg args 1)
   if a == "SKILL.md" then (if b == "SKILL.md" then toJson (0 : Nat) else toJson (-1 : Int))
   else if b == "SKILL.md" then toJson (1 : Nat)
-  else Twin.unsupported "localeCompare collation"
+  else localeCompareAscii a b
 
 private def closures (names : List String) : Json :=
   Json.mkObj (names.map fun name => (name, fn name))
@@ -1193,19 +1219,77 @@ private def appendConversationEvents (call : Json) : Prog Json := do
   let _ ← Prog.effect "this.confirmOwner" [started]
   pure Twin.undefinedJson
 
+/-- Normalizes each staged object in turn. The first stale one is deleted without waiting, so the
+callbacks after it, and their deletes, overlap that delete and start in one group. -/
+private def deleteStaleFrom (bucket : Json) (prefixText : String) (keep : List Json) :
+    List Json → Prog Unit
+  | [] => pure ()
+  | object :: rest => do
+    let key := str (field object "key")
+    let relative ← Prog.effect "normalizeBundlePath" [toJson (dropChars key prefixText.length)]
+    if keep.contains relative then deleteStaleFrom bucket prefixText keep rest
+    else
+      let later := rest.map fun next =>
+        let nextKey := str (field next "key")
+        let nextRelative := normalizeBundlePath (.arr #[toJson (dropChars nextKey prefixText.length)])
+        (nextKey, nextRelative)
+      if later.any fun (_, relative) => relative.getStr?.toOption.isNone then
+        Prog.unsupported "a staged path that fails to normalize inside concurrent callbacks"
+      else
+        let calls : List (String × List Json) :=
+          [("deleteS3Object", [bucket, toJson key])] ++ later.flatMap fun (nextKey, nextRelative) =>
+            [("normalizeBundlePath", [toJson (dropChars nextKey prefixText.length)])] ++
+              (if keep.contains nextRelative then []
+               else [("deleteS3Object", [bucket, toJson nextKey])])
+        let outcomes ← Prog.all calls
+        for outcome in outcomes do
+          match outcome with
+          | .threw error _ => Prog.fail error
+          | _ => pure ()
+
 private def deleteStaleStagedSkillFiles (call : Json) : Prog Json := do
   let bucket := Twin.callArg call 0
   let prefixText := str (Twin.callArg call 1)
   let keep := arr (field (Twin.callArg call 2) "$set")
   let objects ← Prog.effect "listS3Prefix" [bucket, toJson prefixText]
-  let files := (arr objects).filter fun o => !(str (field o "key")).endsWith "/"
-  if files.length > 1 then Prog.unsupported "concurrent deletes interleave"
-  for object in files do
-    let key := str (field object "key")
-    let relative ← Prog.effect "normalizeBundlePath" [toJson (dropChars key prefixText.length)]
-    if !keep.contains relative then
-      let _ ← Prog.effect "deleteS3Object" [bucket, toJson key]
+  deleteStaleFrom bucket prefixText keep ((arr objects).filter fun o => !(str (field o "key")).endsWith "/")
   pure Twin.undefinedJson
+
+/-- Whether `a` sorts before `b`: the sort's comparator, which only its sign matters to. -/
+private def bundleLess (a b : Json) : Prog Bool := do
+  let order ← Prog.effect "compareSkillBundlePath" [field a "path", field b "path"]
+  return match order.getInt? with | .ok n => decide (n < 0) | _ => false
+
+/-- Binary search for where `pivot` goes among the first `right` sorted entries. -/
+private def bundleInsertAt (files : List Json) (pivot : Json) (left right fuel : Nat) : Prog Nat :=
+  match fuel with
+  | 0 => pure left
+  | fuel + 1 =>
+    if left >= right then pure left
+    else do
+      let middle := left + (right - left) / 2
+      let less ← bundleLess pivot files[middle]!
+      if less then bundleInsertAt files pivot left middle fuel
+      else bundleInsertAt files pivot (middle + 1) right fuel
+
+/-- Binary insertion sort from `start` on, the order Bun's engine compares in. -/
+private def bundleInsertionSort (files : List Json) (start fuel : Nat) : Prog (List Json) :=
+  match fuel with
+  | 0 => pure files
+  | fuel + 1 =>
+    if start >= files.length then pure files
+    else do
+      let pivot := files[start]!
+      let position ← bundleInsertAt files pivot 0 start files.length
+      let moved := files.take position ++ pivot :: (files.drop position).take (start - position)
+        ++ files.drop (start + 1)
+      bundleInsertionSort moved (start + 1) fuel
+
+/-- `files.sort(compareSkillBundlePath)`. Recordings show binary insertion from the second entry
+for up to three entries; a longer sort's comparison order was not observed. -/
+private def sortBundleFiles (files : List Json) : Prog (List Json) := do
+  if files.length > 3 then Prog.unsupported "the comparison order of a sort over three entries"
+  bundleInsertionSort files 1 files.length
 
 private def listSkillSourceFiles (call : Json) : Prog Json := do
   let sourcePrefix := str (Twin.callArg call 0) ++ "/"
@@ -1219,13 +1303,7 @@ private def listSkillSourceFiles (call : Json) : Prog Json := do
       let size := field object "size"
       files := files ++ [obj [("key", toJson key), ("path", path),
         ("size", if nullish size then toJson (5242880 : Nat) else size)]]
-  match files with
-  | [first, second] =>
-    let order ← Prog.effect "compareSkillBundlePath" [field second "path", field first "path"]
-    let negative : Bool := match order.getInt? with | .ok n => decide (n < 0) | _ => false
-    pure (toJson (if negative then [second, first] else [first, second]))
-  | [_] | [] => pure (.arr files.toArray)
-  | _ => Prog.unsupported "the order of comparisons in a longer sort is the engine's"
+  return .arr (← sortBundleFiles files).toArray
 
 private def parkAiSdkHarnessSession (call : Json) : Prog Json := do
   let opts := Twin.callArg call 0

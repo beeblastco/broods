@@ -234,24 +234,22 @@ private def referenceUrl (c : Json) : Prog Json := do
   let query := String.intercalate "&" (pairs.map fun p => formEncode p.1 ++ "=" ++ formEncode (text p.2))
   return .str s!"broods-media://{text (a c 3)}/{encodeComponent (text (a c 2))}?{query}"
 
-private def mediaBytesValue : Nat → Json → Prog Json
-  | 0, _ => Prog.unsupported "nested byte wrappers exceed fuel"
-  | fuel + 1, v => do
-    if string (get v "$bytes") then return v
-    if string v then
-      let s := text v
-      let prefixEnd := indexOf? s ","
-      let dataUrl := s.toLower.startsWith "data:" &&
-        ((s.splitOn ",").headD "").toLower.endsWith ";base64"
-      let scheme := Spec.Sandbox.Tools.Re.test
-        (Spec.Sandbox.Tools.Re.seqs [.bol, .chr (fun ch => ch.isAlpha),
-          .rep (.chr (fun ch => ch.isAlphanum || "+.-".toList.contains ch)) true,
-          Spec.Sandbox.Tools.Re.lit ":"]) s
-      if !dataUrl && scheme then return .null
-      let encoded := if dataUrl then dropChars s (prefixEnd.getD 0 + 1) else s
-      return Json.mkObj [("$bytes", .str (String.ofList (encode64 (Spec.Sandbox.Tools.fromBase64 encoded).toList)))]
-    if get v "type" == .str "data" then return ← mediaBytesValue fuel (get v "data")
-    return .null
+private def mediaBytesValue (v : Json) : Prog Json := do
+  if string (get v "$bytes") then return v
+  if string v then
+    let s := text v
+    let prefixEnd := indexOf? s ","
+    let dataUrl := s.toLower.startsWith "data:" &&
+      ((s.splitOn ",").headD "").toLower.endsWith ";base64"
+    let scheme := Spec.Sandbox.Tools.Re.test
+      (Spec.Sandbox.Tools.Re.seqs [.bol, .chr (fun ch => ch.isAlpha),
+        .rep (.chr (fun ch => ch.isAlphanum || "+.-".toList.contains ch)) true,
+        Spec.Sandbox.Tools.Re.lit ":"]) s
+    if !dataUrl && scheme then return .null
+    let encoded := if dataUrl then dropChars s (prefixEnd.getD 0 + 1) else s
+    return Json.mkObj [("$bytes", .str (String.ofList (encode64 (Spec.Sandbox.Tools.fromBase64 encoded).toList)))]
+  if get v "type" == .str "data" then return ← Prog.effect "mediaBytes" [get v "data"]
+  return .null
 
 private def numberFields (v : Json) (names : List String) : List (String × Json) :=
   names.filterMap fun k => if (get v k).getNum?.isOk then some (k, get v k) else none
@@ -270,7 +268,7 @@ private def moreTwins : List Twin := [
   Twin.traced (core "discord-channel" "formatDiscordMessageText") discordText,
   Twin.traced (media "parseMediaReference") parseReference,
   Twin.traced (media "mediaReferenceUrl") referenceUrl,
-  Twin.traced (media "mediaBytes") (fun c => mediaBytesValue 64 (a c 0)),
+  Twin.traced (media "mediaBytes") (fun c => mediaBytesValue (a c 0)),
   Twin.traced (core "telegram-channel" "toTelegramSource") telegramSource,
   Twin.traced (core "gchat-channel" "parseServiceAccountKey") parseKey,
   pureTwin (core "channels" "parseQuestionButtonId") parseQuestion,
@@ -668,7 +666,10 @@ private def assertSlackUrl (c : Json) : Prog Json :=
       let host := url.hostname.toLower
       if host != "slack.com" && ![".slack.com", ".slack-edge.com", ".slack-files.com"].any (fun suffix => host.endsWith suffix) then
         Prog.throwError "Error" s!"refusing to send the Slack token to {host}"
-      else Prog.unsupported "URL instance result"
+      else
+        match urlHref (text (a c 0)) url with
+        | some href => pure (Json.mkObj [("$url", .str href)])
+        | none => Prog.unsupported "URL serialization beyond plain ASCII text"
 
 private def mediaSafeName (name : String) : Option String :=
   if name.toList.any (fun ch => ch.toNat > 127) then none else
@@ -856,7 +857,11 @@ private def parseInboundValue (c : Json) : Prog Json := do
     ("message", message), ("phoneNumberId", get options "phoneNumberId")]]
   let reply ← Prog.effect "replyText" [message]
   let body := nullish reply (Twin.field parsed "text")
-  if !live body then return ← Prog.unsupported "parsed.attachments is not recorded"
+  if !live body then
+    match (Twin.field parsed "attachments").getArr?.toOption with
+    | some #[] => return ignore s!"unsupported_type:{text (get message "type")}"
+    | some _ => pure ()
+    | none => return ← Prog.unsupported "parsed.attachments is not recorded"
   let inboundMessage ← Prog.effect "toInboundMessage" [message, sender, parsed, body]
   return Json.mkObj [("kind", .str "message"), ("redelivers", .bool true),
     ("message", inboundMessage)]
@@ -972,7 +977,9 @@ private def fourthTwins : List Twin := [
     let value := a c 0
     if missing value then .str "" else if string value then value
     else match value with
-      | .obj _ => Json.mkObj [("$unsupported", .str "object key order is not recorded")]
+      | .obj _ =>
+        if get value "$bigint" != Twin.undefinedJson then .str "[unserializable tool output]"
+        else Json.mkObj [("$unsupported", .str "object key order is not recorded")]
       | other => .str other.compress),
   pureTwin (core "whatsapp-channel" "handshakeParams") (fun c =>
     Json.mkObj [("$params", jarr ((formPairs (text (get (a c 0) "rawQueryString"))).map

@@ -697,7 +697,17 @@ private def payloadTwins : List Spec.Twin :=
             Spec.Twin.threw "Background job completion requires the x-job-token header"
           else
             match Json.parse bodyText with
-            | .error _ => Spec.Twin.unsupported "the engine words the JSON parse error"
+            | .error _ =>
+              -- JavaScriptCore names a leading bare word; its other parse errors are not modelled.
+              match (jsTrim bodyText).toList with
+              | first :: rest =>
+                if first.isAlpha || first == '_' || first == '$' then
+                  let word := String.ofList (first :: rest.takeWhile fun c => c.isAlphanum || c == '_' || c == '$')
+                  if ["true", "false", "null"].contains word then
+                    Spec.Twin.unsupported "the engine words the JSON parse error"
+                  else Spec.Twin.threw s!"Invalid request JSON: JSON Parse error: Unexpected identifier \"{word}\""
+                else Spec.Twin.unsupported "the engine words the JSON parse error"
+              | [] => Spec.Twin.unsupported "the engine words the JSON parse error"
             | .ok record@(.obj _) =>
               match field record "status" with
               | status@(.str "completed") | status@(.str "failed") =>

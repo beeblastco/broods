@@ -147,9 +147,39 @@ private def tenantGraphApi (c : Json) : Prog Json := do
     let body ← Prog.effect "response.text"
     Prog.throwError "Error" s!"WhatsApp API error: {status} {text body}"
 
+/-- The first response header called `name`, as `response.headers.get` reads it. -/
+private def responseHeader (response : Json) (name : String) : Json :=
+  match (items (get response "headers")).find? fun pair => text (items pair |>.head?.getD undef) == name with
+  | some pair => (items pair).getD 1 undef
+  | none => .null
+
+/-- The redirect loop of `fetchSlackFile`: `hops` more downloads may follow. -/
+private def slackDownload (token target : Json) : Nat → Prog Json
+  | 0 => Prog.throwError "Error" "Slack file download redirected too many times"
+  | hops + 1 => do
+    let signal ← Prog.effect "AbortSignal.timeout" [num 30000]
+    let reply ← Prog.effect "fetch" [target, obj [
+      ("headers", obj [("authorization", .str s!"Bearer {text token}")]),
+      ("redirect", .str "manual"), ("signal", signal)]]
+    let response := get reply "$response"
+    let status := (get response "status").getNat?.toOption.getD 0
+    let location := responseHeader response "location"
+    if live location && 300 ≤ status && status < 400 then
+      match parseUrl (text location) with
+      | .ok url =>
+        match urlHref (text location) url with
+        | some href => slackDownload token (← Prog.effect "assertSlackFileUrl" [.str href]) hops
+        | none => Prog.unsupported "URL serialization beyond plain ASCII text"
+      | _ => Prog.unsupported "a relative or unusual redirect location"
+    else if !(200 ≤ status && status < 300) then
+      Prog.throwError "Error" s!"Slack answered {status}"
+    else if ((text (responseHeader response "content-type")).splitOn "text/html").length > 1 then
+      Prog.throwError "Error"
+        "Slack returned its login page instead of the file. The app needs the files:read scope"
+    else Prog.effect "response.arrayBuffer"
+
 private def fetchSlackFile (c : Json) : Prog Json := do
-  let _ ← Prog.effect "assertSlackFileUrl" [a c 0]
-  Prog.unsupported "no recording reaches the download"
+  slackDownload (a c 1) (← Prog.effect "assertSlackFileUrl" [a c 0]) 5
 
 /-- The key order `JSON.stringify` uses for a recorded object. -/
 private def keyOrder (value : Json) : List String :=

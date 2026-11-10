@@ -297,6 +297,16 @@ def parseUrl (value : String) : UrlOutcome :=
       | _ => .invalid
   | [] => .invalid
 
+/-- `url.href` for a parsed `http`-like URL whose text needs no percent-encoding or credential handling. -/
+def urlHref (raw : String) (url : ParsedUrl) : Option String :=
+  let plain := fun (ch : Char) => ch.toNat > 32 && ch.toNat < 127 && ch != '@' && ch != '\\' &&
+    ch != '"' && ch != '<' && ch != '>' && ch != '`' && ch != '{' && ch != '}' && ch != '|' && ch != '^'
+  let tail := (raw.toList.dropWhile (fun ch => ch != '?' && ch != '#'))
+  if !raw.toList.all plain || raw.toList.contains '[' then none
+  else
+    let port := if url.port == "" then "" else ":" ++ url.port
+    some (url.protocol ++ "//" ++ url.hostname ++ port ++ url.pathname ++ String.ofList tail)
+
 /-- `Number.isFinite` on a JSON number is always true; compares the value with a natural. -/
 def numLe (n : JsonNumber) (k : Nat) : Bool :=
   let scale := (10 : Int) ^ n.exponent
