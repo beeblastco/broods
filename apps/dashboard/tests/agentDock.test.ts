@@ -317,6 +317,42 @@ describe("agent dock", () => {
     ).toEqual(["broods/b.ts"]);
   });
 
+  test("a proposal's title and branch come from the steps the user kept", () => {
+    const commit = proposalPlan(
+      {
+        files: [{ content: "a", path: "broods/a.ts" }],
+        message: "Add retry cron",
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+    const plan = {
+      actions: [
+        {
+          change: { after: "1", before: "", field: "RETRIES" },
+          label: "Set RETRIES",
+          name: "RETRIES",
+          type: "setEnvVar" as const,
+          value: "1",
+        },
+        ...(commit?.actions ?? []),
+      ],
+      summary: "Retry failed runs",
+    };
+
+    const proposal = dockProposals(
+      [{ id: "m", plan: plan }],
+      new Set([changeKey("m", 1, "broods/a.ts")]),
+      new Set(),
+      {},
+      [],
+    ).get("m");
+
+    expect(proposal?.title).toBe("Set RETRIES");
+    expect(proposal?.branch).toBeUndefined();
+  });
+
   test("a commit follows its GitHub run to deployed or failed, in the chat's words", () => {
     const commit = proposalPlan(
       { files: [{ content: "a", path: "broods/a.ts" }], summary: "" },
