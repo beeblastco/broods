@@ -253,36 +253,76 @@ def suspendedSettle (handoff : Handoff) : List Input :=
   [.request key {} {} 2 conversation 7 {}, .request key {} {} 2 conversation 8 {}, .status 1 false,
     .settle 1 7 false handoff]
 
-/-- An inactive account's inline hand-off hands nothing on: 8 stays queued with no owner, so
-`settle_hands_on` needs `handsOn`. Replay `inactive-inline-takeNext` shows the same in Convex. -/
-theorem inactive_inline_settle_strands :
-    let w := (system small).final (suspendedSettle .inline)
+/-- In an inactive account no hand-off hands on: 8 stays queued with no owner, so `settle_hands_on`
+needs its account-active hypothesis. Replays `inactive-settle-drain` and `inactive-inline-takeNext`
+show the same in Convex. -/
+theorem inactive_settle_strands (handoff : Handoff) :
+    let w := (system small).final (suspendedSettle handoff)
     (∃ r ∈ (w 1).runs, r.id = 8 ∧ r.status = .queued) ∧
       busy (w 1).runs { account := 1, agent := 2, name := 0 } = false := by
-  simp [suspendedSettle, System.final, System.runFrom, system, step, accountStep, requestRun,
-    startAuth, Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh, admit,
-    promote, busy, nextQueued, liveRun, endRun, settledStatus, handsOn, setStatus, emptyWorld,
-    Input.account, rootRun]
-
-/-- A drain hands on even in an inactive account: the settle drops the rows, and the `takeNext` that
-follows carries none, so it skips `requireActiveAccount` (replay `inactive-settle-drain`). -/
-theorem inactive_drain_hands_on :
-    let w := (system small).final (suspendedSettle .drain)
-    ∃ r ∈ (w 1).runs, r.id = 8 ∧ r.status = .running := by
-  simp [suspendedSettle, System.final, System.runFrom, system, step, accountStep, requestRun,
-    startAuth, Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh, admit,
-    promote, busy, nextQueued, liveRun, endRun, settledStatus, handsOn, setStatus, emptyWorld,
-    Input.account, rootRun]
+  cases handoff <;>
+    simp [suspendedSettle, System.final, System.runFrom, system, step, accountStep, requestRun,
+      startAuth, Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh,
+      admit, promote, busy, nextQueued, liveRun, endRun, settledStatus, setStatus, emptyWorld,
+      Input.account, rootRun]
 
 /-- A background run in an inactive account loses its outcome (its refused settle leaves the envelope
-to expire, `failed` here) while its queue is still handed on to 8. -/
+to expire, `failed` here), and its queue waits: 8 stays queued. -/
 theorem inactive_background_settle_loses_outcome :
     let w := (system small).final (suspendedSettle .background)
     (∃ r ∈ (w 1).runs, r.id = 7 ∧ r.status = .failed) ∧
-      ∃ r ∈ (w 1).runs, r.id = 8 ∧ r.status = .running := by
+      ∃ r ∈ (w 1).runs, r.id = 8 ∧ r.status = .queued := by
   simp [suspendedSettle, System.final, System.runFrom, system, step, accountStep, requestRun,
     startAuth, Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh, admit,
-    promote, busy, nextQueued, liveRun, endRun, settledStatus, handsOn, setStatus, emptyWorld,
+    promote, busy, nextQueued, liveRun, endRun, settledStatus, setStatus, emptyWorld,
     Input.account, rootRun]
+
+/-- The account step with a settle that hands on whatever the account, as `takeNext` did before
+it checked the account. -/
+def drainAlways (cfg : Config) (s : AccountState) : Input → AccountState × List Effect
+  | .settle account id failed handoff =>
+    match liveRun s.runs id with
+    | none => (s, [])
+    | some run => endRun s account run (settledStatus s.active handoff failed) true
+  | i => accountStep cfg s i
+
+/-- With `drainAlways`, a drain in a suspended account starts 8, so `inactive_starts_nothing` needs
+`takeNext` to check the account. -/
+theorem drain_always_starts :
+    let pre := (system small).final ((suspendedSettle .drain).take 3)
+    Effect.started 1 8 8 ∈ (drainAlways small (pre 1) (.settle 1 7 false .drain)).2 := by
+  simp [suspendedSettle, System.final, System.runFrom, system, step, accountStep, requestRun,
+    startAuth, Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh, admit,
+    promote, busy, nextQueued, liveRun, endRun, settledStatus, setStatus, emptyWorld,
+    Input.account, rootRun, drainAlways]
+
+/-- `inactive_starts_nothing` needs its exclusion of a non-persistent child: in a suspended account
+a running run's child still starts outside ingress. -/
+theorem inactive_detached_child_starts :
+    let key : Access.Credential := { kind := .account, account := 1 }
+    let conversation : Conversation := { account := 1, agent := 2, name := 0 }
+    let delegating : Config :=
+      [{ account := 1, agent := 2, tools := [3], sandboxes := [4], subagents := some [] }]
+    let pre := (system delegating).final [.request key {} {} 2 conversation 7 {}, .status 1 false]
+    Effect.started 1 9 7 ∈ (accountStep delegating (pre 1) (.spawn 1 7 (.virtual 5) 9 false {})).2 := by
+  simp [System.final, System.runFrom, system, step, accountStep, requestRun, startAuth,
+    Access.resolve, Access.authAccount, mayStart, Config.lookup, arrive, fresh, admit, promote, busy,
+    nextQueued, liveRun, emptyWorld, Input.account, rootRun, childRun, detach]
+
+/-- A shed dispatch strands nothing for good: 7 owns, 8 queues, 7's dispatch is shed and requeued, so
+both wait with no owner; the next recovery sweep promotes 7 again, ahead of 8. -/
+theorem requeue_then_recover :
+    let key : Access.Credential := { kind := .account, account := 1 }
+    let conversation : Conversation := { account := 1, agent := 2, name := 0 }
+    let shed := (system small).final
+      [.request key {} {} 2 conversation 7 {}, .request key {} {} 2 conversation 8 {}, .requeue 1 7]
+    let swept := (system small).final
+      [.request key {} {} 2 conversation 7 {}, .request key {} {} 2 conversation 8 {}, .requeue 1 7,
+        .recover 1 conversation]
+    busy (shed 1).runs conversation = false ∧ (shed 1).runs.map (·.status) = [.queued, .queued] ∧
+      (swept 1).runs.map (·.status) = [.running, .queued] := by
+  simp [System.final, System.runFrom, system, step, accountStep, requestRun, startAuth,
+    Access.resolve, Access.authAccount, mayStart, small, Config.lookup, arrive, fresh, admit, promote,
+    busy, nextQueued, ownerRun, setStatus, emptyWorld, Input.account, rootRun]
 
 end Spec.Runtime.Controls

@@ -81,9 +81,10 @@ theorem request_legs_bound (signedIn modern : Bool) (server : Nat → Answer) (s
         rw [Nat.succ_mul]; omega
       · rw [Nat.succ_mul]; omega
 
-theorem sdk_call_bound (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) :
-    (sdkCallTool signedIn modern server sent).1 ≤
-      (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) := by
+theorem sdk_call_bound (signedIn modern defined : Bool) (server : Nat → Answer) (sent : Nat) :
+    (sdkCallTool signedIn modern defined server sent).1 ≤
+      (if modern then (if defined then 1 else 2) * (maxRounds + 1) else 1) *
+        (if signedIn then 2 else 1) := by
   have first := request_legs_bound signedIn modern server sent maxRounds
   have second := request_legs_bound signedIn modern server
     (sent + (requestLegs signedIn modern server sent maxRounds).1) maxRounds
@@ -94,37 +95,48 @@ theorem sdk_call_bound (signedIn modern : Bool) (server : Nat → Answer) (sent 
   cases modern
   · simpa using first
   · simp only [ite_true] at first second ⊢
-    split
-    · rcases hq : requestLegs signedIn true server (sent + n) maxRounds with ⟨m, last⟩
-      rw [hq] at second
-      simp only at second ⊢
-      rw [Nat.mul_assoc]
-      generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
-      omega
-    · rw [Nat.mul_assoc]
-      generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
-      omega
+    cases defined
+    · simp only [Bool.false_eq_true, ↓reduceIte, Bool.not_false, Bool.true_and]
+      split
+      · rcases hq : requestLegs signedIn true server (sent + n) maxRounds with ⟨m, last⟩
+        rw [hq] at second
+        simp only at second ⊢
+        rw [Nat.mul_assoc]
+        generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
+        omega
+      · rw [Nat.mul_assoc]
+        generalize (maxRounds + 1) * (if signedIn = true then 2 else 1) = k at *
+        omega
+    · simpa using first
 
-theorem call_sends_bound (signedIn modern : Bool) (server : Nat → Answer) (sent retries : Nat) :
-    callSends signedIn modern server sent retries ≤
-      (retries + 1) * ((if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1)) := by
+theorem call_sends_bound (signedIn modern defined : Bool) (server : Nat → Answer)
+    (sent retries : Nat) :
+    callSends signedIn modern defined server sent retries ≤
+      (retries + 1) * ((if modern then (if defined then 1 else 2) * (maxRounds + 1) else 1) *
+        (if signedIn then 2 else 1)) := by
   induction retries generalizing sent with
-  | zero => simpa [callSends] using sdk_call_bound signedIn modern server sent
+  | zero => simpa [callSends] using sdk_call_bound signedIn modern defined server sent
   | succ r ih =>
-    have once := sdk_call_bound signedIn modern server sent
-    have rest := ih (sent + (sdkCallTool signedIn modern server sent).1)
+    have once := sdk_call_bound signedIn modern defined server sent
+    have rest := ih (sent + (sdkCallTool signedIn modern defined server sent).1)
     simp only [callSends]
-    rcases hp : sdkCallTool signedIn modern server sent with ⟨n, answer⟩
+    rcases hp : sdkCallTool signedIn modern defined server sent with ⟨n, answer⟩
     rw [hp] at once rest
     simp only at once rest ⊢
     split <;> rw [Nat.succ_mul] <;> omega
 
-theorem tool_call_bound (signedIn modern : Bool) (server : Nat → Answer) :
-    toolCallSends signedIn modern server ≤
-      4 * (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) := by
-  have := call_sends_bound signedIn modern server 0 3
+theorem tool_call_bound (signedIn modern defined : Bool) (server : Nat → Answer) :
+    toolCallSends signedIn modern defined server ≤
+      4 * (if modern then (if defined then 1 else 2) * (maxRounds + 1) else 1) *
+        (if signedIn then 2 else 1) := by
+  have := call_sends_bound signedIn modern defined server 0 3
   rw [Nat.mul_assoc]
   simpa [toolCallSends] using this
+
+theorem explorer_bound (signedIn modern : Bool) (server : Nat → Answer) :
+    explorerSends signedIn modern server ≤
+      (if modern then 2 * (maxRounds + 1) else 1) * (if signedIn then 2 else 1) := by
+  simpa [explorerSends] using sdk_call_bound signedIn modern false server 0
 
 theorem isolation_nonvacuous :
     tenantId "account" (some "agent-a") ≠ tenantId "account" (some "agent-b") := by cbv

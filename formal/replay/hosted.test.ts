@@ -27,6 +27,7 @@ import {
 } from "../../apps/core/src/harness/mcp-tasks.ts";
 import {
   callMcpTool,
+  callMcpToolResult,
   mcpConnection,
   setMcpForTests,
 } from "../../apps/core/src/harness/mcp/client.ts";
@@ -93,8 +94,11 @@ function privateFunction<T>(
   ) as T;
 }
 
+const WRITE_TOOL = { name: "write", inputSchema: { type: "object" as const } };
+
 // A fake MCP server behind the stubbed publicHostFetch; counts tools/call sends only.
 async function toolCallSends(input: {
+  path: "agent" | "bare" | "explorer";
   connected: boolean;
   modern: boolean;
   script: string[];
@@ -149,7 +153,7 @@ async function toolCallSends(input: {
         ...complete,
         ttlMs: 0,
         cacheScope: "private",
-        tools: [{ name: "write", inputSchema: { type: "object" } }],
+        tools: [WRITE_TOOL],
       });
     }
     const answer = input.script[sends % input.script.length];
@@ -215,8 +219,18 @@ async function toolCallSends(input: {
     createdAt: "date",
     updatedAt: "date",
   } as McpRecord;
+  const connection = mcpConnection(record, undefined);
   try {
-    await callMcpTool(mcpConnection(record, undefined), "write", {});
+    if (input.path === "explorer") {
+      await callMcpToolResult(connection, "write", {});
+    } else {
+      await callMcpTool(
+        connection,
+        "write",
+        {},
+        input.path === "agent" ? { toolDefinition: WRITE_TOOL } : {},
+      );
+    }
   } catch {
     // A thrown call ends the loop; only the send count is compared.
   } finally {
@@ -397,11 +411,7 @@ test.each(vectors)("$kind: $name", async (vector): Promise<void> => {
       return;
     }
     case "sends": {
-      const input = vector.input as {
-        connected: boolean;
-        modern: boolean;
-        script: string[];
-      };
+      const input = vector.input as Parameters<typeof toolCallSends>[0];
       expect(await toolCallSends(input)).toBe(vector.expected);
 
       return;

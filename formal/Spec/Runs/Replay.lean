@@ -27,7 +27,8 @@ def inputJson : Input → Json
       ("failed", toJson failed), ("results", toJson results), ("asyncResult", toJson asyncResult)]
   | .status active => Json.mkObj [("op", toJson "status"), ("active", toJson active)]
   | .renewOwner o now ttl => owned "renewOwner" o now ttl
-  | .releaseOwner o => owned "releaseOwner" o 0 0
+  | .releaseOwner o requeue => Json.mkObj [("op", toJson "releaseOwner"),
+      ("event", toJson o.event), ("generation", toJson o.generation), ("requeue", toJson requeue)]
   | .stopOwner now => Json.mkObj [("op", toJson "stopOwner"), ("now", toJson now)]
   | .recoverQueued now ttl => Json.mkObj [("op", toJson "recoverQueued"), ("now", toJson now), ("ttl", toJson ttl)]
   | .declineRecovery now => Json.mkObj [("op", toJson "declineRecovery"), ("now", toJson now)]
@@ -49,35 +50,44 @@ def traces : List (String × List Input) := [
   ("steering-barrier", [.accept (row 1) 0 100, .accept (row 2) 1 100,
     .accept (row 3 .steer) 2 100, .applySteering owner 3 100 0]),
   ("release-recover", [.accept (row 1) 0 100, .accept (row 2) 1 100,
-    .settle owner 2 false [] false, .releaseOwner owner, .recoverQueued 3 100]),
+    .settle owner 2 false [] false, .releaseOwner owner false, .recoverQueued 3 100]),
   ("collect", [.accept (row 1) 0 100, .accept (row 2 .collect) 1 100,
     .accept (row 3 .collect) 2 100, .takeNext owner 3 100 true false]),
   ("decline-expiry", [.accept (row 1) 0 100, .accept (row 2) 1 100,
-    .settle owner 2 false [] false, .releaseOwner owner, .declineRecovery 3, .maintain 11]),
+    .settle owner 2 false [] false, .releaseOwner owner false, .declineRecovery 3, .maintain 11]),
   ("decline-recover", [.accept (row 1) 0 100, .accept (row 2) 1 100, .accept (row 3) 2 100,
-    .settle owner 3 false [] false, .releaseOwner owner, .declineRecovery 4, .recoverQueued 11 100]),
+    .settle owner 3 false [] false, .releaseOwner owner false, .declineRecovery 4, .recoverQueued 11 100]),
   ("event-conflict", [.accept (row 1) 0 100, .accept { row 2 with event := 1 } 1 100]),
   ("resume-readmitted", [.accept { row 1 with resume := true } 0 100, .settle owner 1 false [] false,
-    .releaseOwner owner, .accept { row 1 with resume := true } 2 100]),
+    .releaseOwner owner false, .accept { row 1 with resume := true } 2 100]),
   ("resume-stored", [.accept { row 1 with resume := true } 0 100, .stepBoundary owner 1 100 false 0 [1],
-    .settle owner 2 false [] false, .releaseOwner owner, .accept { row 1 with resume := true } 3 100]),
+    .settle owner 2 false [] false, .releaseOwner owner false, .accept { row 1 with resume := true } 3 100]),
   ("resume-boundary-no-result", [.accept { row 1 with resume := true } 0 100,
-    .stepBoundary owner 1 100 false 0 [], .settle owner 2 false [] false, .releaseOwner owner,
+    .stepBoundary owner 1 100 false 0 [], .settle owner 2 false [] false, .releaseOwner owner false,
     .accept { row 1 with resume := true } 3 100]),
   ("resume-settle-stores", [.accept { row 1 with resume := true } 0 100, .settle owner 1 false [1] false,
-    .releaseOwner owner, .accept { row 1 with resume := true } 2 100]),
+    .releaseOwner owner false, .accept { row 1 with resume := true } 2 100]),
   ("inactive-settle-drain", [.accept (row 1) 0 100, .accept (row 2) 1 100, .status false,
-    .settle owner 2 false [9] false, .settle owner 2 false [] false, .takeNext owner 3 100 false false,
-    .stepBoundary ⟨2, 2⟩ 4 100 false 0 [9], .settle ⟨2, 2⟩ 4 true [] true,
-    .takeNext ⟨2, 2⟩ 5 100 false false, .accept (row 3) 6 100, .stopOwner 6, .recoverQueued 7 100]),
+    .settle owner 2 false [9] false, .settle owner 2 true [] true, .takeNext owner 3 100 true false,
+    .accept (row 3) 4 100, .stopOwner 4, .recoverQueued 5 100, .status true, .recoverQueued 6 100]),
   ("inactive-inline-takeNext", [.accept (row 1) 0 100, .accept (row 2) 1 100, .status false,
-    .takeNext owner 2 100 true true, .settle owner 2 false [] false, .releaseOwner owner,
+    .takeNext owner 2 100 true true, .settle owner 2 false [] false, .releaseOwner owner false,
     .recoverQueued 3 100]),
+  ("requeue-shed", [.accept (row 1) 0 100, .accept (row 2) 1 100, .accept (row 3) 2 100,
+    .takeNext owner 3 100 true false, .releaseOwner ⟨2, 2⟩ true, .recoverQueued 4 100]),
+  ("requeue-collect", [.accept (row 1) 0 100, .accept (row 2 .collect) 1 100,
+    .accept (row 3 .collect) 2 100, .accept (row 4) 3 100, .takeNext owner 4 100 true false,
+    .releaseOwner ⟨2, 2⟩ true, .accept (row 5) 5 100]),
+  ("requeue-stale", [.accept (row 1) 0 100, .accept (row 2) 1 100, .takeNext owner 2 100 true false,
+    .releaseOwner ⟨2, 1⟩ true, .releaseOwner owner true, .settle ⟨2, 2⟩ 3 false [] false,
+    .releaseOwner ⟨2, 2⟩ true]),
+  ("requeue-admitted-owner", [.accept (row 1) 0 100, .stepBoundary owner 1 100 false 0 [],
+    .releaseOwner owner true, .recoverQueued 2 100, .settle ⟨1, 2⟩ 3 false [] false]),
   ("retention-delete", [.accept { row 1 with retainUntil := 5 } 0 100, .settle owner 1 false [] false,
-    .releaseOwner owner, .maintain 6, .accept (row 1) 7 100]),
+    .releaseOwner owner false, .maintain 6, .accept (row 1) 7 100]),
   ("G1-live", [.accept (row 1) 0 100, .accept (row 2) 1 100, .maintain 11]),
   ("G1-recovery", [.accept (row 1) 0 100, .accept (row 2) 1 100,
-    .settle owner 2 false [] false, .releaseOwner owner, .maintain 11, .recoverQueued 12 100])]
+    .settle owner 2 false [] false, .releaseOwner owner false, .maintain 11, .recoverQueued 12 100])]
 def vectorJson (name : String) (inputs : List Input) : Json :=
   let rec go : State → List Input → List Json
     | _, [] => []

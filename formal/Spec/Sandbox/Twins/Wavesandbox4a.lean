@@ -990,14 +990,40 @@ def releaseExpiredSandboxes (call : Json) : Prog Json := do
         pure false
       | .pending => Prog.unsupported "take never settled"
     if taken then
-      let done_ ← Prog.effect "releaseOnProvider" [accountId, provider, configs, key, externalId]
-      if truthy done_ then
+      let outcome ← Prog.effect "releaseOnProvider" [accountId, provider, configs, key, externalId]
+      if truthy (field outcome "released") then
         released := released ++ [reservation]
         let _ ← Prog.effect "queueMirrorRemove" [accountId, key, externalId]
       else
-        let _ ← Prog.attempt "claimSandboxInstance"
+        let handedBack ← Prog.attempt "claimSandboxInstance"
           [provider, key, externalId, accountId, field reservation "ttlSeconds"]
+        let kept ← match handedBack with
+          | .ok value => pure (truthy value)
+          | .threw _ _ => pure false
+          | .pending => Prog.unsupported "hand-back never settled"
+        if !kept then
+          let _ ← Prog.effect "keepForSweep" [accountId, provider, key, externalId]
   return .arr released.toArray
+
+/-- `TEARDOWN_RETRY_SECONDS` (`sandbox-cleanup.ts:33`). -/
+def teardownRetrySeconds : Nat := 60
+
+/-- `keepForSweep`: re-reserves a machine whose teardown failed under `teardown:<externalId>`,
+unless the original key already names it again. -/
+def keepForSweep (call : Json) : Prog Json := do
+  let provider := Twin.callArg call 1
+  let key := Twin.callArg call 2
+  let externalId := Twin.callArg call 3
+  Prog.catchFail (do
+    let current ← Prog.effect "getSandboxExternalId" [provider, key]
+    if current == externalId then return Twin.undefinedJson
+    let _ ← Prog.effect "claimSandboxInstance"
+      [provider, toJson ("teardown:" ++ str externalId), externalId, Twin.callArg call 0,
+       toJson teardownRetrySeconds]
+    return Twin.undefinedJson)
+    (fun error => do
+      let _ ← Prog.effect "toErrorMessage" [error]
+      return Twin.undefinedJson)
 
 /-- `SANDBOX_PROVIDERS` without the stateless ones, in declared order. -/
 private def releasableProviders : List String :=
@@ -1013,9 +1039,16 @@ def releaseReservedSandboxes (call : Json) : Prog Json := do
   for ns in namespaces do
     let mut machines : List Json := []
     for provider in releasableProviders do
-      let machine ← Prog.effect "releaseOnProvider" [accountId, toJson provider, configs, ns]
-      if truthy machine then machines := machines ++ [machine]
-      let _ ← Prog.attempt "deleteSandboxInstance" [toJson provider, ns, accountId]
+      let outcome ← Prog.effect "releaseOnProvider" [accountId, toJson provider, configs, ns]
+      let released_ := truthy (field outcome "released")
+      if released_ then machines := machines ++ [field outcome "externalId"]
+      let dropped ← Prog.attempt "deleteSandboxInstance" [toJson provider, ns, accountId]
+      let dropped ← match dropped with
+        | .ok value => pure (truthy value)
+        | .threw _ _ => pure false
+        | .pending => Prog.unsupported "reservation delete never settled"
+      if dropped && truthy outcome && !released_ then
+        let _ ← Prog.effect "keepForSweep" [accountId, toJson provider, ns, field outcome "externalId"]
     released := released + machines.length
     let fences := if machines.isEmpty then [undef] else machines
     let _ ← Prog.all (fences.map fun machine => ("queueMirrorRemove", [accountId, ns, machine]))
@@ -1067,6 +1100,7 @@ def twins : List Spec.Twin :=
    Twin.traced (tools ++ "runSandbox") runSandbox,
    Twin.traced "apps/core/src/harness/tools/channel.tool.ts#resolveImages" resolveImages,
    Twin.traced (cleanup ++ "releaseExpiredSandboxes") releaseExpiredSandboxes,
-   Twin.traced (cleanup ++ "releaseReservedSandboxes") releaseReservedSandboxes]
+   Twin.traced (cleanup ++ "releaseReservedSandboxes") releaseReservedSandboxes,
+   Twin.traced (cleanup ++ "keepForSweep") keepForSweep]
 
 end Spec.Sandbox.Wavesandbox4a

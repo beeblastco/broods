@@ -64,15 +64,27 @@ def scripted (script : List String) (n : Nat) : Answer :=
 
 def answerNames : List String := ["ok", "401", "rate", "input", "mismatch"]
 
+/-- `agent`: callMcpTool with the listed definition, as mcp.tool.ts calls it. `bare`: callMcpTool
+without one. `explorer`: callMcpToolResult without one, as accounts/mcp-service.ts calls it. -/
+def sendPaths : List String := ["agent", "bare", "explorer"]
+
+def pathSends (path : String) (connected modern : Bool) (server : Nat → Answer) : Nat :=
+  match path with
+  | "agent" => toolCallSends connected modern true server
+  | "bare" => toolCallSends connected modern false server
+  | _ => explorerSends connected modern server
+
 def sendVectors : List Json :=
   let scripts := answerNames.map (fun a => [a]) ++
     answerNames.flatMap (fun a => answerNames.map (fun b => [a, b])) ++
-    [(List.range 44).map (fun n => answerName (worstAnswer n))]
-  scripts.flatMap fun script => bools.flatMap fun connected => bools.map fun modern =>
-    row "sends" s!"{connected}-{modern}-{script.take 4}"
-      (Json.mkObj [("connected", toJson connected), ("modern", toJson modern),
-        ("script", toJson script)])
-      (toJson (toolCallSends connected modern (scripted script)))
+    [(List.range 44).map (fun n => answerName (worstAnswer n)),
+     (List.range 22).map (fun n => answerName (worstDefinedAnswer n))]
+  scripts.flatMap fun script => sendPaths.flatMap fun path => bools.flatMap fun connected =>
+    bools.map fun modern =>
+      row "sends" s!"{path}-{connected}-{modern}-{script.take 4}-{script.length}"
+        (Json.mkObj [("path", toJson path), ("connected", toJson connected),
+          ("modern", toJson modern), ("script", toJson script)])
+        (toJson (pathSends path connected modern (scripted script)))
 
 def vectors : List Json := retryVectors ++ tokenVectors ++ sendVectors ++ frameVectors ++ trailingVectors ++
   malformed.map (fun line => row "parse" line (toJson line) (toJson (parseLine line))) ++

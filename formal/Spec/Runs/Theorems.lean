@@ -41,7 +41,7 @@ theorem boundary_without_result_stores_nothing :
     let owned := (step {} (.accept (sampleRow .queued 100 true) 0 100)).1
     let saved := (step owned (.stepBoundary ⟨1, 1⟩ 1 100 false 0 [])).1
     let settled := (step saved (.settle ⟨1, 1⟩ 2 false [] false)).1
-    let released := (step settled (.releaseOwner ⟨1, 1⟩)).1
+    let released := (step settled (.releaseOwner ⟨1, 1⟩ false)).1
     (step released (.accept (sampleRow .queued 100 true) 3 100)).2 = [.admission "owner"] := by
   decide
 /-- Idempotency keys are unique among the rows of every reachable state, so a key names one
@@ -72,8 +72,8 @@ theorem queued_cannot_expire_behind_owner (s : State) (reach : system.Reachable 
   exact ⟨now, ht, g.1.1.2, g.2⟩
 /-- D6, over every input of every reachable state: a queued envelope becomes expired only after
 recovery was offered: a promotion found the queue empty, or recovery declined the conversation
-because its account is not active. A shed recovery dispatch is no decline: it is `recoverQueued`, then
-`settle` failed and `takeNext` (G201). Intended rule; the code expires by TTL alone (G1). -/
+because its account is not active. A shed dispatch offers nothing: its `releaseOwner` with `requeue`
+puts the rows back for the next recovery or arrival. Intended rule; the code expires by TTL alone (G1). -/
 theorem recovery_before_queue_expiry (s : State) (reach : system.Reachable s) (i : Input)
     (r x : Row) (hr : r ∈ s.rows) (hq : r.phase = .queued)
     (hx : x ∈ (step s i).1.rows) (hk : x.key = r.key) (he : x.phase = .expired) :
@@ -81,6 +81,26 @@ theorem recovery_before_queue_expiry (s : State) (reach : system.Reachable s) (i
   obtain ⟨now, _, g⟩ := Proofs.queued_expiry_guarded s i r x (keys_unique s reach) hr hq hx hk he
   simp [mayExpire] at g
   exact g.1.2
+/-- A conversation whose account is not active mints no owner on any path: from such a state, any
+input list that never reactivates the account leaves the owner generation where it was. Admission
+and `stopOwner` refuse, recovery skips the account, and `takeNext` clears the owner without
+promoting, with or without a settle. -/
+theorem inactive_promotes_nothing (s : State) (trace : List Input) (hs : s.accountActive = false)
+    (stays : ∀ i ∈ trace, ∀ a, i = .status a → a = false) :
+    (system.runFrom s trace).1.generation = s.generation :=
+  Proofs.inactive_run s trace hs stays
+/-- A shed dispatch loses nothing: in a reachable state, `releaseOwner` with `requeue` by the live
+owner keeps every row under its key in the same order, with no key twice; it leaves no owner, no row
+still processing under that owner and generation, and each such row queued again unowned
+(`requeueRow`). Counters are checked by replay, not modelled. -/
+theorem requeue_restores_queue (s : State) (reach : system.Reachable s) (o : Owner)
+    (h : s.owner = some o) :
+    let t := (step s (.releaseOwner o true)).1
+    t.rows.map (·.key) = s.rows.map (·.key) ∧ (t.rows.map (·.key)).Nodup ∧ t.owner = none ∧
+      (∀ x ∈ t.rows, ¬ (x.phase = .processing ∧ x.appliedTo = o.event ∧ x.generation = o.generation)) ∧
+      ∀ y ∈ s.rows, requeueRow o y ∈ t.rows := by
+  obtain ⟨keys, owner, held, back⟩ := Proofs.requeue_release s o h
+  exact ⟨keys, keys ▸ keys_unique s reach, owner, held, back⟩
 /-- Promotion always begins with the first queued envelope, including collect and dead-owner steer.
 The code promotes the first unexpired envelope; the model promotes the head whatever its deadline,
 the intended D6 order (G1, L203). -/

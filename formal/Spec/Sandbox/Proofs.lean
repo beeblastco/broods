@@ -35,28 +35,79 @@ theorem hello (p i : Option String) (force : Bool)
   simpa [acceptsHello, Bool.and_eq_true, Bool.or_eq_true, and_assoc] using h
 
 theorem cleanup_effects (s : Cleanup) (trace : List CleanupInput) :
-    (cleanupSystem.runFrom s trace).2 = cleanupLeak trace := by
+    (cleanupSystem.runFrom s trace).2 = cleanupLeakFrom s.row trace := by
   induction trace generalizing s with
   | nil => rfl
   | cons i rest ih =>
+    show List.append (cleanupStep s i).2 (cleanupSystem.runFrom (cleanupStep s i).1 rest).2 = _
+    rw [ih]
     cases i with
-    | sweep a l c p =>
-      cases a <;> cases l <;> cases c <;> cases p <;>
-        simp_all [Spec.System.runFrom, cleanupSystem, cleanupStep, cleanupLeak,
-          List.nil_append, List.cons_append] <;> rfl
+    | sweep a l c p r k =>
+      obtain ⟨row, physical, mirror⟩ := s
+      cases a <;> cases l <;> cases c <;> cases row <;> cases p <;>
+        simp [cleanupStep, cleanupLeakFrom]
 
 theorem progress : Spec.Progress cleanupSystem (fun _ => True)
-    (fun _ schedule => schedule = [.sweep true true true true])
+    (fun _ schedule => ∃ r k, schedule = [.sweep true true true true r k])
     (fun s => s.row = true) (fun s => s.physical = false ∧ s.mirror = false) := by
-  intro trace _ _ schedule fair
-  subst schedule
-  simp [Spec.System.runFrom, cleanupSystem, cleanupStep]
+  intro trace _ pending schedule fair
+  obtain ⟨r, k, rfl⟩ := fair
+  generalize cleanupSystem.final trace = s at pending ⊢
+  simp [Spec.System.runFrom, cleanupSystem, cleanupStep, pending]
 
 theorem privacy : Spec.Private cleanupSystem Unit (List Bool) Bool (fun _ => True)
     (fun _ _ => []) cleanupLeak (fun _ effects => effects) := by
   intro _ a b _ _ _ h
   exact (cleanup_effects cleanupSystem.init a).trans
     (h.trans (cleanup_effects cleanupSystem.init b).symm)
+
+/-- Each step keeps "a running machine has a row" when its failed teardown keeps one. -/
+theorem kept_step (s : Cleanup) (i : CleanupInput) (hk : keepsFailed i = true)
+    (h : s.physical = true → s.row = true) :
+    (cleanupStep s i).1.physical = true → (cleanupStep s i).1.row = true := by
+  cases i with
+  | sweep a l c p r k =>
+    simp only [cleanupStep]
+    split
+    · cases p
+      · intro _; simpa [keepsFailed] using hk
+      · simp
+    · exact h
+
+theorem kept_run (s : Cleanup) (trace : List CleanupInput)
+    (hk : ∀ i ∈ trace, keepsFailed i = true) (h : s.physical = true → s.row = true) :
+    (cleanupSystem.runFrom s trace).1.physical = true →
+      (cleanupSystem.runFrom s trace).1.row = true := by
+  induction trace generalizing s with
+  | nil => exact h
+  | cons i rest ih =>
+    exact ih (cleanupStep s i).1 (fun j hj => hk j (List.mem_cons_of_mem _ hj))
+      (kept_step s i (hk i List.mem_cons_self) h)
+
+theorem kept_reachable (trace : List CleanupInput) (hk : ∀ i ∈ trace, keepsFailed i = true) :
+    (cleanupSystem.final trace).physical = true → (cleanupSystem.final trace).row = true :=
+  kept_run cleanupSystem.init trace hk (fun _ => rfl)
+
+theorem retry : Spec.Progress cleanupSystem (fun _ => True)
+    (fun _ schedule => ∃ r k r' k', (r || k) = true ∧
+      schedule = [.sweep true true true false r k, .sweep true true true true r' k'])
+    (fun s => s.row = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+  intro trace _ pending schedule fair
+  obtain ⟨r, k, r', k', hk, rfl⟩ := fair
+  generalize cleanupSystem.final trace = s at pending ⊢
+  simp [Spec.System.runFrom, cleanupSystem, cleanupStep, pending, hk]
+
+theorem stranded (s : Cleanup) (h : s.row = false) (trace : List CleanupInput) :
+    (cleanupSystem.runFrom s trace).1 = s := by
+  induction trace with
+  | nil => rfl
+  | cons i rest ih =>
+    cases i with
+    | sweep a l c p r k =>
+      have hs : (cleanupStep s (.sweep a l c p r k)).1 = s := by simp [cleanupStep, h]
+      simp only [Spec.System.runFrom]
+      change (cleanupSystem.runFrom (cleanupStep s (.sweep a l c p r k)).1 rest).1 = s
+      rw [hs]; exact ih
 
 theorem check_burst (n a : Nat) : checkBurst 1 n ⟨0, a⟩ = ⟨0, a + n⟩ := by
   induction n generalizing a with

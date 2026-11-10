@@ -51,6 +51,7 @@ interface Input {
   rows?: boolean;
   asyncResult?: boolean;
   active?: boolean;
+  requeue?: boolean;
 }
 interface Vector {
   name: string;
@@ -200,7 +201,10 @@ async function replay(vector: Vector): Promise<void> {
             });
             break;
           case "releaseOwner":
-            await t.mutation(internal.runtimeIngress.releaseOwner, owned);
+            await t.mutation(internal.runtimeIngress.releaseOwner, {
+              ...owned,
+              ...(i.requeue ? { requeue: true } : {}),
+            });
             break;
           case "settle":
             try {
@@ -289,9 +293,15 @@ async function replay(vector: Vector): Promise<void> {
               status: r.status,
             })),
           generation: coordinator?.ownerGeneration ?? 0,
+          queuedCount: coordinator?.queuedCount ?? 0,
         };
       });
-      expect(actual).toEqual({ rows: rows, generation: generation });
+      // The coordinator's queue counter tracks the queued rows, through a requeue too.
+      expect(actual).toEqual({
+        rows: rows,
+        generation: generation,
+        queuedCount: rows.filter((r): boolean => r.status === "queued").length,
+      });
     }
   } finally {
     Date.now = realNow;

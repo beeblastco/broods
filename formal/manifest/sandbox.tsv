@@ -61,7 +61,7 @@ apps/core/src/shared/convex/sandbox-instances.ts	decision	open			Whole-file mode
 apps/core/src/shared/convex/sandbox-snapshots.ts	glue	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/shared/machine-socket.ts	protocol	open	Spec.Sandbox.acceptsHello		Directed actual-parser round trips tested; Lean wire codec, all validator branches and Unicode holder truncation open.
 apps/core/src/shared/s3.ts	adapter	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
-apps/core/src/shared/sandbox-cleanup.ts	decision	open	Spec.Sandbox.cleanupSystem		Conditional single-reservation progress and declared-outcome privacy proved; provider candidates, retries and concurrent transitions open (L402).
+apps/core/src/shared/sandbox-cleanup.ts	decision	open	Spec.Sandbox.cleanupSystem		Conditional single-machine progress, failed-teardown reachability and retry, and declared-outcome privacy proved; provider candidates and concurrent transitions open (L402, G403).
 apps/core/src/shared/sandbox-sizes.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/shared/sandbox-snapshot-builds.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 apps/core/src/shared/sandbox-sweeper.ts	decision	open	Spec.Sandbox.cleanupSystem		Single-reservation abstract sweep only; lease/pages/deferral/clock completeness open.

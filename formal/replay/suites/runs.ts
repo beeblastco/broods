@@ -25,6 +25,24 @@ export const suite: Suite = {
       replace: "const steering = active.length > 0;",
     },
     {
+      name: "takeNext promotes for a suspended account",
+      file: "packages/convex/runtimeIngress.ts",
+      find: 'account?.status === "active"',
+      replace: "account !== null",
+    },
+    {
+      name: "shed release ignores requeue",
+      file: "packages/convex/runtimeIngress.ts",
+      find: "args.requeue === true",
+      replace: "false",
+    },
+    {
+      name: "requeue leaves the queue counter",
+      file: "packages/convex/runtimeIngress.ts",
+      find: "queue.queuedCount += 1;",
+      replace: "",
+    },
+    {
       name: "continuation accepts empty tool input",
       file: "apps/core/src/harness/pruning.ts",
       find: "message.content.length > 0 &&",

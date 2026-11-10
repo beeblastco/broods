@@ -222,7 +222,7 @@ the 401 to mean nothing ran (G602). Returns sends made and the answer handed bac
 def tokenFetch (signedIn : Bool) (server : Nat → Answer) (sent : Nat) : Nat × Answer :=
   if signedIn && (server sent).status == 401 then (2, server (sent + 1)) else (1, server sent)
 
-/-- The SDK's default `inputRequired.maxRounds`; core's `Client` sets no `inputRequired` option. -/
+/-- `inputRequired.maxRounds`, which core's `Client` pins (`INPUT_REQUIRED_MAX_ROUNDS`, mcp/client.ts). -/
 def maxRounds : Nat := 10
 
 /-- SDK `request()`: in the 2026-07-28 era an `input_required` answer is re-sent, up to
@@ -237,27 +237,33 @@ def requestLegs (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) 
     else (n, answer)
 
 /-- SDK `Client.callTool`: in the 2026-07-28 era a -32020 re-lists tools and calls once more,
-since core passes no `toolDefinition`. -/
-def sdkCallTool (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) : Nat × Answer :=
+unless the caller passed a `toolDefinition` (`defined`); then the -32020 is thrown. -/
+def sdkCallTool (signedIn modern defined : Bool) (server : Nat → Answer) (sent : Nat) : Nat × Answer :=
   let (n, answer) := requestLegs signedIn modern server sent maxRounds
-  if modern && answer.status == 400 && answer.headerMismatch then
+  if modern && !defined && answer.status == 400 && answer.headerMismatch then
     let (m, last) := requestLegs signedIn modern server (sent + n) maxRounds
     (n + m, last)
   else (n, answer)
 
 /-- callMcpTool: one call plus up to `retries` rate-limit retries, each through sdkCallTool.
 `server n` answers the n-th tools/call send; aborts and thrown errors only end the loop sooner. -/
-def callSends (signedIn modern : Bool) (server : Nat → Answer) (sent : Nat) : Nat → Nat
-  | 0 => (sdkCallTool signedIn modern server sent).1
+def callSends (signedIn modern defined : Bool) (server : Nat → Answer) (sent : Nat) : Nat → Nat
+  | 0 => (sdkCallTool signedIn modern defined server sent).1
   | retries + 1 =>
-    let (n, answer) := sdkCallTool signedIn modern server sent
+    let (n, answer) := sdkCallTool signedIn modern defined server sent
     if answer.status == 200 && answer.rateLimited then
-      n + callSends signedIn modern server (sent + n) retries
+      n + callSends signedIn modern defined server (sent + n) retries
     else n
 
-/-- tools/call sends one tool call makes with the code's three rate-limit retries. -/
-def toolCallSends (signedIn modern : Bool) (server : Nat → Answer) : Nat :=
-  callSends signedIn modern server 0 3
+/-- tools/call sends one `callMcpTool` makes with the code's three rate-limit retries. The agent's
+tools (mcp.tool.ts) pass the listed definition: `defined`. -/
+def toolCallSends (signedIn modern defined : Bool) (server : Nat → Answer) : Nat :=
+  callSends signedIn modern defined server 0 3
+
+/-- tools/call sends of the dashboard tool explorer (accounts/mcp-service.ts): one
+`callMcpToolResult` with no definition and no rate-limit loop. -/
+def explorerSends (signedIn modern : Bool) (server : Nat → Answer) : Nat :=
+  (sdkCallTool signedIn modern false server 0).1
 
 def rateWait (attempt : Nat) (asked : Option Nat) : Nat :=
   min (asked.getD (if attempt = 0 then 1000 else 2000 * 2 ^ (attempt - 1))) 60000

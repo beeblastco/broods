@@ -274,6 +274,20 @@ private def drainInvokeStream (call : Json) : Prog Json := do
 
 private def errorOf (value : Json) : Json := field value "$error"
 
+/-- `{ ...value, [name]: undefined }`: the recording drops a key whose value is `undefined`. -/
+private def withoutKey (value : Json) (name : String) : Json :=
+  match value with
+  | .obj kvs =>
+    let kept := (kvs.erase name).toList.map fun (key, item) =>
+      if key == "$keys" then (key, .arr ((items item).filter (· != toJson name)).toArray)
+      else (key, item)
+    obj kept
+  | _ => value
+
+/-- `Map.delete` on a recorded `Map`. -/
+private def mapDelete (value : Json) (key : Json) : Json :=
+  obj [("$map", .arr ((items (field value "$map")).filter (Twin.arg · 0 != key)).toArray)]
+
 /-- Enters the drain callback `runBatch` was given, once, with its queue and `onInvoked`. -/
 private def runDrain (start : Json → Json → Prog Unit) : Prog Unit :=
   .input fun
@@ -354,13 +368,15 @@ private def callMcpToolResult (call : Json) : Prog Json := do
         s!"MCP tool {str (field record "name")}.{str toolName} answered with a result this SDK does not accept"
     return relayed
   let signal := field options "abortSignal"
+  let definition := field options "toolDefinition"
+  let callOptions := obj ((if nil signal then [] else [("signal", signal)]) ++
+    (if nil definition then [] else [("toolDefinition", withoutKey definition "outputSchema")]))
   let enter : Prog Unit := .input fun
     | some ("arg1", entered) =>
       Prog.catchFail
         (do
           let _ ← Prog.effect "client.callTool"
-            [obj [("name", toolName), ("arguments", args)],
-             if nil signal then obj [] else obj [("signal", signal)]]
+            [obj [("name", toolName), ("arguments", args)], callOptions]
           let _ := entered)
         (fun _ => pure ())
     | some (other, _) => Prog.unsupported s!"callback {other}"
@@ -369,7 +385,15 @@ private def callMcpToolResult (call : Json) : Prog Json := do
   let outcome ← Prog.attempt "withClient" [connection, fn "", field options "onCpuUsec"]
   match outcome with
   | .ok value => return value
-  | .threw error _ => .fail error
+  | .threw error _ =>
+    let failure := errorOf error
+    if field failure "$class" == toJson "ProtocolError" &&
+        field (field failure "fields") "code" == toJson (-32020 : Int) then
+      let key ← Prog.effect "cacheKeyFor" [connection]
+      let cache := Twin.moduleValue call "toolListCache"
+      if mapDelete cache key != cache then
+        Prog.setState "module.toolListCache" (mapDelete cache key)
+    .fail error
   | .pending => Prog.unsupported "withClient never settled"
 
 /-- This author's twins. -/

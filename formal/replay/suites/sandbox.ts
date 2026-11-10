@@ -48,6 +48,12 @@ export const suite: Suite = {
       replace: "-gt ${options.maxConcurrentJobs}",
     },
     {
+      name: "failed teardown not kept for the sweep",
+      file: "apps/core/src/shared/sandbox-cleanup.ts",
+      find: "if (!handedBack) {",
+      replace: "if (false) {",
+    },
+    {
       name: "daemon parser uses wrong direction",
       file: "apps/core/src/shared/machine-socket.ts",
       find: "return parseFrame(daemonFrame, raw);",

@@ -50,6 +50,14 @@ type Vector =
       expected: number | null;
     }
   | {
+      kind: "cleanup";
+      retained: boolean;
+      kept: boolean;
+      row: boolean;
+      physical: boolean;
+      outcomes: boolean[];
+    }
+  | {
       kind: "hello";
       occupied: boolean;
       previous: string | null;
@@ -143,6 +151,10 @@ test.each(vectors)("Lean vector %# $kind", async (vector): Promise<void> => {
       });
       setStorageForTests(null);
     }
+    return;
+  }
+  if (vector.kind === "cleanup") {
+    await replayCleanup(vector);
     return;
   }
   if (vector.kind === "computer") {
@@ -356,6 +368,81 @@ test("G401 cached externalId returns after concurrent provider deletion", async 
     mutate.mockRestore();
   }
 });
+
+// The take succeeds and no config can tear the machine down. `retained` false: another run
+// takes the key right after the take, so the hand-back is refused. `kept` false: the
+// teardown claim throws.
+async function replayCleanup(
+  vector: Extract<Vector, { kind: "cleanup" }>,
+): Promise<void> {
+  const { runtime } =
+    await import("../../apps/core/src/shared/convex/runtime.ts");
+  const { setStorageForTests } =
+    await import("../../apps/core/src/shared/storage.ts");
+  const { releaseExpiredSandboxes } =
+    await import("../../apps/core/src/shared/sandbox-cleanup.ts");
+  type Args = { reservationKey: string; externalId?: string };
+  const rows = new Map<string, string>([["key-a", "sbx-a"]]);
+  const query = spyOn(runtime, "query").mockImplementation((async (
+    name: string,
+    args: Args,
+  ): Promise<unknown> => {
+    if (name === "getSandboxReleaseTarget") {
+      return {
+        externalId: args.externalId ?? rows.get(args.reservationKey) ?? null,
+        instance: null,
+      };
+    }
+    if (name === "getSandboxReservation") {
+      return rows.get(args.reservationKey) ?? null;
+    }
+    throw new Error(`unstubbed query ${name}`);
+  }) as typeof runtime.query);
+  const mutate = spyOn(runtime, "mutate").mockImplementation((async (
+    name: string,
+    args: Args & { expectedExternalId?: string },
+  ): Promise<unknown> => {
+    if (name === "deleteSandboxReservation") {
+      if (rows.get(args.reservationKey) !== args.expectedExternalId) {
+        return false;
+      }
+      rows.delete(args.reservationKey);
+      if (!vector.retained) rows.set(args.reservationKey, "sbx-other");
+      return true;
+    }
+    if (name === "claimSandboxReservation") {
+      if (args.reservationKey.startsWith("teardown:") && !vector.kept) {
+        throw new Error("claim failed");
+      }
+      if (rows.has(args.reservationKey)) return false;
+      rows.set(args.reservationKey, args.externalId ?? "");
+      return true;
+    }
+    throw new Error(`unstubbed mutation ${name}`);
+  }) as typeof runtime.mutate);
+  setStorageForTests({
+    sandboxConfigs: { list: async (): Promise<[]> => [] },
+  } as unknown as Parameters<typeof setStorageForTests>[0]);
+  try {
+    const released = await releaseExpiredSandboxes("acct", [
+      {
+        provider: "e2b",
+        reservationKey: "key-a",
+        externalId: "sbx-a",
+        ttlSeconds: 600,
+      },
+    ]);
+    expect(released.map((): boolean => true)).toEqual(
+      vector.outcomes.filter((outcome): boolean => outcome),
+    );
+    expect([...rows.values()].includes("sbx-a")).toBe(vector.row);
+    expect(vector.physical).toBe(true);
+  } finally {
+    query.mockRestore();
+    mutate.mockRestore();
+    setStorageForTests(null);
+  }
+}
 
 function attachedSandbox(id: number): ResolvedAgentSandbox {
   return {

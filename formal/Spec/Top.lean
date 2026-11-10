@@ -84,9 +84,9 @@ theorem toolGated (cfg : Config) (s : AccountState) (a : AccountId) (id : RunId)
 /-- **Queues recover the lease.** Queued work can be left without an owner (a released lease hands
 nothing on: `queue_can_strand`), but after any input list ending in a recovery sweep that reaches the
 conversation while its account is active, a run there holds the lease whenever one is queued. One
-`promote` step (`LIMITS.md` L22). Holding the lease is not running: a shed recovery dispatch fails the
-work (G201), and an inactive account's queue stays unowned until it expires. A port must keep the
-sweep. -/
+`promote` step (`LIMITS.md` L22). Holding the lease is not running: a shed recovery dispatch puts the
+work back in the queue for the next sweep (`requeue_returns_to_queue`), and an inactive account's
+queue stays unowned until it expires or the account is reactivated. A port must keep the sweep. -/
 theorem queueRecovers (cfg : Config) (a : AccountId) (c : Conversation) :
     Spec.Progress (system cfg) (fun _ => True)
       (fun s schedule => ∃ pre, schedule = pre ++ [.recover a c] ∧

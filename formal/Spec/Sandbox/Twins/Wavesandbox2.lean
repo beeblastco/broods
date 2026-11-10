@@ -1325,8 +1325,8 @@ private def releaseOnProvider (call : Json) : Prog Json := do
       (fun error => do
         let _ ← Prog.effect "toErrorMessage" [error]
         pure false)
-    if done then return field target "externalId"
-  return Twin.undefinedJson
+    if done then return obj [("externalId", field target "externalId"), ("released", toJson true)]
+  return obj [("externalId", field target "externalId"), ("released", toJson false)]
 
 private def obscuraCommand (call : Json) : Prog Json := do
   let request := Twin.callArg call 1

@@ -54,7 +54,8 @@ inductive Input where
   background run's outcome for its polling row (`asyncResult`). -/
   | settle (owner : Owner) (now : Nat) (failed : Bool) (results : List Nat) (asyncResult : Bool)
   | renewOwner (owner : Owner) (now ttl : Nat)
-  | releaseOwner (owner : Owner)
+  /-- `requeue`: a full pod shed the owner's dispatch, so the rows it took go back to the queue. -/
+  | releaseOwner (owner : Owner) (requeue : Bool)
   | stopOwner (now : Nat)
   | recoverQueued (now ttl : Nat)
   /-- Recovery visited the conversation and promoted nothing: the account is not active. -/
@@ -105,6 +106,17 @@ def storeResults (s : State) (results : List Nat) : State :=
 /-- The owner's step-boundary write: it appends history and stores the results it carries. -/
 def store (s : State) (o : Owner) (results : List Nat) : State :=
   { storeResults s results with writes := s.writes ++ [o.event] }
+/-- `releaseOwner` with `requeue`: each row processing under this owner and generation is queued
+again in place, so in its old order, with no owner (`releaseOwner`, `runtimeIngress.ts:772`). -/
+def requeueRow (o : Owner) (r : Row) : Row :=
+  if r.phase == .processing && r.appliedTo == o.event && r.generation == o.generation then
+    { r with phase := .queued, generation := 0, appliedTo := 0 } else r
+def requeue (s : State) (o : Owner) : State :=
+  { s with rows := s.rows.map (requeueRow o) }
+/-- `takeNext` in an account that is not active: after the settle and the expiry pass it promotes
+nothing and clears the owner, so the queue waits for recovery after reactivation. -/
+def holdQueue (s : State) : State :=
+  { s with owner := none, stopped := false, recoveryOffered := false }
 def renew (s : State) (now ttl : Nat) : State :=
   if (s.lease - now) * 10 > ttl * 9 then s else { s with lease := now + ttl }
 def finish (s : State) (o : Owner) (failed : Bool) : State :=
@@ -156,7 +168,8 @@ def step (s : State) : Input → State × List Effect
   | .takeNext o now ttl settles rows =>
     if fence s o now then
       if !s.accountActive && rows then (s, [.refused]) else
-      promote (expireQueued (if settles then finish s o false else s) now) now ttl
+      let swept := expireQueued (if settles then finish s o false else s) now
+      if s.accountActive then promote swept now ttl else (holdQueue swept, [])
     else (s, [])
   | .applySteering o now ttl sender => if fence s o now then steer s o now ttl sender else (s, [])
   | .stepBoundary o now ttl claim sender results =>
@@ -176,8 +189,8 @@ def step (s : State) : Input → State × List Effect
     if !fence s o now then (s, [.renewal "stale"])
     else if s.stopped then (s, [.renewal "stopped"])
     else (renew s now ttl, [.renewal "renewed"])
-  | .releaseOwner o =>
-    if s.owner == some o then ({ s with owner := none, stopped := false, recoveryOffered := false }, [])
+  | .releaseOwner o requeued =>
+    if s.owner == some o then (holdQueue (if requeued then requeue s o else s), [])
     else (s, [])
   | .stopOwner now =>
     if !s.accountActive then (s, [.refused])
@@ -195,7 +208,7 @@ def Input.time : Input → Option Nat
   | .accept _ now _ | .takeNext _ now _ _ _ | .applySteering _ now _ _ | .stepBoundary _ now _ _ _ _
   | .settle _ now _ _ _ | .renewOwner _ now _ | .stopOwner now | .recoverQueued now _
   | .declineRecovery now | .maintain now => some now
-  | .releaseOwner _ | .status _ => none
+  | .releaseOwner _ _ | .status _ => none
 
 /-- handler.ts:2009: awaiting states dominate even a failed envelope; processing does not. -/
 def pollStatus (envelope : String) (asyncStatus : Option String) : String :=

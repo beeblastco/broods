@@ -114,9 +114,8 @@ inductive SpawnTarget where
 keeps (`insertOwnedEvents` and `writeAsyncAgentResult` run `requireActiveAccount`; the session retries
 a refused settle without its history rows). `drain`: settle, then `takeNext` with no rows (direct,
 async and WebSocket runs, `settleFailedIngressAndDrain`). `inline`: `takeNext` carries the settle and
-the turn's rows (channel turns, queued command turns, `dispatchNextIngress` with a settle that
-throws to a caller that releases the lease). `background`: a drain whose settle also carries the
-background run's `asyncResult`. -/
+the turn's rows (channel turns, queued command turns, `dispatchNextIngress`). `background`: a drain
+whose settle also carries the background run's `asyncResult`. -/
 inductive Handoff where
   | drain
   | inline
@@ -129,21 +128,17 @@ until `maintain` expires it, here `failed`. -/
 def settledStatus (active : Bool) (handoff : Handoff) (failed : Bool) : Status :=
   if !active && handoff == .background then .failed else if failed then .failed else .finished
 
-/-- Whether core hands the conversation on: always, except an inline hand-off in an inactive
-account, whose `takeNext` throws to a caller that releases the lease (handler.ts channel loop,
-`runCommandTurn`); the queue then waits, and `recover` skips the account. -/
-def handsOn (active : Bool) (handoff : Handoff) : Bool :=
-  active || handoff != .inline
-
 /-- Everything that can happen. `verified` is the signature check's answer: by assumption A1 it holds
 only for a sender with that account's secret. `settle` is a settle, finished or failed, then the
-hand-off its `Handoff` names; `boundary` is a step-boundary write carrying history rows
+hand-off its `Handoff` names, whose `takeNext` promotes nothing in an inactive account; `boundary` is a step-boundary write carrying history rows
 (`stepBoundary`), which an inactive account refuses, so the run fails and core settles it through
 the same hand-off; `release`
 is `releaseOwner` or a lease that ran out; `expire` drops a queued message past its time to live
-(TTL alone, as today's code does, G1; `Spec.Runs` states the intended D6 rule); `recover` is one
+(TTL alone, as today's code does, G1; `Spec.Runs` states the intended D6 rule); `requeue` is
+`releaseOwner` with `requeue` after a full pod shed the owner's dispatch (`dispatchAppliedIngress`):
+the run is queued again in its old place with no owner, here for any owner run; `recover` is one
 `recoverQueued` sweep reaching a conversation, which skips an inactive account and leaves its queue
-unowned until `expire`; `status` is the operator activating or suspending the
+unowned until `expire` or reactivation; `status` is the operator activating or suspending the
 account (its row is trusted, A3). -/
 inductive Input where
   | request (credential : Access.Credential) (gatewayRequest : Access.Request) (route : DirectRoute)
@@ -158,6 +153,7 @@ inductive Input where
   | settle (account : AccountId) (run : RunId) (failed : Bool) (handoff : Handoff)
   | boundary (account : AccountId) (run : RunId) (handoff : Handoff)
   | release (account : AccountId) (run : RunId)
+  | requeue (account : AccountId) (run : RunId)
   | expire (account : AccountId) (run : RunId)
   | recover (account : AccountId) (conversation : Conversation)
   | status (account : AccountId) (active : Bool)
@@ -192,6 +188,7 @@ def Input.account : Input → AccountId
   | .settle account _ _ _ => account
   | .boundary account _ _ => account
   | .release account _ => account
+  | .requeue account _ => account
   | .expire account _ => account
   | .recover account _ => account
   | .status account _ => account
@@ -396,7 +393,8 @@ def detach (s : AccountState) (run : Run) (account : AccountId) : AccountState �
   if !fresh s.runs run.id then (s, [])
   else ({ s with runs := s.runs ++ [{ run with status := .detached }] }, [.started account run.id run.root])
 
-/-- Settle a run and, if it held the owner lease and `handOn`, hand its conversation on (`takeNext`). -/
+/-- Settle a run and, if it held the owner lease and `handOn`, hand its conversation on (`takeNext`).
+Core always calls `takeNext`; it promotes only for an active account, so `handOn` is `active`. -/
 def endRun (s : AccountState) (account : AccountId) (run : Run) (status : Status) (handOn : Bool) :
     AccountState × List Effect :=
   let ended : AccountState := { s with runs := setStatus s.runs run.id status }
@@ -440,17 +438,21 @@ def accountStep (cfg : Config) (s : AccountState) : Input → AccountState × Li
     match liveRun s.runs id with
     | none => (s, [])
     | some run =>
-      endRun s account run (settledStatus s.active handoff failed) (handsOn s.active handoff)
-  | .boundary account id handoff =>
+      endRun s account run (settledStatus s.active handoff failed) s.active
+  | .boundary account id _ =>
     match ownerRun s.runs id with
     | none => (s, [])
     | some run =>
-      if s.active then (s, []) else endRun s account run .failed (handsOn s.active handoff)
+      if s.active then (s, []) else endRun s account run .failed s.active
   | .release account id =>
     match ownerRun s.runs id with
     | none => (s, [])
     | some run =>
       ({ s with runs := setStatus s.runs id .failed }, [.ended account id run.root .failed])
+  | .requeue _ id =>
+    match ownerRun s.runs id with
+    | none => (s, [])
+    | some _ => ({ s with runs := setStatus s.runs id .queued }, [])
   | .expire account id =>
     match queuedRun s.runs id with
     | none => (s, [])

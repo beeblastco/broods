@@ -242,6 +242,11 @@ Spec.Hosted.every_request_one_outcome
   ∀ (ids : List String) (s : Spec.Hosted.Collection),
   (Spec.Hosted.settle ids s).length = ids.length ∧ List.map Prod.fst (Spec.Hosted.settle ids s) = ids
 
+Spec.Hosted.explorer_sends_bounded
+  ∀ (signedIn modern : Bool) (server : Nat → Spec.Hosted.Answer),
+  Spec.Hosted.explorerSends signedIn modern server ≤
+    (if modern = true then 2 * (Spec.Hosted.maxRounds + 1) else 1) * if signedIn = true then 2 else 1
+
 Spec.Hosted.frames_chunk_independent
   ∀ (a b : List (List Char)), a.flatten = b.flatten → Spec.Hosted.parseChunks a = Spec.Hosted.parseChunks b
 
@@ -282,9 +287,10 @@ Spec.Hosted.terminal_is_final
   s.ended = true → Spec.Hosted.collect ids s f = s
 
 Spec.Hosted.tool_call_sends_bounded
-  ∀ (signedIn modern : Bool) (server : Nat → Spec.Hosted.Answer),
-  Spec.Hosted.toolCallSends signedIn modern server ≤
-    (4 * if modern = true then 2 * (Spec.Hosted.maxRounds + 1) else 1) * if signedIn = true then 2 else 1
+  ∀ (signedIn modern defined : Bool) (server : Nat → Spec.Hosted.Answer),
+  Spec.Hosted.toolCallSends signedIn modern defined server ≤
+    (4 * if modern = true then (if defined = true then 1 else 2) * (Spec.Hosted.maxRounds + 1) else 1) *
+      if signedIn = true then 2 else 1
 
 Spec.Hosted.worker_pin_exact
   ∀ (now : Nat) (f : Spec.Hosted.Failure),
@@ -296,7 +302,7 @@ Spec.Runs.boundary_without_result_stores_nothing
 have saved :=
   (Spec.Runs.step owned (Spec.Runs.Input.stepBoundary { event := 1, generation := 1 } 1 100 false 0 [])).fst;
 have settled := (Spec.Runs.step saved (Spec.Runs.Input.settle { event := 1, generation := 1 } 2 false [] false)).fst;
-have released := (Spec.Runs.step settled (Spec.Runs.Input.releaseOwner { event := 1, generation := 1 })).fst;
+have released := (Spec.Runs.step settled (Spec.Runs.Input.releaseOwner { event := 1, generation := 1 } false)).fst;
 (Spec.Runs.step released (Spec.Runs.Input.accept (Spec.Runs.sampleRow Spec.Runs.Phase.queued 100 true) 3 100)).snd =
   [Spec.Runs.Effect.admission "owner"]
 
@@ -316,6 +322,12 @@ Spec.Runs.duplicate_resume_readmitted
 
 Spec.Runs.finished_async_requires_tied_continuation
   ∀ (run : Nat) (continuation : Option Nat), Spec.Runs.asyncWrite true run continuation = true ↔ continuation = some run
+
+Spec.Runs.inactive_promotes_nothing
+  ∀ (s : Spec.Runs.State) (trace : List Spec.Runs.Input),
+  s.accountActive = false →
+    (∀ (i : Spec.Runs.Input), i ∈ trace → ∀ (a : Bool), i = Spec.Runs.Input.status a → a = false) →
+      (Spec.Runs.system.runFrom s trace).fst.generation = s.generation
 
 Spec.Runs.keys_unique
   Spec.Always Spec.Runs.system fun s => (List.map (fun x => x.key) s.rows).Nodup
@@ -355,6 +367,20 @@ Spec.Runs.recovery_before_queue_expiry
         r.phase = Spec.Runs.Phase.queued →
           x ∈ (Spec.Runs.step s i).fst.rows →
             x.key = r.key → x.phase = Spec.Runs.Phase.expired → s.recoveryOffered = true
+
+Spec.Runs.requeue_restores_queue
+  ∀ (s : Spec.Runs.State),
+  Spec.Runs.system.Reachable s →
+    ∀ (o : Spec.Runs.Owner),
+      s.owner = some o →
+        have t := (Spec.Runs.step s (Spec.Runs.Input.releaseOwner o true)).fst;
+        List.map (fun x => x.key) t.rows = List.map (fun x => x.key) s.rows ∧
+          (List.map (fun x => x.key) t.rows).Nodup ∧
+            t.owner = none ∧
+              (∀ (x : Spec.Runs.Row),
+                  x ∈ t.rows →
+                    ¬(x.phase = Spec.Runs.Phase.processing ∧ x.appliedTo = o.event ∧ x.generation = o.generation)) ∧
+                ∀ (y : Spec.Runs.Row), y ∈ s.rows → Spec.Runs.requeueRow o y ∈ t.rows
 
 Spec.Runs.stale_owner_cannot_write
   ∀ (s : Spec.Runs.State) (o : Spec.Runs.Owner) (now ttl sender : Nat) (claim : Bool) (results : List Nat),
@@ -418,14 +444,16 @@ Spec.Runtime.inactive_admits_nothing
   ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (i : Spec.Runtime.Input),
   s.active = false → i.viaIngress = true → Spec.Runtime.accountStep cfg s i = (s, [])
 
-Spec.Runtime.inactive_inline_hands_nothing_on
+Spec.Runtime.inactive_starts_nothing
   ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (i : Spec.Runtime.Input),
   s.active = false →
-    ((∃ a id failed, i = Spec.Runtime.Input.settle a id failed Spec.Runtime.Handoff.inline) ∨
-        ∃ a id, i = Spec.Runtime.Input.boundary a id Spec.Runtime.Handoff.inline) →
-      ∀ (e : Spec.Runtime.Effect),
-        e ∈ (Spec.Runtime.accountStep cfg s i).snd →
-          ∀ (a : Spec.Runtime.AccountId) (r root : Spec.Runtime.RunId), e ≠ Spec.Runtime.Effect.started a r root
+    (∀ (a : Spec.Runtime.AccountId) (p : Spec.Runtime.RunId) (t : Spec.Runtime.SpawnTarget) (c : Spec.Runtime.RunId)
+        (arr : Spec.Runtime.Arrival), i ≠ Spec.Runtime.Input.spawn a p t c false arr) →
+      (∀ (e : Spec.Runtime.Effect),
+          e ∈ (Spec.Runtime.accountStep cfg s i).snd →
+            ∀ (a : Spec.Runtime.AccountId) (r root : Spec.Runtime.RunId), e ≠ Spec.Runtime.Effect.started a r root) ∧
+        ∀ (r : Spec.Runtime.Run),
+          r ∈ (Spec.Runtime.accountStep cfg s i).fst.runs → r.status = Spec.Runtime.Status.running → r ∈ s.runs
 
 Spec.Runtime.inductive_world
   ∀ (cfg : Spec.Runtime.Config), Spec.Inductive (Spec.Runtime.system cfg) (Spec.Runtime.WorldInv cfg)
@@ -452,6 +480,19 @@ Spec.Runtime.recover_drains
     ∀ (r : Spec.Runtime.Run),
       r ∈ (w a).runs →
         r.status = Spec.Runtime.Status.queued → r.conversation = c → Spec.Runtime.busy (w a).runs c = true
+
+Spec.Runtime.requeue_returns_to_queue
+  ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (a : Spec.Runtime.AccountId) (id : Spec.Runtime.RunId)
+  (run : Spec.Runtime.Run),
+  Spec.Runtime.ownerRun s.runs id = some run →
+    have t := (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.requeue a id)).fst;
+    List.map (fun x => x.id) t.runs = List.map (fun x => x.id) s.runs ∧
+      { id := run.id, root := run.root, parent := run.parent, context := run.context, conversation := run.conversation,
+            configAgent := run.configAgent, tools := run.tools, sandboxes := run.sandboxes, deny := run.deny,
+            subagents := run.subagents, status := Spec.Runtime.Status.queued } ∈
+          t.runs ∧
+        (∀ (x : Spec.Runtime.Run), x ∈ s.runs → x.id ≠ id → x ∈ t.runs) ∧
+          (Spec.Runtime.accountStep cfg s (Spec.Runtime.Input.requeue a id)).snd = []
 
 Spec.Runtime.restricted_never_start
   ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (c : Spec.Access.Credential) (r : Spec.Access.Request)
@@ -488,7 +529,7 @@ Spec.Runtime.served_request_starts
 Spec.Runtime.settle_hands_on
   ∀ (cfg : Spec.Runtime.Config) (s : Spec.Runtime.AccountState) (a : Spec.Runtime.AccountId) (id : Spec.Runtime.RunId)
   (failed : Bool) (handoff : Spec.Runtime.Handoff),
-  Spec.Runtime.handsOn s.active handoff = true →
+  s.active = true →
     ∀ (run n : Spec.Runtime.Run),
       Spec.Runtime.liveRun s.runs id = some run →
         run.status = Spec.Runtime.Status.running →
@@ -569,8 +610,8 @@ Spec.Sandbox.check_guard_reads_running
 
 Spec.Sandbox.cleanup_progress
   Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
-  (fun x schedule => schedule = [Spec.Sandbox.CleanupInput.sweep true true true true]) (fun s => s.row = true) fun s =>
-  s.physical = false ∧ s.mirror = false
+  (fun x schedule => ∃ r k, schedule = [Spec.Sandbox.CleanupInput.sweep true true true true r k])
+  (fun s => s.row = true) fun s => s.physical = false ∧ s.mirror = false
 
 Spec.Sandbox.cleanup_view_is_declared_leak
   Spec.Private Spec.Sandbox.cleanupSystem Unit (List Bool) Bool (fun x => True) (fun x x_1 => []) Spec.Sandbox.cleanupLeak
@@ -582,6 +623,21 @@ Spec.Sandbox.computer_unnamed_needs_one
 Spec.Sandbox.daemon_exclusion
   ∀ (p i : Option String) (force : Bool),
   Spec.Sandbox.acceptsHello true p i force = true → force = true ∨ i.isSome = true ∧ i ≠ some "" ∧ i = p
+
+Spec.Sandbox.failed_teardown_retried
+  Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
+  (fun x schedule =>
+    ∃ r k r' k',
+      (r || k) = true ∧
+        schedule =
+          [Spec.Sandbox.CleanupInput.sweep true true true false r k,
+            Spec.Sandbox.CleanupInput.sweep true true true true r' k'])
+  (fun s => s.row = true) fun s => s.physical = false ∧ s.mirror = false
+
+Spec.Sandbox.failed_teardown_stays_reachable
+  ∀ (trace : List Spec.Sandbox.CleanupInput),
+  (∀ (i : Spec.Sandbox.CleanupInput), i ∈ trace → Spec.Sandbox.keepsFailed i = true) →
+    (Spec.Sandbox.cleanupSystem.final trace).physical = true → (Spec.Sandbox.cleanupSystem.final trace).row = true
 
 Spec.Sandbox.launch_conserves_admissions
   ∀ (cap : Nat) (s : Spec.Sandbox.Jobs),

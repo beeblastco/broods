@@ -156,6 +156,13 @@ theorem mem_setStatus_self {runs : List Run} {id : RunId} {st : Status} {r : Run
   have hb : (r.id == id) = true := by simp [hid]
   rw [if_pos hb]
 
+/-- A status change to anything but `running` makes no new owner. -/
+theorem setStatus_running {runs : List Run} {id : RunId} {st : Status} (hst : st ≠ .running)
+    {x : Run} (hx : x ∈ setStatus runs id st) (hr : x.status = .running) : x ∈ runs := by
+  obtain ⟨r, hrm, ⟨_, rfl⟩ | ⟨_, rfl⟩⟩ := mem_setStatus hx
+  · exact absurd hr hst
+  · exact hrm
+
 /-- Every run keeps an image of the same id and the same delegation facts. -/
 theorem setStatus_image {runs : List Run} {id : RunId} {st : Status} {p : Run} (hp : p ∈ runs) :
     ∃ q ∈ setStatus runs id st, q.id = p.id ∧ q.root = p.root ∧ ∀ c, Delegated p c → Delegated q c := by
@@ -681,6 +688,9 @@ theorem step_effect (cfg : Config) (s : AccountState) (i : Input) (e : Effect)
       simp only [List.mem_singleton] at he
       subst he
       exact ⟨rfl, Or.inl ⟨run, mem, rfl⟩⟩
+  | requeue a id =>
+    simp only [accountStep] at he
+    split at he <;> simp at he
   | expire a id =>
     simp only [accountStep] at he
     split at he
@@ -788,6 +798,16 @@ theorem inv_accountStep (cfg : Config) (s : AccountState) (i : Input)
     · rename_i run hr
       obtain ⟨mem, hid, _⟩ := ownerRun_some hr
       have kept := logged.setStatus (st := .failed) mem (fun hs => by cases hs)
+      rw [hid] at kept
+      exact kept
+  | requeue a id =>
+    simp only [Input.account] at logged ⊢
+    simp only [accountStep]
+    split
+    · exact logged
+    · rename_i run hr
+      obtain ⟨mem, hid, _⟩ := ownerRun_some hr
+      have kept := logged.setStatus (st := .queued) mem (fun hs => by cases hs)
       rw [hid] at kept
       exact kept
   | expire a id =>

@@ -636,8 +636,10 @@ private def takeNextIngress (call : Json) : Prog Json := do
 
 private def releaseIngressOwner (call : Json) : Prog Json := do
   let owner := Twin.callArg call 0
+  let released := ownerOf (field owner "conversationKey") (field owner "ownerEventId")
+    (field owner "ownerGeneration")
   let _ ← Prog.effect "runtime.mutate" [.str "releaseIngressOwner",
-    ownerOf (field owner "conversationKey") (field owner "ownerEventId") (field owner "ownerGeneration")]
+    if truthy (Twin.callArg call 1) then spread released [("requeue", .bool true)] else released]
   let _ ← Prog.effect "forgetOwner" [owner]
   return Twin.undefinedJson
 
@@ -1161,6 +1163,9 @@ private def prepareSessionMessage (call : Json) : Prog Json := do
     ("agentConfig", field loaded "agentConfig"), ("publicEventId", publicEventId),
     ("publicConversationKey", publicKey)]
 
+/-- `WORKER_QUEUE_FULL`, `apps/core/src/harness/worker-queue.ts:18`. -/
+private def workerQueueFull : String := "In-process worker queue is full"
+
 private def dispatchAppliedIngress (call : Json) : Prog Json := do
   let base := Twin.callArg call 0
   let next := Twin.callArg call 1
@@ -1188,9 +1193,18 @@ private def dispatchAppliedIngress (call : Json) : Prog Json := do
        ("source", if undef (field delivery "source") || field delivery "source" == .null then obj []
          else field delivery "source")] ++
       if truthy (field delivery "identity") then [("identity", field delivery "identity")] else []))] else []))
+  let owner := ownerOf (field base "conversationKey") (field next "eventId") (field next "ownerGeneration")
   let fail := fun (current : Json) (error : Json) => do
-    let _ ← Prog.effect "failOwnedIngress"
-      [current, .str (errorMessageOr "Failed to schedule queued ingress" error)]
+    let shed := field (field error "$error") "message" == .str workerQueueFull
+    let requeued ← if shed then
+        match ← Prog.attempt "releaseIngressOwner" [owner, .bool true] with
+        | .ok _ => pure true
+        | .threw _ _ => pure false
+        | .pending => Prog.unsupported "requeue release is unfinished"
+      else pure false
+    if !requeued then
+      let _ ← Prog.effect "failOwnedIngress"
+        [current, .str (errorMessageOr "Failed to schedule queued ingress" error)]
     (throw error : Prog Json)
   match ← Prog.attempt "loadAppliedIngressConfig" [obj [("accountId", field base "accountId"),
       ("agentId", field base "agentId"), ("configRef", field next "configRef")]] with

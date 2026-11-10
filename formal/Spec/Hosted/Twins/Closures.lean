@@ -197,7 +197,8 @@ def mcpExecute (call : Json) : Prog Json := do
   Prog.effect "callMcpTool"
     [Twin.moduleValue call "connection", field (Twin.moduleValue call "remote") "name",
      if nullish input then Json.mkObj [] else input,
-     obj ([("abortSignal", field options "abortSignal"), ("onRetry", named "onRetry")] ++
+     obj ([("abortSignal", field options "abortSignal"),
+       ("toolDefinition", Twin.moduleValue call "remote"), ("onRetry", named "onRetry")] ++
        (if sandbox then [("onCpuUsec", named "onCpuUsec")] else []))]
 
 /-- `forwardAbortSignal`'s `onAbort`: signals the child, ignoring a failure. -/

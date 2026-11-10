@@ -37,5 +37,12 @@ def run (_args : List String) : IO Unit := do
       for mounted in [false, true] do
         IO.println (Json.mkObj [("kind", "bash"), ("attached", toJson attached), ("mounted", toJson mounted),
           ("requested", toJson requested), ("expected", toJson (selectBash attached mounted requested))]).compress
+  -- One expired reservation whose teardown fails; `retained` and `kept` are the two claims.
+  for retained in [false, true] do
+    for kept in [false, true] do
+      let (s, effects) := cleanupStep {} (.sweep true true true false retained kept)
+      IO.println (Json.mkObj [("kind", "cleanup"), ("retained", toJson retained),
+        ("kept", toJson kept), ("row", toJson s.row), ("physical", toJson s.physical),
+        ("outcomes", toJson effects)]).compress
 
 end Spec.Sandbox.Replay

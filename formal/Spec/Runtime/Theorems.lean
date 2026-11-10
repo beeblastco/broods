@@ -111,7 +111,7 @@ theorem conversation_exclusive (cfg : Config) :
   exact ((inductive_world cfg).always w reach a).exclusive
 
 /-- **Queues can strand.** A queued run does not always have an owner: when the owner's lease is
-released (a failed hand-off, shutdown) nothing promotes the queue. Request 7 owns, request 8 queues,
+released (a failed hand-off, shutdown, a shed dispatch's `requeue`) nothing promotes the queue. Request 7 owns, request 8 queues,
 7 is released, and 8 waits with no owner until a recovery sweep or a new arrival. -/
 theorem queue_can_strand :
     ¬ Spec.Always (system [{ account := 1, agent := 2, tools := [3], sandboxes := [4] }])
@@ -140,8 +140,8 @@ theorem queue_can_strand :
 conversation `c` (`recoverQueued`, every 30 seconds per pod) while its account is active, a run of `c`
 holds the owner lease whenever one is queued there. An inactive account's sweep is skipped
 (`Controls.inactive_queue_stays_unowned`). Holding the lease is not running: the pod dispatches the
-promoted work with no queue place, a shed dispatch fails it and promotes the next the same way (G201),
-and queued work may expire before a sweep (`expire`). -/
+promoted work with no queue place, a shed dispatch puts it back in the queue (`requeue`) for the next
+sweep or arrival, and queued work may expire before a sweep (`expire`). -/
 theorem recover_drains (cfg : Config) (a : AccountId) (c : Conversation) :
     Spec.Progress (system cfg) (fun _ => True)
       (fun s schedule => ∃ pre, schedule = pre ++ [.recover a c] ∧
@@ -161,8 +161,8 @@ theorem recover_drains (cfg : Config) (a : AccountId) (c : Conversation) :
 
 /-- An inactive account admits nothing through ingress: a request, a delivery, a persistent child and
 a recovery sweep all leave its state alone (`requireActiveAccount` in `accept`, the status check in
-`recoverQueued`). Its running runs lose their history rows, and through an inline hand-off their
-queue (`inactive_inline_hands_nothing_on`). -/
+`recoverQueued`). Its running runs lose their history rows, and no hand-off starts its queue
+(`inactive_starts_nothing`). -/
 theorem inactive_admits_nothing (cfg : Config) (s : AccountState) (i : Input)
     (hs : s.active = false) (hi : i.viaIngress = true) : accountStep cfg s i = (s, []) := by
   cases i with
@@ -224,43 +224,114 @@ theorem tool_call_gated (cfg : Config) (s : AccountState) (a : AccountId) (id : 
             · simp at hselect
         · exact he
 
-/-- In an inactive account an inline hand-off starts nothing: its `takeNext` carries the turn's rows,
-`requireActiveAccount` refuses it, the session settles without the rows, and the caller releases the
-lease (channel turns, queued command turns). A port must decide this (G202): every other hand-off
-drains the queue even for an inactive account, and `recover` skips it. -/
-theorem inactive_inline_hands_nothing_on (cfg : Config) (s : AccountState) (i : Input)
-    (hs : s.active = false)
-    (hi : (∃ a id failed, i = .settle a id failed .inline) ∨ ∃ a id, i = .boundary a id .inline) :
-    ∀ e ∈ (accountStep cfg s i).2, ∀ a r root, e ≠ .started a r root := by
-  intro e he a' r root hstart
-  subst hstart
-  rcases hi with ⟨a, id, failed, rfl⟩ | ⟨a, id, rfl⟩
-  · simp only [accountStep] at he
-    split at he
-    · simp at he
-    · simp [endRun, handsOn, hs] at he
-  · simp only [accountStep] at he
-    split at he
-    · simp at he
-    · simp [endRun, handsOn, hs] at he
+/-- An inactive account starts nothing on any path but a non-persistent child, which skips ingress:
+no input emits a start, and every run that holds an owner lease after the step held it before.
+Ingress and recovery refuse the account, and every hand-off's `takeNext` promotes nothing there,
+whatever the hand-off. -/
+theorem inactive_starts_nothing (cfg : Config) (s : AccountState) (i : Input)
+    (hs : s.active = false) (hi : ∀ a p t c arr, i ≠ .spawn a p t c false arr) :
+    (∀ e ∈ (accountStep cfg s i).2, ∀ a r root, e ≠ .started a r root) ∧
+      ∀ r ∈ (accountStep cfg s i).1.runs, r.status = .running → r ∈ s.runs := by
+  by_cases via : i.viaIngress = true
+  · rw [inactive_admits_nothing cfg s i hs via]
+    exact ⟨by simp, fun r hr _ => hr⟩
+  have ended : ∀ a run st, st ≠ .running →
+      (∀ e ∈ (endRun s a run st false).2, ∀ a r root, e ≠ .started a r root) ∧
+        ∀ r ∈ (endRun s a run st false).1.runs, r.status = .running → r ∈ s.runs := by
+    intro a run st hst
+    refine ⟨fun e he a' r root h => ?_, fun r hr hrun => ?_⟩
+    · simp only [endRun, Bool.false_and, Bool.false_eq_true, ite_false, List.mem_cons,
+        List.not_mem_nil, or_false] at he
+      subst he
+      cases h
+    · simp only [endRun, Bool.false_and, Bool.false_eq_true, ite_false] at hr
+      exact setStatus_running hst hr hrun
+  have unchanged : (∀ e ∈ ([] : List Effect), ∀ a r root, e ≠ .started a r root) ∧
+      ∀ r ∈ s.runs, r.status = .running → r ∈ s.runs := ⟨by simp, fun r hr _ => hr⟩
+  have failedNot : (Status.failed) ≠ .running := by decide
+  cases i with
+  | request c r route ag conv id arr => simp [Input.viaIngress] at via
+  | delivery a v ag conv id den rec arr => simp [Input.viaIngress] at via
+  | recover a c => simp [Input.viaIngress] at via
+  | spawn a pid target ch persistent arr =>
+    cases persistent
+    · exact absurd rfl (hi a pid target ch arr)
+    · simp [Input.viaIngress] at via
+  | toolCall a id t sb g wt gr =>
+    simp only [accountStep]
+    refine ⟨?_, ?_⟩
+    · intro e he a' r root h
+      subst h
+      repeat' (first | split at he | simp at he)
+    · intro r hr _
+      repeat' (first | split at hr | exact hr)
+  | reply a id =>
+    simp only [accountStep]
+    split
+    · exact unchanged
+    · exact ⟨by simp, fun r hr _ => hr⟩
+  | settle a id failed handoff =>
+    simp only [accountStep, hs]
+    split
+    · exact unchanged
+    · exact ended _ _ _ (by unfold settledStatus; split <;> (try split) <;> decide)
+  | boundary a id handoff =>
+    simp only [accountStep, hs]
+    split
+    · exact unchanged
+    · exact ended _ _ _ failedNot
+  | release a id =>
+    simp only [accountStep]
+    split
+    · exact unchanged
+    · exact ⟨by simp, fun r hr hrun => setStatus_running failedNot hr hrun⟩
+  | requeue a id =>
+    simp only [accountStep]
+    split
+    · exact unchanged
+    · exact ⟨by simp, fun r hr hrun => setStatus_running (by decide) hr hrun⟩
+  | expire a id =>
+    simp only [accountStep]
+    split
+    · exact unchanged
+    · exact ⟨by simp, fun r hr hrun => setStatus_running failedNot hr hrun⟩
+  | status a b => exact ⟨by simp [accountStep], fun r hr _ => hr⟩
+
+/-- A shed dispatch loses no run: `requeue` of the run holding its conversation's lease keeps every
+run id in the same order, queues that run again in its place, and leaves the conversation without an
+owner, so the next recovery sweep or arrival promotes it (`recover_drains`). -/
+theorem requeue_returns_to_queue (cfg : Config) (s : AccountState) (a : AccountId) (id : RunId)
+    (run : Run) (hrun : ownerRun s.runs id = some run) :
+    let t := (accountStep cfg s (.requeue a id)).1
+    t.runs.map (·.id) = s.runs.map (·.id) ∧ { run with status := .queued } ∈ t.runs ∧
+      (∀ x ∈ s.runs, x.id ≠ id → x ∈ t.runs) ∧ (accountStep cfg s (.requeue a id)).2 = [] := by
+  obtain ⟨mem, hid, _⟩ := ownerRun_some hrun
+  simp only [accountStep, hrun]
+  refine ⟨?_, mem_setStatus_self mem hid, fun x hx hne => mem_setStatus_other hx hne, trivial⟩
+  simp only [setStatus, List.map_map]
+  congr 1
+  funext r
+  simp only [Function.comp_def]
+  split <;> rfl
 
 /-- Settling the conversation's owner, then `takeNext`, hands the conversation to its oldest queued
-run, when no other run owns it and core hands on (`handsOn`: the account is active, or the hand-off
-is not inline). An inactive account's run loses its history rows (and a background run its outcome:
-`settledStatus`), but its queue is still handed on unless the hand-off is inline (G202).
-One step of `endRun`. The code promotes the first
-unexpired row, or a contiguous group of collect or steer rows as one run (`promoteQueuedGroup`); the
-model promotes the oldest queued run alone (L9). `release` does not hand on (`queue_can_strand`). -/
+run, when the account is active and no other run owns it. In an inactive account no hand-off starts
+anything (`inactive_starts_nothing`): the run loses its history rows (a background run its outcome
+too, `settledStatus`) and the queue waits for reactivation or expiry. One step of `endRun`. The code
+promotes the first unexpired row, or a contiguous group of collect or steer rows as one run
+(`promoteQueuedGroup`); the model promotes the oldest queued run alone (L9). `release` does not hand
+on (`queue_can_strand`). -/
 theorem settle_hands_on (cfg : Config) (s : AccountState) (a : AccountId) (id : RunId)
-    (failed : Bool) (handoff : Handoff) (hand : handsOn s.active handoff = true)
+    (failed : Bool) (handoff : Handoff) (hand : s.active = true)
     (run n : Run) (hrun : liveRun s.runs id = some run) (howner : run.status = .running)
     (hfree : busy (setStatus s.runs run.id (settledStatus s.active handoff failed)) run.conversation =
       false)
     (hn : nextQueued (setStatus s.runs run.id (settledStatus s.active handoff failed)) run.conversation =
       some n) :
     { n with status := .running } ∈ (accountStep cfg s (.settle a id failed handoff)).1.runs := by
+  rw [hand] at hfree hn
   simp only [accountStep, hrun, endRun, hand, howner, promote, hfree, hn]
-  simp only [beq_self_eq_true, ite_true, Bool.false_eq_true, ite_false]
+  simp only [beq_self_eq_true, ite_true, Bool.false_eq_true, ite_false, Bool.true_and]
   exact mem_setStatus_self (nextQueued_some hn).1 rfl
 
 /-- **Completeness on served requests.** A credential that may start the agent's run, a configured

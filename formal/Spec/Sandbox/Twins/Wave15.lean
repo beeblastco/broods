@@ -2,7 +2,7 @@ import Spec.Twin
 
 /-!
 Twins of `mirror-writes.ts`, the per-account queue every sandbox executor sends its row writes
-through. A queued write's promise settles only once the write landed, so the recorder keeps
+through. A queued write's promise settles only once its send settled, so the recorder keeps
 `enqueue`, `place` and the queue entry points open while later writes on the account run.
 -/
 
@@ -287,7 +287,9 @@ private def land (call : Json) : Prog Json := do
   return undef
 
 /-- `pump`: when the account's sender is free, sends the first write of its first urgent, else ready,
-lane; with none left the sender goes. -/
+lane; with none left the sender goes. A failed `land` is logged (`.catch`), then `.finally` settles
+the write, frees the sender and lane and pumps again. That continuation runs after `pump` returned
+and has no trace of its own, so this twin states only the spawned `land` (L25). -/
 private def pump (call : Json) : Prog Json := do
   let account := Twin.callArg call 0
   let sender := Twin.callArg call 1
@@ -347,7 +349,7 @@ private def place (call : Json) : Prog Json := do
   | none => pure ()
   return undef
 
-/-- `enqueue`. `place` answers with the write's promise, which settles only once the write landed. -/
+/-- `enqueue`. `place` answers with the write's promise, which settles once its send settled. -/
 private def enqueue (call : Json) : Prog Json := do
   let account := Twin.callArg call 0
   let rowKey := Twin.callArg call 1

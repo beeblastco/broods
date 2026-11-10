@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Hosted.Model
 
 /-!
 Twins for the functions listed in `.lake/worklist/assign5/hosted5a.tsv`.
@@ -88,7 +89,7 @@ private def listingCall (connection onCpuUsec : Json) : String × List Json :=
     ("withClient", [connection, fnValue "", onCpuUsec])
 
 /-- Validates a sandbox listing once it has landed; `withClient` runs the callback instead. -/
-private def finishListing (connection : Json) (outcome : Outcome) : Prog Json := do
+private def finishListing (connection : Json) (outcome : Spec.Outcome) : Prog Json := do
   match outcome with
   | .pending => Prog.unsupported "the listing never settled"
   | .threw error _ => .fail error
@@ -168,12 +169,13 @@ private def makeClient (connection onCpuUsec prior : Json) (info : Json) : Prog 
   let transport ← Prog.effect "new StreamableHTTPClientTransport"
     [obj [("$url", url)],
      obj [("requestInit", obj [("headers", headers)]), ("fetch", fetcher)]]
+  let rounds := ("inputRequired", obj [("maxRounds", toJson Hosted.maxRounds)])
   let client ← Prog.effect "new Client"
     [info,
      if hosted then
-       obj [("supportedProtocolVersions", .arr #[toJson "2026-07-28"]),
+       obj [rounds, ("supportedProtocolVersions", .arr #[toJson "2026-07-28"]),
             ("versionNegotiation", obj [("mode", obj [("pin", toJson "2026-07-28")])])]
-     else obj [("versionNegotiation", obj [("mode", toJson "auto")])]]
+     else obj [rounds, ("versionNegotiation", obj [("mode", toJson "auto")])]]
   let connectOptions := if truthy prior then obj [("prior", prior)] else obj []
   let _ ← Prog.effect "client.connect" [transport, connectOptions]
   return client

@@ -94,6 +94,18 @@ theorem expire_tracks (s : State) (now : Nat) :
     simp [h, hq]
   · simp [h]
 
+/-- A requeue turns processing rows into queued ones and leaves every expired row as it was. -/
+theorem requeue_expired {G : Row → Prop} (s : State) (o : Owner) :
+    ExpiredFrom G s.rows (requeue s o).rows := by
+  intro x hx he
+  obtain ⟨y, hy, rfl⟩ := List.mem_map.1 hx
+  refine ⟨y, hy, ?_, Or.inl ?_⟩
+  · unfold requeueRow; split <;> rfl
+  · unfold requeueRow at he ⊢
+    by_cases h : (y.phase == .processing && y.appliedTo == o.event && y.generation == o.generation) = true
+    · simp [h] at he
+    · simp [h]
+
 theorem storeResults_tracks {G : Row → Prop} (s : State) (results : List Nat) :
     Tracks G s.rows (storeResults s results).rows :=
   tracks_refl _
@@ -170,10 +182,14 @@ theorem step_expired (s : State) (i : Input) (x : Row) (hx : x ∈ (step s i).1.
     split
     · split
       · exact expired_of_tracks (tracks_refl _)
-      · cases settles
-        · exact expired_of_tracks (tracks_trans (expire_tracks s now) (promote_tracks _ _ _))
-        · exact expired_of_tracks (tracks_trans (tracks_trans (finish_tracks s o false)
-            (expire_tracks _ now)) (promote_tracks _ _ _))
+      · have swept : Tracks (fun y => mayExpire s now y = true) s.rows
+            (expireQueued (if settles then finish s o false else s) now).rows := by
+          cases settles
+          · exact expire_tracks s now
+          · exact tracks_trans (finish_tracks s o false) (expire_tracks _ now)
+        split
+        · exact expired_of_tracks (tracks_trans swept (promote_tracks _ _ _))
+        · exact expired_of_tracks swept
     · exact expired_of_tracks (tracks_refl _)
   | applySteering o now ttl sender =>
     refine lift (G := fun y => mayExpire s now y = true) ?_ (fun y h => ⟨now, rfl, h⟩)
@@ -213,10 +229,14 @@ theorem step_expired (s : State) (i : Input) (x : Row) (hx : x ∈ (step s i).1.
       · exact expired_of_tracks (tracks_refl _)
       · unfold renew
         split <;> exact expired_of_tracks (tracks_refl _)
-  | releaseOwner o =>
+  | releaseOwner o requeued =>
     refine lift (G := fun _ => False) ?_ none
     simp only [step]
-    split <;> exact expired_of_tracks (tracks_refl _)
+    split
+    · cases requeued
+      · exact expired_of_tracks (tracks_refl _)
+      · exact requeue_expired s o
+    · exact expired_of_tracks (tracks_refl _)
   | stopOwner now =>
     refine lift (G := fun _ => False) ?_ none
     simp only [step]
@@ -291,6 +311,10 @@ theorem expire_keys (s : State) (now : Nat) :
 theorem finish_keys (s : State) (o : Owner) (failed : Bool) :
     (finish s o failed).rows.map (·.key) = s.rows.map (·.key) :=
   keys_map _ (fun r => by split <;> rfl)
+
+theorem requeue_keys (s : State) (o : Owner) :
+    (requeue s o).rows.map (·.key) = s.rows.map (·.key) :=
+  keys_map _ (fun r => by unfold requeueRow; split <;> rfl)
 
 theorem promote_keys (s : State) (now ttl : Nat) :
     (promote s now ttl).1.rows.map (·.key) = s.rows.map (·.key) := by
@@ -368,14 +392,18 @@ theorem keys_inductive : Spec.Inductive system (fun s => (s.rows.map (·.key)).N
           simp [hk] at this)
   | takeNext o now ttl settles rows =>
     simp only [step]
+    have swept : (expireQueued (if settles then finish s o false else s) now).rows.map (·.key) =
+        s.rows.map (·.key) := by
+      cases settles
+      · exact expire_keys s now
+      · exact (expire_keys _ now).trans (finish_keys s o false)
     split
     · split
       · exact keys
-      · cases settles
-        · simp only [Bool.false_eq_true, ite_false]
-          rw [promote_keys, expire_keys]; exact keys
-        · simp only [ite_true]
-          rw [promote_keys, expire_keys, finish_keys]; exact keys
+      · split
+        · rw [promote_keys, swept]; exact keys
+        · change ((expireQueued _ now).rows.map (·.key)).Nodup
+          rw [swept]; exact keys
     · exact keys
   | applySteering o now ttl sender =>
     simp only [step]
@@ -407,9 +435,14 @@ theorem keys_inductive : Spec.Inductive system (fun s => (s.rows.map (·.key)).N
     · split
       · exact keys
       · rw [renew_keys]; exact keys
-  | releaseOwner o =>
+  | releaseOwner o requeued =>
     simp only [step]
-    split <;> exact keys
+    split
+    · cases requeued
+      · exact keys
+      · change ((requeue s o).rows.map (·.key)).Nodup
+        rw [requeue_keys]; exact keys
+    · exact keys
   | stopOwner now =>
     simp only [step]
     split <;> (try split) <;> exact keys
@@ -450,6 +483,99 @@ theorem fifo_head (s : State) (now ttl : Nat) (r : Row) (rest : List Row)
     ∃ tail, (promote s now ttl).2 = [.applied (r.event :: tail)] := by
   simp only [promote, h]
   split <;> simp
+
+/-- One step in an account that is not active mints no owner generation and installs no owner. -/
+theorem inactive_step (s : State) (i : Input) (hs : s.accountActive = false) :
+    (step s i).1.generation = s.generation ∧ (step s i).1.accountActive = (match i with
+      | .status a => a | _ => s.accountActive) ∧
+      ((step s i).1.owner = s.owner ∨ (step s i).1.owner = none) := by
+  cases i with
+  | accept r now ttl => simp [step, hs]
+  | takeNext o now ttl settles rows =>
+    simp only [step, hs]
+    split
+    · cases settles <;> cases rows <;>
+        simp [hs, holdQueue, expireQueued, finish]
+    · simp [hs]
+  | applySteering o now ttl sender =>
+    simp only [step]
+    split
+    · unfold steer
+      split <;> simp [hs, mark, expireQueued]
+    · simp [hs]
+  | stepBoundary o now ttl claim sender results =>
+    simp only [step]
+    split
+    · simp [hs]
+    · split
+      · simp [hs]
+      · split
+        · simp [hs, store, storeResults]
+        · split
+          · unfold steer
+            split <;> simp [hs, mark, expireQueued, store, storeResults]
+          · unfold renew
+            split <;> simp [hs, store, storeResults]
+  | settle o now failed results asyncResult =>
+    simp only [step]
+    split
+    · simp [hs]
+    · split
+      · simp [hs]
+      · simp [hs, finish, storeResults]
+  | renewOwner o now ttl =>
+    simp only [step]
+    split
+    · simp [hs]
+    · split
+      · simp [hs]
+      · unfold renew
+        split <;> simp [hs]
+  | releaseOwner o requeued =>
+    simp only [step]
+    split
+    · cases requeued <;> simp [hs, holdQueue, requeue]
+    · simp [hs]
+  | stopOwner now => simp [step, hs]
+  | recoverQueued now ttl => simp [step, hs]
+  | declineRecovery now =>
+    simp only [step]
+    split <;> simp [hs]
+  | maintain now => simp [hs, step, maintain]
+  | status a => simp [step]
+
+/-- Over inputs that never reactivate the account, an inactive conversation keeps its generation. -/
+theorem inactive_run (s : State) (trace : List Input) (hs : s.accountActive = false)
+    (stays : ∀ i ∈ trace, ∀ a, i = .status a → a = false) :
+    (system.runFrom s trace).1.generation = s.generation := by
+  induction trace generalizing s with
+  | nil => rfl
+  | cons i rest ih =>
+    obtain ⟨gen, act, _⟩ := inactive_step s i hs
+    have next : (step s i).1.accountActive = false := by
+      rw [act]
+      cases i with
+      | status a => exact stays _ List.mem_cons_self a rfl
+      | _ => exact hs
+    change (system.runFrom (step s i).1 rest).1.generation = s.generation
+    rw [ih (step s i).1 next (fun j hj => stays j (List.mem_cons_of_mem _ hj)), gen]
+
+/-- `releaseOwner` with `requeue` by the live owner: the keys keep their order, no owner is left,
+and no row is still held by that owner and generation. -/
+theorem requeue_release (s : State) (o : Owner) (h : s.owner = some o) :
+    let t := (step s (.releaseOwner o true)).1
+    t.rows.map (·.key) = s.rows.map (·.key) ∧ t.owner = none ∧
+      (∀ x ∈ t.rows, ¬ (x.phase = .processing ∧ x.appliedTo = o.event ∧ x.generation = o.generation)) ∧
+      ∀ y ∈ s.rows, requeueRow o y ∈ t.rows := by
+  simp only [step, h, beq_self_eq_true, ite_true]
+  refine ⟨requeue_keys s o, rfl, ?_, fun y hy => List.mem_map_of_mem hy⟩
+  intro x hx ⟨hp, ha, hg⟩
+  obtain ⟨y, _, rfl⟩ := List.mem_map.1 hx
+  unfold requeueRow at hp ha hg
+  by_cases c : (y.phase == .processing && y.appliedTo == o.event && y.generation == o.generation) = true
+  · simp [c] at hp
+  · simp only [c, Bool.false_eq_true, ite_false] at hp ha hg
+    simp [hp, ha, hg] at c
 
  theorem other_unchanged (s : World) (i : RoutedInput) (p : Nat)
     (h : p ≠ i.conversation) : (worldStep s i).1 p = s p := by

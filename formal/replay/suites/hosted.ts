@@ -85,6 +85,18 @@ export const suite: Suite = {
       replace: "const RATE_LIMIT_RETRIES = 4;",
     },
     {
+      name: "tool call drops its definition",
+      file: "apps/core/src/harness/mcp/client.ts",
+      find: "...(options.toolDefinition\n",
+      replace: "...(false\n",
+    },
+    {
+      name: "input_required rounds unpinned",
+      file: "apps/core/src/harness/mcp/client.ts",
+      find: "const INPUT_REQUIRED_MAX_ROUNDS = 10;",
+      replace: "const INPUT_REQUIRED_MAX_ROUNDS = 11;",
+    },
+    {
       name: "Lambda child ignores tenant",
       file: "apps/lambda/handler.mjs",
       find: "`${event.tenantId}:${event.expectedSha256}`",
