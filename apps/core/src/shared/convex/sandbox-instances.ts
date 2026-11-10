@@ -31,6 +31,7 @@ export type SandboxInstanceStatus =
   | "error";
 
 // Pass `specs` only when the real size is known; else the row bills the config's, unverified.
+// False when the write failed.
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
   provider: SandboxProvider,
@@ -38,8 +39,8 @@ export async function upsertSandboxInstance(
   externalId: string,
   metadata?: SandboxRunMetadata,
   options?: SandboxInstanceUpsertOptions,
-): Promise<void> {
-  if (!controlPlane) return;
+): Promise<boolean> {
+  if (!controlPlane) return true;
   const meta: SandboxRunMetadata = metadata ?? {};
   const ephemeral = options?.ephemeral === true;
   try {
@@ -74,10 +75,14 @@ export async function upsertSandboxInstance(
       },
       { skipQueue: true },
     );
+
+    return true;
   } catch (err) {
     logError("Sandbox instance upsert mirror failed (convex)", {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    return false;
   }
 }
 

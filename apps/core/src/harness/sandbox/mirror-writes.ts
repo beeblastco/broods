@@ -206,6 +206,7 @@ async function land(rowKey: string, write: MirrorWrite): Promise<void> {
   );
   const stalled = await Promise.race([sent, timedOut]);
   clearTimeout(timer);
+  if (stalled && write.kind === "upsert") refreshed.delete(rowKey);
   const now = Date.now();
   const waitedMs = now - write.queuedAt;
   if (
@@ -304,8 +305,9 @@ function pump(accountId: string, sender: AccountSender): void {
   });
 }
 
-function sendUpsert(upsert: MirrorUpsert): Promise<void> {
-  return upsertSandboxInstance(
+// A refresh that did not land is forgotten, so the next identical one is sent.
+async function sendUpsert(upsert: MirrorUpsert): Promise<void> {
+  const landed = await upsertSandboxInstance(
     upsert.controlPlane,
     upsert.provider,
     upsert.reservationKey,
@@ -313,4 +315,5 @@ function sendUpsert(upsert: MirrorUpsert): Promise<void> {
     upsert.metadata,
     upsert.options,
   );
+  if (!landed) refreshed.delete(upsert.reservationKey);
 }

@@ -16,6 +16,7 @@ let holds = new Map<string, PromiseWithResolvers<void>>();
 let inFlight = 0;
 let peak = 0;
 let testsRun = 0;
+let failUpserts = 0;
 
 async function arrive(entry: Landed): Promise<void> {
   inFlight += 1;
@@ -29,14 +30,19 @@ async function arrive(entry: Landed): Promise<void> {
 }
 
 await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
-  upsertSandboxInstance: (
+  upsertSandboxInstance: async (
     _c: unknown,
     _p: string,
     key: string,
     externalId: string,
     metadata?: { traceId?: string; taskId?: string },
-  ): Promise<void> =>
-    arrive([
+  ): Promise<boolean> => {
+    if (failUpserts > 0) {
+      failUpserts -= 1;
+
+      return false;
+    }
+    await arrive([
       "upsert",
       key,
       {
@@ -44,7 +50,10 @@ await mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
         traceId: metadata?.traceId,
         taskId: metadata?.taskId,
       },
-    ]),
+    ]);
+
+    return true;
+  },
   removeSandboxInstance: (
     _a: string,
     key: string,
@@ -72,6 +81,7 @@ beforeEach((): void => {
   setSystemTime(new Date(Date.now() + testsRun * 120_000));
   landed.length = 0;
   holds = new Map();
+  failUpserts = 0;
   inFlight = 0;
   peak = 0;
 });
@@ -151,6 +161,19 @@ describe("mirror writes", () => {
     await queueMirrorRemove("acct", "row-a", "m-1");
     await refresh("t-2");
     expect(landed).toHaveLength(7);
+  });
+
+  it("sends an unchanged refresh again when the last one failed or timed out", async () => {
+    failUpserts = 1;
+    await upsert("acct", "row-a", "m-1", "t-1");
+    await upsert("acct", "row-a", "m-1", "t-1");
+    expect(kinds()).toEqual(["upsert:row-a"]);
+
+    jest.useFakeTimers();
+    hold("row-b");
+    await settleOnFakeClock(upsert("acct", "row-b", "m-2", "t-1"));
+    await upsert("acct", "row-b", "m-2", "t-1");
+    expect(kinds()).toEqual(["upsert:row-a", "upsert:row-b"]);
   });
 
   it("keeps the refresh window a fifteenth of a short idle timeout", async () => {

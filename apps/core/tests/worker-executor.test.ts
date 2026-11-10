@@ -103,8 +103,10 @@ beforeEach((): void => {
     },
   );
   spyOn(sandboxInstances, "upsertSandboxInstance").mockImplementation(
-    async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
+    async (_plane, _provider, key, _id, _meta, options): Promise<boolean> => {
       mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
+
+      return true;
     },
   );
 });
