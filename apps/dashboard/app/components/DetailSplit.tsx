@@ -90,6 +90,7 @@ export function DetailSplit({
     frameWidth - HANDLE_WIDTH_PX - tableMinWidth,
   );
 
+  const shown = Math.min(width, room);
   const resize = (next: number): void =>
     setWidth(Math.max(DETAIL_MIN_WIDTH, Math.min(next, room)));
 
@@ -128,19 +129,19 @@ export function DetailSplit({
             aria-orientation="vertical"
             aria-valuemax={room}
             aria-valuemin={DETAIL_MIN_WIDTH}
-            aria-valuenow={Math.min(width, room)}
+            aria-valuenow={shown}
             tabIndex={0}
             data-slot="resizable-handle"
             onKeyDown={(event) => {
               const move = KEY_MOVES[event.key];
               if (!move) return;
               event.preventDefault();
-              resize(move(width));
+              resize(move(shown));
             }}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               event.currentTarget.setPointerCapture(event.pointerId);
-              drag.current = event.clientX + width;
+              drag.current = event.clientX + shown;
             }}
             onPointerMove={(event) => {
               if (drag.current !== null) resize(drag.current - event.clientX);

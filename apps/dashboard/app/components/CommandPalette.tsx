@@ -1,20 +1,32 @@
 "use client";
 
 // Takes its rows as props, so the `/ui-gallery` fixture drives it with no Convex behind it.
+import { chunkFailed } from "@/app/components/ChunkFailed";
 import { useShortcut } from "@/app/components/ShortcutProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
 import { useEverTrue } from "@/app/hooks/useEverTrue";
 import { afterLoad } from "@/app/lib/prefetch";
 import type { SearchGroup, SearchItem } from "@/app/lib/paletteSearch";
 import { Search } from "lucide-react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+} from "react";
+import type { CommandPaletteDialog as Dialog } from "./CommandPaletteDialog";
 
-const loadDialog = (): Promise<typeof import("./CommandPaletteDialog")> =>
-  import("./CommandPaletteDialog");
+const loadDialog = (): Promise<{
+  default: ComponentType<ComponentProps<typeof Dialog>>;
+}> =>
+  import("./CommandPaletteDialog").then(
+    (mod) => ({ default: mod.CommandPaletteDialog }),
+    () => chunkFailed<ComponentProps<typeof Dialog>>("search"),
+  );
 
-const CommandPaletteDialog = lazy(() =>
-  loadDialog().then((mod) => ({ default: mod.CommandPaletteDialog })),
-);
+const CommandPaletteDialog = lazy(loadDialog);
 
 export function CommandPalette({
   items,
