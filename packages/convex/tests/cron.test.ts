@@ -239,11 +239,16 @@ describe("settleAnsweredRun", () => {
     const { accountId, cronId } = await firstCron(tt);
     const runId = await staleRun(tt, accountId, cronId, "event-paused");
     await tt.run((ctx) =>
-      ctx.db.patch(runId, { ingressConversationKey: "scoped:cron" }),
+      ctx.db.patch(runId, {
+        ingressConversationKey: "scoped:cron",
+        waitingOn: ["approval-1"],
+      }),
     );
 
     await tt.mutation(internal.agent.crons.settleAnsweredRun, {
       conversationKey: "scoped:cron",
+      ownerEventId: "answer",
+      answered: ["approval-1"],
       status: "completed",
       result: "approved and done",
     });

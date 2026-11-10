@@ -1281,6 +1281,8 @@ export const cronRunsFields = {
   // The scoped id of the run's envelope; `eventId` is the public one. Absent on older rows.
   ingressEventId: v.optional(v.string()),
   ingressConversationKey: v.optional(v.string()),
+  // While paused: the approval ids or question status ids an answer must name to settle this run.
+  waitingOn: v.optional(v.array(v.string())),
   // Fixed at fire time: the job can be rescheduled while this run is still open.
   oneShot: v.optional(v.boolean()),
   conversationKey: v.string(),

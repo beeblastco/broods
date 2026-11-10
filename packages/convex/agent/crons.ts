@@ -52,6 +52,7 @@ const DEAD_RUN_GRACE_MS = 5 * 60 * 1000;
 const EXPIRED_RUN_GRACE_MS = 60 * 60 * 1000;
 // As long as the polling row that holds the open approval.
 const PAUSED_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PAUSED_RUN_SCAN_LIMIT = 100;
 // Rows from before `ingressEventId` have no envelope to read, so only age can end them.
 const UNTRACKED_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEAD_RUN_ERROR = "The run stopped before it recorded an outcome.";
@@ -476,33 +477,44 @@ export const removeRunsCascade = internalMutation({
   },
 });
 
-// A run paused for an approval ends in the later turn that answered it, with that turn's outcome.
+// A paused run records what it waits on; the turn that answers one of those ends it, or pauses
+// it again on what that turn asked in turn.
 export const settleAnsweredRun = internalMutation({
   args: {
     conversationKey: v.string(),
+    ownerEventId: v.string(),
+    answered: v.array(v.string()),
+    waitingOn: cronRunsFields.waitingOn,
     status: v.union(v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (
-    ctx,
-    { conversationKey, status, result, error },
-  ): Promise<null> => {
-    const run = await ctx.db
+  handler: async (ctx, args): Promise<null> => {
+    const started = await ctx.db
       .query("cronRuns")
       .withIndex("by_ingressConversationKey_and_status", (q) =>
-        q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+        q
+          .eq("ingressConversationKey", args.conversationKey)
+          .eq("status", "started"),
       )
       .order("desc")
-      .first();
-    if (run) {
+      .take(PAUSED_RUN_SCAN_LIMIT);
+    const run = started.find((candidate): boolean =>
+      args.answered.length > 0
+        ? (candidate.waitingOn ?? []).some((id) => args.answered.includes(id))
+        : candidate.ingressEventId === args.ownerEventId,
+    );
+    if (!run) return null;
+    if (args.waitingOn) {
+      await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
+    } else {
       await finishRun(
         ctx,
         run,
-        status === "completed"
-          ? { status: "completed", result: result ?? null }
-          : { status: "failed", error: error ?? DEAD_RUN_ERROR },
+        args.status === "completed"
+          ? { status: "completed", result: args.result ?? null }
+          : { status: "failed", error: args.error ?? DEAD_RUN_ERROR },
       );
     }
 
