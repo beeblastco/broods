@@ -9,7 +9,10 @@ import * as ingress from "../src/harness/ingress.ts";
 import type {
   IngressAdmission,
   IngressCandidate,
+  RecoveredIngress,
 } from "../src/harness/ingress.ts";
+import * as workerQueue from "../src/harness/worker-queue.ts";
+import { WORKER_QUEUE_FULL } from "../src/harness/worker-queue.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -83,6 +86,104 @@ describe("queued ingress recovery", () => {
       });
     } finally {
       mutate.mockRestore();
+    }
+  });
+
+  it.each([
+    [WORKER_QUEUE_FULL, "leaves shed work queued for the next sweep"],
+    ["worker crashed", "fails work whose dispatch broke for another reason"],
+  ])("%s: %s", async (failure: string): Promise<void> => {
+    const conversationKey = scopedDirectConversationKey(
+      "account_1",
+      "agent_1",
+      "chat",
+    );
+    const recovered: RecoveredIngress = {
+      accountId: "account_1",
+      agentId: "agent_1",
+      conversationKey: conversationKey,
+      applied: {
+        eventId: "evt_queued",
+        events: [{ role: "user", content: "queued behind a dead pod" }],
+        delivery: {
+          kind: "async",
+          publicEventId: "evt_queued",
+          publicConversationKey: "chat",
+          statusUrl: "/v1/runs/run_queued",
+        },
+        requestedMode: "followup",
+        appliedMode: "followup",
+        appliedToEventId: "evt_queued",
+        contributingEventIds: ["evt_queued"],
+        ownerGeneration: 2,
+      },
+    };
+    const pages = [{ recovered: [recovered], continueAfter: null }];
+    const writes: { name: string; args: Record<string, unknown> }[] = [];
+    const spies = [
+      spyOn(runtime, "mutate").mockImplementation(
+        async <T>(name: string, args: unknown): Promise<T> => {
+          writes.push({ name: name, args: args as Record<string, unknown> });
+          if (name === "recoverQueuedIngress") {
+            return (pages.shift() ?? {
+              recovered: [],
+              continueAfter: null,
+            }) as T;
+          }
+
+          return (name === "createAsyncAgentResult") as T;
+        },
+      ),
+      spyOn(ingress, "loadAppliedIngressConfig").mockResolvedValue({}),
+      spyOn(workerQueue, "dispatchInProcessWorker").mockImplementation(
+        (): void => {
+          throw new Error(failure);
+        },
+      ),
+      spyOn(asyncAgentResults, "listOwedAsyncAgentResults").mockResolvedValue({
+        page: [],
+        cursor: "end",
+        isDone: true,
+      }),
+      spyOn(asyncToolResults, "listOwedAsyncToolResults").mockResolvedValue({
+        page: [],
+        cursor: "end",
+        isDone: true,
+      }),
+    ];
+    try {
+      startIngressRecovery();
+      for (
+        let i = 0;
+        i < 200 &&
+        !writes.some((write) => write.name === "releaseIngressOwner");
+        i += 1
+      ) {
+        await Bun.sleep(1);
+      }
+
+      const failed = writes.filter((write) => write.args.status === "failed");
+      const released = writes.find(
+        (write) => write.name === "releaseIngressOwner",
+      );
+      if (failure === WORKER_QUEUE_FULL) {
+        expect(failed).toEqual([]);
+        expect(released?.args).toEqual({
+          conversationKey: conversationKey,
+          ownerEventId: "evt_queued",
+          ownerGeneration: 2,
+          requeue: true,
+        });
+        return;
+      }
+      expect(failed[0]?.args).toMatchObject({
+        ownerEventId: "evt_queued",
+        ownerGeneration: 2,
+        error: "worker crashed",
+      });
+      expect(released?.args.requeue).toBeUndefined();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
     }
   });
 

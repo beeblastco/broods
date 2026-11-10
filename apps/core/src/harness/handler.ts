@@ -110,6 +110,7 @@ import {
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
+  releaseIngressOwner,
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
@@ -2381,6 +2382,15 @@ export async function dispatchAppliedIngress(
       await invokeAsyncWorker(event);
     }
   } catch (error) {
+    if (error instanceof Error && error.message === WORKER_QUEUE_FULL) {
+      const owner = {
+        conversationKey: event.conversationKey,
+        ownerEventId: event.eventId,
+        ownerGeneration: next.ownerGeneration,
+      };
+      await releaseIngressOwner(owner, true);
+      throw error;
+    }
     await failOwnedIngress(
       event,
       error instanceof Error
