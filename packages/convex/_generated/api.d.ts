@@ -6468,6 +6468,12 @@ export declare const internal: {
         { authId: string },
         null
       >;
+      listDue: FunctionReference<
+        "query",
+        "internal",
+        { now: number },
+        Array<string>
+      >;
       listSoleOwnedAccounts: FunctionReference<
         "query",
         "internal",
@@ -6480,9 +6486,16 @@ export declare const internal: {
         { authId: string },
         null | number
       >;
+      start: FunctionReference<
+        "mutation",
+        "internal",
+        { authId: string },
+        null
+      >;
     };
     workosUserDeletionCleanup: {
       run: FunctionReference<"action", "internal", { authId: string }, null>;
+      sweep: FunctionReference<"action", "internal", {}, null>;
     };
   };
   runtime: {
@@ -8779,6 +8792,14 @@ export declare const internal: {
         toolCallCount: number;
         totalTokens: number;
       },
+      null
+    >;
+  };
+  user: {
+    cancelAccountDeletion: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string },
       null
     >;
   };

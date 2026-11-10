@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { purgeUser } from "../model/cascade";
 
@@ -33,6 +34,48 @@ export const listSoleOwnedAccounts = internalQuery({
     }
 
     return accountIds;
+  },
+});
+
+// Past-due account deletion requests whose teardown has not started yet.
+export const listDue = internalQuery({
+  args: { now: v.number() },
+  returns: v.array(v.string()),
+  handler: async (ctx, args): Promise<string[]> => {
+    const users = await ctx.db
+      .query("users")
+      .withIndex("by_deletionScheduledFor", (q) =>
+        q.gte("deletionScheduledFor", 0).lte("deletionScheduledFor", args.now),
+      )
+      .collect();
+
+    return users
+      .filter((user) => !user.workosDeletionRequestedAt)
+      .map((user) => user.authId);
+  },
+});
+
+// The sweep's half of `user.deleted`: re-checks the request so a cancel in between wins.
+export const start = internalMutation({
+  args: { authId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first();
+    const dueAt = user?.deletionScheduledFor;
+    if (!user || !dueAt || dueAt > Date.now() || user.workosDeletionRequestedAt)
+      return null;
+
+    await ctx.db.patch(user._id, { workosDeletionRequestedAt: Date.now() });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.org.workosUserDeletionCleanup.run,
+      { authId: args.authId },
+    );
+
+    return null;
   },
 });
 

@@ -2,7 +2,7 @@ import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
-import { action, mutation, query } from "./_generated/server";
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { hexFromBytes } from "./model/accountSecrets";
 import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
@@ -173,6 +173,30 @@ export const requestAccountDeletion = mutation({
     await ctx.db.patch(user._id, { deletionScheduledFor: scheduledFor });
 
     return { scheduledFor: scheduledFor };
+  },
+});
+
+// Support's restore path; the deletion sweep re-reads the field, so clearing it stops the purge.
+export const cancelAccountDeletion = internalMutation({
+  args: { authId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first();
+    if (!user) {
+      throw new Error(`No user with authId ${args.authId}`);
+    }
+    if (user.workosDeletionRequestedAt) {
+      throw new Error(
+        "Deletion already started; the account cannot be restored",
+      );
+    }
+
+    await ctx.db.patch(user._id, { deletionScheduledFor: undefined });
+
+    return null;
   },
 });
 

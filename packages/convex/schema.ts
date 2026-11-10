@@ -1447,7 +1447,8 @@ export default defineSchema({
   users: defineTable(usersFields)
     .index("by_authId", ["authId"])
     .index("by_accountHandle", ["accountHandle"])
-    .index("by_email", ["email"]),
+    .index("by_email", ["email"])
+    .index("by_deletionScheduledFor", ["deletionScheduledFor"]),
   // Also serves the org's project list, in slug order; the one caller that
   // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields)

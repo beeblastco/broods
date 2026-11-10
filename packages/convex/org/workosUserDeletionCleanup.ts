@@ -6,6 +6,39 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import { authKit } from "../auth";
+import { authProvider } from "../model/selfHostAuth";
+
+// Runs a past-due `user.requestAccountDeletion`. The identity goes first, so a failure retries
+// next sweep instead of leaving a sign-in with no user row.
+export const sweep = internalAction({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const authIds: string[] = await ctx.runQuery(
+      internal.org.workosUserDeletion.listDue,
+      { now: Date.now() },
+    );
+    for (const authId of authIds) {
+      if (authProvider() === "workos") {
+        try {
+          await authKit.workos.userManagement.deleteUser(authId);
+        } catch (error) {
+          console.error(
+            `Account deletion could not remove WorkOS user ${authId}`,
+            error,
+          );
+          continue;
+        }
+      }
+      await ctx.runMutation(internal.org.workosUserDeletion.start, {
+        authId: authId,
+      });
+    }
+
+    return null;
+  },
+});
 
 export const run = internalAction({
   args: { authId: v.string() },
