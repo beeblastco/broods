@@ -3,7 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DataModel, Id } from "../_generated/dataModel";
 import schema from "../schema";
-import { deleteStageContents } from "../stage";
+import { deleteStageContents, duplicateStageContents } from "../stage";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -258,6 +258,49 @@ describe("deleteStageContents", () => {
     }
 
     expect(orphaned).toEqual([]);
+  });
+
+  test("a copied stage's server starts signed out", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = cascadeTest();
+    const { projectId, stageId } = await seedFullStage(t);
+    const copyId = await t.run(async (ctx) => {
+      const [server] = await ctx.db.query("mcp").collect();
+      await ctx.db.patch(server!._id, {
+        connection: {
+          clientId: "client_1",
+          tokenUrl: "https://auth.example.com/token",
+          resource: "https://mcp.example.com/mcp",
+          expiresAt: 1,
+          updatedAt: 1,
+        },
+        connectionCiphertext: "ct",
+        connectionIv: "iv",
+        connectionTag: "tag",
+      });
+
+      return await ctx.db.insert("stages", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        name: "Copy",
+        kind: "development" as const,
+        isDefault: false,
+        updatedAt: 1,
+      });
+    });
+
+    await t.run(async (ctx) => {
+      await duplicateStageContents(ctx, AUTH_ID, projectId, stageId, copyId, 2);
+    });
+    const copied = await t.run(async (ctx) =>
+      (await ctx.db.query("mcp").collect()).find(
+        (server) => server.stageId === copyId,
+      ),
+    );
+
+    expect(copied?.connection).toBeUndefined();
+    expect(copied?.connectionCiphertext).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 
   test("deletes the account's own agents row and leaves another account's alone", async () => {

@@ -1,8 +1,9 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   assertMcpRow,
   MCP_CLEARABLE_FIELDS,
@@ -13,6 +14,34 @@ import {
 import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
+
+const CONNECTION_SCOPE = "mcp:connection";
+
+export const NO_MCP_CONNECTION = {
+  connection: undefined,
+  connectionCiphertext: undefined,
+  connectionIv: undefined,
+  connectionTag: undefined,
+};
+
+const connectionRef = { accountId: v.id("accounts"), serverId: v.id("mcp") };
+const connectionSecrets = {
+  accessToken: v.string(),
+  refreshToken: v.string(),
+  clientSecret: v.optional(v.string()),
+};
+const storedConnection = v.object({
+  clientId: v.string(),
+  tokenUrl: v.string(),
+  resource: v.string(),
+  expiresAt: v.number(),
+  updatedAt: v.number(),
+  ...connectionSecrets,
+});
+const connectionSecretsValidator = v.object(connectionSecrets);
+
+type ConnectionSecrets = Infer<typeof connectionSecretsValidator>;
+export type StoredMcpConnection = Infer<typeof storedConnection>;
 
 export const mcpDoc = v.object({
   ...mcpFields,
@@ -109,6 +138,20 @@ export const create = internalMutation({
   },
 });
 
+export const disconnect = internalMutation({
+  args: connectionRef,
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    if (server?.accountId !== args.accountId || !server.connection) {
+      return false;
+    }
+    await ctx.db.patch(server._id, NO_MCP_CONNECTION);
+
+    return true;
+  },
+});
+
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -188,6 +231,33 @@ export const listForStagePage = internalQuery({
   },
 });
 
+export const loadConnection = internalQuery({
+  args: connectionRef,
+  returns: v.union(v.null(), storedConnection),
+  handler: async (ctx, args): Promise<StoredMcpConnection | null> => {
+    const server = await ctx.db.get(args.serverId);
+    if (
+      server?.accountId !== args.accountId ||
+      !server.connection ||
+      !server.connectionCiphertext ||
+      !server.connectionIv ||
+      !server.connectionTag
+    ) {
+      return null;
+    }
+    const cipher = await accountCipher(ctx, server.accountId);
+
+    return {
+      ...server.connection,
+      ...((await cipher.decrypt(CONNECTION_SCOPE, {
+        ciphertext: server.connectionCiphertext,
+        iv: server.connectionIv,
+        tag: server.connectionTag,
+      })) as ConnectionSecrets),
+    };
+  },
+});
+
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -214,6 +284,7 @@ export const remove = internalMutation({
       deletedAt: Date.now(),
       nodeId: undefined,
       updatedAt: Date.now(),
+      ...NO_MCP_CONNECTION,
     });
 
     return null;
@@ -251,6 +322,72 @@ export const resolveScope = internalQuery({
       projectId: resolved.projectDoc._id,
       stageId: resolved.stageDoc._id,
     };
+  },
+});
+
+// A sign-in or disconnect since core loaded the tokens wins over this refresh.
+export const saveRefreshedConnection = internalMutation({
+  args: {
+    ...connectionRef,
+    loadedUpdatedAt: v.number(),
+    expiresAt: v.number(),
+    ...connectionSecrets,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    if (
+      server?.accountId !== args.accountId ||
+      server.connection?.updatedAt !== args.loadedUpdatedAt
+    ) {
+      return false;
+    }
+    await ctx.db.patch(server._id, {
+      connection: {
+        ...server.connection,
+        expiresAt: args.expiresAt,
+        updatedAt: Date.now(),
+      },
+      ...(await sealConnection(ctx, args.accountId, args)),
+    });
+
+    return true;
+  },
+});
+
+export const setConnection = internalMutation({
+  args: {
+    ...connectionRef,
+    url: v.string(),
+    clientId: v.string(),
+    tokenUrl: v.string(),
+    resource: v.string(),
+    expiresAt: v.number(),
+    ...connectionSecrets,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    // Checked with the write: tokens for one URL must never land on a row repointed since.
+    if (
+      server?.accountId !== args.accountId ||
+      server.status !== "active" ||
+      server.url !== args.url
+    ) {
+      return false;
+    }
+    await ctx.db.patch(server._id, {
+      connection: {
+        clientId: args.clientId,
+        tokenUrl: args.tokenUrl,
+        resource: args.resource,
+        expiresAt: args.expiresAt,
+        updatedAt: Date.now(),
+      },
+      ...(await sealConnection(ctx, args.accountId, args)),
+    });
+
+    return true;
   },
 });
 
@@ -304,11 +441,40 @@ export const update = internalMutation({
     };
     assertMcpRow({ ...doc, ...patch });
 
-    await ctx.db.patch(normalized, patch);
+    // Tokens are bound to one URL: repointing the server signs it out.
+    await ctx.db.patch(normalized, {
+      ...patch,
+      ...("url" in patch && patch.url !== doc.url ? NO_MCP_CONNECTION : {}),
+    });
 
     return null;
   },
 });
+
+async function sealConnection(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  secrets: ConnectionSecrets,
+): Promise<{
+  connectionCiphertext: string;
+  connectionIv: string;
+  connectionTag: string;
+}> {
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const sealed = await cipher.encrypt(CONNECTION_SCOPE, {
+    accessToken: secrets.accessToken,
+    refreshToken: secrets.refreshToken,
+    ...(secrets.clientSecret !== undefined
+      ? { clientSecret: secrets.clientSecret }
+      : {}),
+  });
+
+  return {
+    connectionCiphertext: sealed.ciphertext,
+    connectionIv: sealed.iv,
+    connectionTag: sealed.tag,
+  };
+}
 
 // Names namespace the server's tools (`name__tool`), so they are unique per stage.
 async function requireNameFree(

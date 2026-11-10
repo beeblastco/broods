@@ -31,6 +31,8 @@ export interface McpRecord {
   headers?: Record<string, string>;
   /** Secret fields carry ${NAME} env refs on the row, never the values. */
   oauth?: McpOauth;
+  /** Signed in through /v1/mcp-connections; core sends that connection's token. */
+  connected?: boolean;
   allowedTools?: string[];
   disabled?: boolean;
   status: McpStatus;

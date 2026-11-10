@@ -317,6 +317,19 @@ export const mcpFields = {
       tokenUrl: v.optional(v.string()),
     }),
   ),
+  // A sign-in through /v1/mcp-connections: its tokens are sealed in the three columns below.
+  connection: v.optional(
+    v.object({
+      clientId: v.string(),
+      tokenUrl: v.string(),
+      resource: v.string(),
+      expiresAt: v.number(),
+      updatedAt: v.number(),
+    }),
+  ),
+  connectionCiphertext: v.optional(v.string()),
+  connectionIv: v.optional(v.string()),
+  connectionTag: v.optional(v.string()),
   allowedTools: v.optional(v.array(v.string())),
   disabled: v.optional(v.boolean()),
   nodeId: v.optional(v.string()),

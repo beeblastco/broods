@@ -10,6 +10,7 @@ import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
+import { NO_MCP_CONNECTION } from "./account/mcp";
 import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
 import { byDefaultThenName } from "./model/defaultStage";
@@ -427,9 +428,11 @@ export async function duplicateStageContents(
     .collect();
   const mcpIdMap = new Map<string, string>();
   for (const server of sourceMcpServers) {
+    // A sign-in belongs to its own row: the copy starts signed out.
     const newServerId = await ctx.db.insert("mcp", {
       ...stripSystemFields(server),
       stageId: targetStageId,
+      ...NO_MCP_CONNECTION,
       updatedAt: now,
     });
     mcpIdMap.set(server._id, newServerId);
