@@ -4147,6 +4147,12 @@ export declare const internal: {
         { accountId: Id<"accounts">; agentId: string },
         null
       >;
+      scopes: FunctionReference<
+        "query",
+        "internal",
+        { accountId: Id<"accounts">; agentIds: Array<string> },
+        Array<{ agentId: string; project: string; stage: string }>
+      >;
       update: FunctionReference<
         "mutation",
         "internal",

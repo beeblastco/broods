@@ -94,15 +94,26 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
     JSON.stringify(done),
   );
 
-  const renamed = await mcp(context, "tools/call", {
-    name: `${key}-old-name`,
-    arguments: { prompt: "hi" },
+  const unknown = await mcp(context, "tools/call", {
+    name: "ask_agent",
+    arguments: { agent: `${key}-gone`, prompt: "hi" },
   });
+  const refused = toolOutcome(unknown);
   assertStep(
-    "a call with a name no agent has is told the current tool names",
-    renamed.error?.message.includes(`Current tools: `) === true &&
-      renamed.error.message.includes(key),
-    JSON.stringify(renamed),
+    "asking an agent that does not exist points at list_agents",
+    refused.isError && refused.text.includes("Call list_agents"),
+    JSON.stringify(unknown),
+  );
+  const read = await mcp(
+    context,
+    "tools/call",
+    { name: "get_run", arguments: { runId: task.taskId } },
+    { capabilities: {} },
+  );
+  assertStep(
+    "get_run reads the finished run without waiting",
+    toolOutcome(read).isError === !context.hasModelKey,
+    JSON.stringify(read),
   );
   const callback = await fetch(
     `${context.edgeUrl}/v1/mcp-connections/callback?code=x&state=forged`,
@@ -113,11 +124,13 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
     String(callback.status),
   );
 
-  const unknown = await mcp(context, "tasks/get", { taskId: "run_unknown" });
+  const unknownTask = await mcp(context, "tasks/get", {
+    taskId: "run_unknown",
+  });
   assertStep(
     "an unknown task is invalid params",
-    unknown.error?.code === -32602,
-    JSON.stringify(unknown),
+    unknownTask.error?.code === -32602,
+    JSON.stringify(unknownTask),
   );
 
   const toCancel = await callTool(context, agentId, "Say OK.");
@@ -139,26 +152,40 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
   await liveCancel(context, key);
 }
 
-/** The agent is a tool named after it, and a client without tasks gets its answer inline. */
+/** The tools are fixed, list_agents names the agent, and a client without tasks asks it inline. */
 async function assertAgentTool(
   context: VerifyContext,
   key: string,
 ): Promise<void> {
-  const listed = await mcp(context, "tools/list", {});
-  const tools = (listed.result?.tools ?? []) as {
-    name: string;
-    title?: string;
-  }[];
+  const tools = await mcp(context, "tools/list", {}, { capabilities: {} });
+  const names = ((tools.result?.tools ?? []) as { name: string }[]).map(
+    (tool) => tool.name,
+  );
   assertStep(
-    "tools/list names the agent by its name",
-    tools.some((tool) => tool.name === key && tool.title === key),
-    JSON.stringify(tools.map((tool) => tool.name)),
+    "tools/list is the same four tools for a client without tasks",
+    names.join() === "list_agents,ask_agent,get_run,continue_run",
+    JSON.stringify(names),
+  );
+
+  const listed = await mcp(context, "tools/call", {
+    name: "list_agents",
+    arguments: {},
+  });
+  const agents = JSON.parse(toolOutcome(listed).text || "{}") as {
+    agents?: { name: string; description?: string }[];
+  };
+  assertStep(
+    "list_agents names the agent with its description",
+    agents.agents?.some(
+      (agent) => agent.name === key && agent.description === "Says OK.",
+    ) === true,
+    JSON.stringify(listed),
   );
 
   const direct = await mcp(
     context,
     "tools/call",
-    { name: key, arguments: { prompt: "Say OK." } },
+    { name: "ask_agent", arguments: { agent: key, prompt: "Say OK." } },
     { capabilities: {}, timeoutMs: 60_000 },
   );
   assertStep(
@@ -191,7 +218,7 @@ async function callTool(
   const called = await mcp(
     context,
     "tools/call",
-    { name: agentId, arguments: { prompt: prompt } },
+    { name: "ask_agent", arguments: { agent: agentId, prompt: prompt } },
     { token: token },
   );
   assertStep(
@@ -389,4 +416,17 @@ async function questionRoundTrip(
       (answered.result?.content[0]?.text ?? "").includes(ANSWER),
     JSON.stringify(answered),
   );
+}
+
+/** What a tool call answered a client that reads it directly. */
+function toolOutcome(response: McpResponse): {
+  text: string;
+  isError: boolean;
+} {
+  const result = response.result as Task["result"];
+
+  return {
+    text: result?.content[0]?.text ?? "",
+    isError: result?.isError === true,
+  };
 }
