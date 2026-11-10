@@ -2,17 +2,14 @@ import type { Components, ExtraProps } from "streamdown";
 
 export const MARKDOWN_IMAGE_COMPONENTS: Components = { img: MarkdownImage };
 
-// Markdown from a model can name any host, so only inline image data loads unasked.
+// Markdown from a model can name any host, so an image is a link and never loads unasked.
 export function MarkdownImage({
   src,
   alt,
 }: React.ComponentProps<"img"> & ExtraProps): React.JSX.Element | null {
-  if (typeof src !== "string" || src === "") return null;
-  if (src.startsWith("data:image/") || src.startsWith("blob:")) {
-    return (
-      // oxlint-disable-next-line nextjs/no-img-element -- inline data: nothing to optimize
-      <img src={src} alt={alt ?? ""} className="max-w-full rounded-md" />
-    );
+  // Streamdown stands a placeholder scheme in for an image that is still streaming.
+  if (typeof src !== "string" || src === "" || src.startsWith("streamdown:")) {
+    return null;
   }
 
   return (

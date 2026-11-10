@@ -17,10 +17,8 @@ describe("markdown images", () => {
     expect(MarkdownImage({ src: "http://example.com/p.png" })?.type).toBe("a");
   });
 
-  test("inline image data renders as an image", () => {
-    const element = MarkdownImage({ src: "data:image/png;base64,AAAA" });
-
-    expect(element?.type).toBe("img");
+  test("an image that is still streaming renders nothing", () => {
+    expect(MarkdownImage({ src: "streamdown:incomplete-image" })).toBeNull();
   });
 
   test("no source renders nothing", () => {
