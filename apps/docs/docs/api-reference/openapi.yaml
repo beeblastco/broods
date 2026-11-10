@@ -2417,6 +2417,110 @@ paths:
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",
           }
 
+  /v1/sandboxes/{sandboxId}/exec:
+    post:
+      tags: [Sandboxes]
+      summary: Run a command in a sandbox instance
+      description: Runs `code` in a persistent sandbox reservation and answers its output, as the agent's `bash` tool would. The `reservationKey` must belong to this account and sandbox config. A scoped key or role session needs `sandboxes:write` on the sandbox. The audit row names the calling credential.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey, code]
+              properties:
+                reservationKey: { type: string }
+                code: { type: string, maxLength: 20000 }
+                timeoutSeconds:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `timeout`; a value above the provider's cap uses the default.",
+                  }
+                outputLimitBytes:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `outputLimitBytes`; a value above the provider's cap uses the default.",
+                  }
+      responses:
+        "200":
+          description: The command ran; `ok` is false when it exited non-zero
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  runtime: { type: string }
+                  exitCode: { type: [integer, "null"] }
+                  stdout: { type: string }
+                  stderr: { type: string }
+                  durationMs: { type: number }
+                  truncated: { type: boolean }
+                  provider: { type: string }
+        "400":
+          { description: "`code` is missing or longer than 20,000 characters" }
+        "402":
+          {
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+
+  /v1/sandboxes/{sandboxId}/refresh:
+    post:
+      tags: [Sandboxes]
+      summary: Refresh sandbox instance status
+      description: Asks the provider for the instance's state and writes it to the live-instance registry row. An instance the provider no longer has, or is terminating, is removed from the registry and answers `terminated`. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    {
+                      type: string,
+                      enum: [running, suspended, error, terminated],
+                    }
+                  externalId: { type: string }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support status refresh }
+
   /v1/sandboxes/{sandboxId}/terminal:
     post:
       tags: [Sandboxes]
