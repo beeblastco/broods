@@ -43,7 +43,6 @@ import type { AgentRecord } from "../shared/domain/agents.ts";
 import { errorResponse, type CoreRequest } from "../shared/http.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
-  publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -120,26 +119,6 @@ const FINISHED_STATUSES: ReadonlySet<RunStatus["status"]> = new Set([
   "failed",
   "expired",
 ]);
-const CONVERSATIONS_ARGS = z.object({
-  agent: z.string().trim().min(1).optional(),
-  limit: z.number().int().min(1).max(50).default(20),
-});
-const CONVERSATIONS_TOOL = "list_conversations";
-const CONVERSATIONS_TOOL_DEFINITION: ToolV2 = {
-  name: CONVERSATIONS_TOOL,
-  description:
-    "List recent conversations ask_agent started, most recently active first, to continue one: pass its conversationId to ask_agent.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      agent: {
-        type: "string",
-        description: "Only this agent's conversations: a name or id.",
-      },
-      limit: { type: "number", description: "How many, 1 to 50. Default 20." },
-    },
-  },
-};
 const GET_RUN_TOOL = "get_run";
 const GET_RUN_TOOL_DEFINITION: ToolV2 = {
   name: GET_RUN_TOOL,
@@ -178,13 +157,6 @@ const RUN_PATH = "/v1/runs";
 // Prefixes the event id and conversation key of every run a task starts.
 const RUN_PREFIX = "mcp-";
 const SERVER_INFO = { name: "broods", version: "1.0.0" };
-const STOP_TOOL = "stop_run";
-const STOP_TOOL_DEFINITION: ToolV2 = {
-  name: STOP_TOOL,
-  description:
-    "Stop a run that is still working. It ends at its next model step.",
-  inputSchema: GET_RUN_TOOL_DEFINITION.inputSchema,
-};
 // Under the 60 second default request timeout most MCP clients apply.
 const SYNC_WAIT_MS = 50_000;
 const SYNC_FIRST_POLL_MS = 250;
@@ -328,15 +300,10 @@ function createTaskServer(caller: McpCaller): Server {
       tools: [
         LIST_TOOL_DEFINITION,
         ASK_TOOL_DEFINITION,
-        CONVERSATIONS_TOOL_DEFINITION,
-        // A client with tasks reads, stops and answers a run through `tasks/*` instead.
+        // A client with tasks reads and answers a run through `tasks/*` instead.
         ...(declaresTasks(ctx)
           ? []
-          : [
-              GET_RUN_TOOL_DEFINITION,
-              STOP_TOOL_DEFINITION,
-              CONTINUE_TOOL_DEFINITION,
-            ]),
+          : [GET_RUN_TOOL_DEFINITION, CONTINUE_TOOL_DEFINITION]),
       ],
     }),
   );
@@ -349,14 +316,11 @@ function createTaskServer(caller: McpCaller): Server {
       if (params.name === LIST_TOOL) {
         return await listAgents(caller, params.arguments);
       }
-      if (params.name === CONVERSATIONS_TOOL) {
-        return await listConversations(caller, params.arguments);
-      }
       if (direct && params.name === CONTINUE_TOOL) {
         return await continueRun(caller, params.arguments, signal);
       }
-      if (direct && [GET_RUN_TOOL, STOP_TOOL].includes(params.name)) {
-        return await readOrStopRun(caller, params.name, params.arguments);
+      if (direct && params.name === GET_RUN_TOOL) {
+        return await getRun(caller, params.arguments);
       }
       if (params.name !== ASK_TOOL) {
         throw new ProtocolError(
@@ -421,7 +385,7 @@ function createTaskServer(caller: McpCaller): Server {
     { params: TASK_PARAMS },
     async (params, ctx): Promise<{ resultType: "complete" }> => {
       requireTaskCapability(ctx);
-      await cancelTask(caller, await resolveTask(caller, params.taskId));
+      await cancelTask(caller, params.taskId);
 
       return { resultType: "complete" };
     },
@@ -580,16 +544,14 @@ function approvalRequest(approvals: ToolApprovalSummary[]): ElicitRequestV2 {
  * run, so it stays where it is, and a finished task stops nothing: its
  * conversation may belong to a newer run by then.
  */
-async function cancelTask(
-  caller: McpCaller,
-  { root, current }: TaskRuns,
-): Promise<boolean> {
+async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
   const { auth } = caller;
   if (auth.kind !== "account" && auth.kind !== "deployment") {
-    throw unknownTask(root.runId);
+    throw unknownTask(taskId);
   }
-  if (FINISHED_STATUSES.has(current.status)) return false;
-  const { stopped } = await runtime.mutate("stopIngressOwner", {
+  const { root, current } = await resolveTask(caller, taskId);
+  if (FINISHED_STATUSES.has(current.status)) return;
+  await runtime.mutate("stopIngressOwner", {
     accountId: auth.account.accountId,
     agentId: root.agentId,
     conversationKey: scopedDirectConversationKey(
@@ -598,8 +560,6 @@ async function cancelTask(
       root.conversationKey,
     ),
   });
-
-  return stopped;
 }
 
 async function continueRun(
@@ -637,10 +597,7 @@ async function continueRun(
 
     return await waitForRun(caller, runId, signal, current.runId);
   } catch (error) {
-    if (error instanceof ProtocolError) {
-      return toolResult(error.message, true);
-    }
-    throw error;
+    return protocolErrorResult(error);
   }
 }
 
@@ -740,6 +697,20 @@ async function findAgent(
   return `${named.length} agents are named ${wanted}. Pass one of these ids as agent: ${choices.join(", ")}.`;
 }
 
+/** `get_run`: where a run stands now, without waiting for it. */
+async function getRun(
+  caller: McpCaller,
+  args: Record<string, unknown>,
+): Promise<CallToolResultV2> {
+  const input = RUN_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  try {
+    return directReply(await resolveTask(caller, input.data.runId));
+  } catch (error) {
+    return protocolErrorResult(error);
+  }
+}
+
 async function listAgents(
   caller: McpCaller,
   args: Record<string, unknown>,
@@ -767,57 +738,6 @@ async function listAgents(
     listed.length
       ? JSON.stringify({ agents: listed })
       : "No agents match. This credential can run none, or the project and stage filter left none.",
-    false,
-  );
-}
-
-async function listConversations(
-  caller: McpCaller,
-  args: Record<string, unknown>,
-): Promise<CallToolResultV2> {
-  const input = CONVERSATIONS_ARGS.safeParse(args);
-  if (!input.success) return toolResult(z.prettifyError(input.error), true);
-  const { auth } = caller;
-  // A runtime key is embedded in apps, so it must not read other users' conversations.
-  if (auth.kind !== "account") {
-    return toolResult(
-      "Only an account key or an OAuth sign-in can list conversations.",
-      true,
-    );
-  }
-  const agents = await listRunnableAgents(auth);
-  const only = input.data.agent
-    ? await findAgent(agents, input.data.agent)
-    : undefined;
-  if (typeof only === "string") return toolResult(only, true);
-  const { accountId } = auth.account;
-  const names = new Map(agents.map(({ agentId, name }) => [agentId, name]));
-  // Only what ask_agent started: a user's or a subagent's is not this caller's to continue.
-  const recent = await runtime.query("listRecentConversations", {
-    accountId: accountId,
-    keyPrefix: RUN_PREFIX,
-  });
-  const conversations = recent
-    .filter(
-      ({ agentId }) =>
-        names.has(agentId) && (!only || only.agentId === agentId),
-    )
-    .slice(0, input.data.limit)
-    .map(({ agentId, conversationKey, updatedAt }) => ({
-      conversationId: publicConversationKeyFromScoped(
-        conversationKey,
-        accountId,
-        agentId,
-      ),
-      agent: names.get(agentId),
-      agentId: agentId,
-      lastActiveAt: new Date(updatedAt).toISOString(),
-    }));
-
-  return toolResult(
-    conversations.length
-      ? JSON.stringify({ conversations: conversations })
-      : "No recent conversations.",
     false,
   );
 }
@@ -859,6 +779,12 @@ function promptAnswers(
 }
 
 /** One form per open prompt, each of its questions an enum of the option labels. */
+/** A run call that missed, as a tool error the model can read; anything else is rethrown. */
+function protocolErrorResult(error: unknown): CallToolResultV2 {
+  if (error instanceof ProtocolError) return toolResult(error.message, true);
+  throw error;
+}
+
 function questionRequest(prompt: PendingQuestion): ElicitRequestV2 {
   return {
     method: "elicitation/create",
@@ -899,33 +825,6 @@ async function readRun(
     ProtocolErrorCode.InternalError,
     await errorText(response),
   );
-}
-
-/** `get_run` and `stop_run`: a run this caller cannot read answers like an unknown one. */
-async function readOrStopRun(
-  caller: McpCaller,
-  tool: string,
-  args: Record<string, unknown>,
-): Promise<CallToolResultV2> {
-  const input = RUN_ARGS.safeParse(args);
-  if (!input.success) return toolResult(z.prettifyError(input.error), true);
-  try {
-    const runs = await resolveTask(caller, input.data.runId);
-    if (tool === GET_RUN_TOOL) return directReply(runs);
-    if (FINISHED_STATUSES.has(runs.current.status)) {
-      return toolResult("The run had already finished.", false);
-    }
-
-    return toolResult(
-      (await cancelTask(caller, runs))
-        ? `Stopping. The run ends at its next model step; ${GET_RUN_TOOL} shows when it has.`
-        : `Nothing to stop: the run is waiting, not working. ${GET_RUN_TOOL} shows what it waits for.`,
-      false,
-    );
-  } catch (error) {
-    if (error instanceof ProtocolError) return toolResult(error.message, true);
-    throw error;
-  }
 }
 
 function requireTaskCapability(ctx: ServerContext): void {

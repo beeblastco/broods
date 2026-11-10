@@ -7220,12 +7220,6 @@ export declare const internal: {
         updatedAt: string;
       }>
     >;
-    listRecentConversations: FunctionReference<
-      "query",
-      "internal",
-      { accountId: Id<"accounts">; keyPrefix: string },
-      Array<{ agentId: string; conversationKey: string; updatedAt: number }>
-    >;
     markAsyncAgentHandback: FunctionReference<
       "mutation",
       "internal",

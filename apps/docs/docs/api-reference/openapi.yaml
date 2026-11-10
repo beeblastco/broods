@@ -436,14 +436,12 @@ paths:
         for every caller: `list_agents` (`{project?, stage?}`) returns each
         agent the credential can run with its description, project, stage and
         id, and `ask_agent` (`{agent, prompt, conversationId?}`) runs one by
-        name or id. `list_conversations` (`{agent?, limit?}`) lists the recent
-        conversations `ask_agent` started, for an account key or OAuth
-        sign-in. With the tasks
+        name or id. With the tasks
         extension, `ask_agent` starts a background
         run and answers a task handle (`resultType:
         "task"`) whose `taskId` is the run id; `tasks/get`, `tasks/update` and
         `tasks/cancel` follow it. Without it, `ask_agent` answers directly
-        within 50 seconds and the list adds `get_run`, `stop_run` and a `continue_run` tool for longer runs and
+        within 50 seconds and the list adds `get_run` and a `continue_run` tool for longer runs and
         questions; `tasks/*` then gets `-32021`. Run reads and writes go
         through `/v1/runs`, so the same credential rules apply: an account
         key lists every agent of the account, a member's stage ticket its

@@ -272,27 +272,28 @@ export const scopes = internalQuery({
     ctx,
     args,
   ): Promise<{ agentId: string; project: string; stage: string }[]> => {
-    const scoped = await Promise.all(
-      args.agentIds.map(async (agentId) => {
-        const scope = await resourceStageScope(
-          ctx,
-          args.accountId,
-          "agents",
-          agentId,
-        );
-        if (!scope) return null;
-        const [project, stage] = await Promise.all([
-          ctx.db.get(scope.projectId),
-          ctx.db.get(scope.stageId),
-        ]);
-
-        return project && stage
-          ? { agentId: agentId, project: project.name, stage: stage.name }
-          : null;
-      }),
+    const scopes = await Promise.all(
+      args.agentIds.map((agentId) =>
+        resourceStageScope(ctx, args.accountId, "agents", agentId),
+      ),
     );
+    // Many agents share a few stages, so each project and stage is read once.
+    const names = new Map<string, string | undefined>();
+    for (const scope of scopes) {
+      for (const id of scope ? [scope.projectId, scope.stageId] : []) {
+        if (!names.has(id)) names.set(id, (await ctx.db.get(id))?.name);
+      }
+    }
 
-    return scoped.filter((scope) => scope !== null);
+    return args.agentIds.flatMap((agentId, index) => {
+      const scope = scopes[index];
+      const project = scope && names.get(scope.projectId);
+      const stage = scope && names.get(scope.stageId);
+
+      return project && stage
+        ? [{ agentId: agentId, project: project, stage: stage }]
+        : [];
+    });
   },
 });
 

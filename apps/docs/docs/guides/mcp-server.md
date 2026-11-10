@@ -15,16 +15,14 @@ claude mcp add --transport http broods https://gateway.broods.app/mcp \
 
 The tools are the same for every account, however many agents it has:
 
-| Tool                 | Input                                        | Answer                                                                                                                         |
-| -------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `list_agents`        | `project`, `stage`, both optional filters    | Each agent's name, description, project, stage and id                                                                          |
-| `ask_agent`          | `agent`, `prompt`, optional `conversationId` | The agent's answer                                                                                                             |
-| `get_run`            | `runId`                                      | A run's answer, its open question, or that it still works; no wait. For a client without tasks                                 |
-| `stop_run`           | `runId`                                      | Stops a working run at its next model step. For a client without tasks                                                         |
-| `list_conversations` | `agent`, `limit`, both optional              | Recent conversations `ask_agent` started, last active first, each with its `conversationId`. Account key or OAuth sign-in only |
-| `continue_run`       | `runId`, optional `answers`                  | Waits for the rest of a run, or answers its question. For a client without tasks                                               |
+| Tool           | Input                                        | Answer                                                                                         |
+| -------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `list_agents`  | `project`, `stage`, both optional filters    | Each agent's name, description, project, stage and id                                          |
+| `ask_agent`    | `agent`, `prompt`, optional `conversationId` | The agent's answer                                                                             |
+| `get_run`      | `runId`                                      | A run's answer, its open question, or that it still works; no wait. For a client without tasks |
+| `continue_run` | `runId`, optional `answers`                  | Waits for the rest of a run, or answers its question. For a client without tasks               |
 
-`agent` is a name or an id from `list_agents`. A name that two agents share, such as the same agent in two stages, is refused with each one's id, project and stage, so pass the id. The calling model picks an agent by its description, so write one for each agent.
+`agent` is a name or an id from `list_agents`. A name that two agents share, such as the same agent in two stages, is refused with each one's id, project and stage, so pass the id. The calling model picks an agent by its description, so write one for each agent. An agent made through the account API, or one that runs in several stages, lists with no project or stage, and a `project` or `stage` filter leaves it out.
 
 ```json
 {
