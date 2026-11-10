@@ -62,7 +62,7 @@ Convex goes first so no service runs ahead of the schema it calls. npm goes last
 | `dependency-watch.yaml`        | Mondays 06:00 UTC; manual                                                         | Reports AI SDK family and esbuild releases into one rolling issue                                                                                                                                                                                                        |
 | `promote.yaml`                 | manual only                                                                       | See [promote](#promote)                                                                                                                                                                                                                                                  |
 
-Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked; that serves prod traffic too.
+Each forwarder is one release serving every config plane, prod included, so a `dev` push only builds and tests it. To try a forwarder change first, run its build workflow on the branch with `rollout` ticked; that serves prod traffic too. The forwarder reads `channel/connections:listConnections` from every config plane, and the rollout waits only for this branch's Convex deploy, so a ticked branch must not change that query.
 
 ## Lean verification
 
@@ -100,7 +100,7 @@ sequenceDiagram
 | core              | `deploy-core-dev.yaml` / `deploy-core.yaml`            | `deploy-convex.yaml`, `deploy.yaml` |
 | gateway           | `deploy-gateway-dev.yaml` / `deploy-gateway.yaml`      | `build-core.yaml`, core's rollout   |
 | dashboard         | `deploy-dashboard-dev.yaml` / `deploy-dashboard.yaml`  | `deploy-convex.yaml`                |
-| discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | nothing                             |
+| discord-forwarder | `deploy-discord-forwarder.yaml`, `main` or ticked only | `deploy-convex.yaml`                |
 
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
 - The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.
