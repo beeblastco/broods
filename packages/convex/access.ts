@@ -787,7 +787,7 @@ async function permissionNames(
 // A rule may hold any id, so only the account's own projects and stages are named.
 async function scopeNames(
   ctx: Ctx,
-  orgId: string,
+  orgId: Id<"orgs"> | null,
   policies: readonly Doc<"agentPolicies">[],
 ): Promise<Map<string, string>> {
   const stageIds = new Set<Id<"stages">>();
