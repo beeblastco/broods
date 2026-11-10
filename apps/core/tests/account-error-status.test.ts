@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import { setStorageForTests } from "../src/shared/storage.ts";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
 import * as instanceStore from "../src/harness/sandbox/instance-store.ts";
 import * as sandboxAuditEvents from "../src/shared/convex/sandbox-audit-events.ts";
@@ -109,6 +110,58 @@ describe("account API error status", () => {
       error: { message: "MCP server docs failed: Unable to connect" },
     });
     expect((await probe("hosted")).status).toBe(500);
+  });
+
+  it("answers an MCP probe that times out with 504", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests({ accounts: { getById: async () => ACCOUNT } } as never);
+    setMcpForTests({
+      listTools: async () => {
+        throw new SdkError(SdkErrorCode.RequestTimeout, "Request timed out");
+      },
+    });
+
+    const response = await handler(
+      request("/v1/mcp-service/rpc", "Bearer service-secret", {
+        method: "tools/list",
+        probe: {
+          name: "docs",
+          transport: "http",
+          url: "https://mcp.example.com",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(504);
+  });
+
+  it("answers a machine MCP server whose daemon is not running with 409", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests({
+      accounts: { getById: async () => ACCOUNT },
+      mcp: {
+        getById: async () => ({
+          accountId: "acct_test",
+          name: "files",
+          transport: "machine",
+          sandbox: "laptop",
+          status: "active",
+        }),
+      },
+      sandboxConfigs: { list: async () => [] },
+    } as never);
+
+    const response = await handler(
+      request("/v1/mcp-service/rpc", "Bearer service-secret", {
+        method: "tools/list",
+        serverId: "mcp_1",
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: "conflict" },
+    });
   });
 
   it("keeps 400 for a request the caller can fix", async () => {

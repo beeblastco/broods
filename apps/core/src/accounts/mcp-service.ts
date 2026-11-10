@@ -1,4 +1,5 @@
 import { ClientError } from "@broods/convex/model/clientError";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import {
   callMcpToolResult,
   listMcpTools,
@@ -82,11 +83,11 @@ export async function handleMcpServiceRpc(
   }
 
   if (method === "tools/list") {
-    const tools = await callerServerCall(connection, () =>
-      listMcpTools(connection),
+    return await callerServerCall(
+      connection,
+      () => listMcpTools(connection),
+      (tools) => jsonResponse(200, { tools: tools }),
     );
-
-    return jsonResponse(200, { tools: tools });
   }
 
   if (typeof body.toolName !== "string" || !body.toolName) {
@@ -95,16 +96,19 @@ export async function handleMcpServiceRpc(
   const args = parseOr(configObject, body.args, {});
   const started = Date.now();
   const toolName = body.toolName;
-  const result = await callerServerCall(connection, () =>
-    callMcpToolResult(connection, toolName, args, {
-      abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-    }),
-  );
 
-  return jsonResponse(200, {
-    result: result,
-    durationMs: Date.now() - started,
-  });
+  return await callerServerCall(
+    connection,
+    () =>
+      callMcpToolResult(connection, toolName, args, {
+        abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      }),
+    (result) =>
+      jsonResponse(200, {
+        result: result,
+        durationMs: Date.now() - started,
+      }),
+  );
 }
 
 async function agentSandboxCandidate(
@@ -148,20 +152,27 @@ async function agentSandboxCandidate(
   };
 }
 
-// A plain http server is the caller's own, so its failure is theirs to fix, not core's.
+// A plain http server is the caller's own, so its failure is theirs to fix; a timeout is not.
 async function callerServerCall<T>(
   connection: McpConnection,
   call: () => Promise<T>,
-): Promise<T> {
+  respond: (value: T) => Response,
+): Promise<Response> {
+  let value: T;
   try {
-    return await call();
+    value = await call();
   } catch (err) {
     const record = connection.record;
+    if (isTimeout(err)) {
+      return errorResponse(504, `MCP server ${record.name} timed out`);
+    }
     if (record.transport !== "http" || record.connected === true) throw err;
     throw new ClientError(
       `MCP server ${record.name} failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+
+  return respond(value);
 }
 
 async function explorerSandboxTarget(
@@ -212,6 +223,12 @@ async function explorerSandboxTarget(
   );
 
   return sandboxMcpTarget(record, runtime);
+}
+
+function isTimeout(err: unknown): boolean {
+  if (SdkError.isInstance(err)) return err.code === SdkErrorCode.RequestTimeout;
+
+  return err instanceof DOMException && err.name === "TimeoutError";
 }
 
 function parseProbe(value: unknown): McpProbe | string {
