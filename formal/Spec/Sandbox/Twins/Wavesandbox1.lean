@@ -1343,7 +1343,7 @@ private def sweepExpiredSandboxes (_call : Json) : Prog Json := do
 
 private def upsertSandboxInstance (call : Json) : Prog Json := do
   let plane := Twin.callArg call 0
-  if !truthy plane then return voidJson
+  if !truthy plane then return toJson true
   let metadata := fallback (Twin.callArg call 4) (Json.mkObj [])
   let options := Twin.callArg call 5
   let specs := get options "specs"
@@ -1364,9 +1364,11 @@ private def upsertSandboxInstance (call : Json) : Prog Json := do
      fromMeta "workspaceName" "workspaceName" ++ fromMeta "workspaceId" "workspaceId" ++
      present "logStream" (get options "logStream") ++
      (if ephemeral then [("ephemeral", toJson true)] else []))
-  let _ ← Prog.attempt "adminMutation"
-    [(Json.mkObj [("$convexFunction", toJson "sandbox/instances:upsert")]), payload, Json.mkObj [("skipQueue", toJson true)]]
-  return voidJson
+  match ← Prog.attempt "adminMutation"
+    [(Json.mkObj [("$convexFunction", toJson "sandbox/instances:upsert")]), payload, Json.mkObj [("skipQueue", toJson true)]] with
+  | .ok written => return written
+  | .threw _ _ => return toJson false
+  | .pending => Prog.unsupported "the mutation never settled"
 
 /-- The optional methods each executor class declares, in the order the wrapper binds them. -/
 private def executorMethods (className : String) : Option (List String) :=

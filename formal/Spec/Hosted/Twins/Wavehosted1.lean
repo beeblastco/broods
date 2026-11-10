@@ -739,13 +739,6 @@ private def parseLogStream (call : Json) : Prog Json := do
     if !undef value then result := Js.set result key value
   return result
 
-private def agentTool (call : Json) : Prog Json := do
-  let agent := Twin.callArg call 1
-  let description := field agent "description"
-  return obj [("name", Twin.callArg call 0), ("title", field agent "name"),
-    ("description", if nil description then toJson s!"Ask the {text (field agent "name")} agent." else description),
-    ("inputSchema", Twin.moduleValue call "AGENT_INPUT_SCHEMA")]
-
 private def sendRunRequest (call : Json) : Prog Json := do
   let caller := Twin.callArg call 0
   let request ← Prog.effect "runRequest" [caller, toJson "POST", toJson "/v1/runs", Twin.callArg call 1]
@@ -1639,7 +1632,6 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/lambda/sandbox-log-forwarder.mjs#verifyLogStream" verifyLogStream,
    Twin.traced "apps/lambda/sandbox-log-forwarder.mjs#decodeCloudWatchEvent" decodeCloudWatchEvent,
    Twin.traced "apps/lambda/sandbox-log-forwarder.mjs#parseLogStream" parseLogStream,
-   Twin.traced "apps/core/src/harness/mcp-tasks.ts#agentTool" agentTool,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#sendRunRequest" sendRunRequest,
    Twin.traced "apps/core/src/accounts/mcp-service.ts#probeRecord" probeRecord,
    Twin.traced "packages/convex/model/envelope.ts#AccountCipher.hasKey" hasKey,

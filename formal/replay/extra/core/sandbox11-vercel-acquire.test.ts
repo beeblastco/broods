@@ -90,6 +90,11 @@ function config(lifecycle?: {
   return {
     provider: "vercel",
     persistent: true,
+    controlPlane: {
+      accountId: "acct_1",
+      name: "box",
+      specs: { vcpu: 1, memoryMb: 1024 },
+    },
     ...(lifecycle ? { lifecycle: lifecycle } : {}),
     options: { token: "tok", teamId: "team_1", projectId: "prj_1" },
   } as SandboxExecutorConfig;
@@ -139,12 +144,16 @@ afterEach((): void => {
   for (const spy of spies) spy.mockRestore();
 });
 
+// The row write is queued, so it reaches the spy a tick after the run returns.
 async function warm(executor: VercelSandboxExecutor): Promise<void> {
   await executor.run({
     code: "true",
     reservationKey: KEY,
     timeoutSeconds: 30,
     outputLimitBytes: 1024,
+  });
+  await new Promise<void>((resolve): void => {
+    setTimeout(resolve, 0);
   });
 }
 
@@ -204,14 +213,15 @@ describe("vercel acquire", () => {
     expect(upsert).toHaveBeenCalledTimes(0);
   });
 
-  test("keeps its own sandbox when the winning row vanished", async (): Promise<void> => {
+  test("deletes its own sandbox and fails when the winning row vanished", async (): Promise<void> => {
     stored(undefined, undefined);
     claim.mockResolvedValue(false);
 
-    await warm(new VercelSandboxExecutor(config()));
-
-    expect(created[0]?.deleted).toBe(0);
-    expect(upsert).toHaveBeenCalledTimes(1);
+    await expect(warm(new VercelSandboxExecutor(config()))).rejects.toThrow(
+      "lost create race",
+    );
+    expect(created[0]?.deleted).toBe(1);
+    expect(upsert).toHaveBeenCalledTimes(0);
   });
 
   test("cleans up and rethrows when the claim call fails", async (): Promise<void> => {

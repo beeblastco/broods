@@ -1,4 +1,3 @@
 kind	name	reason
 external	^context\.executor\.(suspend|resume)$	The executor is the sandbox provider boundary; replay checks the reservation ref passed and the twin only proceeds on its outcome.
 internal	apps/gateway/src/agent.ts#followExecution	Its behaviour is driven by a NATS async iterator racing a poll loop, whose contents and interleaving are not call inputs, so no twin can exist; replay checks every field of the execution it is handed.
-internal	apps/core/src/harness/sandbox/utils.ts#queueMirrorWrite	Only chains a promise per sandbox id and resolves undefined, so a twin would be hollow; the write it runs appears as its own recorded effect and is checked.

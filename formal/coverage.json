@@ -1,15 +1,15 @@
 {
   "totals": {
-    "statements": 18825,
-    "excluded": 602,
-    "verifiable": 18223,
-    "verified": 11468,
-    "byTwin": 10846,
-    "byReplay": 622,
-    "arms": 13738,
-    "armsVerified": 8219
+    "statements": 18992,
+    "excluded": 608,
+    "verifiable": 18384,
+    "verified": 11255,
+    "byTwin": 10632,
+    "byReplay": 623,
+    "arms": 13828,
+    "armsVerified": 8108
   },
-  "twins": 1993,
+  "twins": 1986,
   "creditedTwins": [
     "apps/cloudflare-mcp/src/index.ts#TenantOutbound.fetch",
     "apps/cloudflare-mcp/src/index.ts#boundedMessage",
@@ -36,28 +36,19 @@
     "apps/cloudflare-worker/src/vfs-state.ts#samePacked",
     "apps/core/src/accounts/cleanup.ts#deleteAccountAttachments",
     "apps/core/src/accounts/cleanup.ts#deleteAccountBundles",
-    "apps/core/src/accounts/cleanup.ts#deleteAccountRuntimeData",
     "apps/core/src/accounts/cleanup.ts#deleteAccountSkills",
     "apps/core/src/accounts/cleanup.ts#deleteConvexRuntimeRows",
     "apps/core/src/accounts/cleanup.ts#deleteWorkspaceFilesystem",
     "apps/core/src/accounts/cleanup.ts#deleteWorkspaceFilesystems",
     "apps/core/src/accounts/handler.ts#auditedSandboxCall",
     "apps/core/src/accounts/handler.ts#boundedInteger",
-    "apps/core/src/accounts/handler.ts#deleteAccountResponse",
     "apps/core/src/accounts/handler.ts#errorResponseForError",
     "apps/core/src/accounts/handler.ts#errorText",
-    "apps/core/src/accounts/handler.ts#execSandbox",
-    "apps/core/src/accounts/handler.ts#handleSandboxLifecycle",
-    "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
     "apps/core/src/accounts/handler.ts#lambdaBaseImage",
-    "apps/core/src/accounts/handler.ts#openSandboxTerminal",
-    "apps/core/src/accounts/handler.ts#refreshSandboxStatus",
     "apps/core/src/accounts/handler.ts#requireAccountAuth",
     "apps/core/src/accounts/handler.ts#retiredImageOptionsRefusal",
     "apps/core/src/accounts/handler.ts#sandboxAuditActor",
     "apps/core/src/accounts/handler.ts#snapshotSandbox",
-    "apps/core/src/accounts/handler.ts#suspendOrResumeSandbox",
-    "apps/core/src/accounts/handler.ts#terminateSandbox",
     "apps/core/src/accounts/handler.ts#toCreateAccountResponse",
     "apps/core/src/accounts/handler.ts#unsupportedSandboxAction",
     "apps/core/src/accounts/mcp-service.ts#agentSandboxCandidate",
@@ -265,6 +256,7 @@
     "apps/core/src/harness/hook-runner.ts#sanitizeHookResult",
     "apps/core/src/harness/hook-runner.ts#sanitizeHookState",
     "apps/core/src/harness/ingress-recovery.ts#recoveryScope",
+    "apps/core/src/harness/ingress-recovery.ts#startIngressRecovery",
     "apps/core/src/harness/ingress-recovery.ts#stopIngressRecovery",
     "apps/core/src/harness/ingress.ts#applySteering",
     "apps/core/src/harness/ingress.ts#forgetOwner",
@@ -295,7 +287,6 @@
     "apps/core/src/harness/integrations.ts#channelAdapterFromConfig",
     "apps/core/src/harness/integrations.ts#channelAgentListKey",
     "apps/core/src/harness/integrations.ts#channelReplySource",
-    "apps/core/src/harness/integrations.ts#cleanupChannelPartitions",
     "apps/core/src/harness/integrations.ts#createChannelRegistry",
     "apps/core/src/harness/integrations.ts#createDiscordChannelFromConfig",
     "apps/core/src/harness/integrations.ts#createGitHubChannelFromConfig",
@@ -317,7 +308,6 @@
     "apps/core/src/harness/integrations.ts#directConversationKeys",
     "apps/core/src/harness/integrations.ts#dropAgedChannelAgentList",
     "apps/core/src/harness/integrations.ts#findChannelCredentialHolder",
-    "apps/core/src/harness/integrations.ts#handleChannelWebhook",
     "apps/core/src/harness/integrations.ts#identityWithChannelRoles",
     "apps/core/src/harness/integrations.ts#integrationNotConfigured",
     "apps/core/src/harness/integrations.ts#listRunnableAgents",
@@ -338,7 +328,6 @@
     "apps/core/src/harness/integrations.ts#parseSystemOverride",
     "apps/core/src/harness/integrations.ts#processChannelMessage",
     "apps/core/src/harness/integrations.ts#publicDeploymentIngress",
-    "apps/core/src/harness/integrations.ts#receiveChannelWebhook",
     "apps/core/src/harness/integrations.ts#refuseChannelInvoke",
     "apps/core/src/harness/integrations.ts#resetChannelAgentListsForTests",
     "apps/core/src/harness/integrations.ts#resolveChannelTarget",
@@ -385,7 +374,6 @@
     "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#withoutCredentials",
     "apps/core/src/harness/lifecycle.ts#createAgentLifecycleEmitter",
     "apps/core/src/harness/lifecycle.ts#toLifecycleValue",
-    "apps/core/src/harness/mcp-tasks.ts#agentTool",
     "apps/core/src/harness/mcp-tasks.ts#answerApprovals",
     "apps/core/src/harness/mcp-tasks.ts#answerQuestions",
     "apps/core/src/harness/mcp-tasks.ts#approvalRequest",
@@ -397,6 +385,7 @@
     "apps/core/src/harness/mcp-tasks.ts#failedTask",
     "apps/core/src/harness/mcp-tasks.ts#nextRun",
     "apps/core/src/harness/mcp-tasks.ts#promptAnswers",
+    "apps/core/src/harness/mcp-tasks.ts#protocolErrorResult",
     "apps/core/src/harness/mcp-tasks.ts#questionRequest",
     "apps/core/src/harness/mcp-tasks.ts#readRun",
     "apps/core/src/harness/mcp-tasks.ts#requireTaskCapability",
@@ -657,6 +646,12 @@
     "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#microvmUpstreamUrl",
     "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#microvmWebSocketProtocols",
     "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#sendUpstreamMessage",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#changesRow",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#laneId",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#mergedUpsert",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#mirrorQueueStats",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#park",
+    "apps/core/src/harness/sandbox/mirror-writes.ts#sendUpsert",
     "apps/core/src/harness/sandbox/platform-worker.ts#callPlatformWorker",
     "apps/core/src/harness/sandbox/platform-worker.ts#platformWorkerConnection",
     "apps/core/src/harness/sandbox/platform-worker.ts#releasePlatformSandbox",
@@ -685,7 +680,6 @@
     "apps/core/src/harness/sandbox/utils.ts#isSandboxGoneError",
     "apps/core/src/harness/sandbox/utils.ts#mergeSandboxEnv",
     "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox",
-    "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox/arg1~3",
     "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox/return~2",
     "apps/core/src/harness/sandbox/utils.ts#parseExecResponse",
     "apps/core/src/harness/sandbox/utils.ts#principalEnv",
@@ -1287,6 +1281,7 @@
     "apps/core/src/shared/log.ts#collectSecretValues",
     "apps/core/src/shared/log.ts#entryName",
     "apps/core/src/shared/log.ts#isSensitiveEnvName",
+    "apps/core/src/shared/log.ts#logError",
     "apps/core/src/shared/log.ts#matchableSecrets",
     "apps/core/src/shared/log.ts#redact",
     "apps/core/src/shared/log.ts#redactRunValue",
@@ -1408,9 +1403,7 @@
     "apps/core/src/shared/s3.ts#s3ObjectExists",
     "apps/core/src/shared/s3.ts#writeS3Object",
     "apps/core/src/shared/sandbox-cleanup.ts#releaseCandidates",
-    "apps/core/src/shared/sandbox-cleanup.ts#releaseExpiredSandboxes",
     "apps/core/src/shared/sandbox-cleanup.ts#releaseOnProvider",
-    "apps/core/src/shared/sandbox-cleanup.ts#releaseReservedSandboxes",
     "apps/core/src/shared/sandbox-cleanup.ts#sandboxConfigs",
     "apps/core/src/shared/sandbox-sizes.ts#positiveNumber",
     "apps/core/src/shared/sandbox-sizes.ts#resolveSandboxSpecs",
@@ -2006,7 +1999,7 @@
     "packages/convex/model/workspaceRules.ts#workspaceStorageOwnAuth"
   ],
   "excludedByCategory": {
-    "test-helper": 23,
+    "test-helper": 29,
     "platform-entry": 131,
     "vendor-passthrough": 8,
     "telemetry": 128,
@@ -2024,15 +2017,15 @@
       "by replay",
       "branch arms"
     ],
-    ["access", "1964", "133", "1831", "77.6%", "1406", "15", "1031/1350"],
-    ["agent", "3841", "139", "3702", "50.8%", "1780", "100", "1359/2705"],
-    ["channels", "3658", "2", "3656", "74.5%", "2573", "152", "2026/3031"],
+    ["access", "1967", "133", "1834", "69.4%", "1257", "15", "939/1350"],
+    ["agent", "3877", "145", "3732", "50.7%", "1792", "101", "1365/2720"],
+    ["channels", "3658", "2", "3656", "72.6%", "2501", "153", "1990/3031"],
     ["config", "616", "0", "616", "89.4%", "488", "63", "379/509"],
-    ["hosted", "2202", "320", "1882", "46.9%", "735", "148", "569/1249"],
-    ["runs", "1683", "8", "1675", "38.7%", "624", "25", "468/1159"],
-    ["sandbox", "4769", "0", "4769", "68.7%", "3194", "84", "2373/3703"],
+    ["hosted", "2227", "320", "1907", "46.4%", "736", "148", "570/1267"],
+    ["runs", "1690", "8", "1682", "38.8%", "628", "25", "469/1161"],
+    ["sandbox", "4865", "0", "4865", "67.2%", "3184", "83", "2382/3758"],
     ["workers", "92", "0", "92", "88.0%", "46", "35", "14/32"],
-    ["all", "18825", "602", "18223", "62.9%", "10846", "622", "8219/13738"]
+    ["all", "18992", "608", "18384", "61.2%", "10632", "623", "8108/13828"]
   ],
   "largestUnverified": [
     {
@@ -2045,7 +2038,7 @@
     },
     {
       "source": "apps/core/src/shared/convex/storage.ts#<unlisted>",
-      "count": 126
+      "count": 133
     },
     {
       "source": "apps/core/src/shared/slack-channel.ts#toSlackStream",
@@ -2120,6 +2113,14 @@
       "count": 36
     },
     {
+      "source": "apps/core/src/accounts/handler.ts#openSandboxTerminal",
+      "count": 36
+    },
+    {
+      "source": "apps/core/src/server.ts#<unlisted>",
+      "count": 35
+    },
+    {
       "source": "apps/core/src/harness/provider.ts#<unlisted>",
       "count": 34
     },
@@ -2128,7 +2129,7 @@
       "count": 34
     },
     {
-      "source": "apps/core/src/server.ts#<unlisted>",
+      "source": "apps/core/src/accounts/handler.ts#handleSandboxLifecycle",
       "count": 33
     },
     {
@@ -2140,8 +2141,16 @@
       "count": 33
     },
     {
+      "source": "apps/core/src/harness/integrations.ts#receiveChannelWebhook",
+      "count": 32
+    },
+    {
       "source": "apps/core/src/harness/integrations.ts#handleConversationFilesRequest",
       "count": 32
+    },
+    {
+      "source": "apps/core/src/harness/integrations.ts#handleChannelWebhook",
+      "count": 31
     },
     {
       "source": "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#MicrovmWebSocketProxy.#connectUpstream",
@@ -2256,10 +2265,6 @@
       "count": 24
     },
     {
-      "source": "apps/core/src/harness/mcp-tasks.ts#continueRun",
-      "count": 24
-    },
-    {
       "source": "apps/core/src/harness/handler.ts#handleScheduledCron",
       "count": 24
     },
@@ -2296,11 +2301,19 @@
       "count": 23
     },
     {
+      "source": "apps/core/src/harness/mcp-tasks.ts#createTaskServer",
+      "count": 23
+    },
+    {
       "source": "apps/core/src/harness/tools/browse.tool.ts#browseTool",
       "count": 23
     },
     {
       "source": "apps/cloudflare-mcp/src/index.ts#<unlisted>",
+      "count": 22
+    },
+    {
+      "source": "apps/core/src/harness/mcp-tasks.ts#continueRun",
       "count": 22
     },
     {
@@ -2321,14 +2334,6 @@
     },
     {
       "source": "apps/cloudflare-sandbox/src/index.ts#<unlisted>",
-      "count": 22
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.run",
-      "count": 22
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#acquire",
       "count": 22
     },
     {
@@ -2356,10 +2361,6 @@
       "count": 21
     },
     {
-      "source": "apps/core/src/harness/mcp-tasks.ts#createTaskServer",
-      "count": 21
-    },
-    {
       "source": "apps/core/src/harness/mcp/oauth.ts#mcpAccessToken",
       "count": 21
     },
@@ -2368,7 +2369,15 @@
       "count": 21
     },
     {
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.run",
+      "count": 21
+    },
+    {
       "source": "apps/core/src/harness/tools/read.tool.ts#readTool",
+      "count": 21
+    },
+    {
+      "source": "apps/core/src/shared/sandbox-cleanup.ts#releaseExpiredSandboxes",
       "count": 21
     },
     {
@@ -2393,6 +2402,14 @@
     },
     {
       "source": "apps/core/src/harness/mcp/hosted.ts#drainBridgeStream",
+      "count": 20
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#acquire",
+      "count": 20
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/mirror-writes.ts#pump",
       "count": 20
     },
     {
@@ -2421,6 +2438,10 @@
     },
     {
       "source": "apps/core/src/harness/tools/edit.tool.ts#editTool",
+      "count": 19
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/mirror-writes.ts#land",
       "count": 19
     },
     {
@@ -2477,6 +2498,10 @@
     },
     {
       "source": "apps/core/src/harness/tools/channel.tool.ts#resolveImages",
+      "count": 18
+    },
+    {
+      "source": "apps/core/src/shared/sandbox-cleanup.ts#releaseReservedSandboxes",
       "count": 18
     },
     {
@@ -2544,6 +2569,14 @@
       "count": 16
     },
     {
+      "source": "apps/core/src/accounts/handler.ts#execSandbox",
+      "count": 15
+    },
+    {
+      "source": "apps/core/src/accounts/handler.ts#refreshSandboxStatus",
+      "count": 15
+    },
+    {
       "source": "apps/core/src/harness/harness.ts#readAgentFullStream",
       "count": 15
     },
@@ -2561,6 +2594,10 @@
     },
     {
       "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.wakeChild",
+      "count": 15
+    },
+    {
+      "source": "apps/core/src/harness/integrations.ts#cleanupChannelPartitions",
       "count": 15
     },
     {
@@ -2588,6 +2625,10 @@
       "count": 15
     },
     {
+      "source": "apps/core/src/harness/sandbox/mirror-writes.ts#enqueue",
+      "count": 15
+    },
+    {
       "source": "apps/gateway/src/observability.ts#relayNatsMessages",
       "count": 14
     },
@@ -2605,6 +2646,10 @@
     },
     {
       "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#raceWithAbort",
+      "count": 14
+    },
+    {
+      "source": "apps/core/src/harness/sandbox/mirror-writes.ts#queueMirrorUpsert",
       "count": 14
     },
     {
@@ -2656,6 +2701,10 @@
       "count": 13
     },
     {
+      "source": "apps/core/src/harness/mcp-tasks.ts#findAgent",
+      "count": 13
+    },
+    {
       "source": "apps/core/src/harness/mcp-tasks.ts#mcpAuth",
       "count": 13
     },
@@ -2694,6 +2743,10 @@
     {
       "source": "apps/core/src/harness/sandbox/workdir-harness-driver.ts#WorkdirHarnessDriver.createSession",
       "count": 13
+    },
+    {
+      "source": "apps/core/src/accounts/cleanup.ts#deleteAccountRuntimeData",
+      "count": 12
     },
     {
       "source": "apps/core/src/harness/chatgpt.ts#chatgptFetch",
@@ -2748,6 +2801,10 @@
       "count": 12
     },
     {
+      "source": "apps/core/src/accounts/handler.ts#handleSandboxLifecycleRoute",
+      "count": 11
+    },
+    {
       "source": "apps/gateway/src/observability.ts#sendTrace",
       "count": 11
     },
@@ -2770,70 +2827,6 @@
     {
       "source": "apps/core/src/harness/session.ts#Session.loadSubagentMetadata",
       "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/subagents.ts#SubagentCoordinator.recordOutcome",
-      "count": 11
-    },
-    {
-      "source": "apps/cloudflare-mcp/src/index.ts#loadBundle",
-      "count": 11
-    },
-    {
-      "source": "apps/cloudflare-mcp/src/index.ts#serveRequest",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/handler.ts#handleSandboxJobCompletionRequest",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/handler.ts#resumeConversation",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/responses.ts#pipeAgentStream",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/shared/convex/budgets.ts#<unlisted>",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#HarnessShellProcess.constructor",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/harness-shell-process.ts#HarnessShellProcess.#status",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/machine-executor.ts#sendFrame",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#execReserved",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#reportBurst",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-executor.ts#MicrovmSandboxExecutor.#assertWorkspaceMounted",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/sandbox/microvm-websocket-proxy.ts#MicrovmWebSocketProxy.#close",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/tools/channel.tool.ts#sendImagesTool",
-      "count": 11
-    },
-    {
-      "source": "apps/core/src/harness/session.ts#Session.buildSystemPromptParts",
-      "count": 10
     }
   ]
 }

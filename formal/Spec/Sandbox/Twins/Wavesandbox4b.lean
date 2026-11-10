@@ -191,8 +191,8 @@ private def workdirResume (call : Json) : Prog Json := do
   let plane := field cfg "controlPlane"
   ignoring "saveSandboxInstance"
     [jsStr "sandbox", key, externalId, accountOf cfg, field plane "releaseAfterIdleSeconds"]
-  ignoring "upsertSandboxInstance"
-    [plane, jsStr "sandbox", key, externalId, field request "metadata"]
+  Prog.spawn "queueMirrorUpsert"
+    [Tools.mirrorUpsert plane (jsStr "sandbox") key externalId (field request "metadata") none]
   harnessGuard request
   return sandbox
 
@@ -491,12 +491,10 @@ private def workerRun (call : Json) : Prog Json := do
     | .ok value => pure value
     | .threw error _ => Prog.fail error
     | .pending => Prog.unsupported "serialized command never finished"
-  Prog.spawn "queueMirrorWrite" [reserved, fnRef]
-  let answer ← finish result
-  Prog.drain (fun _ _ =>
-    Prog.spawn "upsertSandboxInstance"
-      [field cfg "controlPlane", jsStr "worker", key, reserved, field request "metadata"]) 1
-  return answer
+  Prog.spawn "queueMirrorUpsert"
+    [Tools.mirrorUpsert (field cfg "controlPlane") (jsStr "worker") key reserved
+      (field request "metadata") none]
+  finish result
 
 /-- `#persistent` of the E2B executor. -/
 private def e2bAcquire (cfg request : Json) : Prog Json := do
@@ -516,8 +514,8 @@ private def e2bAcquire (cfg request : Json) : Prog Json := do
           let options ← Prog.effect "e2bApiOptions" [cfg]
           let sandbox ← Prog.effect "Sandbox.connect" [externalId, options]
           ignoring "saveSandboxInstance" [jsStr "e2b", ns, externalId, accountOf cfg]
-          let _ ← Prog.effect "upsertSandboxInstance"
-            [plane, jsStr "e2b", ns, externalId, field request "metadata"]
+          Prog.spawn "queueMirrorUpsert"
+            [Tools.mirrorUpsert plane (jsStr "e2b") ns externalId (field request "metadata") none]
           pure (some sandbox))
         fun error => do
           let gone ← Prog.effect "isSandboxGoneError" [error]
@@ -535,10 +533,10 @@ private def e2bAcquire (cfg request : Json) : Prog Json := do
     (do
       let won ← Prog.effect "claimSandboxInstance" [jsStr "e2b", ns, createdId, accountOf cfg]
       if truthy won then
-        let _ ← Prog.effect "upsertSandboxInstance"
-          [plane, jsStr "e2b", ns, createdId, field request "metadata"]
+        Prog.spawn "queueMirrorUpsert"
+          [Tools.mirrorUpsert plane (jsStr "e2b") ns createdId (field request "metadata") none]
         if truthy (accountOf cfg) then
-          let _ ← Prog.unsupported (α := Json) "the detached specs read"
+          Prog.spawn "e2bSpecs" [created]
       pure (truthy won))
     fun error => do
       let api ← Prog.effect "e2bApiOptions" [cfg]

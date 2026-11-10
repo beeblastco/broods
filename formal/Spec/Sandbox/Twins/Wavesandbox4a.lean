@@ -993,7 +993,7 @@ def releaseExpiredSandboxes (call : Json) : Prog Json := do
       let done_ ← Prog.effect "releaseOnProvider" [accountId, provider, configs, key, externalId]
       if truthy done_ then
         released := released ++ [reservation]
-        let _ ← Prog.effect "removeSandboxInstance" [accountId, key, externalId]
+        let _ ← Prog.effect "queueMirrorRemove" [accountId, key, externalId]
       else
         let _ ← Prog.attempt "claimSandboxInstance"
           [provider, key, externalId, accountId, field reservation "ttlSeconds"]
@@ -1011,11 +1011,14 @@ def releaseReservedSandboxes (call : Json) : Prog Json := do
   let configs ← Prog.effect "sandboxConfigs" [accountId]
   let mut released : Nat := 0
   for ns in namespaces do
+    let mut machines : List Json := []
     for provider in releasableProviders do
-      let done_ ← Prog.effect "releaseOnProvider" [accountId, toJson provider, configs, ns]
-      if truthy done_ then released := released + 1
+      let machine ← Prog.effect "releaseOnProvider" [accountId, toJson provider, configs, ns]
+      if truthy machine then machines := machines ++ [machine]
       let _ ← Prog.attempt "deleteSandboxInstance" [toJson provider, ns, accountId]
-    let _ ← Prog.effect "removeSandboxInstance" [accountId, ns]
+    released := released + machines.length
+    let fences := if machines.isEmpty then [undef] else machines
+    let _ ← Prog.all (fences.map fun machine => ("queueMirrorRemove", [accountId, ns, machine]))
   return toJson released
 
 private def sandboxDir : String := "apps/core/src/harness/sandbox/"

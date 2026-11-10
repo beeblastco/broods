@@ -64,7 +64,12 @@ interface RecordedEffect {
   fn: string;
   to?: string;
   args: unknown;
-  outcome: { returned?: unknown; threw?: unknown; pending?: boolean };
+  outcome: {
+    returned?: unknown;
+    threw?: unknown;
+    sync?: boolean;
+    pending?: boolean;
+  };
   start: number;
   settle: number | null;
   nested: boolean | "detached";
@@ -114,6 +119,7 @@ interface TwinResult {
   impliedElse: number[];
   internal: string[];
   external: string[];
+  discarded: string[];
   hollow: boolean;
   stateUnmodelled: number;
   firstMismatch?: { args: unknown; expected: unknown; actual: unknown };
@@ -689,6 +695,7 @@ async function checkTraced(
   const sets: number[][] = [];
   const internal = new Set<string>();
   const bare = new Set<string>();
+  const unread = new Set<string>();
   calls.forEach((call, index) => {
     const actual = JSON.parse(
       outputs[index] ?? '{"unsupported":"no output"}',
@@ -732,7 +739,8 @@ async function checkTraced(
     )
       result.hollow = false;
     for (const effect of call.effects) {
-      if (effect.to) internal.add(effect.to);
+      if (discarded(effect, call.effects)) unread.add(effect.to ?? effect.fn);
+      else if (effect.to) internal.add(effect.to);
       else bare.add(effect.fn);
     }
   });
@@ -752,10 +760,15 @@ async function checkTraced(
     if (targets) for (const target of targets) internal.add(target);
     else external.add(label);
   }
+  // A discarded call to a label that never reached one of our functions is still a boundary.
+  for (const label of unread) {
+    if (!label.includes("#") && !reached.has(label)) external.add(label);
+  }
   result.hits = [...hits];
   result.impliedElse = impliedElse(twin.source, sets);
   result.internal = [...internal].sort();
   result.external = [...external].sort();
+  result.discarded = [...unread].sort();
 
   return result;
 }
@@ -853,6 +866,27 @@ function hasBig(value: unknown): boolean {
   return JSON.stringify(value ?? null).includes('"$big"');
 }
 
+// `void f()` and a bare `f();` read no value from the call. The function then takes no answer
+// from it, so the callee need not earn credit, as long as the call did not throw on the spot,
+// left no state behind, was handed no function, and ran none of the function's callbacks.
+function discarded(effect: RecordedEffect, all: RecordedEffect[]): boolean {
+  if (effect.nested !== "detached" || effect.outcome.sync === true)
+    return false;
+  const wrote =
+    (effect.argWindows ?? []).length > 0 ||
+    JSON.stringify(effect.selfBefore) !== JSON.stringify(effect.selfAfter) ||
+    JSON.stringify(effect.moduleBefore) !== JSON.stringify(effect.moduleAfter);
+  const handedFunction = JSON.stringify(effect.args ?? null).includes('"$fn"');
+  const ranCallback = all.some(
+    (other) =>
+      other.nested === true &&
+      other.start > effect.start &&
+      other.start < (effect.settle ?? Number.POSITIVE_INFINITY),
+  );
+
+  return !wrote && !handedFunction && !ranCallback;
+}
+
 // Every leaf that differs, so two writes to one object are told apart. An array counts as one leaf.
 function deepChanges(
   path: string,
@@ -926,6 +960,7 @@ function emptyResult(twin: TwinRow): TwinResult {
     impliedElse: [],
     internal: [],
     external: [],
+    discarded: [],
     hollow: true,
     stateUnmodelled: 0,
   };

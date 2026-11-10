@@ -107,10 +107,6 @@ inductive Cache where
 
 /-- A closure handed to `queueMirrorWrite`, run when the recording enters it. -/
 inductive Closure where
-  /-- `upsertSandboxInstance` of a row, with the specs read when the write runs. -/
-  | upsert (cfg key id metadata : Json) (extras : List (String × Json))
-  /-- As `upsert`, with the row key read from the request when the write runs. -/
-  | upsertKeyed (cfg request id : Json)
   /-- `recordSandboxBurst`, then remember the totals. -/
   | burst (accountId id totals : Json)
 
@@ -120,7 +116,6 @@ structure Mod where
   refresh : List (String × Json) := []
   burst : List (String × Json) := []
   pending : List Closure := []
-  tails : List (Json × Json) := []
   /-- What a traced callee left in a cache; the caller answers for it only if it changes again. -/
   byCallee : List (Cache × List (String × Json)) := []
 
@@ -224,35 +219,19 @@ private def rawSpawn (fn : String) (args : List Json) : M Unit := liftP (Prog.sp
 private def promoteSpecs (specs : Json) : List (String × Json) :=
   if isUndef specs then [] else [("specs", specs)]
 
-/-- Runs one queued mirror write, as `queueMirrorWrite` does once the caller yields. -/
+/-- Runs one queued mirror write, as the lane's sender does once its turn comes. -/
 private def runClosure : Closure → M Unit
-  | .upsert cfg key id metadata extras => do
-    let specs ← rawEffect "configuredSandboxSpecs" [cfg]
-    rawSpawn "upsertSandboxInstance"
-      [field cfg "controlPlane", toJson "lambda", key, id, metadata,
-       Json.mkObj (extras ++ promoteSpecs specs)]
-  | .upsertKeyed cfg request id => do
-    let reserved ← rawEffect "sandboxReservationKey" [request]
-    let specs ← rawEffect "configuredSandboxSpecs" [cfg]
-    rawSpawn "upsertSandboxInstance"
-      [field cfg "controlPlane", toJson "lambda", orElse reserved id, id, field request "metadata",
-       Json.mkObj (promoteSpecs specs)]
   | .burst accountId id totals => do
     let recorded ← rawEffect "recordSandboxBurst" [accountId, id, totals]
     if truthy recorded then
+      let now ← rawEffect "Date.now" []
       let state ← getMod
-      setMod { state with tails := state.tails ++ [(id, totals)] }
-
-/-- What follows an answered `recordSandboxBurst`: it runs once the caller's own steps are done. -/
-private def burstTail (id totals : Json) : M Unit := do
-  let now ← rawEffect "Date.now" []
-  let state ← getMod
-  if state.burst.length ≥ 512 then
-    return ← unsupported "burst cache at its cap"
-  let _ ← rawEffect "evictToCap" [mapJson state.burst, now]
-  cacheSet .burst (str id)
-    (Json.mkObj [("vcpuSeconds", field totals "vcpuSeconds"), ("gbSeconds", field totals "gbSeconds"),
-      ("expiresAt", toJson (intOf now + 86400000))])
+      if state.burst.length ≥ 512 then
+        return ← unsupported "burst cache at its cap"
+      let _ ← rawEffect "evictToCap" [mapJson state.burst, now]
+      cacheSet .burst (str id)
+        (Json.mkObj [("vcpuSeconds", field totals "vcpuSeconds"), ("gbSeconds", field totals "gbSeconds"),
+          ("expiresAt", toJson (intOf now + 86400000))])
 
 /-- Every yield lets queued mirror writes run, so they are handled wherever the recording enters one. -/
 private def drain : Nat → M Unit
@@ -261,7 +240,7 @@ private def drain : Nat → M Unit
     match ← liftP (Prog.input Prog.done) with
     | none => pure ()
     | some (label, _) =>
-      if label == "arg1" then
+      if label == "send" then
         let state ← getMod
         match state.pending with
         | closure :: rest =>
@@ -283,26 +262,27 @@ private def outcomeOf (fn : String) (args : List Json := []) : M Outcome := do
 private def nowMs : M Int := do
   return intOf (← effect "Date.now")
 
-/-- Runs what follows answered burst writes, which happens while the caller's last call is pending. -/
-private def flushTails : M Unit := do
-  let state ← getMod
-  setMod { state with tails := [] }
-  for tail in state.tails do
-    burstTail tail.1 tail.2
-
-/-- `queueMirrorWrite(id, write)` with its result dropped. -/
-private def queueMirror (id : Json) (closure : Closure) : M Unit := do
-  rawSpawn "queueMirrorWrite" [id, fnRef]
-  push closure
+/-- `queueMirrorUpsert({...})` with its result dropped, the sizes being already read. -/
+private def queueUpsertWith (cfg key id metadata specs : Json) (extras : List (String × Json)) :
+    M Unit := do
+  let present (entries : List (String × Json)) : List (String × Json) :=
+    entries.filter fun entry => !isUndef entry.2
+  rawSpawn "queueMirrorUpsert"
+    [Json.mkObj (present
+      [("controlPlane", field cfg "controlPlane"), ("provider", toJson "lambda"),
+       ("reservationKey", key), ("externalId", id), ("metadata", metadata),
+       ("options", Json.mkObj (extras ++ promoteSpecs specs))])]
   drain 4
+
+/-- `queueMirrorUpsert({...})`; its sizes are read first. -/
+private def queueUpsert (cfg key id metadata : Json) (extras : List (String × Json)) : M Unit := do
+  queueUpsertWith cfg key id metadata (← rawEffect "configuredSandboxSpecs" [cfg]) extras
 
 /-- Runs a method body and states the cache changes it left, whether or not it threw. -/
 private def execute (call : Json) (body : M Json) : Prog Json := do
   let init := initialMod call
   let (outcome, afterBody) ← (body.run).run init
-  let (_, final) ← ((do
-    for tail in afterBody.tails do
-      burstTail tail.1 tail.2 : M Unit).run).run { afterBody with tails := [] }
+  let final := afterBody
   for cache in [Cache.tokens, Cache.reserved, Cache.burst] do
     let before := mapJson (init.entries cache)
     let after := mapJson (final.entries cache)
@@ -459,7 +439,6 @@ private def terminate (id : Json) : M Bool := do
 private def terminateDetached (id : Json) : M Unit := do
   cacheDelete .tokens fun key => !key.startsWith s!"{jsText id}:"
   let command ← effect "new TerminateMicrovmCommand" [commandInput id]
-  flushTails
   rawSpawn "this.#client .send" [command]
   drain 4
   let _ ← effect "waitUntil" [promiseRef]
@@ -575,9 +554,10 @@ private def reportBurst (cfg id burst : Json) : M Unit := do
   let sinceV := if usable then lastNum "vcpuSeconds" else 0.0
   let sinceG := if usable then lastNum "gbSeconds" else 0.0
   if vcpu - sinceV < 0.01 && gb - sinceG < 0.01 then return
-  rawSpawn "queueMirrorWrite" [id, fnRef]
+  rawSpawn "queueMirrorWrite"
+    [accountId, id, Json.mkObj [("kind", toJson "burst"), ("externalId", id), ("send", Json.mkObj [("$fn", toJson "send")])]]
   push (.burst accountId id totals)
-  let _ ← effect "waitUntil" [promiseRef]
+  drain 4
 
 /-- `#exec`. -/
 private def exec (cfg id endpoint payload : Json) (budgetMs : Int := warmupBudgetMs) : M Json := do
@@ -817,8 +797,7 @@ private def runMicrovm (call cfg request : Json) : M (Json × Json × Json) := d
 private def acquire (call cfg request : Json) : M Acquired := do
   if !(← isPersistent cfg request) then
     let (id, endpoint, stream) ← runMicrovm call cfg request
-    queueMirror id
-      (.upsert cfg id id (field request "metadata") [("ephemeral", toJson true), ("logStream", stream)])
+    queueUpsert cfg id id (field request "metadata") [("ephemeral", toJson true), ("logStream", stream)]
     return { id := id, endpoint := endpoint, first := true }
   let keyJson ← effect "sandboxReservationKey" [request]
   let key := str keyJson
@@ -826,9 +805,14 @@ private def acquire (call cfg request : Json) : M Acquired := do
   if truthy existing then
     let reconnected ← attemptM (do
       let target ← reconnect cfg existing
-      rawSpawn "saveSandboxInstance"
-        [provider, keyJson, existing, accountOf cfg, field (field cfg "controlPlane") "releaseAfterIdleSeconds"]
-      queueMirror existing (.upsert cfg keyJson existing (field request "metadata") [])
+      -- The save is not awaited, so the sizes are read while it is still running.
+      match ← liftP (Prog.all
+          [("saveSandboxInstance",
+            [provider, keyJson, existing, accountOf cfg,
+             field (field cfg "controlPlane") "releaseAfterIdleSeconds"]),
+           ("configuredSandboxSpecs", [cfg])]) with
+      | [_, .ok specs] => queueUpsertWith cfg keyJson existing (field request "metadata") specs []
+      | _ => unsupported "the sizes could not be read"
       cacheTarget cfg key target.1 target.2
       return target)
     match reconnected with
@@ -843,7 +827,7 @@ private def acquire (call cfg request : Json) : M Acquired := do
   | .error _ => return ← unsupported "the claim was rejected and both sides are undone together"
   | .ok won =>
     if truthy won then
-      queueMirror id (.upsert cfg keyJson id (field request "metadata") [("logStream", stream)])
+      queueUpsert cfg keyJson id (field request "metadata") [("logStream", stream)]
       cacheTarget cfg key id endpoint
       return { id := id, endpoint := endpoint, first := true }
   let winner ← effect "getSandboxExternalId" [provider, keyJson]
@@ -886,7 +870,8 @@ private def execPayload (cfg request : Json) : M Json := do
 /-- `#execReserved`: a run on a cached VM, or nothing when the cache was stale. -/
 private def execReserved (cfg request : Json) (target : Json × Json) (payload : Json) :
     M (Option Json) := do
-  queueMirror target.1 (.upsertKeyed cfg request target.1)
+  let reserved ← rawEffect "sandboxReservationKey" [request]
+  queueUpsert cfg (orElse reserved target.1) target.1 (field request "metadata") []
   let attempted ← attemptM (do
     let workDir ← workDirOf cfg (← workspaceKey cfg request)
     runLifecycle cfg target.1 target.2 workDir cachedWarmupBudgetMs
@@ -991,7 +976,7 @@ def resumeHarnessReservation (call : Json) : Prog Json :=
     runLifecycle cfg id endpoint (← workDirOf cfg (str key))
     let _ ← outcomeOf "saveSandboxInstance"
       [provider, key, id, accountOf cfg, field (field cfg "controlPlane") "releaseAfterIdleSeconds"]
-    queueMirror id (.upsert cfg key id (field request "metadata") [])
+    queueUpsert cfg key id (field request "metadata") []
     abortCheck request
     return reservationJson id endpoint none)
 

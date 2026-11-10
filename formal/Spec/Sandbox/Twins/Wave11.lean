@@ -85,9 +85,9 @@ private def reconnect (externalId : Json) : Prog Json := do
 
 private def specsUpsert (cfg request sandbox ns id : Json) : Prog Unit := do
   let specs ← Prog.effect "daytonaSpecs" [sandbox]
-  let _ ← Prog.effect "upsertSandboxInstance"
-    [field cfg "controlPlane", daytona, ns, id, field request "metadata",
-     Json.mkObj [("specs", specs)]]
+  Prog.spawn "queueMirrorUpsert"
+    [Tools.mirrorUpsert (field cfg "controlPlane") daytona ns id (field request "metadata")
+      (some [("specs", specs)])]
 
 /-- `#acquire`: reconnects to the stored sandbox, or creates one and settles the claim race. -/
 private def acquire (cfg request : Json) : Prog Json := do

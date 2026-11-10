@@ -196,9 +196,9 @@ private def vercelEnsureMount (self config sandbox request : Json) (persistent :
 
 private def vercelUpsert (config sandbox request key name : Json) : Prog Unit := do
   let specs ← Prog.effect "vercelSpecs" [sandbox]
-  let _ ← Prog.effect "upsertSandboxInstance"
-    [field config "controlPlane", provider, key, name, field request "metadata",
-      Json.mkObj (present "specs" specs)]
+  Prog.spawn "queueMirrorUpsert"
+    [Tools.mirrorUpsert (field config "controlPlane") provider key name (field request "metadata")
+      (some [("specs", specs)])]
 
 private def vercelForget (config key name : Json) : Prog Unit :=
   ignoring "deleteSandboxInstance"
@@ -243,10 +243,9 @@ private def vercelCreateClaimed (config request key : Json) : Prog Json := do
     Prog.fail error
   if ← claimed then return sandbox
   let winner ← Prog.effect "getSandboxExternalId" [provider, key]
-  if !truthy winner then
-    vercelUpsert config sandbox request key name
-    return sandbox
   ignoring "sandbox.delete" []
+  if !truthy winner then
+    Prog.throwError "Error" "failed to reserve vercel sandbox (lost create race)"
   let auth ← Prog.effect "vercelAuthOptions" [config]
   Prog.effect "Sandbox.get" [merged (Json.mkObj [("name", winner)]) (spread auth)]
 

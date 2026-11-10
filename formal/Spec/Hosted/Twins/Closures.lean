@@ -33,30 +33,16 @@ private def plain (value : Json) : List (String × Json) :=
 private def enter (label : String) : Prog Unit :=
   Prog.drain (fun entered _ => if entered == label then pure () else Prog.unsupported entered) 1
 
-/-- The entries of a recorded `Map`. -/
-private def mapEntries (value : Json) : List (Json × Json) :=
-  match field value "$map" with
-  | .arr entries => entries.toList.map fun entry =>
-    (match entry with | .arr pair => pair[0]?.getD Json.null | _ => Json.null,
-     match entry with | .arr pair => pair[1]?.getD Json.null | _ => Json.null)
-  | _ => []
-
 /-- The caller `createTaskServer` was made for. -/
 private def caller (call : Json) : Json := Twin.moduleValue call "caller"
 
-/-- `tools/list`: every runnable agent as a tool, plus `continue_run` for a client without tasks. -/
+/-- `tools/list`: `list_agents` and `ask_agent`, plus `get_run` and `continue_run` without tasks. -/
 def toolsList (call : Json) : Prog Json := do
   enter "arg1"
-  let agents ← Prog.effect "listRunnableAgents" [field (caller call) "auth"]
-  let named ← Prog.effect "agentsByToolName" [agents]
-  let entries := mapEntries named
-  let mut tools : List Json := []
-  for (name, agent) in entries do
-    tools := tools ++ [← Prog.effect "agentTool" [name, agent]]
-  if !entries.isEmpty then
-    let declares ← Prog.effect "declaresTasks" [Twin.callArg call 1]
-    if declares != toJson true then
-      tools := tools ++ [Twin.moduleValue call "CONTINUE_TOOL_DEFINITION"]
+  let declares ← Prog.effect "declaresTasks" [Twin.callArg call 1]
+  let tools := [Twin.moduleValue call "LIST_TOOL_DEFINITION", Twin.moduleValue call "ASK_TOOL_DEFINITION"] ++
+    (if declares == toJson true then []
+     else [Twin.moduleValue call "GET_RUN_TOOL_DEFINITION", Twin.moduleValue call "CONTINUE_TOOL_DEFINITION"])
   return Json.mkObj [("tools", toJson tools)]
 
 /-- The word `received ...` in zod's type issue. -/
@@ -69,54 +55,107 @@ private def receivedType (value : Json) : String :=
   | .arr _ => "array"
   | .obj _ => "object"
 
-/-- One issue of `AGENT_ARGS` for the string field `name`, as `z.prettifyError` prints it. -/
-private def stringIssue (name : String) (required : Bool) (value : Json) : Option String :=
+/-- One issue of `ASK_ARGS` for the string field `name`, as `z.prettifyError` prints it. -/
+private def stringIssue (name : String) (required : Bool) (value : Json) (trimmed : Bool := true) : Option String :=
   let line (message : String) : Option String := some s!"\u2716 {message}\n  \u2192 at {name}"
   if undef value then
     if required then line "Invalid input: expected string, received undefined" else none
   else
     match value with
     | .str text =>
-      if (Access.Js.trim text).isEmpty then line "Too small: expected string to have >=1 characters"
+      if (if trimmed then Access.Js.trim text else text).isEmpty then line "Too small: expected string to have >=1 characters"
       else none
     | other => line s!"Invalid input: expected string, received {receivedType other}"
 
-/-- `z.prettifyError` of a failed `AGENT_ARGS` parse: the `prompt` issue, then `conversationId`. -/
-private def agentArgsError (arguments : Json) : Option String :=
-  let issues := [stringIssue "prompt" true (field arguments "prompt"),
+/-- `z.prettifyError` of a failed `ASK_ARGS` parse: the `agent`, `prompt` and `conversationId` issues. -/
+private def askArgsError (arguments : Json) : Option String :=
+  let issues := [stringIssue "agent" true (field arguments "agent"),
+    stringIssue "prompt" true (field arguments "prompt"),
     stringIssue "conversationId" false (field arguments "conversationId")].filterMap id
   if issues.isEmpty then none else some ("\n".intercalate issues)
 
-/-- `tools/call`: starts a run for the agent named by the tool; a task for a client with tasks. -/
+/-- `tools/call`: the four tools; `ask_agent` starts a run, as a task for a client with tasks. -/
 def toolsCall (call : Json) : Prog Json := do
   enter "arg2"
   let params := Twin.callArg call 0
   let ctx := Twin.callArg call 1
   let signal := field (field ctx "mcpReq") "signal"
+  let name := field params "name"
   let declares ← Prog.effect "declaresTasks" [ctx]
   let direct := declares != toJson true
-  if direct && field params "name" == toJson "continue_run" then
+  if name == toJson "list_agents" then
+    return ← Prog.effect "listAgents" [caller call, field params "arguments"]
+  if direct && name == toJson "continue_run" then
     return ← Prog.effect "continueRun" [caller call, field params "arguments", signal]
-  let agents ← Prog.effect "listRunnableAgents" [field (caller call) "auth"]
-  let named ← Prog.effect "agentsByToolName" [agents]
-  let entries := mapEntries named
-  let byName := (entries.find? fun entry => entry.1 == field params "name").map (·.2)
-  let agent := byName.orElse fun _ =>
-    (entries.find? fun entry => field entry.2 "agentId" == field params "name").map (·.2)
-  let some agent := agent | do
-    let names := ", ".intercalate (entries.map fun entry => text entry.1)
+  if direct && name == toJson "get_run" then
+    return ← Prog.effect "getRun" [caller call, field params "arguments"]
+  if name != toJson "ask_agent" then
     let error ← Prog.effect "new ProtocolError"
-      [toJson (-32602), toJson s!"No tool named {text (field params "name")}. Tools are named after agents, so it may have been renamed. Current tools: {if names.isEmpty then "none" else names}."]
+      [toJson (-32602), toJson s!"No tool named {text name}. Call list_agents to see the agents, then ask_agent to run one."]
     Prog.fail error
-  let parsed ← Prog.effect "AGENT_ARGS.safeParse" [field params "arguments"]
+  let parsed ← Prog.effect "ASK_ARGS.safeParse" [field params "arguments"]
   if field parsed "success" != toJson true then
-    match agentArgsError (field params "arguments") with
+    match askArgsError (field params "arguments") with
     | some message => return ← Prog.effect "toolResult" [toJson message, toJson true]
     | none => return ← Prog.unsupported "a zod issue the model does not print"
+  let agents ← Prog.effect "listRunnableAgents" [field (caller call) "auth"]
+  let agent ← Prog.effect "findAgent" [agents, field (field parsed "data") "agent"]
+  if (agent.getStr?).toOption.isSome then
+    return ← Prog.effect "toolResult" [agent, toJson true]
   let runId ← Prog.effect "startRun" [caller call, field agent "agentId", field parsed "data"]
   if (runId.getStr?).toOption.isNone then return runId
   if direct then Prog.effect "waitForRun" [caller call, runId, signal]
   else Prog.effect "startedTask" [caller call, runId]
+
+/-- `protocolErrorResult`: a missed run call as a tool error; any other error is rethrown. -/
+def protocolErrorResult (call : Json) : Prog Json := do
+  let error := Twin.callArg call 0
+  if field (field error "$error") "name" == toJson "ProtocolError" then
+    Prog.effect "toolResult" [field (field error "$error") "message", toJson true]
+  else
+    Prog.fail error
+
+/-- `getRun`: where a run stands now, a miss on the run id read as a tool error. -/
+def getRun (call : Json) : Prog Json := do
+  let parsed ← Prog.effect "RUN_ARGS.safeParse" [Twin.callArg call 1]
+  if field parsed "success" != toJson true then
+    match stringIssue "runId" true (field (Twin.callArg call 1) "runId") false with
+    | some message => return ← Prog.effect "toolResult" [toJson message, toJson true]
+    | none => return ← Prog.unsupported "a zod issue the model does not print"
+  let resolved ← Prog.attempt "resolveTask" [Twin.callArg call 0, field (field parsed "data") "runId"]
+  match resolved with
+  | .ok task =>
+    match ← Prog.attempt "directReply" [task] with
+    | .ok reply => return reply
+    | .threw error _ => Prog.effect "protocolErrorResult" [error]
+    | .pending => Prog.unsupported "the reply never settled"
+  | .threw error _ => Prog.effect "protocolErrorResult" [error]
+  | .pending => Prog.unsupported "the task never resolved"
+
+/-- `findAgent`: the agent an id or name picks, else what to tell the caller. -/
+def findAgent (call : Json) : Prog Json := do
+  let agents := match Twin.callArg call 0 with | .arr items => items.toList | _ => []
+  let wanted := text (Twin.callArg call 1)
+  if !(Access.Js.isAscii wanted) || agents.any (fun agent => !(Access.Js.isAscii (text (field agent "name")))) then
+    return ← Prog.unsupported "case folding of names outside ASCII"
+  let named := agents.filter fun agent => (text (field agent "name")).toLower == wanted.toLower
+  let byId := agents.find? fun agent => field agent "agentId" == toJson wanted
+  let picked := byId.orElse fun _ => match named with | [only] => some only | _ => none
+  if let some agent := picked then return agent
+  if named.isEmpty then
+    return toJson s!"No agent named {wanted}. Call list_agents to see the agents you can ask."
+  let _ ← Prog.effect "getStorage" []
+  let scopes ← Prog.effect "getStorage().agents.scopes" [toJson named]
+  let scopeOf (id : Json) : Option Json :=
+    match field scopes "$map" with
+    | .arr pairs => (pairs.toList.find? fun pair => Twin.arg pair 0 == id).map (Twin.arg · 1)
+    | _ => none
+  let choices := named.map fun agent =>
+    let id := text (field agent "agentId")
+    match scopeOf (field agent "agentId") with
+    | some scope => s!"{id} (project {text (field scope "project")}, stage {text (field scope "stage")})"
+    | none => id
+  return toJson s!"{named.length} agents are named {wanted}. Pass one of these ids as agent: {", ".intercalate choices}."
 
 /-- `tasks/get`: the task a run belongs to, as a finished result. -/
 def tasksGet (call : Json) : Prog Json := do
@@ -234,6 +273,9 @@ def childExit (call : Json) : Prog Json := do
 def twins : List Spec.Twin :=
   [Twin.traced "apps/core/src/harness/mcp-tasks.ts#createTaskServer/arg1" toolsList,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#createTaskServer/arg2" toolsCall,
+   Twin.traced "apps/core/src/harness/mcp-tasks.ts#findAgent" findAgent,
+   Twin.traced "apps/core/src/harness/mcp-tasks.ts#getRun" getRun,
+   Twin.traced "apps/core/src/harness/mcp-tasks.ts#protocolErrorResult" protocolErrorResult,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#createTaskServer/arg2~2" tasksGet,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#createTaskServer/arg2~3" tasksUpdate,
    Twin.traced "apps/core/src/harness/mcp-tasks.ts#createTaskServer/arg2~4" tasksCancel,

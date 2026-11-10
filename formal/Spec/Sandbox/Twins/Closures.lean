@@ -989,28 +989,10 @@ private def releaseOccupancy (call : Json) : Prog Json := do
     Prog.setState "module.occupants" next
   return undef
 
-/-- `meterEphemeralSandbox/arg1`: the queued upsert of an ephemeral sandbox's row. -/
-private def meterUpsert (call : Json) : Prog Json := do
-  let specs := Twin.moduleValue call "specs"
-  let isPromise := get specs "$opaque" == toJson "Promise"
-  let sandboxId := Twin.moduleValue call "sandboxId"
-  Prog.effect "upsertSandboxInstance"
-    [Twin.moduleValue call "controlPlane", Twin.moduleValue call "provider", sandboxId, sandboxId,
-     Twin.moduleValue call "metadata",
-     literal [("ephemeral", toJson true), ("specs", if isPromise then undef else specs)]]
-
-/-- `meterEphemeralSandbox/arg1~3`: the queued removal of an ephemeral sandbox's row. -/
-private def meterRemove (call : Json) : Prog Json := do
-  Prog.drain (fun _ _ => pure ()) 4
-  let sandboxId := Twin.moduleValue call "sandboxId"
-  Prog.effect "removeSandboxInstance" [Twin.moduleValue call "accountId", sandboxId, sandboxId]
-
-/-- `meterEphemeralSandbox/return~2`: queues the removal and hands the promise to `waitUntil`. -/
+/-- `meterEphemeralSandbox/return~2`: queues the row's removal. -/
 private def meterRelease (call : Json) : Prog Json := do
-  let _ ← Prog.attempt "queueMirrorWrite"
-    [Twin.moduleValue call "sandboxId", Json.mkObj [("$fn", toJson "")]]
-  let _ ← Prog.effect "waitUntil"
-    [Json.mkObj [("$opaque", toJson "Promise"), ("$fields", Json.mkObj [])]]
+  let sandboxId := Twin.moduleValue call "sandboxId"
+  Prog.spawn "queueMirrorRemove" [Twin.moduleValue call "accountId", sandboxId, sandboxId]
   return undef
 
 /-- `sendHeartbeats/arg0`: stamps one machine connection as seen. -/
@@ -1062,8 +1044,6 @@ def twins : List Spec.Twin :=
    Twin.traced (tools ++ "index.ts#createTools/arg1") skillLoaderCallback,
    Twin.traced (tools ++ "channel.tool.ts#workspaceAttachment/fetchData") attachmentFetchData,
    Twin.traced "apps/core/src/harness/sandbox/live-status.ts#occupySandbox/return" releaseOccupancy,
-   Twin.traced "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox/arg1" meterUpsert,
-   Twin.traced "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox/arg1~3" meterRemove,
    Twin.traced "apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox/return~2" meterRelease,
    Twin.traced "apps/core/src/harness/sandbox/machine-executor.ts#sendHeartbeats/arg0" heartbeatSeen]
 

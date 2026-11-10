@@ -61,6 +61,7 @@ const { handleMcpRequest } =
 type Replay = Parameters<typeof handleMcpRequest>[1];
 
 function call(agentId: string): CoreRequest {
+  const tool = "ask_agent";
   return {
     method: "POST",
     path: "/mcp",
@@ -72,15 +73,15 @@ function call(agentId: string): CoreRequest {
       "content-type": "application/json",
       "mcp-protocol-version": "2026-07-28",
       "mcp-method": "tools/call",
-      "mcp-name": agentId,
+      "mcp-name": tool,
     },
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
       params: {
-        name: agentId,
-        arguments: { prompt: "do it" },
+        name: tool,
+        arguments: { agent: agentId, prompt: "do it" },
         _meta: {
           "io.modelcontextprotocol/protocolVersion": "2026-07-28",
           "io.modelcontextprotocol/clientInfo": { name: "test", version: "1" },
@@ -104,7 +105,7 @@ async function answerOf(replay: Replay): Promise<unknown> {
 }
 
 describe("starting a task through tools/call", (): void => {
-  test("an unknown agent is an invalid-params error", async (): Promise<void> => {
+  test("an agent that can no longer be run is an error tool result", async (): Promise<void> => {
     const answer = await answerOf(
       replayWith(
         new Response("{}", { status: 404 }),
@@ -112,7 +113,10 @@ describe("starting a task through tools/call", (): void => {
       ),
     );
 
-    expect(JSON.stringify(answer)).toContain("Unknown tool: agent_1");
+    expect(JSON.stringify(answer)).toContain(
+      "Agent agent_1 can no longer be run",
+    );
+    expect(JSON.stringify(answer)).toContain('"isError":true');
   });
 
   test("a refused run comes back as an error tool result", async (): Promise<void> => {

@@ -331,13 +331,7 @@ private def suspendOrResumeSandbox (call : Json) : Prog Json := do
   auditedVerb context
     (if suspending then "context.executor.suspend" else "context.executor.resume")
   let status := str (if suspending then "suspended" else "running")
-  let reservationKey := field context "reservationKey"
-  let externalId ← Prog.effect "getSandboxExternalId" [field context "provider", reservationKey]
-  let _ ← Prog.drain (fun _ _ => pure ()) 1
-  let _ ← Prog.effect "setSandboxInstanceStatus"
-    [field context "accountId", reservationKey, status]
-  let _ ← Prog.effect "queueMirrorWrite"
-    [orElse externalId reservationKey, Json.mkObj [("$fn", str "")]]
+  let _ ← Prog.effect "queueMirrorStatus" [context, status]
   let _ ← Prog.effect "context.audit" [str "ok", Json.mkObj [("status", status)]]
   Prog.effect "jsonResponse" [toJson (200 : Nat), Json.mkObj [("status", status)]]
 

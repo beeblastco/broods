@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Sandbox.Twins.Tools.Js
 
 /-!
 Twins for the functions listed in `.lake/worklist/assign6/sandbox6b.tsv`.
@@ -287,13 +288,23 @@ def resolveS3ReadTarget (call : Json) : Prog Json := do
     Prog.fail error
   | .pending => Prog.unsupported "the mount lookup never finished"
 
-/-- `meterEphemeralSandbox`. Specs only feed writes queued as closures, so their value is not read. -/
+/-- `meterEphemeralSandbox`. A Promise of sizes is written by a later closure, so it is not read here. -/
 def meterEphemeralSandbox (call : Json) : Prog Json := do
   let plane := Twin.callArg call 0
   let accountId := if truthy (field plane "ownCredentials") then undef else field plane "accountId"
   if !truthy accountId then return fnRef
-  if !isUndef (Twin.callArg call 4) then Prog.spawn "readSpecs"
-  Prog.spawn "queueMirrorWrite" [Twin.callArg call 2, fnRef]
+  let specs ←
+    if isUndef (Twin.callArg call 4) then pure undef
+    else match ← Prog.attempt "readSpecs" [] with
+      | .ok value => pure value
+      | .threw error _ => Prog.fail error
+      | .pending => pure undef
+  let id := Twin.callArg call 2
+  let options := [("ephemeral", toJson true), ("specs", specs)].filter fun entry => !isUndef entry.2
+  Prog.spawn "queueMirrorUpsert"
+    [Json.mkObj ([("controlPlane", plane), ("provider", Twin.callArg call 1),
+      ("reservationKey", id), ("externalId", id), ("metadata", Twin.callArg call 3),
+      ("options", Json.mkObj options)].filter fun entry => !isUndef entry.2)]
   return fnRef
 
 /-- `MAX_TIMEOUT_MS` in `apps/cloudflare-sandbox/src/limits.ts`. -/
@@ -388,16 +399,13 @@ def cloudflareRun (call : Json) : Prog Json := do
       let workspace ← Prog.effect "requiredWorkspacePath" [request, toJson "/workspace"]
       let response ← bridgeExec config request id workspace isReserved
       if isReserved && truthy key then
-        Prog.spawn "queueMirrorWrite" [id, fnRef]
+        let specs ← Prog.effect "configuredSandboxSpecs" [config]
+        Prog.spawn "queueMirrorUpsert"
+          [Tools.mirrorUpsert plane (toJson "cloudflare") key id (field request "metadata")
+            (some [("specs", specs)])]
       let result ← Prog.effect "execRunResult"
         [request, response, toJson "cloudflare", startedAt]
-      Prog.drain (fun label _ =>
-        if label == "arg1" then do
-          let specs ← Prog.effect "configuredSandboxSpecs" [config]
-          Prog.spawn "upsertSandboxInstance"
-            [plane, toJson "cloudflare", key, id, field request "metadata",
-             Json.mkObj (if isUndef specs then [] else [("specs", specs)])]
-        else Prog.unsupported s!"callback {label}") 4
+      Prog.drain (fun label _ => Prog.unsupported s!"callback {label}") 4
       pure (Except.ok result))
     (fun error => pure (Except.error error))
   destroy

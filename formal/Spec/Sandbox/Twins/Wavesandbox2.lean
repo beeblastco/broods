@@ -1241,9 +1241,6 @@ private def releasePlatformSandbox (call : Json) : Prog Json := do
   let id ← if undef expected || expected == .null then Prog.effect "getSandboxExternalId" [provider, key] else pure expected
   if !truthy id then return Twin.undefinedJson
   let _ ← Prog.effect "drop" [id]
-  Prog.drain (fun label _ =>
-    if label == "arg1" then pure () else Prog.unsupported "unexpected mirror callback") 4
-  let _ ← Prog.effect "queueMirrorWrite" [id, fn ""]
   let _ ← Prog.effect "deleteSandboxInstance" [provider, key, Twin.callArg call 1, id]
   return Twin.undefinedJson
 
@@ -1317,7 +1314,7 @@ private def releaseOnProvider (call : Json) : Prog Json := do
     (fun error => do
       let _ ← Prog.effect "toErrorMessage" [error]
       pure Json.null)
-  if !truthy (field target "externalId") then return toJson false
+  if !truthy (field target "externalId") then return Twin.undefinedJson
   let configs ← Prog.effect "releaseCandidates" [provider, Twin.callArg call 2, field target "instance"]
   for config in items configs do
     let done ← Prog.catchFail (do
@@ -1328,8 +1325,8 @@ private def releaseOnProvider (call : Json) : Prog Json := do
       (fun error => do
         let _ ← Prog.effect "toErrorMessage" [error]
         pure false)
-    if done then return toJson true
-  return toJson false
+    if done then return field target "externalId"
+  return Twin.undefinedJson
 
 private def obscuraCommand (call : Json) : Prog Json := do
   let request := Twin.callArg call 1

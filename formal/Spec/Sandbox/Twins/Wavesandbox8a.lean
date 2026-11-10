@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Sandbox.Twins.Tools.Js
 
 /-!
 Twins for the functions listed in `.lake/worklist/assign8/sandbox8a.tsv`.
@@ -197,9 +198,9 @@ private def createAndClaim (call request key : Json) : Prog (Json × Bool) := do
       [toJson "sandbox", key, sandboxId created, accountId, idle]
     if !truthy claimed then return none
     let specs ← Prog.effect "configuredSandboxSpecs" [config call]
-    let _ ← Prog.effect "upsertSandboxInstance"
-      [field (config call) "controlPlane", toJson "sandbox", key, sandboxId created,
-       metadataOf request, present [("specs", specs)]]
+    Prog.spawn "queueMirrorUpsert"
+      [Tools.mirrorUpsert (field (config call) "controlPlane") (toJson "sandbox") key
+        (sandboxId created) (metadataOf request) (some [("specs", specs)])]
     return some (created, true)
   let claimed ← tryCatch claim fun error => do
     if (error.getObjVal? "$unsupported").toOption.isSome then Prog.fail error
@@ -223,8 +224,9 @@ private def reuseReserved (call request key externalId : Json) : Prog (Option (J
     Prog.spawn "saveSandboxInstance"
       [toJson "sandbox", key, externalId, controlPlaneField call "accountId",
        controlPlaneField call "releaseAfterIdleSeconds"]
-    Prog.spawn "upsertSandboxInstance"
-      [field (config call) "controlPlane", toJson "sandbox", key, externalId, metadataOf request]
+    Prog.spawn "queueMirrorUpsert"
+      [Tools.mirrorUpsert (field (config call) "controlPlane") (toJson "sandbox") key externalId
+        (metadataOf request) none]
     return some (sandbox, false)
   tryCatch attempt fun error => do
     if (error.getObjVal? "$unsupported").toOption.isSome then Prog.fail error

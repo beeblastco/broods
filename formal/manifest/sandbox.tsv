@@ -70,3 +70,4 @@ packages/convex/model/sandboxProviders.ts	decision	replayed	Spec.Sandbox.provide
 packages/convex/model/sandboxRules.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/workspaceIsolation.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
 packages/convex/model/workspaceRules.ts	decision	open			Whole-file model and replay not completed; no file-level model claimed; twins are credited separately in coverage.json.
+apps/core/src/harness/sandbox/mirror-writes.ts	decision	open			Added after #1438. No model yet: the per-account queue of sandbox row writes, its lanes, merging of upserts and the send timer remain.

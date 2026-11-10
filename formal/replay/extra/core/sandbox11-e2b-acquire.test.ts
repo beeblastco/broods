@@ -62,15 +62,21 @@ function config(): SandboxExecutorConfig {
   return {
     provider: "e2b",
     persistent: true,
+    controlPlane: {
+      accountId: "acct_1",
+      name: "box",
+      specs: { vcpu: 1, memoryMb: 1024 },
+    },
     options: { apiKey: "key" },
   } as SandboxExecutorConfig;
 }
 
-function launch(
+// The row write is queued, so it reaches the spy a tick after the launch returns.
+async function launch(
   executor: E2BSandboxExecutor,
   extra: Record<string, unknown> = {},
-): ReturnType<E2BSandboxExecutor["runBackground"]> {
-  return executor.runBackground({
+): Promise<Awaited<ReturnType<E2BSandboxExecutor["runBackground"]>>> {
+  const handle = await executor.runBackground({
     code: "echo hi",
     reservationKey: KEY,
     timeoutSeconds: 30,
@@ -78,6 +84,11 @@ function launch(
     jobId: "job_1",
     ...extra,
   });
+  await new Promise<void>((resolve): void => {
+    setTimeout(resolve, 0);
+  });
+
+  return handle;
 }
 
 function stored(...ids: Array<string | undefined>): void {

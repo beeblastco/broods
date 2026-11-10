@@ -36,6 +36,7 @@ interface Line {
 interface Result {
   source: string;
   internal: string[];
+  discarded: string[];
   external: string[];
   traced: boolean;
   compared: number;
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
       // Damage changes effects, so a twin whose compared calls made none has nothing to catch.
       twin.compared > 0 &&
       twin.stateUnmodelled === 0 &&
-      twin.internal.length + twin.external.length > 0 &&
+      twin.internal.length + twin.external.length + twin.discarded.length > 0 &&
       statSync(tracePath(twin.source)).size <= MAX_SAMPLED_TRACE_BYTES,
   );
   const step = Math.max(1, Math.floor(twins.length / SAMPLE));

@@ -71,7 +71,7 @@ What earns credit, per statement rather than per function:
 
 - Only statements that ran in a call the twin matched. A branch no test took earns nothing.
 - Every internal function the twin takes an answer from must itself be credited, or be listed in
-  `boundaries.tsv` with a reason. So build leaves first.
+  `boundaries.tsv` with a reason. So build leaves first. A call whose value is discarded (`void f()`, a bare `f();`) is not an answer, unless a recorded call threw on the spot, changed the caller's state, was handed a function or ran a callback of the caller (L32).
 - Every external effect label must match a `boundaries.tsv` regex, and every opaque class must be
   declared there, or the call does not count.
 - A call with a value too big to record is not compared. What a function's closures do after it returned is outside its trace (L25).

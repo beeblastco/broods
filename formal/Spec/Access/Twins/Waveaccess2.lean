@@ -1012,23 +1012,38 @@ private def snapshotSandbox (call : Json) : Prog Json := do
     Prog.effect "jsonResponse" [toJson (200 : Nat), defined
       [("status", status), ("snapshotId", field result "snapshotId"), ("externalImageId", externalImageId)]]
 
+/-- `queueMirrorStatus`: the status write runs inside the queued callback, on the row's lane. -/
+private def queueMirrorStatus (call : Json) : Prog Json := do
+  let context := Twin.callArg call 0
+  let changed ← Prog.input fun
+    | none => pure (Json.bool false)
+    | some _ => Prog.effect "setSandboxInstanceStatus"
+        [field context "accountId", field context "reservationKey", Twin.callArg call 1,
+         Twin.callArg call 2]
+  let _ ← Prog.effect "queueMirrorWrite"
+    [field context "accountId", field context "reservationKey",
+     obj [("kind", .str "status"), ("send", obj [("$fn", .str "send")])]]
+  return changed
+
 private def refreshSandboxStatus (call : Json) : Prog Json := do
   let context := Twin.callArg call 0
   if !executorHas (field context "executor") "getInstanceInfo" then
     return ← Prog.effect "unsupportedSandboxAction" [context, .str "instance status refresh"]
   let account := field context "accountId"
   let key := field context "reservationKey"
+  let reserved ← Prog.effect "getSandboxExternalId" [field context "provider", key]
   let info ← audited context "context.executor.getInstanceInfo"
   let state := field info "state"
   if !truth info || state == .str "terminating" then
-    let _ ← Prog.effect "removeSandboxInstance" [account, key]
+    let removedId := coalesce (field info "externalId") (coalesce reserved Twin.undefinedJson)
+    let _ ← Prog.effect "queueMirrorRemove" [account, key, removedId]
     auditThen context "ok" [("status", .str "terminating")]
     return ← Prog.effect "jsonResponse" [toJson (200 : Nat), obj [("status", .str "terminated")]]
   let status := if state == .str "unknown" then Json.str "error" else state
   let errorMessage := coalesce (field info "errorMessage")
     (if state == .str "unknown" then .str "provider reported an unrecognised state" else Twin.undefinedJson)
-  let changed ← Prog.effect "setSandboxInstanceStatus"
-    [account, key, status, defined [("observed", .bool true), ("errorMessage", errorMessage)]]
+  let changed ← Prog.effect "queueMirrorStatus"
+    [context, status, defined [("observed", .bool true), ("errorMessage", errorMessage)]]
   if truth changed then
     auditThen context (if status == .str "error" then "error" else "ok") [("status", status), ("errorMessage", errorMessage)]
   Prog.effect "jsonResponse" [toJson (200 : Nat), defined [("status", status), ("externalId", field info "externalId")]]
@@ -1040,13 +1055,9 @@ private def terminateSandbox (call : Json) : Prog Json := do
   let account := field context "accountId"
   let key := field context "reservationKey"
   let provider := field context "provider"
-  let externalId ← Prog.effect "getSandboxExternalId" [provider, key]
   let _ ← audited context "context.executor.release"
   let _ ← Prog.effect "deleteSandboxInstance" [provider, key, account]
-  let _ ← Prog.drain (fun _ _ => pure ()) 1
-  let _ ← Prog.attempt "removeSandboxInstance" [account, key]
-  let queued ← Prog.attempt "queueMirrorWrite" [coalesce externalId key, obj [("$fn", .str "")]]
-  let _ ← settled [queued]
+  let _ ← Prog.effect "queueMirrorRemove" [account, key]
   auditThen context "ok" [("status", .str "terminating")]
   Prog.effect "jsonResponse" [toJson (200 : Nat), obj [("status", .str "terminated")]]
 
@@ -1065,7 +1076,7 @@ private def execSandbox (call : Json) : Prog Json := do
   let key := field context "reservationKey"
   let result ← callThrough context "context.executor.run"
     (obj [("code", .str code), ("reservationKey", key), ("timeoutSeconds", timeoutSeconds), ("outputLimitBytes", outputLimit)])
-  let _ ← Prog.effect "setSandboxInstanceStatus" [field context "accountId", key, .str "running"]
+  let _ ← Prog.effect "queueMirrorStatus" [context, .str "running"]
   let truncated := Json.bool (field result "truncated" == .bool true)
   auditThen context (if truth (field result "ok") then "ok" else "error")
     [("status", .str "running"), ("exitCode", field result "exitCode"), ("durationMs", field result "durationMs"), ("truncated", truncated)]
@@ -1100,7 +1111,7 @@ private def openSandboxTerminal (call : Json) : Prog Json := do
     let info ← Prog.effect "context.executor.getInstanceInfo" [field context "ref"]
     if field info "state" == .str "suspended" then
       let _ ← audited context "context.executor.resume"
-      let _ ← Prog.effect "setSandboxInstanceStatus" [account, key, .str "running"]
+      let _ ← Prog.effect "queueMirrorStatus" [context, .str "running"]
   let mut bearerExpiresAt : Option Json := none
   let mut target : List (String × Json) := []
   if name == "lambda" then
@@ -1320,6 +1331,7 @@ def twins : List Spec.Twin :=
    Twin.traced (gateway ++ "followAttachedExecution") followAttachedExecution,
    Twin.traced (gateway ++ "attachCoreStream") attachCoreStream,
    Twin.traced (handler ++ "snapshotSandbox") snapshotSandbox,
+   Twin.traced (handler ++ "queueMirrorStatus") queueMirrorStatus,
    Twin.traced (handler ++ "refreshSandboxStatus") refreshSandboxStatus,
    Twin.traced (handler ++ "terminateSandbox") terminateSandbox,
    Twin.traced (handler ++ "execSandbox") execSandbox,

@@ -93,16 +93,22 @@ function config(
   return {
     provider: "daytona",
     persistent: true,
+    controlPlane: {
+      accountId: "acct_1",
+      name: "box",
+      specs: { vcpu: 1, memoryMb: 1024 },
+    },
     options: { apiKey: "key" },
     ...extra,
   } as SandboxExecutorConfig;
 }
 
-function launch(
+// The row write is queued, so it reaches the spy a tick after the launch returns.
+async function launch(
   executor: Executor,
   extra: Record<string, unknown> = {},
-): ReturnType<Executor["runBackground"]> {
-  return executor.runBackground({
+): Promise<Awaited<ReturnType<Executor["runBackground"]>>> {
+  const handle = await executor.runBackground({
     code: "echo hi",
     reservationKey: KEY,
     timeoutSeconds: 30,
@@ -110,6 +116,11 @@ function launch(
     jobId: "job_1",
     ...extra,
   });
+  await new Promise<void>((resolve): void => {
+    setTimeout(resolve, 0);
+  });
+
+  return handle;
 }
 
 function stored(...ids: Array<string | undefined>): void {

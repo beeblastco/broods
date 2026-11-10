@@ -10,6 +10,7 @@ import {
 
 import type { McpRecord } from "../../../../apps/core/src/shared/domain/mcp.ts";
 import { hostedMcpFetch } from "../../../../apps/core/src/harness/mcp/hosted.ts";
+import { flushUsage } from "../../../../apps/core/src/harness/plan-limits.ts";
 import { getStorage } from "../../../../apps/core/src/shared/storage.ts";
 
 interface BridgeCase {
@@ -161,6 +162,9 @@ test.each(CASES)(
       method: "POST",
       body: "{}",
     }).catch((error: unknown): Error => error as Error);
+
+    // Usage is batched behind a timer that holds a waitUntil task; send it now.
+    await flushUsage();
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error).message).toContain(bridgeCase.expected);

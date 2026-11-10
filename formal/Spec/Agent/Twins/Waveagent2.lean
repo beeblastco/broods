@@ -621,11 +621,63 @@ private def claimWarning (call : Json) : Prog Json := do
     return toJson s!"This account has used 80% of its storage limit of {str limit} on the {plan} plan. Runs stop when it is full."
   return toJson s!"This account has used 80% of one of its monthly resource caps on the {plan} plan. Runs stop when a cap is reached."
 
+private def usageMapEntries (map : Json) : List (Json × Json) :=
+  (items (field map "$map")).map fun pair => (Twin.arg pair 0, Twin.arg pair 1)
+
+private def usageMapSet (map key value : Json) : Json :=
+  let entries := usageMapEntries map
+  let next := if entries.any (fun entry => entry.1 == key) then
+      entries.map fun entry => if entry.1 == key then (key, value) else entry
+    else entries ++ [(key, value)]
+  Json.mkObj [("$map", Json.arr (next.map fun entry => Json.arr #[entry.1, entry.2]).toArray)]
+
+/-- `pending.usage[field] = (pending.usage[field] ?? 0) + (usage[field] ?? 0)` for each field. -/
+private def addUsage (pending usage : Json) : Json :=
+  let order := match usage.getObjVal? "$keys" with
+    | .ok (.arr keys) => keys.toList.filterMap fun (key : Json) => (Json.getStr? key).toOption
+    | _ => (match usage with | .obj kvs => kvs.keys | _ => [])
+  order.foldl (fun total name =>
+    let previous := match field total name with
+      | .num number => number
+      | _ => 0
+    let added := match field usage name with
+      | .num number => number
+      | _ => 0
+    total.setObjVal! name (Spec.Access.Js.floatJson
+      (Spec.Access.Js.numFloat previous + Spec.Access.Js.numFloat added))) pending
+
+/-- Adds a call's usage to the per-account, per-source totals and arms the 5 s flush once. -/
 private def recordUsage (call : Json) : Prog Json := do
-  let _ ← Prog.effect "getStorage"
-  Prog.spawn "getStorage().budgets.record"
-    [Twin.callArg call 0, Twin.callArg call 1, Twin.callArg call 2]
-  Prog.effect "waitUntil" [Json.mkObj [("$opaque", toJson "Promise")]]
+  let accountId := Twin.callArg call 0
+  let usage := Twin.callArg call 1
+  let source := Twin.callArg call 2
+  let pendingTable := Twin.moduleValue call "pendingUsage"
+  let sources := (usageMapEntries pendingTable).find? (fun entry => entry.1 == accountId)
+    |>.map (·.2) |>.getD (Json.mkObj [("$map", Json.arr #[])])
+  let part (name : String) : Json :=
+    let value := field source name
+    if undef value then Json.null else value
+  let key := toJson (Twin.jsonStringify 8
+    (Json.arr #[part "projectId", part "agentId", part "workspaceId"]))
+  let merged :=
+    match (usageMapEntries sources).find? (fun entry => entry.1 == key) |>.map (·.2) with
+    | some pending =>
+      let entry := Json.mkObj [("usage", addUsage (field pending "usage") usage)]
+      if undef (field pending "source") then entry
+      else (entry.setObjVal! "source" (field pending "source")).setObjVal! "$keys" (field pending "$keys")
+    | none =>
+      let base := Json.mkObj [("usage", usage), ("source", source)]
+      if undef source then Json.mkObj [("usage", usage)]
+      else base.setObjVal! "$keys" (Json.arr #[toJson "usage", toJson "source"])
+  Prog.setState "module.pendingUsage"
+    (usageMapSet pendingTable accountId (usageMapSet sources key merged))
+  if Twin.moduleValue call "scheduledFlush" != Json.null then return Twin.undefinedJson
+  let timer ← Prog.effect "setTimeout" [Json.mkObj [("$fn", toJson "")], toJson (5000 : Nat)]
+  Prog.setState "module.scheduledFlush"
+    (Json.mkObj [("timer", timer), ("settle", Json.mkObj [("$fn", toJson "")]),
+      ("$keys", Json.arr #[toJson "timer", toJson "settle"])])
+  let _ ← Prog.effect "waitUntil" [Json.mkObj [("$opaque", toJson "Promise")]]
+  return Twin.undefinedJson
 
 private def hookMutableFields (event : String) : List String :=
   match event with

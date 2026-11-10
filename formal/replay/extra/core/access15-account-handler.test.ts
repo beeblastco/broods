@@ -371,6 +371,12 @@ describe("openSandboxTerminal", (): void => {
 });
 
 describe("refreshSandboxStatus", (): void => {
+  beforeEach((): void => {
+    spies.push(
+      spyOn(instanceStore, "getSandboxExternalId").mockResolvedValue("ext-1"),
+    );
+  });
+
   test("refuses a provider that cannot report status", async (): Promise<void> => {
     useExecutor({});
     const response = await handler(lifecycle("refresh"));
@@ -393,7 +399,7 @@ describe("refreshSandboxStatus", (): void => {
       const response = await handler(lifecycle("refresh"));
 
       expect(await response.json()).toEqual({ status: "terminated" });
-      expect(removed.mock.calls[0]).toEqual(["acct_test", "res_1"]);
+      expect(removed.mock.calls[0]).toEqual(["acct_test", "res_1", "ext-1"]);
     },
   );
 

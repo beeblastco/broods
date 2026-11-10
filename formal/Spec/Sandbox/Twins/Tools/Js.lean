@@ -453,4 +453,17 @@ def sha256Hex (value : String) : String :=
     let n := word.toNat
     hexByte (n / 16777216) ++ hexByte (n / 65536 % 256) ++ hexByte (n / 256 % 256) ++ hexByte (n % 256))
 
+/-- The argument of `queueMirrorUpsert({...})`: `undefined` fields are absent, as the recorder shows
+them. `options` is `none` when the call passes none. -/
+def mirrorUpsert (plane provider key id metadata : Json) (options : Option (List (String × Json))) :
+    Json :=
+  let present (pairs : List (String × Json)) : List (String × Json) :=
+    pairs.filter fun pair => pair.2 != Spec.Twin.undefinedJson
+  Json.mkObj (present
+    [("controlPlane", plane), ("provider", provider), ("reservationKey", key),
+     ("externalId", id), ("metadata", metadata),
+     ("options", match options with
+       | some pairs => Json.mkObj (present pairs)
+       | none => Spec.Twin.undefinedJson)])
+
 end Spec.Sandbox.Tools
