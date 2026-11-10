@@ -5,7 +5,7 @@ import { activeDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import { priceLookupIds } from "./model/modelPricing";
 import { resolveProjectStage } from "./model/projectScope";
-import { projectEndpointIds } from "./model/usageEndpoints";
+import { projectEndpoints, type UsageEndpoint } from "./model/usageEndpoints";
 import { modelPricesFields } from "./schema";
 import { taskIdParts, type UsageGrain } from "./usage";
 
@@ -150,7 +150,7 @@ export const fetchUsageStats = query({
 
     return await usageForEndpoints(
       ctx,
-      await projectEndpointIds(ctx, authUser.id, projectId, stageId),
+      await projectEndpoints(ctx, authUser.id, projectId, stageId),
       range,
     );
   },
@@ -175,14 +175,14 @@ export const usageForAccountStage = internalQuery({
       : null;
 
     return deployment
-      ? await usageForEndpoints(ctx, [deployment.endpointId], range)
+      ? await usageForEndpoints(ctx, [deployment], range)
       : null;
   },
 });
 
 async function usageForEndpoints(
   ctx: QueryCtx,
-  endpointIds: string[],
+  endpoints: UsageEndpoint[],
   range: Infer<typeof usageRange>,
 ): Promise<Infer<typeof usageStats>> {
   const cfg = RANGE_CONFIG[range];
@@ -194,7 +194,7 @@ async function usageForEndpoints(
     startTimeMs: startMs,
     endTimeMs: nowMs,
   };
-  if (endpointIds.length === 0) {
+  if (endpoints.length === 0) {
     return {
       ...base,
       buckets: [],
@@ -217,8 +217,8 @@ async function usageForEndpoints(
 
   const grain = usageGrainForBinSeconds(cfg.binSeconds);
   const batches = await Promise.all(
-    endpointIds.map((endpointId) =>
-      collectUsageRollups(ctx, endpointId, grain, startMs),
+    endpoints.map((endpoint) =>
+      collectUsageRollups(ctx, endpoint, grain, startMs),
     ),
   );
 
@@ -247,7 +247,7 @@ export const fetchUsageTasks = query({
       throw new Error("User not found or not authenticated");
     }
 
-    const endpointIds = await projectEndpointIds(
+    const endpoints = await projectEndpoints(
       ctx,
       authUser.id,
       args.projectId,
@@ -256,9 +256,9 @@ export const fetchUsageTasks = query({
     const models = args.models ? parseModelKeys(args.models) : undefined;
     // A range per endpoint and model keeps filtered-out models off Convex's read budget,
     // which is split across ranges; the one extra row read marks a range cut short.
-    const scans = endpointIds.flatMap((endpointId) =>
+    const scans = endpoints.flatMap((endpoint) =>
       (models ?? [undefined]).map((model) => ({
-        endpointId: endpointId,
+        endpoint: endpoint,
         model: model,
       })),
     );
@@ -270,7 +270,7 @@ export const fetchUsageTasks = query({
       scans.map((scan) =>
         collectUsageTasks(
           ctx,
-          scan.endpointId,
+          scan.endpoint,
           args.startMs,
           args.endMs,
           perScan + 1,
@@ -309,24 +309,27 @@ export const fetchUsageTasks = query({
 
 export async function collectUsageRollups(
   ctx: QueryCtx,
-  endpointId: string,
+  endpoint: UsageEndpoint,
   grain: UsageGrain,
   startMs: number,
 ): Promise<Doc<"usageRollups">[]> {
   return await ctx.db
     .query("usageRollups")
-    .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
-      q
-        .eq("endpointId", endpointId)
-        .eq("grain", grain)
-        .gte("bucketStart", startMs),
+    .withIndex(
+      "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
+      (q) =>
+        q
+          .eq("accountId", endpoint.accountId)
+          .eq("endpointId", endpoint.endpointId)
+          .eq("grain", grain)
+          .gte("bucketStart", startMs),
     )
     .collect();
 }
 
 export async function collectUsageTasks(
   ctx: QueryCtx,
-  endpointId: string,
+  endpoint: UsageEndpoint,
   startMs: number,
   endMs: number,
   limit: number,
@@ -336,10 +339,11 @@ export async function collectUsageTasks(
     return await ctx.db
       .query("taskUsage")
       .withIndex(
-        "by_endpointId_and_modelProvider_and_modelId_and_finishedAt",
+        "by_accountId_and_endpointId_and_modelProvider_and_modelId_and_finishedAt",
         (q) =>
           q
-            .eq("endpointId", endpointId)
+            .eq("accountId", endpoint.accountId)
+            .eq("endpointId", endpoint.endpointId)
             .eq("modelProvider", model.modelProvider)
             .eq("modelId", model.modelId)
             .gte("finishedAt", startMs)
@@ -350,9 +354,10 @@ export async function collectUsageTasks(
 
   return await ctx.db
     .query("taskUsage")
-    .withIndex("by_endpointId_and_finishedAt", (q) =>
+    .withIndex("by_accountId_and_endpointId_and_finishedAt", (q) =>
       q
-        .eq("endpointId", endpointId)
+        .eq("accountId", endpoint.accountId)
+        .eq("endpointId", endpoint.endpointId)
         .gte("finishedAt", startMs)
         .lt("finishedAt", endMs),
     )
