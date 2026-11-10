@@ -3,11 +3,14 @@ import {
   falsePositiveRule,
   median,
   parseArgs,
+  poll,
   renderComment,
+  renderDiagnosis,
   score,
   workspaceOf,
   type Candidate,
   type Generation,
+  type Judge,
   type Verdict,
 } from "./jittest.ts";
 
@@ -89,6 +92,50 @@ describe("score", () => {
   });
 });
 
+describe("poll", () => {
+  const judges: Judge[] = ["free", "plan", "billed"].map((model) => ({
+    cli: "claude",
+    model: model,
+  }));
+  const answers = (
+    ...likelihoods: (Verdict["likelihood"] | undefined)[]
+  ): string[] => {
+    const asked: string[] = [];
+    poll(judges, (judge) => {
+      asked.push(judge.model);
+      const likelihood = likelihoods[asked.length - 1];
+
+      return likelihood === undefined
+        ? undefined
+        : { ...verdict(likelihood), duplicate: false };
+    });
+
+    return asked;
+  };
+
+  test("two judges that agree settle it, the billed one is never asked", () => {
+    expect(answers("high", "high")).toEqual(["free", "plan"]);
+    expect(answers("low", "low")).toEqual(["free", "plan"]);
+  });
+
+  test("a split vote or an abstention asks the next judge", () => {
+    expect(answers("high", "low", "high")).toEqual(["free", "plan", "billed"]);
+    expect(answers("high", undefined, "high")).toEqual([
+      "free",
+      "plan",
+      "billed",
+    ]);
+  });
+
+  test("a duplicate stops the poll with no vote", () => {
+    const polled = poll(judges, () => ({
+      ...verdict("high"),
+      duplicate: true,
+    }));
+    expect(polled).toEqual({ verdicts: [], duplicate: true });
+  });
+});
+
 describe("renderComment", () => {
   test("asks about a catch that scored high enough", () => {
     const comment = renderComment(generation, [
@@ -109,6 +156,30 @@ describe("renderComment", () => {
       ]),
     ).toBeUndefined();
   });
+});
+
+test("renderDiagnosis names the commit whose parent passes the reproduction", () => {
+  const comment = renderDiagnosis(
+    "blocked() compares with > instead of >=.",
+    [
+      {
+        file: "apps/gateway/tests/jittest/blocked.test.ts",
+        behavior: "A key at the limit is blocked.",
+        suspects: ["apps/gateway/src/rate-limiter.ts"],
+        outcome: "reproduced",
+        rule: undefined,
+        code: "expect(limiter.blocked(key)).toBe(true);",
+        output: "Expected: true",
+        culprit: "abc1234 refactor the limiter",
+      },
+    ],
+    "0123456789abcdef",
+  );
+  expect(comment).toContain("reproduced on 01234567");
+  expect(comment).toContain("Broken by abc1234 refactor the limiter");
+  expect(renderDiagnosis("No unit test can show it.", [], "0123")).toContain(
+    "not reproduced",
+  );
 });
 
 test("workspaceOf maps a path to a workspace it can run tests in", () => {

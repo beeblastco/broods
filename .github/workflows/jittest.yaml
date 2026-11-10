@@ -5,8 +5,13 @@ name: JiTTest
 # sides, and a failure that survives the rules and the judges becomes one question on the
 # pull request. Never blocks a merge. Billed per run, so it runs only on request: the
 # jittest label (remove and add it again to re-run), or a manual run on a branch.
+# The same label on an issue reproduces the report with a failing test on dev and names
+# the commit that broke it. Label an issue only after reading it: its text reaches a
+# model that runs commands next to the key.
 on:
   pull_request:
+    types: [labeled]
+  issues:
     types: [labeled]
   workflow_dispatch:
 
@@ -14,7 +19,7 @@ permissions: {}
 
 jobs:
   jittest:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'jittest'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.label.name == 'jittest')
     # On the job, not the workflow: any other label starts a run whose job is
     # skipped, and a workflow-level group would cancel a billed run for it.
     concurrency:
@@ -60,6 +65,57 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: jittest-${{ github.run_id }}
+          path: .jittest/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 30
+
+  diagnose:
+    if: github.event_name == 'issues' && github.event.label.name == 'jittest'
+    concurrency:
+      group: jittest-issue-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.322
+
+      - name: Reproduce the report and find the commit that broke it
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY secret is not set" >&2; exit 1; }
+          printf '# %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" > "$RUNNER_TEMP/report.md"
+          bun run jittest -- --report "$RUNNER_TEMP/report.md"
+
+      - name: Answer on the issue
+        if: hashFiles('.jittest/comment.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: gh issue comment "$ISSUE" --body-file .jittest/comment.md
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jittest-issue-${{ github.run_id }}
           path: .jittest/
           include-hidden-files: true
           if-no-files-found: ignore
