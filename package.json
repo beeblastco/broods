@@ -62,9 +62,6 @@
     "@earendil-works/pi-coding-agent": {
       "undici": "8.12.3"
     },
-    "@microsoft/teams.apps": {
-      "@azure/msal-node": "7.1.1"
-    },
     "@vercel/cli-config": {
       "zod": "4.6.7"
     },
