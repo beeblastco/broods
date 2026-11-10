@@ -264,7 +264,7 @@ function fakeStorage(): Storage {
       getById: none,
       removeAllForAccount: zero,
       loadConnection: none,
-      setConnection: async () => undefined,
+      setConnection: async () => false,
       saveRefreshedConnection: async () => false,
       disconnect: async () => false,
     },

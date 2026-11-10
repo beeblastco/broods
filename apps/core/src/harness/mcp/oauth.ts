@@ -137,7 +137,8 @@ async function mintAccessToken(
     );
     if (token.refreshToken) {
       if (rotatedRefreshTokens.size >= MAX_TOKEN_CACHE_ENTRIES) {
-        rotatedRefreshTokens.clear();
+        // Oldest only: every entry is the one valid token for its server.
+        rotatedRefreshTokens.delete(rotatedRefreshTokens.keys().next().value!);
       }
       rotatedRefreshTokens.set(key, token.refreshToken);
     }

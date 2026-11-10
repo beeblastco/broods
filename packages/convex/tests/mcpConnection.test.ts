@@ -54,6 +54,29 @@ test("deleting the server drops the tokens", async () => {
   expect((await server(t, scope))?.connectionCiphertext).toBeUndefined();
 });
 
+test("tokens for a url the server no longer has are not stored", async () => {
+  const t = convexTest(schema, modules);
+  const scope = await connectedServer(t);
+  await t.mutation(internal.account.mcp.update, {
+    ...scope,
+    url: "https://elsewhere.example.com/mcp",
+  });
+
+  expect(
+    await t.mutation(internal.account.mcp.setConnection, {
+      ...scope,
+      url: "https://mcp.example.com/mcp",
+      clientId: "client",
+      tokenUrl: "https://auth.example.com/token",
+      resource: "https://mcp.example.com/mcp",
+      expiresAt: 1,
+      accessToken: "access",
+      refreshToken: "refresh",
+    }),
+  ).toBe(false);
+  expect((await server(t, scope))?.connection).toBeUndefined();
+});
+
 test("a refresh loses to a sign-in that landed after it loaded", async () => {
   const t = convexTest(schema, modules);
   const scope = await connectedServer(t);
@@ -118,6 +141,7 @@ async function connectedServer(t: T): Promise<Scope> {
   });
   await t.mutation(internal.account.mcp.setConnection, {
     ...scope,
+    url: "https://mcp.example.com/mcp",
     clientId: "client",
     tokenUrl: "https://auth.example.com/token",
     resource: "https://mcp.example.com/mcp",

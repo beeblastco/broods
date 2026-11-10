@@ -217,12 +217,14 @@ interface McpStore {
     accountId: string,
     serverId: string,
   ): Promise<StoredMcpConnection | null>;
+  /** False when the server was repointed or removed since the sign-in began. */
   setConnection(
     connection: Omit<StoredMcpConnection, "updatedAt"> & {
       accountId: string;
       serverId: string;
+      url: string;
     },
-  ): Promise<void>;
+  ): Promise<boolean>;
   /** False when `updatedAt` moved since `loaded` was read: a new sign-in wins. */
   saveRefreshedConnection(
     accountId: string,

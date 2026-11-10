@@ -91,8 +91,10 @@ beforeEach((): void => {
   setStorageForTests({
     mcp: {
       getById: async (): Promise<McpRecord> => record(),
-      setConnection: async (connection: unknown): Promise<void> => {
+      setConnection: async (connection: unknown): Promise<boolean> => {
         saved.push(connection);
+
+        return true;
       },
     },
   } as unknown as Storage);

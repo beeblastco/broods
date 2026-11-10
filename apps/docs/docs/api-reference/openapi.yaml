@@ -2948,6 +2948,7 @@ paths:
         schema: { type: string }
     post:
       tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
       summary: Start an OAuth sign-in
       description: Broods does discovery, client registration and PKCE. Give `authorizeUrl` to a person to open.
       responses:
@@ -2968,6 +2969,7 @@ paths:
           }
     get:
       tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
       summary: Read whether the server is connected
       responses:
         "200":
@@ -2981,6 +2983,7 @@ paths:
                   connected: { type: boolean }
     delete:
       tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
       summary: Disconnect and forget the tokens
       responses:
         "200":

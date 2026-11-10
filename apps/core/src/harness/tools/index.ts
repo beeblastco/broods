@@ -13,7 +13,10 @@ import {
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
 import type { Tool as RemoteMcpTool } from "@modelcontextprotocol/client";
-import type { McpRecord } from "../../shared/domain/mcp.ts";
+import {
+  authorizationHeaderName,
+  type McpRecord,
+} from "../../shared/domain/mcp.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
@@ -470,6 +473,8 @@ async function registerMcpTools(
           });
           if (
             record.transport === "http" &&
+            !record.oauth &&
+            !authorizationHeaderName(record.headers) &&
             MCP_AUTH_FAILURE_PATTERN.test(message)
           ) {
             const requester = context.session?.principal?.chain?.[0];

@@ -358,17 +358,23 @@ export const saveRefreshedConnection = internalMutation({
 export const setConnection = internalMutation({
   args: {
     ...connectionRef,
+    url: v.string(),
     clientId: v.string(),
     tokenUrl: v.string(),
     resource: v.string(),
     expiresAt: v.number(),
     ...connectionSecrets,
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
     const server = await ctx.db.get(args.serverId);
-    if (server?.accountId !== args.accountId || server.status !== "active") {
-      return null;
+    // Checked with the write: tokens for one URL must never land on a row repointed since.
+    if (
+      server?.accountId !== args.accountId ||
+      server.status !== "active" ||
+      server.url !== args.url
+    ) {
+      return false;
     }
     await ctx.db.patch(server._id, {
       connection: {
@@ -381,7 +387,7 @@ export const setConnection = internalMutation({
       ...(await sealConnection(ctx, args.accountId, args)),
     });
 
-    return null;
+    return true;
   },
 });
 

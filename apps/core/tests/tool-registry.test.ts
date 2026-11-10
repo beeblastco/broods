@@ -1824,7 +1824,7 @@ function storageWithMcp(record: McpRecord): Storage {
         return 0;
       },
       loadConnection: async (): Promise<null> => null,
-      setConnection: async (): Promise<void> => {},
+      setConnection: async (): Promise<boolean> => false,
       saveRefreshedConnection: async (): Promise<boolean> => false,
       disconnect: async (): Promise<boolean> => false,
     },

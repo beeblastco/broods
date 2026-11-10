@@ -185,6 +185,7 @@ example : route .get ["v1", "mcp"] = .config := by decide
 
 /-- Its OAuth metadata reaches core at the well-known path, and nothing else under it. -/
 example : route .get [".well-known", "oauth-protected-resource", "mcp"] = .core := by decide
+example : route .get [".well-known", "oauth-protected-resource"] = .core := by decide
 example : route .get [".well-known", "oauth-protected-resource", "x"] = .notFound := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/

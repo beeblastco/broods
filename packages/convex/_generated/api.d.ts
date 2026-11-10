@@ -3424,8 +3424,9 @@ export declare const internal: {
           resource: string;
           serverId: Id<"mcp">;
           tokenUrl: string;
+          url: string;
         },
-        null
+        boolean
       >;
       update: FunctionReference<
         "mutation",

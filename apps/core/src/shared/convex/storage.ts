@@ -794,7 +794,7 @@ const mcp: Storage["mcp"] = {
     });
   },
   setConnection: async function (connection) {
-    await adminMutation(internal.account.mcp.setConnection, connection);
+    return await adminMutation(internal.account.mcp.setConnection, connection);
   },
   saveRefreshedConnection: async function (
     accountId,

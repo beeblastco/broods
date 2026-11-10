@@ -184,9 +184,10 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
       },
       publicHostFetch,
     );
-    await getStorage().mcp.setConnection({
+    const stored = await getStorage().mcp.setConnection({
       accountId: pending.accountId,
       serverId: pending.serverId,
+      url: pending.url,
       clientId: pending.clientId,
       tokenUrl: pending.tokenUrl,
       resource: pending.resource,
@@ -195,6 +196,9 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
       refreshToken: tokens.refreshToken ?? "",
       ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
     });
+    if (!stored) {
+      return page(409, "This server changed during sign-in. Start again.");
+    }
     forgetTokens(tokenKey(pending.accountId, pending.serverId));
   } catch (error) {
     return page(502, `Sign-in failed: ${toErrorMessage(error)}`);
@@ -267,8 +271,10 @@ async function startSignIn(record: McpRecord): Promise<Response> {
 
 /** The link a person opens to sign in to a remote server; the callback stores the tokens. */
 export async function mcpSignInLink(record: McpRecord): Promise<string> {
+  const base = getHarnessPublicUrl();
+  if (!base) throw new Error("PUBLIC_BASE_URL is not configured");
   const url = record.url!;
-  const redirectUri = `${getHarnessPublicUrl()}${PATH_PREFIX}${CALLBACK_SEGMENT}`;
+  const redirectUri = `${base}${PATH_PREFIX}${CALLBACK_SEGMENT}`;
   {
     const protectedResource = await discoverOAuthProtectedResourceMetadata(
       url,
