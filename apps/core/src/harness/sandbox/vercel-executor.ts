@@ -22,7 +22,6 @@ import {
 } from "./instance-store.ts";
 import {
   callbackEnv,
-  generateJobId,
   launchScript,
   logsScript,
   parseJobStatus,
@@ -38,6 +37,7 @@ import {
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
 import type {
+  SandboxBackgroundRequest,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
@@ -121,11 +121,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd: cwd } : {}),
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
+        env: mergeSandboxEnv(this.#config.envVars, {
+          principal: request.principal,
+        }),
         timeoutMs: request.timeoutSeconds * 1000,
       });
 
@@ -140,26 +138,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async prewarm(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
-    if (!this.#persistent(request)) return;
-    await this.#acquire({
-      code: "",
-      ...request,
-      timeoutSeconds: 30,
-      outputLimitBytes: 1024,
-    });
-  }
-
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     const workDir = this.#workDir(ns);
     await this.#ensureS3Mount(sandbox, request);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
-    const jobId = request.jobId ?? generateJobId();
+    const jobId = request.jobId;
     await this.#keepAlive(sandbox, request.timeoutSeconds);
     await this.#runLifecycle(sandbox, ns);
     await this.#keepAlive(sandbox, request.timeoutSeconds);
@@ -570,7 +557,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
     return {
       ok: result.exitCode === 0,
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       exitCode: result.exitCode,
       stdout: stdout.value,
       stderr: stderr.value,
@@ -726,7 +713,7 @@ function vercelCreateOptions(
         : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
     networkPolicy: vercelNetworkPolicy(config, request),
     // No run identity: the sandbox outlives its run, and each exec lays its own on top.
-    env: mergeSandboxEnv(config.envVars, request.envVars),
+    env: mergeSandboxEnv(config.envVars),
     tags: { app: "broods", provider: "vercel" },
   };
 }

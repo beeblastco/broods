@@ -12,9 +12,7 @@ export interface ToolExecuteHooks {
   after?: (output: unknown) => Promise<unknown>;
 }
 
-export function isAsyncIterable(
-  value: unknown,
-): value is AsyncIterable<unknown> {
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   return Boolean(
     value && typeof value === "object" && Symbol.asyncIterator in value,
   );
@@ -22,7 +20,7 @@ export function isAsyncIterable(
 
 // The SDK streams only when execute returns an AsyncIterable, and a wrapper must pick its
 // shape before it starts the tool, so this checks the function, not a call's result.
-export function isStreamingExecute(execute: ToolExecute): boolean {
+function isStreamingExecute(execute: ToolExecute): boolean {
   return execute instanceof AsyncGeneratorFunction;
 }
 

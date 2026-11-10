@@ -1202,26 +1202,6 @@ export declare const api: {
       },
       { _id: Id<"deployKeys">; keyHint: string; token: string }
     >;
-    list: FunctionReference<
-      "query",
-      "public",
-      { projectId: Id<"projects">; stageId: Id<"stages"> },
-      Array<{
-        _creationTime: number;
-        _id: Id<"deployKeys">;
-        accountId: Id<"accounts">;
-        createdAt: number;
-        createdBy?: Id<"users">;
-        description?: string;
-        keyHint: string;
-        lastUsedAt?: number;
-        name: string;
-        projectId: Id<"projects">;
-        stageId: Id<"stages">;
-        status: "active" | "revoked";
-        updatedAt: number;
-      }>
-    >;
     remove: FunctionReference<
       "mutation",
       "public",
@@ -4321,7 +4301,6 @@ export declare const internal: {
         "internal",
         {
           accountId: Id<"accounts">;
-          agentId?: Id<"agents">;
           paginationOpts: {
             cursor: string | null;
             endCursor?: string | null;
@@ -4548,10 +4527,7 @@ export declare const internal: {
           accountId: Id<"accounts">;
           description?: string;
           document: any;
-          managedBy?: "cli" | "dashboard";
           name: string;
-          projectId?: Id<"projects">;
-          stageId?: Id<"stages">;
         },
         Id<"agentPolicies">
       >;

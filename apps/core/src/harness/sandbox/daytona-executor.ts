@@ -17,7 +17,6 @@ import {
 } from "./instance-store.ts";
 import {
   callbackEnv,
-  generateJobId,
   launchScript,
   lifecycleScript,
   logsScript,
@@ -32,6 +31,7 @@ import {
   resolveS3MountIdentity,
 } from "./s3-mount.ts";
 import type {
+  SandboxBackgroundRequest,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
@@ -104,7 +104,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
 
       return {
         ok: (response.exitCode ?? 0) === 0,
-        runtime: request.runtime ?? "bash",
+        runtime: "bash",
         exitCode: response.exitCode ?? null,
         stdout: stdout.value,
         stderr: "",
@@ -120,12 +120,14 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     await mountAwsS3Buckets(sandbox, request, this.#config);
     await this.#runLifecycle(sandbox, this.#workDir(ns));
-    const jobId = request.jobId ?? generateJobId();
+    const jobId = request.jobId;
     const script = launchScript(
       this.#jobsDir(ns),
       jobId,
@@ -345,11 +347,9 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   }
 
   #execEnvVars(request: SandboxRunRequest): Record<string, string> | undefined {
-    const env = mergeSandboxEnv(
-      this.#config.envVars,
-      request.envVars,
-      request.principal,
-    );
+    const env = mergeSandboxEnv(this.#config.envVars, {
+      principal: request.principal,
+    });
 
     return Object.keys(env).length > 0 ? env : undefined;
   }
@@ -455,13 +455,13 @@ function daytonaClientOptions(
 
 async function daytonaCreateOptions(
   config: SandboxExecutorConfig,
-  request: Pick<SandboxRunRequest, "namespace" | "envVars" | "metadata">,
+  request: Pick<SandboxRunRequest, "namespace" | "metadata">,
   persistent: boolean,
 ): Promise<Record<string, unknown>> {
   const options = config.options ?? {};
   await assertSnapshotBootable(config.controlPlane, config.snapshot);
   // No run identity: the sandbox outlives this run, and each exec lays its own over this env.
-  const baseEnv = mergeSandboxEnv(config.envVars, request.envVars);
+  const baseEnv = mergeSandboxEnv(config.envVars);
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
   const autoStopMinutes = Math.max(
@@ -582,15 +582,6 @@ async function mountAwsS3Buckets(
     identity,
     `${workspaceRoot}/${request.namespace}`,
   );
-
-  if (
-    configString(options.skillsBucketName) ||
-    optionalEnv("SKILLS_BUCKET_NAME")
-  ) {
-    logWarn(
-      "Daytona skills bucket mount skipped; selected skills are staged into the workspace bucket instead",
-    );
-  }
 }
 
 // Every call: a restarted sandbox keeps its disk but loses its FUSE mounts.

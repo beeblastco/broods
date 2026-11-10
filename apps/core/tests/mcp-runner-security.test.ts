@@ -83,8 +83,8 @@ async function invokeHandler(
   parentEnv: Record<string, string> = {},
   // Slow reads against a small buffer force the handler's backpressure path.
   throttleMs = 0,
-  // As core does in production: a presigned GET the handler resolves, not inline bytes.
-  bundleAddress?: "served" | { url: string },
+  // Unset serves the bundle over HTTP, as core's presigned GET does in production.
+  bundleAddress?: { url: string },
   options: {
     // A second invoke in the same warm process; its frames come back as followUpStdout.
     followUp?: string;
@@ -97,15 +97,19 @@ async function invokeHandler(
   exitCode: number | null;
 }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
-  const server =
-    bundleAddress === "served"
-      ? Bun.serve({ port: 0, fetch: () => new Response(bundle) })
-      : undefined;
-  const bundleUrl =
-    server?.url.href ??
-    (bundleAddress && bundleAddress !== "served"
-      ? bundleAddress.url
-      : undefined);
+  const server = bundleAddress
+    ? undefined
+    : Bun.serve({
+        port: 0,
+        fetch: (request): Response =>
+          new Response(
+            new URL(request.url).pathname === "/follow-up"
+              ? options.followUp
+              : bundle,
+          ),
+      });
+  const bundleUrl = server?.url.href ?? bundleAddress?.url;
+  const followUpUrl = server && new URL("follow-up", server.url).href;
   const event = {
     mode: "mcp",
     toolName: "server-under-test",
@@ -139,8 +143,7 @@ async function invokeHandler(
         `})();`,
         `await handler({`,
         `  ...${JSON.stringify(event)},`,
-        `  ...${JSON.stringify(bundleUrl ? { bundleUrl: bundleUrl } : {})},`,
-        bundleUrl ? `` : `  bundleSourceB64: bundle.toString("base64"),`,
+        `  bundleUrl: ${JSON.stringify(bundleUrl)},`,
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
         `await consumed;`,
@@ -155,7 +158,7 @@ async function invokeHandler(
         `  })();`,
         `  await handler({`,
         `    ...${JSON.stringify(event)},`,
-        `    bundleSourceB64: next.toString("base64"),`,
+        `    bundleUrl: ${JSON.stringify(followUpUrl)},`,
         `    expectedSha256: createHash("sha256").update(next).digest("hex"),`,
         `  }, stream);`,
         `  await read;`,
@@ -361,7 +364,7 @@ describe("mcp-runner bundle addressing", () => {
     // Core spends its 6 MB invoke quota on a presigned GET rather than the bytes.
     const bundle = `export default () => new Response(JSON.stringify({ ok: true }));`;
 
-    const result = await invokeHandler(bundle, {}, 0, "served");
+    const result = await invokeHandler(bundle);
 
     expect(finalBody(result.stdout)).toEqual({ ok: true });
   }, 30_000);

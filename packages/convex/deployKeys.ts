@@ -1,8 +1,8 @@
 /** `bpdk_` keys that authorize one project stage; only the token's SHA-256 is stored. */
 
-import { type Infer, v } from "convex/values";
+import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { requireDashboardPermission } from "./model/access";
 import {
@@ -14,14 +14,6 @@ import {
 import { userByAuthId } from "./model/ownership/org";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
-import { deployKeysFields } from "./schema";
-
-const { keyHash: _keyHash, ...deployKeyListFields } = deployKeysFields;
-const deployKeyListItem = v.object({
-  ...deployKeyListFields,
-  _id: v.id("deployKeys"),
-  _creationTime: v.number(),
-});
 
 export const create = mutation({
   args: {
@@ -66,35 +58,6 @@ export const create = mutation({
       description: description,
       createdBy: member._id,
     });
-  },
-});
-
-export const list = query({
-  args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.array(deployKeyListItem),
-  handler: async (
-    ctx,
-    { projectId, stageId },
-  ): Promise<Infer<typeof deployKeyListItem>[]> => {
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    // Empty, not a throw: a subscriber may briefly hold a just-deleted stage.
-    const stage = await getOwnedStage(ctx, user.id, stageId);
-    if (!stage || stage.projectId !== projectId) {
-      return [];
-    }
-
-    const keys = await ctx.db
-      .query("deployKeys")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .collect();
-
-    return keys.map(({ keyHash: _hash, ...key }) => key);
   },
 });
 

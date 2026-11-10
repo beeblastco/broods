@@ -41,9 +41,9 @@ import type {
   SandboxRunResult,
   SandboxRuntime,
 } from "../sandbox/types.ts";
-import { isFatalSandboxSetupError, toolError, toolText } from "./utils.ts";
+import { isFatalSandboxSetupError, toolError } from "./utils.ts";
 
-export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
+const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 
@@ -473,7 +473,7 @@ export async function s3ReadNumbered(
     .map((line, index) => `${String(start + index).padStart(6, " ")}\t${line}`)
     .join("\n");
 
-  return toolText(numbered.length > 0 ? `${numbered}\n` : "");
+  return numbered.length > 0 ? `${numbered}\n` : "";
 }
 
 export async function s3Glob(
@@ -512,9 +512,7 @@ export async function s3Glob(
     .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""))
     .map((entry) => entry.rel);
 
-  return toolText(
-    matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n",
-  );
+  return matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n";
 }
 
 // Not a presigned link: Zalo re-fetches the URL whenever a viewer opens the picture, so
@@ -690,7 +688,7 @@ export function toBase64(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64");
 }
 
-export function boundedInteger(
+function boundedInteger(
   value: unknown,
   defaultValue: number,
   max: number,

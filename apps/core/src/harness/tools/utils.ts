@@ -256,8 +256,6 @@ export const toolError = (value: string): never => {
   );
 };
 
-export const toolText = (value: string): string => value;
-
 export function virtualSubagentConfig(parent: AgentConfig): AgentConfig {
   return subagentConfig(
     applyRunOverrides(parent, { model: parent.subagent?.model }),

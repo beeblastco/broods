@@ -6,7 +6,7 @@ import {
   type UpdateCronInput,
 } from "../../shared/domain/cron.ts";
 import { getStorage } from "../../shared/storage.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 const SCHEDULE_EXPRESSION_DESCRIPTION =
   "Schedule expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).";
@@ -99,9 +99,7 @@ export function cancelScheduleTool(context: ScheduleContext): ToolSet {
         }
         await getStorage().crons.remove(context.accountId, cronId);
 
-        return toolText(
-          `Cancelled scheduled task '${existing.name}' (${cronId}).`,
-        );
+        return `Cancelled scheduled task '${existing.name}' (${cronId}).`;
       },
     }),
   };
@@ -141,11 +139,9 @@ export function scheduleTool(context: ScheduleContext): ToolSet {
           ...(input.timezone ? { timezone: input.timezone } : {}),
         });
 
-        return toolText(
-          `Scheduled task '${created.name}' (${created.cronId}) on ${created.scheduleExpression}${
-            created.timezone ? ` in ${created.timezone}` : " in UTC"
-          }. It runs in this conversation.`,
-        );
+        return `Scheduled task '${created.name}' (${created.cronId}) on ${created.scheduleExpression}${
+          created.timezone ? ` in ${created.timezone}` : " in UTC"
+        }. It runs in this conversation.`;
       },
     }),
   };
@@ -209,11 +205,9 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
           return toolError(`Scheduled task ${cronId} no longer exists`);
         }
 
-        return toolText(
-          `Updated scheduled task '${updated.name}' (${updated.cronId}): ${updated.scheduleExpression}${
-            updated.timezone ? ` in ${updated.timezone}` : " in UTC"
-          }, ${updated.status}.`,
-        );
+        return `Updated scheduled task '${updated.name}' (${updated.cronId}): ${updated.scheduleExpression}${
+          updated.timezone ? ` in ${updated.timezone}` : " in UTC"
+        }, ${updated.status}.`;
       },
     }),
   };

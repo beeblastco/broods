@@ -35,8 +35,6 @@ const ACCOUNT_HOOK_UPLOAD = z.looseObject(
   { error: "hook upload body must be an object" },
 );
 
-export type AccountHookUploadInput = z.output<typeof ACCOUNT_HOOK_UPLOAD>;
-
 export type AgentHookEventName = (typeof AGENT_HOOK_EVENT_NAMES)[number];
 
 export interface NormalizedAccountHookUpload {

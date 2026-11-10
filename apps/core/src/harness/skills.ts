@@ -13,7 +13,6 @@ import {
   listS3Prefix,
   readS3TextHead,
 } from "../shared/s3.ts";
-import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
   contentTypeForSkillPath,
   isExecutableSkillPath,
@@ -256,7 +255,7 @@ function canonicalStagePrefix(
   workspaceNamespace: string,
   skillName: string,
 ): string {
-  return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
+  return `${workspaceNamespace}/${SKILL_CANONICAL_DIR}/${skillName}/`;
 }
 
 function compareSkillBundlePath(a: string, b: string): number {
@@ -340,8 +339,7 @@ function mirrorStagePrefixes(
   skillName: string,
 ): string[] {
   return SKILL_MIRROR_DIRS.map(
-    (dir) =>
-      `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
+    (dir) => `${workspaceNamespace}/${dir}/${skillName}/`,
   );
 }
 

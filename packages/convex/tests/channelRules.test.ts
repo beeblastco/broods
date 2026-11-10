@@ -73,6 +73,13 @@ describe("normalizeChannelRecordConfig", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
+        partition: { by: "shared", alias: "support" },
+      }),
+    ).toThrow("only supported when by is conversation");
+
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: bindings,
         partition: { by: "everything" },
       }),
     ).toThrow("must be one of: shared, conversation");

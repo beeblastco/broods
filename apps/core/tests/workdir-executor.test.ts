@@ -1371,6 +1371,7 @@ describe("WorkdirSandboxExecutor background jobs", () => {
     await expect(
       executor.runBackground({
         code: "x",
+        jobId: "job_test",
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
       }),

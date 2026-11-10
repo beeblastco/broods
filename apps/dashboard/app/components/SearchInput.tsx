@@ -11,7 +11,6 @@ interface Props {
   onChange: (value: string) => void;
   fields: readonly string[];
   placeholder: string;
-  className?: string;
 }
 
 export function SearchInput({
@@ -19,7 +18,6 @@ export function SearchInput({
   onChange,
   fields,
   placeholder,
-  className,
 }: Props): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
   // Without htmlFor, a click on the box would activate a chip's remove button, also labelable.
@@ -57,7 +55,6 @@ export function SearchInput({
       className={cn(
         "flex h-8 min-w-50 flex-1 cursor-text items-center gap-1 overflow-x-auto rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30",
         "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
-        className,
       )}
     >
       <Search className="size-3.5 shrink-0 text-muted-foreground" />

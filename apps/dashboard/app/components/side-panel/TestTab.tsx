@@ -41,21 +41,6 @@ const toolImagePart = z.object({
   mediaType: z.string(),
 });
 
-type SubagentPanelEvent = {
-  phase: "started" | "tool_call" | "tool_result";
-  text: string;
-};
-
-type SubagentPanelPart = {
-  type: "subagent-panel";
-  taskId: string;
-  sessionId: string;
-  agentName?: string;
-  status: "running" | "completed";
-  events: SubagentPanelEvent[];
-  text: string;
-};
-
 export function TestTab({
   activeDeployment,
   deploymentApiKey,
@@ -141,48 +126,6 @@ function parseSubagentSpeaker(text: string): { agentName: string } | null {
   return { agentName: match[1].trim() };
 }
 
-function parseSubagentPanelPart(value: unknown): SubagentPanelPart | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const raw = value as Record<string, unknown>;
-  if (raw.type !== "subagent-panel") {
-    return null;
-  }
-  if (typeof raw.taskId !== "string" || typeof raw.sessionId !== "string") {
-    return null;
-  }
-
-  const events: SubagentPanelEvent[] = Array.isArray(raw.events)
-    ? raw.events
-        .filter((entry) => entry && typeof entry === "object")
-        .map((entry) => {
-          const record = entry as Record<string, unknown>;
-          const phase: SubagentPanelEvent["phase"] =
-            record.phase === "tool_call" || record.phase === "tool_result"
-              ? record.phase
-              : "started";
-
-          return {
-            phase: phase,
-            text: typeof record.text === "string" ? record.text : "",
-          };
-        })
-        .filter((event) => event.text.trim().length > 0)
-    : [];
-
-  return {
-    type: "subagent-panel",
-    taskId: raw.taskId,
-    sessionId: raw.sessionId,
-    agentName: typeof raw.agentName === "string" ? raw.agentName : undefined,
-    status: raw.status === "completed" ? "completed" : "running",
-    events: events,
-    text: typeof raw.text === "string" ? raw.text : "",
-  };
-}
-
 function initialsFromName(name: string): string {
   const parts = name
     .split(/[^a-zA-Z0-9]+/)
@@ -244,7 +187,6 @@ function ChatWindow({
     apiKey: apiKey,
     projectSlug: projectSlug,
     stageSlug: stageSlug,
-    webSocketEnabled: true,
   });
   const [input, setInput] = useState("");
   const followRef = useRef(true);
@@ -368,16 +310,14 @@ function ChatWindow({
 
 function AgentAvatar({
   color,
-  className,
   label,
 }: {
   color?: string;
-  className?: string;
   label?: string;
 }): React.JSX.Element {
   return (
     <span
-      className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-(--avatar-color) ${className ?? ""}`}
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-(--avatar-color)"
       style={{ "--avatar-color": color ?? "var(--color-canvas-agent)" }}
     >
       {label && (
@@ -464,14 +404,8 @@ const MessageBubble = memo(function MessageBubble({
     );
   }
 
-  const panelPartInMessage =
-    message.parts
-      .map((part) => parseSubagentPanelPart(part))
-      .find((part): part is SubagentPanelPart => part !== null) ?? null;
   const assistantText = extractAssistantText(message);
-  const subagentSpeaker = panelPartInMessage?.agentName
-    ? { agentName: panelPartInMessage.agentName }
-    : parseSubagentSpeaker(assistantText);
+  const subagentSpeaker = parseSubagentSpeaker(assistantText);
   const avatarColor = subagentSpeaker
     ? colorFromName(subagentSpeaker.agentName)
     : nodeColor;
@@ -486,7 +420,7 @@ const MessageBubble = memo(function MessageBubble({
     <div className="flex items-start gap-2">
       <AgentAvatar color={avatarColor} label={avatarLabel} />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {subagentSpeaker && !panelPartInMessage && (
+        {subagentSpeaker && (
           <p className="text-xs font-medium text-muted-foreground">
             Subagent {subagentSpeaker.agentName}
           </p>
@@ -520,31 +454,10 @@ const MessageBubble = memo(function MessageBubble({
               <ToolInvocationBlock
                 key={`tool-${typeof p.toolCallId === "string" ? p.toolCallId : index}`}
                 toolName={toolName}
-                input={p.input ?? p.args ?? {}}
-                output={
-                  hasOutput
-                    ? (errorText ?? p.output ?? p.result ?? null)
-                    : undefined
-                }
+                input={p.input ?? {}}
+                output={hasOutput ? (errorText ?? p.output ?? null) : undefined}
                 state={state}
                 isError={state === "output-error"}
-              />
-            );
-          }
-
-          if (type === "subagent-panel") {
-            const panelPart = parseSubagentPanelPart(p);
-            if (!panelPart) {
-              return null;
-            }
-
-            return (
-              <SubagentPanelBlock
-                key={`subagent-panel-${panelPart.taskId}`}
-                agentName={panelPart.agentName}
-                status={panelPart.status}
-                events={panelPart.events}
-                text={panelPart.text}
               />
             );
           }
@@ -575,70 +488,6 @@ const MessageBubble = memo(function MessageBubble({
     </div>
   );
 });
-
-function SubagentPanelBlock({
-  agentName,
-  status,
-  events,
-  text,
-}: {
-  agentName?: string;
-  status: "running" | "completed";
-  events: SubagentPanelEvent[];
-  text: string;
-}): React.JSX.Element {
-  const isStreaming = status === "running";
-  const elapsed = useElapsedTime(isStreaming);
-  const contentRef = useStickToBottom<HTMLDivElement>([
-    events,
-    text,
-    isStreaming,
-  ]);
-
-  const [userOverride, setUserOverride] = useState<boolean | null>(null);
-  const open = userOverride ?? isStreaming;
-
-  return (
-    <Collapsible open={open} onOpenChange={setUserOverride}>
-      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md border border-run-subagent/30 bg-run-subagent/5 px-2 py-1.5 text-xs hover:bg-run-subagent/10 transition-colors">
-        <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
-        <Wrench className="size-3 shrink-0" />
-        <span className="font-medium text-foreground">
-          {agentName ? `Subagent ${agentName}` : "Subagent"}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5 text-muted-foreground">
-          {isStreaming ? "running..." : "done"}
-          <span className="tabular-nums">{formatElapsed(elapsed)}</span>
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div
-          ref={contentRef}
-          className="ml-5 mt-1 max-h-40 space-y-2 overflow-y-auto overflow-x-auto rounded-md border border-run-subagent/20 bg-run-subagent/5 px-2.5 py-2"
-        >
-          {events.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {events.map((event, index) => (
-                <p
-                  // oxlint-disable-next-line react/no-array-index-key -- append-only events, no id
-                  key={`subagent-event-${index}`}
-                  className="text-2xs text-run-subagent wrap-break-word"
-                >
-                  {event.text}
-                </p>
-              ))}
-            </div>
-          )}
-          {text.trim().length > 0 && (
-            <Streamdown className="min-w-0 wrap-break-word text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_code]:whitespace-pre-wrap [&_code]:wrap-break-word [&_pre]:max-w-full [&_pre]:overflow-x-auto">
-              {text}
-            </Streamdown>
-          )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
 
 function ReasoningBlock({
   text,

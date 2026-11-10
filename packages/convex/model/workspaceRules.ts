@@ -3,6 +3,7 @@
 
 import { z } from "zod/mini";
 
+import { sha256Hex } from "./accountSecrets";
 import { assertPublicHttpsUrl, isPrivateHostname } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
 import {
@@ -347,15 +348,9 @@ export async function workspaceNamespace(
   accountId: string,
   workspaceId: string,
 ): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      `filesystem-namespace\0${accountId}:${workspaceId}`,
-    ),
+  const hex = await sha256Hex(
+    `filesystem-namespace\0${accountId}:${workspaceId}`,
   );
-  const hex = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
 }

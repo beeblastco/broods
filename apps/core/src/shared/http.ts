@@ -42,7 +42,6 @@ export interface CoreRequest {
   /** Keys lowercased. */
   headers: Record<string, string>;
   body: string;
-  cookies: string[];
   /** Rightmost X-Forwarded-For hop or the socket address, never the spoofable leftmost. */
   clientIp: string;
 }

@@ -58,10 +58,10 @@ flowchart TD
   ON2 --> CE
 ```
 
-- The budget wrapper also guards `runBackground`, `resume`, `postReserved` and `prewarm`.
+- The budget wrapper also guards `runBackground`, `resume` and `postReserved`.
 - `SandboxCapacityError` comes only from a refused create: MicroVM `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException`, `TooManyRequestsException`, and the workdir and Daytona admission refusals. Validation refuses a fallback on a `persistent` config, a fallback equal to `provider`, and a `machine` or `custom` fallback.
 - Limits come from `packages/convex/model/sandboxRules.ts`: `timeout` 30 s default, capped by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`; output capped by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. A blocking call also stays inside `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`. Background jobs are bound by neither.
-- Env: `mergeSandboxEnv()` in `utils.ts` lays per-call `envVars` over the account's, drops `RESERVED_SANDBOX_ENV_KEYS` (`PATH`, `HOME`, `LD_PRELOAD`, `NODE_OPTIONS`, the `__CB_*` callback slots and the rest) from the per-call layer, drops the `BROODS_*` identity names from both, then sets the run's `BROODS_*` identity on top.
+- Env: `mergeSandboxEnv()` in `utils.ts` starts from the account's `envVars`. Only a harness shell command on `lambda` adds a per-call layer (`requestEnv`), and `RESERVED_SANDBOX_ENV_KEYS` (`PATH`, `HOME`, `LD_PRELOAD`, `NODE_OPTIONS`, the `__CB_*` callback slots and the rest) are dropped from it. The `BROODS_*` identity names are dropped from both, then the run's `BROODS_*` identity is set on top.
 - The exec wire contract a MicroVM image, the Cloudflare bridge and a `custom` server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`. `parseExecResponse` and `execRunResult` in `utils.ts` read it.
 - CPU: `sandbox` reports CPU from the workdir cgroup and `lambda` from the image's `getrusage`. `src/harness/harness.ts` sums it into `sandboxUsage` rows and puts `tool.compute.type` and `tool.compute.cpu_usec` on the `tool.call` span. Other providers report none.
 

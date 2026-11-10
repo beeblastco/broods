@@ -40,7 +40,6 @@ import type {
   TaskWaitingOn,
 } from "../../../../packages/broods/src/observability-contracts.ts";
 import { extractText } from "../shared/channels.ts";
-import { consumeColdStart } from "../shared/cold-start.ts";
 import {
   AGENT_MAX_TURN_UNLIMITED,
   type AgentConfig,
@@ -72,7 +71,7 @@ import {
   runWithObservabilityScope,
   setObservabilityContext,
 } from "../shared/otel.ts";
-import { recordTaskUsage } from "../shared/telemetry.ts";
+import { getStorage, type TaskUsageInput } from "../shared/storage.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
 import {
   applyMessageSendingHook,
@@ -268,7 +267,6 @@ export type AgentLoopStream = ReturnType<typeof streamText> & {
   didFail(): boolean;
   yielded(): boolean;
   failureText(): string | null;
-  approvalSummaries(): ToolApprovalSummary[];
   questionSummaries(): PendingQuestionSummary[];
   // The message to the parent this turn ended waiting on, if one did.
   parentQuestion(): AgentMessage | undefined;
@@ -439,15 +437,6 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  const coldStart = consumeColdStart(runStartedAt);
-  if (coldStart) {
-    spans.phase(
-      "phase.cold_start",
-      "Cold start",
-      coldStart.startMs,
-      coldStart.startMs + coldStart.durationMs,
-    );
-  }
   if (turnContext.timings) {
     const { phases, prepareEndedMs, prepareStartedMs } = turnContext.timings;
     spans.phase(
@@ -1656,7 +1645,6 @@ export async function runAgentLoop(
     didFail: (): boolean => didFail,
     yielded: (): boolean => deadline.hasYielded() && !didFail,
     failureText: (): string | null => failureText,
-    approvalSummaries: (): ToolApprovalSummary[] => approvalSummaries,
     questionSummaries: (): PendingQuestionSummary[] => questionSummaries,
     parentQuestion: (): AgentMessage | undefined => parentQuestion,
     hasStructuredOutput: (): boolean => Boolean(modelOutput),
@@ -2107,6 +2095,10 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
       conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
     })
     .catch(() => {});
+}
+
+async function recordTaskUsage(input: TaskUsageInput): Promise<void> {
+  await getStorage().taskUsage.record(input);
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

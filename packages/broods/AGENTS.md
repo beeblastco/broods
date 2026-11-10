@@ -13,4 +13,4 @@
 - **`dist/` is gitignored.** a stale local build silently runs an old CLI. run `bun run build` before trusting a local demo run.
 - **the CLI has to run on plain `node`, not only bun.** node erases type syntax and nothing else, so `manifest.ts` registers an esbuild load hook before importing a project's `broods/*.ts`. bun ships no `module.registerHooks`, so a `bun test` never touches that path. `tests/node-runtime.test.ts` spawns a real `node` child instead. keep `manifest.ts` and everything it imports free of non-erasable syntax (`enum`, decorators, parameter properties) or that test cannot even load it.
 - `tsconfig.json` only includes `src/**/*.ts`; `scripts/` has its own `tsconfig.scripts.json`, and `bun run check` runs both. types are not behaviour: still run those scripts to prove them.
-- the 31 demos under `packages/demos/*` link `broods` as `file:../../broods`; `harness-codex` is the one that pins a registry range, so it only sees features that are actually published.
+- every demo under `packages/demos/*` links `broods` as `file:../../broods`. none pins a registry range, so no demo proves a feature is published.

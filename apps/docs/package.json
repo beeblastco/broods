@@ -9,7 +9,6 @@
     "build": "NODE_OPTIONS=--openssl-legacy-provider docusaurus build",
     "check": "tsc --noEmit",
     "serve": "DOCUSAURUS_BROWSER=none docusaurus serve",
-    "deploy": "NODE_OPTIONS=--openssl-legacy-provider docusaurus deploy",
     "clear": "docusaurus clear",
     "test": "bun test tests"
   },
@@ -24,7 +23,6 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@docusaurus/tsconfig": "^3.10.2",
     "@docusaurus/types": "3.10.2",
     "@types/node": "^26.6.6",
     "@types/react": "19.3.0",

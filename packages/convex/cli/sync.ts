@@ -307,7 +307,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       accountId: account._id,
       projectId: projectDoc._id,
       stageId: stageDoc._id,
-      projectSlug: projectDoc.slug ?? resourceName(args.project),
+      projectSlug: projectDoc.slug,
       stageSlug: stageDoc.name.toLowerCase(),
       createdBy: creator?.name,
       rotate: args.rotate === true,

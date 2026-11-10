@@ -19,7 +19,7 @@ import {
   TRANSCRIPTION_RETRIES,
   transcriptAdvice,
 } from "../transcribe.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 const DEFAULT_LIMIT = 2000;
 
@@ -76,7 +76,7 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout);
+          return result.stdout;
         } catch (cause) {
           // toolError already threw; re-wrapping would prefix a setup error twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
@@ -141,9 +141,7 @@ async function spokenContents(
     );
   }
 
-  return toolText(
-    transcript.text
-      ? `Transcript of ${rel}:\n\n${transcript.text}`
-      : `${rel} contains no speech.`,
-  );
+  return transcript.text
+    ? `Transcript of ${rel}:\n\n${transcript.text}`
+    : `${rel} contains no speech.`;
 }

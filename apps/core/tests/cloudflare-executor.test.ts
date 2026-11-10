@@ -132,8 +132,6 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
     code: "echo ok",
     timeoutSeconds: 10,
     outputLimitBytes: 1024,
-    envVars: { PATH: "/evil", CALL_VAR: "b" },
-    args: ["one"],
     principal: { accountId: "acct", agentId: "agent", runToken: "tok" },
   });
   await drainInFlight();
@@ -149,7 +147,7 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   );
   expect(exec?.authorization).toBe("Bearer bridge-key");
   expect(exec?.body).toMatchObject({
-    env: { ACCOUNT_VAR: "a", CALL_VAR: "b", BROODS_AGENT_ID: "agent" },
+    env: { ACCOUNT_VAR: "a", BROODS_AGENT_ID: "agent" },
     timeoutMs: 10_000,
     idleTimeoutSeconds: 70,
     enableInternet: false,
@@ -157,7 +155,7 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   });
   const argv = exec?.body?.argv;
   if (!Array.isArray(argv)) throw new Error("exec body has no argv");
-  expect(argv.slice(-3)).toEqual(["/workspace", "echo ok", "one"]);
+  expect(argv.slice(-3)).toEqual(["bash", "/workspace", "echo ok"]);
   expect(destroy?.method).toBe("DELETE");
   expect(destroy?.url).toBe(exec?.url.replace(/\/exec$/, ""));
   const id = exec?.url.split("/").at(-2);

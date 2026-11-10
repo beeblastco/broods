@@ -120,7 +120,6 @@ interface ChannelRecordStore {
     accountId: string,
     channelRecordId: string,
   ): Promise<ChannelRecord | null>;
-  list(accountId: string): Promise<ChannelRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 

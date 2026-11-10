@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { readStoredAuth, stageFromEnv } from "./config.ts";
+import { readStoredAuth } from "./config.ts";
 
 export interface BroodsRuntimeConfig {
   dashboardUrl?: string;
@@ -34,7 +34,7 @@ export function loadBroodsRuntimeConfig(
     // From the resolved login only, so it always belongs to the same server.
     token: stored?.token,
     project: process.env.BROODS_PROJECT,
-    stage: stageFromEnv(),
+    stage: process.env.BROODS_STAGE,
   };
 }
 

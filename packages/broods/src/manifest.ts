@@ -41,7 +41,7 @@ import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
 } from "../../convex/model/workspaceIsolation.ts";
-import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
+import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
   isConnectionDefinition,
@@ -216,7 +216,9 @@ export async function compileProject(
   const stage = resolveStage(
     config,
     options.stage ??
-      (options.useRuntimeStage === false ? undefined : stageFromEnv()),
+      (options.useRuntimeStage === false
+        ? undefined
+        : process.env.BROODS_STAGE),
     options.command ?? "dev",
   );
   const sortedResources = (

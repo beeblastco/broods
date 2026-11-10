@@ -38,11 +38,17 @@ cd packages/demos/basic-stream && bun run start
 - Open an issue first to align on the approach.
 - Read the root `AGENTS.md` for the repo-wide rules, then the workspace's own `AGENTS.md` if it has one. Only workspaces with their own gotchas carry a guide; the rest are covered by the root file. Today that is:
   - `apps/core/AGENTS.md`: Bun container runtime, request flow, tools, channels, sandboxes, SST
-  - `apps/gateway/AGENTS.md`: front-door routing, config/core split, WebSocket surfaces
+  - `apps/edge/AGENTS.md`: public route table and the Traefik config generated from it
+  - `apps/gateway/AGENTS.md`: WebSocket server behind Traefik
   - `apps/discord-forwarder/AGENTS.md`: Discord Gateway sockets
+  - `apps/cloudflare-mcp/AGENTS.md`: hosted MCP runtime on Cloudflare Workers
+  - `apps/cloudflare-sandbox/AGENTS.md`: bridge Worker for the `cloudflare` sandbox provider
+  - `apps/cloudflare-worker/AGENTS.md`: Worker for the `worker` sandbox provider
   - `apps/dashboard/AGENTS.md`: Next.js dashboard, routes and components, WorkOS auth
   - `packages/convex/AGENTS.md`: Convex schema, config plane, secrets, auth
   - `packages/broods/AGENTS.md`: published CLI + SDK, release versioning
+  - `apps/docs/AGENTS.md`: Docusaurus site, user docs and internals
+  - `verification/AGENTS.md`: Lean 4 models, mirrors and oracles
 
 ## Code conventions
 

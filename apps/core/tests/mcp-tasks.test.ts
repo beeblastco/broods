@@ -712,7 +712,6 @@ function mcpRequest(
         },
       },
     }),
-    cookies: [],
     clientIp: "127.0.0.1",
   };
 }

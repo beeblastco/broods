@@ -2,9 +2,8 @@
 
 Shared Convex backend for the broods monorepo, used by two workspaces:
 
-- **`apps/dashboard`** deploys this package as its Convex project (the
-  dashboard Docker image build runs `convex deploy` from this directory) and
-  calls the public functions through the generated `api`.
+- **`apps/dashboard`** calls the public functions through the generated `api`.
+  It does not deploy them: `deploy-convex.yaml` does (see Workflow).
 - **`apps/core`** does NOT deploy these functions; its Convex adapter at
   `apps/core/src/shared/convex/` imports the generated
   `internal` types and calls the functions remotely via `ConvexHttpClient`
@@ -19,8 +18,7 @@ Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `stages`,
 `deployKeys`.
 
 Agent-platform domain (shared with core): `accounts`, `agents`,
-`sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
-`skills`, `workspaceFiles`,
+`sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `workspaceFiles`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
 `runtimeHarnessSessions`, `runtimeHarnessSessionEntries`, and
@@ -62,7 +60,7 @@ Naming follows the CRUD rule: `create`, `update`, `list`, `remove`, `getById`,
 Every mutation validates the `accountId` argument against the row being
 touched. A leaked Convex deploy key cannot trivially cross tenants.
 
-## AWS config plane (epic #85 phase 9)
+## AWS config plane
 
 Convex owns the account config plane's AWS resources directly (no core proxy):
 skill bundles, hook and MCP bundles, and workspace files in S3. Account cron
@@ -75,7 +73,7 @@ the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
 `workspace/filesPublic.ts`).
 
 `config/http.ts` serves the public config API on this deployment's
-`.convex.site` host, replacing core's former routes. Traefik routes those
+`.convex.site` host. Traefik routes those
 paths here (the config rules in `apps/edge/src/routes.ts`). It covers account metadata and rotation (`GET/PATCH /v1/account`,
 `POST /v1/account/rotate-secret`, `GET /v1/accounts`,
 `GET/PATCH /v1/accounts/{accountId}`, and
