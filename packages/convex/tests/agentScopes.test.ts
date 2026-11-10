@@ -8,9 +8,9 @@ import schema from "../schema";
 const modules = import.meta.glob("../**/*.ts");
 const AUTH_ID = "auth_owner@example.com";
 
-test("scopes names the project and stage of each agent that has a config row", async () => {
+test("scopes names the project and stage of each agent that runs in one stage", async () => {
   const tt = convexTest(schema, modules);
-  const { staged, loose } = await tt.run(async (ctx) => {
+  const { accountId, staged, loose } = await tt.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
       name: "acme",
@@ -57,12 +57,16 @@ test("scopes names the project and stage of each agent that has a config row", a
     });
 
     return {
+      accountId: accountId,
       staged: stagedId,
       loose: await ctx.db.insert("agents", { ...agent, name: "api-made" }),
     };
   });
 
   expect(
-    await tt.query(internal.agent.agents.scopes, { agentIds: [staged, loose] }),
+    await tt.query(internal.agent.agents.scopes, {
+      accountId: accountId,
+      agentIds: [staged, loose],
+    }),
   ).toEqual([{ agentId: staged, project: "shop", stage: "production" }]);
 });

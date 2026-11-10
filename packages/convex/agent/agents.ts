@@ -15,7 +15,11 @@ import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
 import type { CanvasNode } from "../model/canvasShapes";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
-import { agentsInProject, agentsInStage } from "../model/projectScope";
+import {
+  agentsInProject,
+  agentsInStage,
+  resourceStageScope,
+} from "../model/projectScope";
 import { agentsFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
@@ -258,30 +262,28 @@ export const listForEndpoint = internalQuery({
   },
 });
 
-/** Which project and stage each agent runs in; an agent with no config row is left out. */
+/** The project and stage names of each agent that runs in exactly one stage of this account. */
 export const scopes = internalQuery({
-  args: { agentIds: v.array(v.id("agents")) },
+  args: { accountId: v.id("accounts"), agentIds: v.array(v.string()) },
   returns: v.array(
-    v.object({
-      agentId: v.id("agents"),
-      project: v.string(),
-      stage: v.string(),
-    }),
+    v.object({ agentId: v.string(), project: v.string(), stage: v.string() }),
   ),
   handler: async (
     ctx,
     args,
-  ): Promise<{ agentId: Id<"agents">; project: string; stage: string }[]> => {
+  ): Promise<{ agentId: string; project: string; stage: string }[]> => {
     const scoped = await Promise.all(
       args.agentIds.map(async (agentId) => {
-        const config = await ctx.db
-          .query("agentConfigs")
-          .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
-          .first();
-        if (!config) return null;
+        const scope = await resourceStageScope(
+          ctx,
+          args.accountId,
+          "agents",
+          agentId,
+        );
+        if (!scope) return null;
         const [project, stage] = await Promise.all([
-          ctx.db.get(config.projectId),
-          ctx.db.get(config.stageId),
+          ctx.db.get(scope.projectId),
+          ctx.db.get(scope.stageId),
         ]);
 
         return project && stage

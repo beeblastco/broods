@@ -128,7 +128,7 @@ const CONVERSATIONS_TOOL = "list_conversations";
 const CONVERSATIONS_TOOL_DEFINITION: ToolV2 = {
   name: CONVERSATIONS_TOOL,
   description:
-    "List recent conversations with your agents, newest first, to continue one: pass its conversationId to ask_agent.",
+    "List recent conversations ask_agent started, most recently active first, to continue one: pass its conversationId to ask_agent.",
   inputSchema: {
     type: "object",
     properties: {
@@ -173,8 +173,6 @@ const LIST_TOOL_DEFINITION: ToolV2 = {
 const MAX_APPROVAL_INPUT_CHARS = 300;
 const POLL_INTERVAL_MS = 2_000;
 const QUESTION_KEY_PREFIX = "question-";
-// Read wider than any one answer, so a filter by agent still fills its page.
-const RECENT_CONVERSATIONS = 200;
 const RUN_ARGS = z.object({ runId: z.string().min(1) });
 const RUN_PATH = "/v1/runs";
 // Prefixes the event id and conversation key of every run a task starts.
@@ -330,10 +328,15 @@ function createTaskServer(caller: McpCaller): Server {
       tools: [
         LIST_TOOL_DEFINITION,
         ASK_TOOL_DEFINITION,
-        GET_RUN_TOOL_DEFINITION,
-        STOP_TOOL_DEFINITION,
         CONVERSATIONS_TOOL_DEFINITION,
-        ...(declaresTasks(ctx) ? [] : [CONTINUE_TOOL_DEFINITION]),
+        // A client with tasks reads, stops and answers a run through `tasks/*` instead.
+        ...(declaresTasks(ctx)
+          ? []
+          : [
+              GET_RUN_TOOL_DEFINITION,
+              STOP_TOOL_DEFINITION,
+              CONTINUE_TOOL_DEFINITION,
+            ]),
       ],
     }),
   );
@@ -349,11 +352,11 @@ function createTaskServer(caller: McpCaller): Server {
       if (params.name === CONVERSATIONS_TOOL) {
         return await listConversations(caller, params.arguments);
       }
-      if (params.name === GET_RUN_TOOL || params.name === STOP_TOOL) {
-        return await readOrStopRun(caller, params.name, params.arguments);
-      }
       if (direct && params.name === CONTINUE_TOOL) {
         return await continueRun(caller, params.arguments, signal);
+      }
+      if (direct && [GET_RUN_TOOL, STOP_TOOL].includes(params.name)) {
+        return await readOrStopRun(caller, params.name, params.arguments);
       }
       if (params.name !== ASK_TOOL) {
         throw new ProtocolError(
@@ -363,7 +366,10 @@ function createTaskServer(caller: McpCaller): Server {
       }
       const input = ASK_ARGS.safeParse(params.arguments);
       if (!input.success) return toolResult(z.prettifyError(input.error), true);
-      const agent = await findAgent(caller, input.data.agent);
+      const agent = await findAgent(
+        await listRunnableAgents(caller.auth),
+        input.data.agent,
+      );
       if (typeof agent === "string") return toolResult(agent, true);
       const runId = await startRun(caller, agent.agentId, input.data);
       if (typeof runId !== "string") return runId;
@@ -415,7 +421,7 @@ function createTaskServer(caller: McpCaller): Server {
     { params: TASK_PARAMS },
     async (params, ctx): Promise<{ resultType: "complete" }> => {
       requireTaskCapability(ctx);
-      await cancelTask(caller, params.taskId);
+      await cancelTask(caller, await resolveTask(caller, params.taskId));
 
       return { resultType: "complete" };
     },
@@ -574,14 +580,16 @@ function approvalRequest(approvals: ToolApprovalSummary[]): ElicitRequestV2 {
  * run, so it stays where it is, and a finished task stops nothing: its
  * conversation may belong to a newer run by then.
  */
-async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
+async function cancelTask(
+  caller: McpCaller,
+  { root, current }: TaskRuns,
+): Promise<boolean> {
   const { auth } = caller;
   if (auth.kind !== "account" && auth.kind !== "deployment") {
-    throw unknownTask(taskId);
+    throw unknownTask(root.runId);
   }
-  const { root, current } = await resolveTask(caller, taskId);
-  if (FINISHED_STATUSES.has(current.status)) return;
-  await runtime.mutate("stopIngressOwner", {
+  if (FINISHED_STATUSES.has(current.status)) return false;
+  const { stopped } = await runtime.mutate("stopIngressOwner", {
     accountId: auth.account.accountId,
     agentId: root.agentId,
     conversationKey: scopedDirectConversationKey(
@@ -590,6 +598,8 @@ async function cancelTask(caller: McpCaller, taskId: string): Promise<void> {
       root.conversationKey,
     ),
   });
+
+  return stopped;
 }
 
 async function continueRun(
@@ -703,13 +713,11 @@ function failedTask(
   };
 }
 
-/** A key or token core already trusts, else an AuthKit OAuth token, else the 401 or 403. */
 /** The agent a name or id picks, or what to tell the caller when it picks none or several. */
 async function findAgent(
-  caller: McpCaller,
+  agents: AgentRecord[],
   wanted: string,
 ): Promise<AgentRecord | string> {
-  const agents = await listRunnableAgents(caller.auth);
   const named = agents.filter(
     ({ name }) => name.toLowerCase() === wanted.toLowerCase(),
   );
@@ -720,9 +728,7 @@ async function findAgent(
   if (named.length === 0) {
     return `No agent named ${wanted}. Call ${LIST_TOOL} to see the agents you can ask.`;
   }
-  const scopes = await getStorage().agents.scopes(
-    named.map(({ agentId }) => agentId),
-  );
+  const scopes = await getStorage().agents.scopes(named);
   const choices = named.map(({ agentId }) => {
     const scope = scopes.get(agentId);
 
@@ -741,9 +747,7 @@ async function listAgents(
   const input = LIST_ARGS.safeParse(args);
   if (!input.success) return toolResult(z.prettifyError(input.error), true);
   const agents = await listRunnableAgents(caller.auth);
-  const scopes = await getStorage().agents.scopes(
-    agents.map(({ agentId }) => agentId),
-  );
+  const scopes = await getStorage().agents.scopes(agents);
   const matches = (wanted: string | undefined, actual?: string): boolean =>
     wanted === undefined || wanted.toLowerCase() === actual?.toLowerCase();
   const listed = agents
@@ -781,20 +785,17 @@ async function listConversations(
       true,
     );
   }
+  const agents = await listRunnableAgents(auth);
   const only = input.data.agent
-    ? await findAgent(caller, input.data.agent)
+    ? await findAgent(agents, input.data.agent)
     : undefined;
   if (typeof only === "string") return toolResult(only, true);
   const { accountId } = auth.account;
-  const names = new Map(
-    (await listRunnableAgents(auth)).map(({ agentId, name }) => [
-      agentId,
-      name,
-    ]),
-  );
+  const names = new Map(agents.map(({ agentId, name }) => [agentId, name]));
+  // Only what ask_agent started: a user's or a subagent's is not this caller's to continue.
   const recent = await runtime.query("listRecentConversations", {
     accountId: accountId,
-    limit: RECENT_CONVERSATIONS,
+    keyPrefix: RUN_PREFIX,
   });
   const conversations = recent
     .filter(
@@ -821,6 +822,7 @@ async function listConversations(
   );
 }
 
+/** A key or token core already trusts, else an AuthKit OAuth token, else the 401 or 403. */
 async function mcpAuth(request: CoreRequest): Promise<McpAuth | Response> {
   const { headers } = request;
   const auth = await resolveBearerAuth(headers);
@@ -909,18 +911,15 @@ async function readOrStopRun(
   if (!input.success) return toolResult(z.prettifyError(input.error), true);
   try {
     const runs = await resolveTask(caller, input.data.runId);
-    if (tool === GET_RUN_TOOL) {
-      return taskFromRuns(runs).status === "working"
-        ? toolResult(`Still working. Call ${GET_RUN_TOOL} again later.`, false)
-        : directReply(runs);
-    }
+    if (tool === GET_RUN_TOOL) return directReply(runs);
     if (FINISHED_STATUSES.has(runs.current.status)) {
       return toolResult("The run had already finished.", false);
     }
-    await cancelTask(caller, input.data.runId);
 
     return toolResult(
-      `Stopping. The run ends at its next model step; ${GET_RUN_TOOL} shows when it has.`,
+      (await cancelTask(caller, runs))
+        ? `Stopping. The run ends at its next model step; ${GET_RUN_TOOL} shows when it has.`
+        : `Nothing to stop: the run is waiting, not working. ${GET_RUN_TOOL} shows what it waits for.`,
       false,
     );
   } catch (error) {
@@ -1011,9 +1010,9 @@ async function startRun(
     }),
   );
   if (started.status === 404) {
-    throw new ProtocolError(
-      ProtocolErrorCode.InvalidParams,
-      `Unknown tool: ${agentId}`,
+    return toolResult(
+      `Agent ${agentId} can no longer be run. Call ${LIST_TOOL} to see the agents you can ask.`,
+      true,
     );
   }
   if (!started.ok) {

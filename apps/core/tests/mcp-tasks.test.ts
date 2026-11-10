@@ -40,6 +40,7 @@ const TASKS = { extensions: { [TASKS_EXTENSION_ID_V2]: {} } };
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 const stops: unknown[] = [];
 const approvalReplies = new Map<string, string>();
+const stopResult = { stopped: true };
 const recentConversations = [
   {
     agentId: "agent_1",
@@ -77,7 +78,7 @@ await mock.module("../src/shared/convex/runtime.ts", () => ({
     mutate: async (name: string, args: unknown): Promise<unknown> => {
       stops.push([name, args]);
 
-      return { stopped: true, queuedCount: 0 };
+      return { ...stopResult, queuedCount: 0 };
     },
   },
 }));
@@ -100,6 +101,7 @@ beforeEach((): void => {
 
 afterEach((): void => {
   stops.length = 0;
+  stopResult.stopped = true;
   approvalReplies.clear();
   setStorageForTests(null);
 });
@@ -411,14 +413,13 @@ describe("handleMcpRequest", () => {
       );
     };
 
-    const always = [
-      "list_agents",
-      "ask_agent",
+    const always = ["list_agents", "ask_agent", "list_conversations"];
+    expect(await names({})).toEqual([
+      ...always,
       "get_run",
       "stop_run",
-      "list_conversations",
-    ];
-    expect(await names({})).toEqual([...always, "continue_run"]);
+      "continue_run",
+    ]);
     expect(await names(TASKS)).toEqual(always);
   });
 
@@ -429,7 +430,11 @@ describe("handleMcpRequest", () => {
     });
     const call = async (name: string, runId: string): Promise<string> => {
       const { result } = await rpc(
-        mcpRequest("tools/call", { name: name, arguments: { runId: runId } }),
+        mcpRequest(
+          "tools/call",
+          { name: name, arguments: { runId: runId } },
+          { capabilities: {} },
+        ),
         replay,
       );
 
@@ -443,6 +448,8 @@ describe("handleMcpRequest", () => {
     expect(stops).toEqual([]);
     expect(await call("stop_run", "run_busy")).toContain("Stopping");
     expect(stops).toHaveLength(1);
+    stopResult.stopped = false;
+    expect(await call("stop_run", "run_busy")).toContain("Nothing to stop");
   });
 
   it("lists recent conversations of agents that still exist, for an account only", async () => {

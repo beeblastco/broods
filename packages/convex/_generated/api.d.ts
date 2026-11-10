@@ -4150,8 +4150,8 @@ export declare const internal: {
       scopes: FunctionReference<
         "query",
         "internal",
-        { agentIds: Array<Id<"agents">> },
-        Array<{ agentId: Id<"agents">; project: string; stage: string }>
+        { accountId: Id<"accounts">; agentIds: Array<string> },
+        Array<{ agentId: string; project: string; stage: string }>
       >;
       update: FunctionReference<
         "mutation",
@@ -7223,7 +7223,7 @@ export declare const internal: {
     listRecentConversations: FunctionReference<
       "query",
       "internal",
-      { accountId: Id<"accounts">; limit: number },
+      { accountId: Id<"accounts">; keyPrefix: string },
       Array<{ agentId: string; conversationKey: string; updatedAt: number }>
     >;
     markAsyncAgentHandback: FunctionReference<

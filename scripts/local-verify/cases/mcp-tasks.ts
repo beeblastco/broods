@@ -98,27 +98,26 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
     name: "ask_agent",
     arguments: { agent: `${key}-gone`, prompt: "hi" },
   });
-  const refused = unknown.result as Task["result"];
+  const refused = toolOutcome(unknown);
   assertStep(
     "asking an agent that does not exist points at list_agents",
-    refused?.isError === true &&
-      (refused.content[0]?.text ?? "").includes("Call list_agents"),
+    refused.isError && refused.text.includes("Call list_agents"),
     JSON.stringify(unknown),
   );
-  const read = await mcp(context, "tools/call", {
-    name: "get_run",
-    arguments: { runId: task.taskId },
-  });
+  const read = await mcp(
+    context,
+    "tools/call",
+    { name: "get_run", arguments: { runId: task.taskId } },
+    { capabilities: {} },
+  );
   const conversations = await mcp(context, "tools/call", {
     name: "list_conversations",
     arguments: { agent: agentId },
   });
   assertStep(
     "get_run reads the finished run, and list_conversations names its conversation",
-    (read.result as Task["result"])?.isError === !context.hasModelKey &&
-      (
-        (conversations.result as Task["result"])?.content[0]?.text ?? ""
-      ).includes('"conversationId":"mcp-'),
+    toolOutcome(read).isError === !context.hasModelKey &&
+      toolOutcome(conversations).text.includes('"conversationId":"mcp-'),
     JSON.stringify({ read: read, conversations: conversations }),
   );
   const callback = await fetch(
@@ -170,7 +169,7 @@ async function assertAgentTool(
   assertStep(
     "tools/list is the same six tools for a client without tasks",
     names.join() ===
-      "list_agents,ask_agent,get_run,stop_run,list_conversations,continue_run",
+      "list_agents,ask_agent,list_conversations,get_run,stop_run,continue_run",
     JSON.stringify(names),
   );
 
@@ -178,8 +177,7 @@ async function assertAgentTool(
     name: "list_agents",
     arguments: {},
   });
-  const roster = (listed.result as Task["result"])?.content[0]?.text;
-  const agents = JSON.parse(roster ?? "{}") as {
+  const agents = JSON.parse(toolOutcome(listed).text || "{}") as {
     agents?: { name: string; description?: string }[];
   };
   assertStep(
@@ -424,4 +422,17 @@ async function questionRoundTrip(
       (answered.result?.content[0]?.text ?? "").includes(ANSWER),
     JSON.stringify(answered),
   );
+}
+
+/** What a tool call answered a client that reads it directly. */
+function toolOutcome(response: McpResponse): {
+  text: string;
+  isError: boolean;
+} {
+  const result = response.result as Task["result"];
+
+  return {
+    text: result?.content[0]?.text ?? "",
+    isError: result?.isError === true,
+  };
 }

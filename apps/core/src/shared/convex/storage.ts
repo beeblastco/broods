@@ -257,9 +257,12 @@ const agents: Storage["agents"] = {
       (record) => record !== null,
     );
   },
-  scopes: async function (agentIds) {
+  scopes: async function (agents) {
+    const [first] = agents;
+    if (!first) return new Map();
     const scopes = await adminQuery(internal.agent.agents.scopes, {
-      agentIds: agentIds,
+      accountId: first.accountId,
+      agentIds: agents.map(({ agentId }) => agentId),
     });
 
     return new Map(

@@ -42,6 +42,9 @@ const DAY_SECONDS = 24 * 60 * 60;
 // One recovery sweep's page of late subagent or async tool results.
 const OWED_RESULT_PAGE_SIZE = 100;
 
+// `listRecentConversations` looks only at this many of an account's newest conversations.
+const RECENT_CONVERSATION_SCAN = 1_000;
+
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
 
@@ -256,11 +259,9 @@ export async function insertConversationEvents(
   return stored;
 }
 
-const RECENT_CONVERSATION_SCAN = 200;
-
-/** An account's newest direct-API conversations; channel, cron and subagent ones are left out. */
+/** Direct-API conversations whose caller-given key starts with `keyPrefix`, last active first. */
 export const listRecentConversations = internalQuery({
-  args: { accountId: v.id("accounts"), limit: v.number() },
+  args: { accountId: v.id("accounts"), keyPrefix: v.string() },
   returns: v.array(
     v.object({
       agentId: v.string(),
@@ -278,11 +279,10 @@ export const listRecentConversations = internalQuery({
     return newest
       .filter(({ agentId, conversationKey }) =>
         conversationKey.startsWith(
-          `acct:${args.accountId}:agent:${agentId}:api:`,
+          `acct:${args.accountId}:agent:${agentId}:api:${args.keyPrefix}`,
         ),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, args.limit)
       .map(({ agentId, conversationKey, updatedAt }) => ({
         agentId: agentId,
         conversationKey: conversationKey,

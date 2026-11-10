@@ -112,8 +112,8 @@ interface AgentStore {
     projectId: string,
     stageId: string,
   ): Promise<AgentRecord[]>;
-  /** Project and stage names by agent id; an agent outside any stage has no entry. */
-  scopes(agentIds: string[]): Promise<Map<string, AgentScope>>;
+  /** One account's agents: project and stage names by id, for those in exactly one stage. */
+  scopes(agents: AgentRecord[]): Promise<Map<string, AgentScope>>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 

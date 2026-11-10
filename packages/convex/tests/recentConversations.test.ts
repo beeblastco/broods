@@ -7,7 +7,7 @@ import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
 
-test("listRecentConversations returns direct-API conversations, most recently active first", async () => {
+test("listRecentConversations returns direct-API conversations with the key prefix, last active first", async () => {
   const tt = convexTest(schema, modules);
   const accountId = await tt.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
@@ -26,9 +26,11 @@ test("listRecentConversations returns direct-API conversations, most recently ac
       updatedAt: 1,
     });
     const keys: [string, number][] = [
-      [`acct:${account}:agent:a1:api:older`, 10],
-      [`acct:${account}:agent:a1:api:newer`, 30],
+      [`acct:${account}:agent:a1:api:mcp-older`, 10],
+      [`acct:${account}:agent:a1:api:mcp-newer`, 30],
       [`acct:${account}:agent:a1:slack:C1`, 20],
+      [`acct:${account}:agent:a1:api:bsu:u1:chat`, 40],
+      [`acct:${account}:agent:a1:api:subagent-persistent-x`, 50],
     ];
     for (const [conversationKey, updatedAt] of keys) {
       await ctx.db.insert("runtimeConversationCoordinators", {
@@ -48,11 +50,11 @@ test("listRecentConversations returns direct-API conversations, most recently ac
 
   const listed = await tt.query(internal.runtime.listRecentConversations, {
     accountId: accountId,
-    limit: 10,
+    keyPrefix: "mcp-",
   });
 
   expect(listed.map(({ conversationKey }) => conversationKey)).toEqual([
-    `acct:${accountId}:agent:a1:api:newer`,
-    `acct:${accountId}:agent:a1:api:older`,
+    `acct:${accountId}:agent:a1:api:mcp-newer`,
+    `acct:${accountId}:agent:a1:api:mcp-older`,
   ]);
 });
