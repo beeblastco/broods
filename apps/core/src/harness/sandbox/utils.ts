@@ -39,7 +39,6 @@ const ERROR_FIELDS = z.looseObject({
 });
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 const PREFIX_SLUG_LENGTH = 31;
 
@@ -301,7 +300,8 @@ export function truncateText(
   }
 
   return {
-    value: `${textDecoder.decode(bytes.slice(0, limit))}\n[output truncated]`,
+    // A streaming decode holds back a character the cut split instead of replacing it.
+    value: `${new TextDecoder().decode(bytes.subarray(0, limit), { stream: true })}\n[output truncated]`,
     truncated: true,
   };
 }

@@ -9,7 +9,7 @@ import {
 } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 
-export type ShownRefusal = {
+type ShownRefusal = {
   message: string;
   nodeId: string;
   dropped: boolean;

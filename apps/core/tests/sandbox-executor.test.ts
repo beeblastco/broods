@@ -8,6 +8,7 @@ import {
   mock,
   spyOn,
 } from "bun:test";
+import { parseLogStream } from "../../lambda/sandbox-log-forwarder.mjs";
 import * as planLimits from "../src/harness/plan-limits.ts";
 import * as sandboxSnapshots from "../src/shared/convex/sandbox-snapshots.ts";
 import * as s3 from "../src/shared/s3.ts";
@@ -335,7 +336,17 @@ const logStreamPattern = (
   new RegExp(
     `^${accountId}/${project}/${stage}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(/[0-9a-f]{16})?$`,
   );
+class E2BCommandExitError extends Error {
+  constructor(
+    readonly exitCode: number,
+    readonly stdout: string,
+    readonly stderr: string,
+  ) {
+    super(`exit status ${exitCode}`);
+  }
+}
 await mock.module("e2b", () => ({
+  CommandExitError: E2BCommandExitError,
   Sandbox: {
     create: e2bCreateMock,
     connect: e2bConnectMock,
@@ -708,6 +719,30 @@ describe("createSandboxExecutor", () => {
       ["account-burst", "microvm-1", { vcpuSeconds: 4, gbSeconds: 0 }],
       ["account-burst", "microvm-1", { vcpuSeconds: 6, gbSeconds: 0 }],
     ]);
+  });
+
+  it("signs the log stream with the key the forwarder trims", async () => {
+    const key = "Authorization=Basic dXNlcjpwYXNz";
+    const previous = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = `${key}\n`;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    try {
+      await createSandboxExecutor({
+        provider: "lambda",
+        controlPlane: { accountId: "account-1", name: "ephemeral" },
+      }).run({ code: "echo ok", timeoutSeconds: 30, outputLimitBytes: 4096 });
+    } finally {
+      if (previous === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      else process.env.OTEL_EXPORTER_OTLP_HEADERS = previous;
+    }
+
+    const stream = upsertSandboxInstanceMock.mock.calls[0]?.[5]?.logStream;
+    expect(parseLogStream(String(stream), key)).toMatchObject({
+      accountId: "account-1",
+    });
   });
 
   it("removes an ephemeral mirror only after its non-blocking upsert settles", async () => {
@@ -2533,6 +2568,26 @@ describe("createSandboxExecutor", () => {
     ).rejects.toThrow("hook failed");
   });
 
+  it("bounds the mount credential push on a reconnected MicroVM", async () => {
+    storedSandboxExternalId = "microvm-1";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run({
+      code: "echo ok",
+      namespace: microvmNamespace(),
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const push = microvmFetchMock.mock.calls.find((call) =>
+      String(call[0]).endsWith("/workspace/credentials"),
+    );
+    expect(push?.[1]).toMatchObject({ signal: expect.any(AbortSignal) });
+  });
+
   it("launches a detached background job in the persistent MicroVM and returns a jobId", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
@@ -2748,6 +2803,52 @@ describe("createSandboxExecutor", () => {
       },
     ]);
     expect(e2bKillMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns an E2B non-zero exit as a result with its output", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    e2bRunMock.mockImplementationOnce(async () => {
+      throw new E2BCommandExitError(1, "partial\n", "no match\n");
+    });
+
+    const result = await createSandboxExecutor({ provider: "e2b" }).run({
+      code: "grep foo file",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      exitCode: 1,
+      stdout: "partial\n",
+      stderr: "no match\n",
+    });
+  });
+
+  it("keeps a finished E2B or Daytona result when the ephemeral teardown fails", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    e2bKillMock.mockImplementationOnce(async () => {
+      throw new Error("kill failed");
+    });
+    daytonaDeleteMock.mockImplementationOnce(async () => {
+      throw new Error("delete failed");
+    });
+    const request = {
+      code: "echo ok",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    const results = [
+      await createSandboxExecutor({ provider: "e2b" }).run(request),
+      await createSandboxExecutor({ provider: "daytona" }).run(request),
+    ];
+
+    expect(results).toMatchObject([{ ok: true }, { ok: true }]);
   });
 
   it("launches persistent E2B background jobs with the native command API", async () => {
@@ -3049,6 +3150,31 @@ describe("createSandboxExecutor", () => {
       }),
     );
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops identity names from account env on Vercel jobs and setup hooks", async () => {
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
+    const executor = new VercelSandboxExecutor({
+      ...persistentVercelConfig(),
+      onCreate: ["true"],
+      envVars: { FOO: "bar", BROODS_RUN_TOKEN: "spoofed" },
+    });
+
+    await executor.runBackground({
+      ...persistentVercelRun(),
+      code: "sleep 1",
+      jobId: "job_env",
+    });
+
+    const envs = vercelRunCommandMock.mock.calls
+      .map((call): unknown => call[0].env)
+      .filter((env): boolean => env !== undefined);
+    expect(envs.length).toBeGreaterThanOrEqual(2);
+    for (const env of envs) {
+      expect(env).toMatchObject({ FOO: "bar" });
+      expect(env).not.toHaveProperty("BROODS_RUN_TOKEN");
+    }
   });
 
   function vercelMountConfig(): SandboxExecutorConfig {
@@ -4024,6 +4150,17 @@ describe("conditional release", () => {
       executor.release({ namespace: NS, expectedExternalId: "sbx-old" }),
     ).rejects.toThrow("failed to terminate MicroVM sbx-old");
     expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("truncateText", () => {
+  it("holds back a character the byte cut splits", async () => {
+    const { truncateText } = await import("../src/harness/sandbox/utils.ts");
+
+    expect(truncateText("aé", 2)).toEqual({
+      value: "a\n[output truncated]",
+      truncated: true,
+    });
   });
 });
 

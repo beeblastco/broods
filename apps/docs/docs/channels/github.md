@@ -53,20 +53,20 @@ The App's install list already limits which repositories reach the agent, so `al
 
 ## Configuration
 
-| Field                | Required | Description                                                                         |
-| -------------------- | -------- | ----------------------------------------------------------------------------------- |
-| `webhookSecret`      | yes      | GitHub App webhook secret                                                           |
-| `appId`              | yes      | GitHub App ID                                                                       |
-| `privateKey`         | yes      | GitHub App private key                                                              |
-| `botUserName`        | no       | bot login for mention detection, such as `my-bot` or `my-bot[bot]`                  |
-| `botUserId`          | no       | bot's numeric user id, used to ignore its own comments. Looked up when omitted      |
-| `triggerOnIssueOpen` | no       | `false` stops auto-runs on issues opened, edited or reopened. Default `true`        |
-| `triggerOnPROpen`    | no       | `false` stops auto-runs on pull requests opened, edited or reopened. Default `true` |
-| `apiUrl`             | no       | API base URL, for GitHub Enterprise. Must be public `https`                         |
-| `allowedChannelIds`  | no       | extra repositories as `owner/repo`, or `["*"]` for every installed repository       |
-| `allowedUserIds`     | no       | GitHub logins allowed to trigger the agent. Everyone when omitted                   |
-| `trace`              | no       | `"enabled"` adds the dashboard trace link to replies                                |
-| `partition`          | no       | workspace folder split. See [Workspaces](../guides/workspaces.md)                   |
+| Field                | Required | Description                                                                                                  |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `webhookSecret`      | yes      | GitHub App webhook secret                                                                                    |
+| `appId`              | yes      | GitHub App ID                                                                                                |
+| `privateKey`         | yes      | GitHub App private key                                                                                       |
+| `botUserName`        | no       | bot login for mention detection, such as `my-bot` or `my-bot[bot]`                                           |
+| `botUserId`          | no       | bot's numeric user id. Broods ignores every comment by a `Bot` account, its own included, with or without it |
+| `triggerOnIssueOpen` | no       | `false` stops auto-runs on issues opened, edited or reopened. Default `true`                                 |
+| `triggerOnPROpen`    | no       | `false` stops auto-runs on pull requests opened, edited or reopened. Default `true`                          |
+| `apiUrl`             | no       | API base URL, for GitHub Enterprise. Must be public `https`                                                  |
+| `allowedChannelIds`  | no       | extra repositories as `owner/repo`, or `["*"]` for every installed repository                                |
+| `allowedUserIds`     | no       | GitHub logins allowed to trigger the agent. Everyone when omitted                                            |
+| `trace`              | no       | `"enabled"` adds the dashboard trace link to replies                                                         |
+| `partition`          | no       | workspace folder split. See [Workspaces](../guides/workspaces.md)                                            |
 
 ## Events
 

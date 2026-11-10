@@ -61,7 +61,7 @@ const regionOptions = regionEntries.map((option) => ({
   enabled: LIVE_DEPLOYMENT_REGIONS.includes(option.value),
 }));
 
-export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
+function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
   return (
     <Circle
       className={cn(
