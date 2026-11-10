@@ -66,7 +66,8 @@ const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
 const pendingUsage = new Map<string, PendingUsage>();
 let scheduledFlush: ScheduledFlush | null = null;
-let flushing: Promise<void> = Promise.resolve();
+// Each account's last queued write: its next one waits for it, other accounts do not.
+const accountWrites = new Map<string, Promise<void>>();
 
 export async function admitRun(
   accountId: string,
@@ -138,16 +139,15 @@ export function planRefusalText(refusal: PlanRefusal): string {
     : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
 }
 
-// Flushes queue behind each other, so one account's writes never overlap across flushes.
 export async function flushUsage(): Promise<void> {
   const due = scheduledFlush;
   scheduledFlush = null;
   if (due) clearTimeout(due.timer);
   const batch = [...pendingUsage.values()];
   pendingUsage.clear();
-  flushing = flushing.then((): Promise<void> => writeUsage(batch));
-  due?.settle(flushing);
-  await flushing;
+  const written = writeUsage(batch);
+  due?.settle(written);
+  await written;
 }
 
 export function recordUsage(
@@ -186,7 +186,7 @@ export function resetPlanLimitsForTests(): void {
     scheduledFlush.settle(Promise.resolve());
     scheduledFlush = null;
   }
-  flushing = Promise.resolve();
+  accountWrites.clear();
 }
 
 // Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
@@ -270,18 +270,29 @@ function currentWindow(
   return fresh;
 }
 
-// One account's entries share its usage rows in Convex, so they go one after another.
+// One account's entries share its usage rows in Convex, so they go one after another, behind
+// any write of that account still under way. `budgets.record` never throws.
 async function writeUsage(batch: PendingUsage[]): Promise<void> {
   const byAccount = Map.groupBy(batch, (entry): string => entry.accountId);
-  await Promise.allSettled(
-    [...byAccount.values()].map(async (entries): Promise<void> => {
-      for (const entry of entries) {
-        await getStorage().budgets.record(
-          entry.accountId,
-          entry.usage,
-          entry.source,
-        );
-      }
+  await Promise.all(
+    [...byAccount].map(([accountId, entries]): Promise<void> => {
+      const written = (accountWrites.get(accountId) ?? Promise.resolve()).then(
+        async (): Promise<void> => {
+          for (const entry of entries) {
+            await getStorage().budgets.record(
+              entry.accountId,
+              entry.usage,
+              entry.source,
+            );
+          }
+          if (accountWrites.get(accountId) === written) {
+            accountWrites.delete(accountId);
+          }
+        },
+      );
+      accountWrites.set(accountId, written);
+
+      return written;
     }),
   );
 }

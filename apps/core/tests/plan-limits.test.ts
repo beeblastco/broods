@@ -314,6 +314,21 @@ describe("recordUsage", () => {
     expect(recorded).toHaveLength(3);
   });
 
+  it("does not hold one account's usage behind another account's slow write", async () => {
+    holdWrites = true;
+    recordUsage(ACCOUNT_ID, { workerRequests: 1 });
+    const slow = flushUsage();
+    await Bun.sleep(0);
+    holdWrites = false;
+    recordUsage("acct_2", { workerRequests: 2 });
+    await flushUsage();
+    expect(recorded).toEqual([
+      { accountId: "acct_2", usage: { workerRequests: 2 } },
+    ]);
+    releaseHeld();
+    await slow;
+  });
+
   it("keeps usage recorded during a flush for the next one", async () => {
     jest.useFakeTimers();
     holdWrites = true;
