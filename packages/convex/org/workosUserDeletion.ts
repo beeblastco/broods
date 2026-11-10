@@ -4,6 +4,8 @@ import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { purgeUser } from "../model/cascade";
 
+const SWEEP_BATCH = 25;
+
 export const listSoleOwnedAccounts = internalQuery({
   args: { authId: v.string() },
   returns: v.array(v.id("accounts")),
@@ -37,26 +39,37 @@ export const listSoleOwnedAccounts = internalQuery({
   },
 });
 
-// Past-due account deletion requests whose teardown has not started yet.
-export const listDue = internalQuery({
-  args: { now: v.number() },
-  returns: v.array(v.string()),
-  handler: async (ctx, args): Promise<string[]> => {
+// Claims past-due `user.requestAccountDeletion` rows in the transaction that reads them: a cancel
+// lands first or is refused. Every row read leaves the index range, so the batch never stalls.
+export const sweep = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const now = Date.now();
     const users = await ctx.db
       .query("users")
-      .withIndex("by_deletionScheduledFor", (q) =>
-        q.gte("deletionScheduledFor", 0).lte("deletionScheduledFor", args.now),
+      .withIndex("by_workosDeletionRequestedAt_and_deletionScheduledFor", (q) =>
+        q
+          .eq("workosDeletionRequestedAt", undefined)
+          .gte("deletionScheduledFor", 0)
+          .lte("deletionScheduledFor", now),
       )
-      .collect();
+      .take(SWEEP_BATCH);
+    for (const user of users) {
+      await ctx.db.patch(user._id, { workosDeletionRequestedAt: now });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.org.workosUserDeletionCleanup.deleteIdentity,
+        { authId: user.authId },
+      );
+    }
 
-    return users
-      .filter((user) => !user.workosDeletionRequestedAt)
-      .map((user) => user.authId);
+    return null;
   },
 });
 
-// The sweep's half of `user.deleted`: re-checks the request so a cancel in between wins.
-export const start = internalMutation({
+// Hands a failed identity delete back to the sweep, behind the requests already waiting.
+export const release = internalMutation({
   args: { authId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -64,16 +77,12 @@ export const start = internalMutation({
       .query("users")
       .withIndex("by_authId", (q) => q.eq("authId", args.authId))
       .first();
-    const dueAt = user?.deletionScheduledFor;
-    if (!user || !dueAt || dueAt > Date.now() || user.workosDeletionRequestedAt)
-      return null;
+    if (!user) return null;
 
-    await ctx.db.patch(user._id, { workosDeletionRequestedAt: Date.now() });
-    await ctx.scheduler.runAfter(
-      0,
-      internal.org.workosUserDeletionCleanup.run,
-      { authId: args.authId },
-    );
+    await ctx.db.patch(user._id, {
+      workosDeletionRequestedAt: undefined,
+      deletionScheduledFor: Date.now(),
+    });
 
     return null;
   },

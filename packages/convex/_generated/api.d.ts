@@ -6468,17 +6468,17 @@ export declare const internal: {
         { authId: string },
         null
       >;
-      listDue: FunctionReference<
-        "query",
-        "internal",
-        { now: number },
-        Array<string>
-      >;
       listSoleOwnedAccounts: FunctionReference<
         "query",
         "internal",
         { authId: string },
         Array<Id<"accounts">>
+      >;
+      release: FunctionReference<
+        "mutation",
+        "internal",
+        { authId: string },
+        null
       >;
       scheduleRetry: FunctionReference<
         "mutation",
@@ -6486,16 +6486,16 @@ export declare const internal: {
         { authId: string },
         null | number
       >;
-      start: FunctionReference<
-        "mutation",
+      sweep: FunctionReference<"mutation", "internal", {}, null>;
+    };
+    workosUserDeletionCleanup: {
+      deleteIdentity: FunctionReference<
+        "action",
         "internal",
         { authId: string },
         null
       >;
-    };
-    workosUserDeletionCleanup: {
       run: FunctionReference<"action", "internal", { authId: string }, null>;
-      sweep: FunctionReference<"action", "internal", {}, null>;
     };
   };
   runtime: {

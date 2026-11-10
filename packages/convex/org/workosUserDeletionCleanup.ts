@@ -9,32 +9,33 @@ import { internalAction } from "../_generated/server";
 import { authKit } from "../auth";
 import { authProvider } from "../model/selfHostAuth";
 
-// Runs a past-due `user.requestAccountDeletion`. The identity goes first, so a failure retries
-// next sweep instead of leaving a sign-in with no user row.
-export const sweep = internalAction({
-  args: {},
+// Deletes a claimed user's sign-in before the teardown, so a failure leaves a retryable account.
+export const deleteIdentity = internalAction({
+  args: { authId: v.string() },
   returns: v.null(),
-  handler: async (ctx): Promise<null> => {
-    const authIds: string[] = await ctx.runQuery(
-      internal.org.workosUserDeletion.listDue,
-      { now: Date.now() },
-    );
-    for (const authId of authIds) {
-      if (authProvider() === "workos") {
-        try {
-          await authKit.workos.userManagement.deleteUser(authId);
-        } catch (error) {
+  handler: async (ctx, args): Promise<null> => {
+    if (authProvider() === "workos") {
+      try {
+        await authKit.workos.userManagement.deleteUser(args.authId);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "NotFoundException")) {
           console.error(
-            `Account deletion could not remove WorkOS user ${authId}`,
+            `Account deletion could not remove WorkOS user ${args.authId}`,
             error,
           );
-          continue;
+          await ctx.runMutation(internal.org.workosUserDeletion.release, {
+            authId: args.authId,
+          });
+
+          return null;
         }
       }
-      await ctx.runMutation(internal.org.workosUserDeletion.start, {
-        authId: authId,
-      });
     }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.org.workosUserDeletionCleanup.run,
+      { authId: args.authId },
+    );
 
     return null;
   },
