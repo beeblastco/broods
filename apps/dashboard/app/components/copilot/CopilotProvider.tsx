@@ -1,7 +1,6 @@
 "use client";
 
 import { useShortcutRegistry } from "@/app/components/ShortcutProvider";
-import { isCodeManagedOwner } from "@/app/components/canvas/edgeOwnership";
 import { useDashboardIndex } from "@/app/hooks/useDashboardIndex";
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { useStage } from "@/app/hooks/useStage";
@@ -23,7 +22,7 @@ import {
   type ProposedNode,
   type TrackedDeploy,
 } from "@/app/lib/copilotActions";
-import { planFromQuery, type CopilotContext } from "@/app/lib/copilotIntent";
+import type { CopilotContext } from "@/app/lib/copilotIntent";
 import { navHref } from "@/app/lib/navigation";
 import { requestCanvasAction } from "@/app/lib/canvasActions";
 import { toErrorMessage } from "@/app/lib/errors";
@@ -155,14 +154,15 @@ export function CopilotProvider({
     api.stage.list,
     indexedProject ? { projectId: indexedProject } : "skip",
   );
-  const facts = useMemo((): DockFacts => {
+  const facts = useMemo((): Omit<DockFacts, "codeNodes"> => {
     const labels = new Map(
       (canvas?.nodes ?? []).map((node) => [
         node.id,
         typeof node.data.label === "string" ? node.data.label : node.id,
       ]),
     );
-    const repo = projects?.find((project) => project._id === projectId)?.repo;
+    const project = projects?.find((entry) => entry._id === projectId);
+    const repo = project?.repo;
     const branches = [
       repo?.productionBranch && `Production from ${repo.productionBranch}`,
       repo?.developmentBranch && `Development from ${repo.developmentBranch}`,
@@ -178,16 +178,14 @@ export function CopilotProvider({
 
     return {
       ...(branch ? { branch: branch } : {}),
-      codeNodes: (canvas?.nodes ?? [])
-        .filter((node) => isCodeManagedOwner(node.data.managedBy))
-        .map((node) => labels.get(node.id) ?? node.id),
       connections: (canvas?.edges ?? []).map(
         (edge) =>
           `${labels.get(edge.source) ?? edge.source} → ${labels.get(edge.target) ?? edge.target}`,
       ),
-      project: projects?.find((project) => project._id === projectId)?.name,
+      project: project?.name,
       repo: repo ? `${repo.fullName} (${branches.join(", ")})` : undefined,
       ...(projectId ? { projectId: projectId } : {}),
+      ...(project ? { projectSlug: project.slug } : {}),
       stage: stage?.name,
       ...(stage ? { stageId: stage._id } : {}),
     };
@@ -429,6 +427,7 @@ export function CopilotProvider({
       replyId: string,
       query: string,
       context: CopilotContext,
+      dockFacts: DockFacts,
       session: DockSession,
       controller: AbortController,
     ): Promise<void> => {
@@ -479,7 +478,7 @@ export function CopilotProvider({
                 seed: {
                   files: files,
                   revision: stored.revision,
-                  ...(facts.branch ? { branch: facts.branch } : {}),
+                  ...(dockFacts.branch ? { branch: dockFacts.branch } : {}),
                 },
                 stageId: currentStageId,
               };
@@ -492,12 +491,14 @@ export function CopilotProvider({
             : undefined;
         // A linked repo's broods/ folder is what the agent edits; without it, it only advises.
         const repo =
-          !seeded && facts.repo && projectId && currentStageId
+          !seeded && dockFacts.repo && projectId && currentStageId
             ? await readRepo({
                 projectId: projectId,
                 stageId: currentStageId,
               }).catch((error: unknown) => {
-                note(`Could not read ${facts.repo}: ${toErrorMessage(error)}`);
+                note(
+                  `Could not read ${dockFacts.repo}: ${toErrorMessage(error)}`,
+                );
 
                 return null;
               })
@@ -511,7 +512,7 @@ export function CopilotProvider({
             query,
             context,
             {
-              ...facts,
+              ...dockFacts,
               page: `${window.location.pathname}${window.location.search}`,
               progress: stageProgress(stored, driftState?.reason),
             },
@@ -592,7 +593,6 @@ export function CopilotProvider({
       convex,
       currentStageId,
       driftState,
-      facts,
       note,
       projectId,
       readRepo,
@@ -618,17 +618,6 @@ export function CopilotProvider({
 
       const askedAt = String(Date.now());
       const replyId = `${askedAt}:broods`;
-      const context: CopilotContext = {
-        crons: (crons ?? []).map((cron) => ({
-          id: cron._id,
-          name: cron.name,
-          status: cron.status,
-        })),
-        envNames: (envVars ?? []).map((envVar) => envVar.name),
-        items: items,
-        liveCommands: registry.activeIds,
-        lockedNodes: new Set(facts.codeNodes),
-      };
       setMessages((prev) => [
         ...prev,
         { id: `${askedAt}:you`, role: "user", text: trimmed },
@@ -645,39 +634,79 @@ export function CopilotProvider({
       // Set before the mint, so Stop also ends an answer still being set up.
       const controller = new AbortController();
       streamRef.current = controller;
-      void dockSession().then(async (session) => {
-        if (session) {
-          return await askAgent(replyId, trimmed, context, session, controller);
-        }
+      // Lazy: the fallback planner and the canvas ownership rules load on the first ask.
+      void Promise.all([
+        dockSession(),
+        import("@/app/lib/copilotIntent"),
+        import("@/app/components/canvas/edgeOwnership"),
+      ])
+        .then(async ([session, { planFromQuery }, { isCodeManagedOwner }]) => {
+          const codeNodes = (canvas?.nodes ?? [])
+            .filter((node) => isCodeManagedOwner(node.data.managedBy))
+            .map((node) =>
+              typeof node.data.label === "string" ? node.data.label : node.id,
+            );
+          const context: CopilotContext = {
+            crons: (crons ?? []).map((cron) => ({
+              id: cron._id,
+              name: cron.name,
+              status: cron.status,
+            })),
+            envNames: (envVars ?? []).map((envVar) => envVar.name),
+            items: items,
+            liveCommands: registry.activeIds,
+            lockedNodes: new Set(codeNodes),
+          };
+          if (session) {
+            return await askAgent(
+              replyId,
+              trimmed,
+              context,
+              { ...facts, codeNodes: codeNodes },
+              session,
+              controller,
+            );
+          }
 
-        streamRef.current = null;
-        const plan = controller.signal.aborted
-          ? null
-          : planFromQuery(trimmed, context);
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === replyId
-              ? {
-                  ...message,
-                  pending: false,
-                  plan: plan ?? undefined,
-                  text: controller.signal.aborted
-                    ? "Stopped."
-                    : (plan?.summary ?? NO_MODEL_REPLY),
-                }
-              : message,
-          ),
-        );
-        if (plan) runSafeSteps(replyId, plan);
-      });
+          streamRef.current = null;
+          const plan = controller.signal.aborted
+            ? null
+            : planFromQuery(trimmed, context);
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === replyId
+                ? {
+                    ...message,
+                    pending: false,
+                    plan: plan ?? undefined,
+                    text: controller.signal.aborted
+                      ? "Stopped."
+                      : (plan?.summary ?? NO_MODEL_REPLY),
+                  }
+                : message,
+            ),
+          );
+          if (plan) runSafeSteps(replyId, plan);
+        })
+        .catch((error: unknown) => {
+          streamRef.current = null;
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === replyId
+                ? { ...message, pending: false, text: toErrorMessage(error) }
+                : message,
+            ),
+          );
+        });
     },
     [
       answering,
       askAgent,
+      canvas,
       crons,
       dockSession,
       envVars,
-      facts.codeNodes,
+      facts,
       items,
       note,
       runSafeSteps,

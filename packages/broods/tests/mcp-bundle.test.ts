@@ -97,6 +97,33 @@ test("a server that needs Node builtins ships the Node build", async (): Promise
   expect(String(server?.config.bundle)).toContain("node:child_process");
 });
 
+test("a handler keeps the code it imports from an SDK subpath", async (): Promise<void> => {
+  const cwd = await mcpFixture(
+    `handler: () => new Response(marker),`,
+    `import { marker } from "broods/account";\n`,
+  );
+  const packageDir = join(cwd, "node_modules", "broods");
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "broods",
+      type: "module",
+      exports: { "./account": "./account.js" },
+    }),
+  );
+  await writeFile(
+    join(packageDir, "account.js"),
+    `export const marker = "from-the-account-subpath";\n`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
+  expect(String(server?.config.bundle)).toContain("from-the-account-subpath");
+});
+
 async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {
   const cwd = await realpath(
     await mkdtemp(join(tmpdir(), "broods-mcp-fixture-")),

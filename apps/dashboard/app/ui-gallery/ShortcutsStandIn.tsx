@@ -19,12 +19,13 @@ import {
   actionTier,
   changeKey,
   dockProposals,
+  itemAction,
   openProposal,
   type CopilotAction,
   type CopilotPlan,
   type DockApply,
 } from "@/app/lib/copilotActions";
-import { itemAction, planFromQuery } from "@/app/lib/copilotIntent";
+import { planFromQuery } from "@/app/lib/copilotIntent";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import { useState } from "react";
 
