@@ -615,8 +615,8 @@ async function parseEventCallback(
     redelivers: true,
     ack: { statusCode: 200 },
     message: {
-      // app_mention and message both arrive for one mention; the ts key dedupes them at claim.
-      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
+      // A user install sends a mention's message copy as context; its own id keeps both.
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}${runAgent ? "" : ":context"}`,
       conversationKey: getSlackConversationKey(
         payload.team_id,
         channelId,
