@@ -79,7 +79,7 @@ The App's install list already limits which repositories reach the agent, so `al
 
 With `botUserName` set, a comment runs the agent only when it mentions `@botUserName`. Without it, every human comment runs the agent.
 
-`triggerOnIssueOpen` and `triggerOnPROpen` only cover `opened`, `edited` and `reopened`, and never fire when a `Bot` account (Dependabot, the agent's own App) did it. Assigning the bot always triggers it. So you can turn both off and still call the bot in by assigning it.
+`triggerOnIssueOpen` and `triggerOnPROpen` only cover `opened`, `edited` and `reopened`, and never fire when a `Bot` account (Dependabot, the agent's own App) did it. Assigning the issue or pull request to the user account named in `botUserName` triggers it whatever these two flags say, so with `botUserName` set you can turn both off and still call the bot in by assigning it. An assignee of type `Bot` (a GitHub App) never triggers.
 
 ## Context and replies
 
