@@ -80,7 +80,7 @@ sequenceDiagram
 ```
 
 - The additional data binds a blob to its tenant, table and column, and the `keyId` names the key that opens it.
-- Encrypted columns (`ENVELOPE_COLUMNS`): `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext`, `connections.ciphertext`, `auditSinks.encryptedSecret`.
+- Encrypted columns (`ENVELOPE_COLUMNS`): `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext`, `connections.ciphertext`, `mcp.connectionCiphertext`, `auditSinks.encryptedSecret`.
 - The CLI compares env values by plain SHA-256, which `listEnvBySecretHash` computes per request from the decrypted value. The stored digest is keyed, so a table dump cannot be brute-forced.
 - Convex runs the cipher on Web Crypto and builds the keyring per request (`model/accountKeys.ts`). Core runs it on `node:crypto` (`src/shared/node-aead.ts`) and caches unwrapped keys per account for 5 minutes (`src/shared/convex/account-keys.ts`), refreshing once when a row names an unknown key. The format is the same on both sides.
 

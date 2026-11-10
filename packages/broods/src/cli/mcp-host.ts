@@ -7,7 +7,6 @@ import {
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
-import { MCP_PROTOCOL_VERSION } from "../../../../apps/core/src/shared/mcp-protocol.ts";
 import { agentEnv } from "../runtime-config.ts";
 
 const CLIENT_INFO = { name: "broods-machine", version: "1.0.0" };
@@ -102,7 +101,7 @@ export class McpHost {
       };
       const client = new Client(CLIENT_INFO, {
         versionNegotiation: {
-          mode: { pin: MCP_PROTOCOL_VERSION },
+          mode: "auto",
           probe: { timeoutMs: DISCOVER_TIMEOUT_MS },
         },
       });

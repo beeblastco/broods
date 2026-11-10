@@ -138,6 +138,8 @@ test("only webhook requests that carry a credential skip the access log", (): vo
   expect(unlogged("POST", "/v1/webhooks/acct/whatsapp")).toBeUndefined();
   expect(unlogged("POST", "/v1/webhooks/acct/slack")).toBeUndefined();
   expect(unlogged("POST", "/v1/webhooks/acct/dev/e1/telegram")).toBeUndefined();
+  expect(unlogged("GET", "/v1/mcp-connections/callback")).toBe(true);
+  expect(unlogged("POST", "/v1/mcp-connections/server_1")).toBeUndefined();
 });
 
 test("a self-hosted install allows its own origins", (): void => {

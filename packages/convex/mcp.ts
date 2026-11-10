@@ -9,7 +9,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { authKit } from "./auth";
-import { mcpDoc } from "./account/mcp";
+import { mcpDoc, NO_MCP_CONNECTION } from "./account/mcp";
 import { mcpFields } from "./schema";
 import { storeMcpBundle, type StoredMcpBundle } from "./model/bundles";
 import {
@@ -143,7 +143,11 @@ export const getByNode = query({
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
 
-    const server = await activeServerByNode(ctx, stageId, nodeId);
+    const found = await activeServerByNode(ctx, stageId, nodeId);
+    // The sealed sign-in tokens never leave the backend.
+    const server = found
+      ? { ...found, ...NO_MCP_CONNECTION, connection: found.connection }
+      : null;
     if (
       !server?.headers ||
       (await getProjectForRole(ctx, authUser.id, projectId, "admin"))

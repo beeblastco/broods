@@ -24,6 +24,9 @@ const CASES: [string, string, Upstream | null][] = [
   ["POST", "/mcp", "core"],
   ["GET", "/mcp/", "core"],
   ["POST", "/mcp/x", null],
+  ["GET", "/.well-known/oauth-protected-resource/mcp", "core"],
+  ["GET", "/.well-known/oauth-protected-resource", "core"],
+  ["GET", "/.well-known/oauth-protected-resource/x", null],
   ["GET", "/v1/mcp", "config"],
 
   ["GET", "/v1/agents/a/ws", "gateway"],
