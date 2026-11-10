@@ -54,8 +54,6 @@ export const SANDBOX_SIZE_NAMES = [
   "large",
 ] as const;
 
-export const DEFAULT_TIMEOUT_SECONDS = 30;
-export const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;

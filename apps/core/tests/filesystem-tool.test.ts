@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -1088,6 +1089,47 @@ describe("sandbox tool set", () => {
     expect(payload.code).toContain("const replaceAll = false");
     // fsync so the rewrite commits before the Lambda freezes.
     expect(payload.code).toContain("fs.fsyncSync");
+  });
+
+  it("edit writes $ patterns in new_string literally", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "edit-dollar-"));
+    writeFileSync(join(workspace, "a.sh"), "echo X\ntail\n");
+    microvmFetchMock.mockImplementation(
+      async (url: string, init: { body: string }): Promise<Response> => {
+        const { code } = JSON.parse(init.body);
+        if (code.includes("mountpoint -q ")) {
+          return microvmFetchResponse(url, init);
+        }
+        const run = Bun.spawnSync(["/bin/bash", "-c", code], {
+          cwd: workspace,
+        });
+
+        return Response.json({
+          ok: run.exitCode === 0,
+          runtime: "bash",
+          exit_code: run.exitCode,
+          timed_out: false,
+          duration_ms: 1,
+          stdout: run.stdout.toString(),
+          stderr: run.stderr.toString(),
+        });
+      },
+    );
+    const edit = await tool("edit", workspaceCtx());
+
+    try {
+      await edit.execute({
+        file_path: "a.sh",
+        old_string: "X",
+        new_string: "$'\\n' $$ $&",
+      });
+      expect(readFileSync(join(workspace, "a.sh"), "utf8")).toBe(
+        "echo $'\\n' $$ $&\ntail\n",
+      );
+    } finally {
+      microvmFetchMock.mockImplementation(microvmFetchResponse);
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("grep runs ripgrep when the image has it, else grep -E", async () => {

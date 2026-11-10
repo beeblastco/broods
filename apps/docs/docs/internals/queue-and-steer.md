@@ -66,7 +66,8 @@ stateDiagram-v2
   [*] --> processing: accept, idle conversation
   [*] --> queued: accept, busy conversation
   queued --> processing: stepBoundary or applySteering, as a steer
-  queued --> processing: takeNext, recoverQueued, recovery in accept
+  queued --> processing: takeNext, recoverQueued, recovery in accept, active account only
+  processing --> queued: releaseOwner with requeue, a full pod shed the dispatch
   queued --> expired: past 15 min
   processing --> completed: settle or takeNext, completed
   processing --> failed: settle or takeNext, failed

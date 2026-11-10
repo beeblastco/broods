@@ -59,7 +59,12 @@ export function routesToMcpConnection(path: string): boolean {
 export async function handleMcpConnectionRequest(
   event: CoreRequest,
 ): Promise<Response> {
-  const segment = decodeURIComponent(event.path.slice(PATH_PREFIX.length));
+  let segment: string;
+  try {
+    segment = decodeURIComponent(event.path.slice(PATH_PREFIX.length));
+  } catch {
+    return errorResponse(404, "MCP server not found");
+  }
   if (segment === CALLBACK_SEGMENT) return await finishSignIn(event);
   const auth = await resolveBearerAuth(event.headers);
   const record = auth ? await authorizedRecord(auth, segment) : null;

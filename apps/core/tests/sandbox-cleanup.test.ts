@@ -23,6 +23,7 @@ const claimSandboxInstanceMock = mock(
     _key: string,
     _externalId: string,
     _accountId: string | undefined,
+    _ttlSeconds?: number,
   ): Promise<boolean> => true,
 );
 const deleteSandboxInstanceMock = mock(
@@ -165,6 +166,76 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
   ]);
   expect(claimSandboxInstanceMock.mock.calls).toEqual([
     ["e2b", "key-a", "sbx-a", "acct-1"],
+  ]);
+});
+
+it("keeps a machine reserved for the sweeper when a run took its key during a failed teardown", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => false);
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-new");
+  const released = await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "key-a",
+      externalId: "sbx-a",
+      ttlSeconds: 3600,
+    },
+  ]);
+
+  expect(released).toEqual([]);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "sbx-a", "acct-1", 3600],
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
+  ]);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("adds no second reservation when a hand-back that threw had landed", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-a");
+  await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls.map((c) => c[1])).toEqual([
+    "key-a",
+  ]);
+});
+
+it("keeps a machine reserved for the sweeper when a released key's teardown fails", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-live", "sbx-live", "acct-1", 60],
+  ]);
+});
+
+it("re-reserves a kept machine whose retried teardown fails again with the same short lifetime", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "teardown:sbx-a",
+      externalId: "sbx-a",
+      ttlSeconds: 60,
+    },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
   ]);
 });
 

@@ -197,6 +197,49 @@ describe("handleScheduledCron", () => {
     expect(removed).toEqual(["cron_1"]);
   });
 
+  it("settles an owned run whose worker the full queue refused", async (): Promise<void> => {
+    const { dispatchInProcessWorker, drainInProcessWorkers } =
+      await import("../src/harness/worker-queue.ts");
+    const releases: (() => void)[] = [];
+    for (let index = 0; index < 1008; index += 1) {
+      dispatchInProcessWorker("busy", (): Promise<void> =>
+        index < 8
+          ? new Promise<void>((resolve): void => {
+              releases.push(resolve);
+            })
+          : Promise.resolve(),
+      );
+    }
+    const mutations: [string, Record<string, unknown>][] = [];
+    runtime.mutate = async function (
+      name: string,
+      args: Record<string, unknown>,
+    ) {
+      mutations.push([name, args]);
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+
+      return name === "createAsyncAgentResult" ? true : null;
+    } as never;
+    try {
+      await expect(invokeCron()).rejects.toThrow(
+        "In-process worker queue is full",
+      );
+    } finally {
+      for (const release of releases.splice(0)) release();
+      await drainInProcessWorkers();
+    }
+
+    expect(failures).toEqual(["In-process worker queue is full"]);
+    expect(mutations.map(([name]): string => name)).toContain(
+      "updateAsyncAgentResult",
+    );
+    expect(
+      mutations.find(([name]): boolean => name === "settleIngress")?.[1],
+    ).toMatchObject({ status: "failed", ownerGeneration: 1 });
+  });
+
   it("frames the stored instructions with the schedule that fired", async () => {
     await expect(
       invokeCron({ scheduledTime: "2026-08-14T09:00:00Z" }),

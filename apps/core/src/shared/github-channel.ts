@@ -1,6 +1,7 @@
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
 import { ConsoleLogger, fromFullStream } from "chat";
 import { createSign } from "node:crypto";
+import { FETCH_TIMEOUT_MS } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -397,6 +398,7 @@ async function createGitHubRestClient(options: {
         Authorization: `Bearer ${appJwt}`,
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     },
   );
   if (!tokenResponse.ok) {
@@ -419,6 +421,7 @@ async function createGitHubRestClient(options: {
           Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!response.ok) {
         throw new Error(`GitHub GET ${path} failed (${response.status})`);
@@ -444,22 +447,31 @@ async function hydrateGitHubThreadContext(options: {
 }): Promise<ChannelIngressEvent | null> {
   try {
     const client = await createGitHubRestClient(options);
-    const thread =
+    const threadRequest =
       options.resource === "issue"
-        ? await client.get<GitHubIssueRef>(
+        ? client.get<GitHubIssueRef>(
             `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`,
           )
-        : await client.get<GitHubPullRequestRef>(
+        : client.get<GitHubPullRequestRef>(
             `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`,
           );
-    const issueComments = await client.get<GitHubCommentRef[]>(
+    const issueCommentsRequest = client.get<GitHubCommentRef[]>(
       `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}/comments?per_page=100`,
     );
-    const reviewComments = options.includeReviewComments
-      ? await client.get<GitHubCommentRef[]>(
+    const reviewCommentsRequest = options.includeReviewComments
+      ? client.get<GitHubCommentRef[]>(
           `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
         )
-      : [];
+      : Promise.resolve([]);
+    // Settled first so no rejection goes unhandled; awaited in order so the thread's error wins.
+    await Promise.allSettled([
+      threadRequest,
+      issueCommentsRequest,
+      reviewCommentsRequest,
+    ]);
+    const thread = await threadRequest;
+    const issueComments = await issueCommentsRequest;
+    const reviewComments = await reviewCommentsRequest;
 
     const content = formatGitHubThreadContext({
       owner: options.owner,

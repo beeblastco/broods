@@ -21,7 +21,7 @@ import { useSearchParams } from "next/navigation";
 
 const GROUP_MAX = 3;
 
-export interface Person {
+interface Person {
   name: string;
   avatarUrl?: string | null;
 }
@@ -82,7 +82,7 @@ export function WhoGroup({ actors }: { actors: Actor[] }): React.JSX.Element {
   );
 }
 
-export function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
+function ActorAvatar({ actor }: { actor: Actor }): React.JSX.Element {
   if ("kind" in actor && actor.kind === "agent") {
     return (
       <Avatar size="xs">

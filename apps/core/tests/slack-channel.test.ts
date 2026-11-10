@@ -265,6 +265,49 @@ describe("slack channel adapter", () => {
     });
   });
 
+  it("looks the sender up once for both the group prefix and the user name", async () => {
+    const lookups: string[] = [];
+    const adapter = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      null,
+      "eyes",
+      undefined,
+      async (userId) => {
+        lookups.push(userId);
+
+        return userId === "U1" ? "Alex" : "Blair";
+      },
+    );
+
+    const parsed = await adapter.parse(
+      createEventRequest({
+        type: "event_callback",
+        authorizations: [{ user_id: "BOT", is_bot: true }],
+        event_id: "evt-once",
+        team_id: "T1",
+        event: {
+          type: "app_mention",
+          text: "<@BOT> ask <@U2>",
+          channel: "C1",
+          channel_type: "channel",
+          user: "U1",
+          ts: "1713916800.000009",
+        },
+      }),
+    );
+
+    if (parsed.kind !== "message") {
+      throw new Error("Expected Slack app mention to be accepted");
+    }
+    expect(parsed.message.content).toEqual([
+      { type: "text", text: "Alex: ask @Blair" },
+    ]);
+    expect(parsed.message.identity?.userName).toBe("Alex");
+    expect(lookups.toSorted()).toEqual(["U1", "U2"]);
+  });
+
   it("keeps a mentioned command bare so its leading token still parses", async () => {
     const adapter = createTestSlackChannel(new Set(["C1"]));
 
