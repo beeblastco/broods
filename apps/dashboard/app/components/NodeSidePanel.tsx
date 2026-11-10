@@ -763,6 +763,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               />
             ) : isWorkspace && node ? (
               <WorkspaceResourceDetailsTab
+                key={node.id}
                 data={nodeData}
                 editName={editName}
                 setEditName={setEditName}
@@ -773,6 +774,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               />
             ) : isSandbox && node ? (
               <SandboxResourceDetailsTab
+                key={node.id}
                 data={nodeData}
                 editName={editName}
                 setEditName={setEditName}
@@ -784,6 +786,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               />
             ) : isSkill && node ? (
               <SkillDetailsTab
+                key={node.id}
                 nodeId={node.id}
                 nodeConfig={nodeData?.config}
                 editName={editName}

@@ -233,6 +233,20 @@ describe("sweepDeadRuns", () => {
   });
 });
 
+describe("getById", () => {
+  test("answers null for an id that is not a cron id", async () => {
+    const tt = t();
+    const { accountId } = await firstCron(tt);
+
+    expect(
+      await tt.query(internal.agent.crons.getById, {
+        accountId: accountId,
+        cronId: "cron_made_up",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("settleAnsweredRun", () => {
   test("ends the paused run with the outcome of the turn that answered it", async () => {
     const tt = t();

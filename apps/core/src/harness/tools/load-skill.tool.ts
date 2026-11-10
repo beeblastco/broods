@@ -67,7 +67,7 @@ export default function loadSkillTool(
             bytes: result.bytes,
           });
           const staged = result.stagedPath
-            ? `. Skill files are staged for sandbox execution at ${result.stagedPath}.`
+            ? `. Skill files are staged for sandbox execution at ${result.stagedPath} in the workspace.`
             : ". No sandbox staging path is available for bundled helper files in this turn.";
 
           return `Loaded skill ${result.path}: ${result.loadedPaths.join(", ")}${staged}`;

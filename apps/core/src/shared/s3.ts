@@ -169,6 +169,7 @@ export async function deleteS3Prefix(
 export async function ensureS3DirectoryMarkers(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<void> {
   const parts = key.split("/").filter(Boolean);
   parts.pop();
@@ -179,6 +180,7 @@ export async function ensureS3DirectoryMarkers(
     await putS3Object(bucket, `${prefix}/`, "", {
       contentType: "application/x-directory",
       metadata: posixMetadata("directory"),
+      access: access,
     });
   }
 }

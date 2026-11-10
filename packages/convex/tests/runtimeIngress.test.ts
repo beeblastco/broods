@@ -1418,6 +1418,44 @@ describe("runtime ingress", () => {
     ).toEqual({ stopped: true, queuedCount: 0 });
   });
 
+  test("a stop fenced on another event leaves the owner running", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const stop = (expectedOwnerEventId: string): Promise<unknown> =>
+      t.mutation(internal.runtimeIngress.stopOwner, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        expectedOwnerEventId: expectedOwnerEventId,
+      });
+
+    expect(await stop("queued")).toEqual({ stopped: false, queuedCount: 0 });
+    expect(await stop("owner")).toEqual({ stopped: true, queuedCount: 0 });
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "failed",
+      error: "Stopped by user at the model boundary",
+    });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_owner",
+      }),
+    ).toMatchObject({ status: "failed", stoppedByUser: true });
+  });
+
   test("a subagent its parent stopped is not flagged stoppedByUser", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

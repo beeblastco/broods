@@ -774,6 +774,102 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
+  it("ignores issues and pull requests a bot sender opens or edits", async () => {
+    const adapter = createGitHubChannel(
+      "webhook-secret",
+      "app-id",
+      "private-key",
+      null,
+      null,
+      undefined,
+      "my-bot",
+    );
+    const bot = { login: "dependabot[bot]", type: "Bot" };
+    const events = [
+      {
+        event: "pull_request",
+        action: "opened",
+        pull_request: { number: 15, title: "Bump" },
+      },
+      {
+        event: "pull_request",
+        action: "edited",
+        pull_request: { number: 15, title: "Bump" },
+      },
+      {
+        event: "issues",
+        action: "reopened",
+        issue: { number: 5, title: "Report" },
+      },
+    ];
+
+    for (const { event, ...body } of events) {
+      const parsed = await adapter.parse(
+        createRequest(
+          JSON.stringify({
+            ...body,
+            repository: createRepository(),
+            sender: bot,
+            installation: { id: 99 },
+          }),
+          {
+            "x-github-event": event,
+            "x-github-delivery": `delivery-bot-${event}-${body.action}`,
+          },
+        ),
+      );
+
+      expect(parsed).toEqual({ kind: "ignore" });
+    }
+  });
+
+  it("ignores an edited issue, pull request or comment from a person", async () => {
+    const adapter = createGitHubChannel(
+      "webhook-secret",
+      "app-id",
+      "private-key",
+      null,
+      null,
+      undefined,
+      "my-bot",
+    );
+    const comment = {
+      id: 55,
+      body: "@my-bot please help, typo fixed",
+      user: { login: "alice", type: "User" },
+    };
+    const events = [
+      { event: "issues", issue: { number: 5, title: "Report" } },
+      { event: "pull_request", pull_request: { number: 15, title: "Change" } },
+      { event: "issue_comment", issue: { number: 12 }, comment: comment },
+      {
+        event: "pull_request_review_comment",
+        pull_request: { number: 15 },
+        comment: comment,
+      },
+    ];
+
+    for (const { event, ...body } of events) {
+      const parsed = await adapter.parse(
+        createRequest(
+          JSON.stringify({
+            ...body,
+            action: "edited",
+            repository: createRepository(),
+            sender: { login: "alice", type: "User" },
+            installation: { id: 99 },
+          }),
+          {
+            "x-github-event": event,
+            "x-github-delivery": `delivery-edited-${event}`,
+          },
+        ),
+      );
+
+      expect(parsed).toEqual({ kind: "ignore" });
+    }
+  });
+
   it("triggers on PR assigned to bot user", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",

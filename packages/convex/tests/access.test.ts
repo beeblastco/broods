@@ -888,6 +888,32 @@ test("a rule may scope only to the caller's own projects and stages", async (): 
   expect(listed?.rules.map((rule) => rule.scope)).toEqual([
     "stage mine / Production",
   ]);
+
+  await t.run(async (ctx): Promise<void> => {
+    const policy = await ctx.db.get(policyId);
+    if (!policy) throw new Error("policy missing");
+    const [rule] = policy.document.rules;
+    if (!rule) throw new Error("rule missing");
+    await ctx.db.patch(policyId, {
+      document: {
+        ...policy.document,
+        rules: [
+          {
+            ...rule,
+            conditions: [
+              {
+                attribute: "project.id",
+                operator: "equals",
+                value: seeded.foreignProject,
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+  const [stored] = await t.query(api.access.listPolicies, {});
+  expect(stored?.rules.map((rule) => rule.scope)).toEqual(["organization"]);
 });
 
 test("a renamed role or policy keeps the names creating one allows", async (): Promise<void> => {

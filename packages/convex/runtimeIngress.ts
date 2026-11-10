@@ -944,6 +944,7 @@ export const stopOwner = internalMutation({
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
+    expectedOwnerEventId: v.optional(v.string()),
     expectedOwnerTaskId: v.optional(v.string()),
   },
   returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
@@ -958,6 +959,8 @@ export const stopOwner = internalMutation({
     if (
       !coordinator ||
       !hasActiveOwner(coordinator, now) ||
+      (args.expectedOwnerEventId !== undefined &&
+        coordinator.ownerEventId !== args.expectedOwnerEventId) ||
       (args.expectedOwnerTaskId !== undefined &&
         coordinator.ownerTaskId !== args.expectedOwnerTaskId)
     ) {

@@ -58,7 +58,7 @@ Pancake is a customer service inbox. The Pancake channel answers inbox messages,
 | `trace`             | no       | `"enabled"` adds the dashboard trace link to replies              |
 | `partition`         | no       | workspace folder split. See [Workspaces](../guides/workspaces.md) |
 
-Pancake has no chat commands. Slash text reaches the agent as ordinary input. Inbound photos and videos arrive as attachments. Pancake gets no reactions.
+Pancake has no chat commands. Slash text reaches the agent as ordinary input. A reply goes out in pieces of at most 1900 characters, under the Messenger limit Pancake relays to. Inbound photos and videos arrive as attachments. Pancake gets no reactions.
 
 ## Human handoff
 

@@ -2241,6 +2241,64 @@ describe("createSandboxExecutor", () => {
     }
   });
 
+  it("checks the account's budget before a harness session starts or runs a command", async () => {
+    let calls = 0;
+    globalThis.fetch = guestFetch(async () => {
+      calls += 1;
+
+      return Response.json({ ok: true });
+    });
+    const budget = spyOn(planLimits, "assertSandboxBudget").mockImplementation(
+      async (): Promise<void> => {
+        throw new Error("sandbox budget exhausted");
+      },
+    );
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+
+    try {
+      const executor = createSandboxExecutor({
+        provider: "lambda",
+        persistent: true,
+        controlPlane: {
+          accountId: "acct_budget",
+          name: "harness",
+          specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+        },
+      });
+      const reservationKey = microvmNamespace();
+      const failures = await Promise.all(
+        [
+          executor.acquireHarnessReservation({
+            reservationKey: reservationKey,
+          }),
+          executor.resumeHarnessReservation({ reservationKey: reservationKey }),
+          executor.runHarnessCommand({
+            microvmId: "microvm-1",
+            endpoint: "https://microvm-1.example.com",
+            reservationKey: reservationKey,
+            code: "echo hi",
+          }),
+        ].map((call: Promise<unknown>) =>
+          call.then(
+            (): string => "resolved",
+            (error: unknown): string => String(error),
+          ),
+        ),
+      );
+
+      expect(failures).toEqual([
+        "Error: sandbox budget exhausted",
+        "Error: sandbox budget exhausted",
+        "Error: sandbox budget exhausted",
+      ]);
+      expect(calls).toBe(0);
+    } finally {
+      budget.mockRestore();
+    }
+  });
+
   it("never resends a guest POST whose connection dropped mid-request", async () => {
     storedSandboxExternalId = "microvm-1";
     let posts = 0;

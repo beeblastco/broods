@@ -5,6 +5,8 @@
 #   Requires the development Convex credentials.
 
 name: Deploy
+# Names the stage a manual run picked; drift-cleanup and rollout skip runs for other stages.
+run-name: ${{ inputs.stage && format('Deploy to {0}', inputs.stage) || '' }}
 
 on:
   push:
@@ -84,6 +86,7 @@ jobs:
     # One lock per SST stage, shared with drift-cleanup.yaml, so a drift
     # reconcile never runs against a stage mid-deploy. Every production-*
     # stage shares one key because stage=production deploys all of them.
+    # So no `sst unlock` here: a lock left by a crashed run is cleared by hand.
     concurrency:
       group: sst-${{ startsWith(inputs.stage || (github.ref == 'refs/heads/main' && 'production' || 'dev'), 'production') && 'production' || inputs.stage || 'dev' }}
       cancel-in-progress: false
@@ -215,19 +218,6 @@ jobs:
 
       - name: Setup crane
         uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-      - name: Clear stale SST deploy lock
-        shell: bash
-        working-directory: apps/core
-        run: |
-          set -euo pipefail
-          while IFS='|' read -r target_stage target_region target_sandbox_ready; do
-            if [[ -z "${target_stage:-}" ]]; then
-              continue
-            fi
-            echo "Clearing stale SST lock for $target_stage in $target_region"
-            AWS_REGION="$target_region" AWS_DEFAULT_REGION="$target_region" bunx sst unlock --stage "$target_stage" || true
-          done <<< "$DEPLOY_TARGETS"
 
       - name: Deploy SST app
         working-directory: apps/core

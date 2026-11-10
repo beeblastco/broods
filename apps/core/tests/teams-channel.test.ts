@@ -163,6 +163,30 @@ describe("teams channel adapter", () => {
       serviceUrl: SERVICE_URL,
     });
   });
+  it("splits a long reply at the provider's limit", async (): Promise<void> => {
+    const post = spyOn(TeamsAdapter.prototype, "postMessage").mockResolvedValue(
+      { id: "reply-1", threadId: "", raw: {} },
+    );
+    restorers.push((): void => post.mockRestore());
+    const adapter = channel();
+    const parsed = await adapter.parse(
+      delivery(JSON.stringify(channelActivity("<at>Agent</at> hi")), ""),
+    );
+    if (parsed.kind !== "message") throw new Error("expected a message");
+    const text = `${"é".repeat(20_000)} tail`;
+
+    await adapter.actions(parsed.message).sendText(text);
+
+    const sent = post.mock.calls.map(([, message]) =>
+      String((message as { markdown: string }).markdown),
+    );
+    expect(sent.length).toBeGreaterThan(1);
+    // Teams caps a whole message near 28 KB of UTF-8.
+    expect(sent.every((chunk) => Buffer.byteLength(chunk) <= 24_000)).toBe(
+      true,
+    );
+    expect(sent.join("")).toBe(text);
+  });
 });
 
 function botFrameworkToken(serviceUrl: string): string {
