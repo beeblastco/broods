@@ -290,9 +290,13 @@ private def run (call : Json) : Prog Json := do
          Json.mkObj [("$fn", jsStr "")]]
   let cleanup : Prog Unit := do
     if !isPersistent then
-      let _ ← Prog.effect "sandbox.delete"
-      if truthy endMeter then
-        let _ ← Prog.effect "endMeter"
+      let deleted ← Prog.attempt "sandbox.delete"
+      let _ ← Prog.effect "waitUntil" [Json.mkObj [("$opaque", jsStr "Promise")]]
+      match deleted with
+      | .ok _ => if truthy endMeter then
+          let _ ← Prog.effect "endMeter"
+      | .threw error _ => let _ ← Prog.effect "toErrorMessage" [error]
+      | .pending => pure ()
   let result ← catching (execute cfg request sandbox startedAt isPersistent) fun error => do
     cleanup
     Prog.fail error

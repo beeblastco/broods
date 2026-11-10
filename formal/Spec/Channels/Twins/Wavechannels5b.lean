@@ -275,7 +275,10 @@ private def uploadPancakeContent (c : Json) : Prog Json := do
   let _ ← Prog.effect "form.set" [.str "file", file]
   let url ← Prog.effect "pancakeApiUrl"
     [.str s!"pages/{encodeComponent (text (a c 1))}/upload_contents", a c 0]
-  let response ← Prog.effect "fetch" [url, obj [("method", .str "POST"), ("body", form)]]
+  -- `FETCH_TIMEOUT_MS`, apps/core/src/harness/isolate/runner/pinned-fetch.mjs:9.
+  let signal ← Prog.effect "AbortSignal.timeout" [toJson (30000 : Nat)]
+  let response ← Prog.effect "fetch"
+    [url, obj [("method", .str "POST"), ("body", form), ("signal", signal)]]
   let bodyText ← Prog.effect "response.text"
   let body ← Prog.effect "parseJsonBody" [bodyText]
   let status := int (get (get response "$response") "status")

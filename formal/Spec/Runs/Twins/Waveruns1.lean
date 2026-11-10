@@ -1327,25 +1327,31 @@ private def startScheduledAgentRun (call : Json) : Prog Json := do
   let oneShot ← Prog.effect "isOneTimeSchedule" [field job "scheduleExpression"]
   let event := spread event [("cronRun", obj ([("cronId", field job "cronId"), ("runId", field run "runId")] ++
     if truthy oneShot then [("oneShot", .bool true)] else []))]
-  let failRun := fun (error : Json) => do
+  -- A failure after admission also fails the owned run and its ingress.
+  let failRun := fun (owned error : Json) => do
+    let message := Json.str (errorMessageOr "Failed to start cron async worker" error)
     let _ ← Prog.effect "getStorage"
     let _ ← Prog.effect "getStorage().crons.failRun" [field job "accountId", field job "cronId",
-      field run "runId", .str (errorMessageOr "Failed to start cron async worker" error)]
+      field run "runId", message]
+    if truthy owned then
+      let _ ← Prog.effect "recordAsyncRun" [owned, obj [("status", .str "failed"), ("error", message)]]
+      let _ ← Prog.effect "failOwnedIngress" [owned, message]
     (throw error : Prog Json)
   let delivery ← Prog.effect "continuationDelivery" [event]
   match ← Prog.attempt "admitInternalContinuation" [event, delivery] with
   | .pending => Prog.unsupported "admission is unfinished"
-  | .threw error _ => failRun error
+  | .threw error _ => failRun .null error
   | .ok admitted =>
     let owned := field admitted "owned"
     if !truthy owned then
-      return ← failRun (Prog.errorJson "Error" "Cron conversation is already processing another turn")
+      return ← failRun .null
+        (Prog.errorJson "Error" "Cron conversation is already processing another turn")
     match ← Prog.attempt "createPendingAsyncAgentResult" [obj [("eventId", field owned "eventId"),
         ("conversationKey", field owned "conversationKey")]] with
-    | .threw error _ => failRun error
+    | .threw error _ => failRun owned error
     | _ =>
       match ← Prog.attempt "invokeAsyncWorker" [owned] with
-      | .threw error _ => failRun error
+      | .threw error _ => failRun owned error
       | _ => return obj [("eventId", field event "publicEventId"),
           ("conversationKey", field event "publicConversationKey")]
 

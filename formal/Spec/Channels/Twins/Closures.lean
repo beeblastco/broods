@@ -727,13 +727,15 @@ private def githubReact (call : Json) : Prog Json := do
 /-- `createGitHubRestClient`'s `get`: an authenticated GET that must answer 2xx. -/
 private def githubGet (call : Json) : Prog Json := do
   let path := jsString (arg call 0)
+  -- `FETCH_TIMEOUT_MS`, apps/core/src/harness/isolate/runner/pinned-fetch.mjs:9.
+  let signal ← Prog.effect "AbortSignal.timeout" [toJson (30000 : Nat)]
   let response ← Prog.effect "request"
     [.str s!"{jsString (mod call "baseApiUrl")}{path}",
      Json.mkObj [("method", .str "GET"),
        ("headers", Json.mkObj
          [("Accept", .str "application/vnd.github+json"),
           ("Authorization", .str s!"Bearer {jsString (mod call "token")}"),
-          ("X-GitHub-Api-Version", .str "2022-11-28")])]]
+          ("X-GitHub-Api-Version", .str "2022-11-28")]), ("signal", signal)]]
   let status := get (get response "$response") "status"
   let ok := match status with
     | .num number => numGe number 200 && !numGe number 300

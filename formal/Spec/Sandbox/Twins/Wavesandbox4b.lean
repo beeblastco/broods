@@ -83,7 +83,7 @@ private def e2bRelease (call : Json) : Prog Json := do
   if !truthy key then return nothing
   let externalId ← releaseTarget "e2b" request key
   if !truthy externalId then return nothing
-  let _ ← Prog.effect "e2bSandboxApi"
+  let _ ← Prog.effect "e2bModule"
   goneOr do
     let options ← Prog.effect "e2bApiOptions" [cfg]
     let _ ← Prog.effect "Sandbox.kill" [externalId, options]
@@ -98,7 +98,7 @@ private def e2bSnapshot (call : Json) : Prog Json := do
     else pure .null
   if !truthy externalId then
     return ← fail "no reserved e2b sandbox to snapshot for this sandbox"
-  let _ ← Prog.effect "e2bSandboxApi"
+  let _ ← Prog.effect "e2bModule"
   let options ← Prog.effect "e2bApiOptions" [cfg]
   let snapshot ← Prog.effect "Sandbox.createSnapshot" [externalId, options]
   return Json.mkObj [("snapshotId", field snapshot "snapshotId")]
@@ -496,11 +496,18 @@ private def workerRun (call : Json) : Prog Json := do
       (field request "metadata") none]
   finish result
 
+/-- `error instanceof CommandExitError`, by the recorded class name: the recorder drops the
+module's classes, so the e2b SDK's class or a stand-in named after it. -/
+private def isCommandExitError (error : Json) : Bool :=
+  (str (field (field error "$error") "$class")).endsWith "CommandExitError"
+
+private def promiseRef : Json := Json.mkObj [("$opaque", toJson "Promise")]
+
 /-- `#persistent` of the E2B executor. -/
 private def e2bAcquire (cfg request : Json) : Prog Json := do
   let plane := field cfg "controlPlane"
   let snapshot := field cfg "snapshot"
-  let _ ← Prog.effect "e2bSandboxApi"
+  let _ ← Prog.effect "e2bModule"
   if !(← persistent cfg request) then
     let _ ← Prog.effect "assertSnapshotBootable" [plane, snapshot]
     let options ← Prog.effect "e2bCreateOptions" [cfg, toJson false]
@@ -566,17 +573,28 @@ private def e2bRun (call : Json) : Prog Json := do
       pure meter
   let cleanup : Prog Unit := do
     if !isPersistent then
-      let _ ← Prog.effect "sandbox.kill"
-      if truthy endMeter then
-        let _ ← Prog.effect "endMeter"
+      let killed ← Prog.attempt "sandbox.kill"
+      let _ ← Prog.effect "waitUntil" [promiseRef]
+      match killed with
+      | .ok _ => if truthy endMeter then
+          let _ ← Prog.effect "endMeter"
+      | .threw error _ => let _ ← Prog.effect "toErrorMessage" [error]
+      | .pending => pure ()
   let some seconds := wholeNumber (field request "timeoutSeconds")
     | Prog.unsupported "a fractional timeout"
   let answer ← Prog.catchFail
     (do
+      let _ ← Prog.effect "e2bModule"
       let envs ← Prog.effect "mergeSandboxEnv"
         [field cfg "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
-      let result ← Prog.effect "sandbox.commands.run" [field request "code",
+      let ran ← Prog.attempt "sandbox.commands .run" [field request "code",
         Json.mkObj [("timeoutMs", toJson (seconds * 1000)), ("envs", envs)]]
+      let result ← match ran with
+        | .ok value => pure value
+        | .threw error _ =>
+          if isCommandExitError error then pure (field (field error "$error") "fields")
+          else Prog.fail error
+        | .pending => Prog.unsupported "a command that never finished"
       let limit := field request "outputLimitBytes"
       let out := field result "stdout"
       let stdout ← Prog.effect "truncateText" [if nullish out then jsStr "" else out, limit]

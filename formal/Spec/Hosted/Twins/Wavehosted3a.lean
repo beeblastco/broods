@@ -694,7 +694,8 @@ private def prefixRun (literal : String) (cls : Char → Bool) (least : Nat) (re
   if run.length < least then none else some (chars.length + run.length)
 
 private def broodsPrefixes : List String :=
-  ["bsk_", "bask_", "bpdk_", "bcli_", "bcode_", "bsts_", "bdts_", "brt_"]
+  ["bsk_", "bask_", "bpdk_", "bcli_", "bcode_", "bsts_", "bdts_", "brt_", "bsig_", "buat_",
+   "bdap_", "bdob_"]
 
 private def broodsCredential (before rest : List Char) : Option (Nat × List Char) :=
   if !boundaryWhere (fun c => !isWord c) before then none else

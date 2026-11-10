@@ -125,7 +125,7 @@ private def vercelWorkspaceRoot (config : Json) : Prog String := do
 /-- `#shell`: a failed setup command throws what `commandError` renders. -/
 private def vercelShell (config _sandbox : Json) (code : String)
     (cwd : Option String) (env : List (String × Json)) : Prog Json := do
-  let base ← Prog.effect "stringRecord" [field config "envVars"]
+  let base ← Prog.effect "mergeSandboxEnv" [field config "envVars"]
   let result ← Prog.effect "sandbox.runCommand" [Json.mkObj
     ([("cmd", toJson "bash"), ("args", toJson [toJson "-lc", toJson code])] ++
       (match cwd with | some dir => [("cwd", toJson dir)] | none => []) ++
@@ -410,7 +410,7 @@ private def vercelRunBackground (call : Json) : Prog Json := do
     [toJson jobsDir, jobId, toJson workDir, field request "code", Json.mkObj
       ([("maxConcurrentJobs", toJson maxConcurrentBackgroundJobs)] ++
         (if truthy callback then [("callback", callback)] else []))]
-  let base ← Prog.effect "stringRecord" [field config "envVars"]
+  let base ← Prog.effect "mergeSandboxEnv" [field config "envVars"]
   let extra ← Prog.effect "callbackEnv" [callback]
   let result ← Prog.effect "sandbox.runCommand" [Json.mkObj
     [("cmd", toJson "bash"), ("args", toJson [toJson "-lc", script]),

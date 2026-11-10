@@ -335,6 +335,7 @@ private def runCommand (call request sandbox : Json) (startedAt : Int) : Prog Js
       let root ← workspaceRoot call
       some <$> Prog.effect "workspacePath" [request, root]
     else pure none
+  let execStartedAt ← Prog.effect "Date.now"
   let quoted ← Prog.effect "shellQuote" [field request "code"]
   let env ← Prog.effect "mergeSandboxEnv"
     [field (config call) "envVars", (Json.mkObj (if field request "principal" == Twin.undefinedJson then [] else [("principal", field request "principal")]))]
@@ -345,20 +346,28 @@ private def runCommand (call request sandbox : Json) (startedAt : Int) : Prog Js
   let limit := field request "outputLimitBytes"
   let stdout ← Prog.effect "truncateText" [orElse (field result "stdout") (toJson ""), limit]
   let stderr ← Prog.effect "truncateText" [orElse (field result "stderr") (toJson ""), limit]
-  let finished ← Prog.effect "Date.now"
+  let checked ← Prog.effect "Date.now"
   let exitCode := field result "exit_code"
+  let some seconds := asInt (field request "timeoutSeconds")
+    | Prog.unsupported "a fractional timeout"
+  let pastDeadline ← match asInt checked, asInt execStartedAt with
+    | some now, some began => pure (decide (now - began ≥ seconds * 1000))
+    | _, _ => Prog.unsupported "a clock that is not an integer"
+  let timedOut := pastDeadline &&
+    (same exitCode (toJson (124 : Nat)) || same exitCode (toJson (137 : Nat)))
+  let finished ← Prog.effect "Date.now"
   let duration ← match asInt finished with
     | some now => pure (now - startedAt)
     | none => Prog.unsupported "a clock that is not an integer"
   return Json.mkObj
     [("ok", toJson (same exitCode (toJson (0 : Nat)))),
      ("runtime", toJson "bash"),
-     ("exitCode", exitCode),
+     ("exitCode", if timedOut then Json.null else exitCode),
      ("stdout", field stdout "value"),
      ("stderr", field stderr "value"),
      ("durationMs", toJson duration),
      ("truncated", toJson (truthy (field stdout "truncated") || truthy (field stderr "truncated"))),
-     ("timedOut", toJson (same exitCode (toJson (124 : Nat)) || same exitCode (toJson (137 : Nat)))),
+     ("timedOut", toJson timedOut),
      ("provider", toJson "sandbox")]
 
 /-- Handles the metering callback, which reads the configured specs. -/

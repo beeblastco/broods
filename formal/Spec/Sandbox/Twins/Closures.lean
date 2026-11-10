@@ -666,12 +666,11 @@ private def computerExecute (call : Json) : Prog Json := do
       [("type", toJson "text"),
        ("value", toJson s!"{render (orElse (get reply "text") (toJson "OK"))}{on}{app}")]
   let label := if get action "action" == toJson "zoom" then "Zoomed region" else "Screenshot"
-  return Json.mkObj
-    [("type", toJson "content"),
-     ("value", .arr #[
-       Json.mkObj [("type", toJson "text"), ("text", toJson s!"{label}{on}{app}")],
-       Json.mkObj [("type", toJson "image-data"), ("data", get (get reply "image") "data"),
-         ("mediaType", get (get reply "image") "mediaType")]])]
+  let parts ← Prog.effect "withImageLimits" [.arr #[
+    Json.mkObj [("type", toJson "text"), ("text", toJson s!"{label}{on}{app}")],
+    Json.mkObj [("type", toJson "image-data"), ("data", get (get reply "image") "data"),
+      ("mediaType", get (get reply "image") "mediaType")]]]
+  return Json.mkObj [("type", toJson "content"), ("value", parts)]
 
 /-- `computerTool/toModelOutput`: the tool's output goes to the model as it is. -/
 private def computerToModelOutput (call : Json) : Prog Json :=

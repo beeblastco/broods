@@ -184,6 +184,22 @@ def handleScheduledCron (call : Json) : Prog Json := do
     Prog.fail error
   | .pending => Prog.unsupported "scheduled run never finished"
 
+private def utf8Bytes (text : String) : List Nat := text.toUTF8.toList.map UInt8.toNat
+
+private def base64Alphabet : List Char :=
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toList
+
+/-- How the recorder carries a `Uint8Array`: standard padded base64. -/
+private def base64Encode (bytes : List Nat) : String :=
+  let sym (n : Nat) := base64Alphabet.getD (n % 64) 'A'
+  let rec go : List Nat → List Char
+    | [] => []
+    | [a] => [sym (a / 4), sym (a % 4 * 16), '=', '=']
+    | [a, b] => [sym (a / 4), sym (a % 4 * 16 + b / 16), sym (b % 16 * 4), '=']
+    | a :: b :: c :: rest =>
+      [sym (a / 4), sym (a % 4 * 16 + b / 16), sym (b % 16 * 4 + c / 64), sym c] ++ go rest
+  String.ofList (go bytes)
+
 /-- `SSE_KEEPALIVE_INTERVAL_MS` in `handler.ts`. -/
 private def keepaliveMs : Nat := 30000
 
@@ -198,8 +214,19 @@ def directTurnResponse (call : Json) : Prog Json := do
        ("ownerEventId", field event "eventId"),
        ("ownerGeneration", generation)]
   whenEntered "start" (do
-    let _ ← Prog.effect "setInterval" [anon, toJson keepaliveMs]
-    let _ ← Prog.effect "dispatchInProcessWorker" [.str "direct-sse", anon, lease])
+    let keepalive ← Prog.effect "setInterval" [anon, toJson keepaliveMs]
+    match ← Prog.attempt "dispatchInProcessWorker" [.str "direct-sse", anon, lease] with
+    | .ok _ => pure ()
+    | .pending => Prog.unsupported "dispatch never finished"
+    | .threw error _ =>
+      let some message := ((field error "$error").getObjValAs? String "message").toOption
+        | Prog.unsupported "a thrown non-Error"
+      let _ ← Prog.effect "clearInterval" [keepalive]
+      let errorFrame := "{\"type\":\"error\",\"error\":" ++ (Json.str message).compress ++ "}"
+      let _ ← Prog.effect "controller.enqueue"
+        [Json.mkObj [("$bytes", .str (base64Encode (utf8Bytes s!"data: {errorFrame}\n\n")))]]
+      let _ ← Prog.effect "controller.close" []
+      Prog.spawn "failOwnedIngress" [event, .str message])
   whenEntered "arg1" (whenEntered "arg0" (do
     let command ← Prog.effect "queuedCommand" [field event "events"]
     if !nullish command then

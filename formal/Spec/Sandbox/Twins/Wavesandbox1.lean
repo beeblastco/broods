@@ -203,12 +203,20 @@ private def normalizeOptionalString (args : Json) : Json :=
                 if s.isEmpty then Json.null else toJson s
     | _ => Twin.threw s!"{text (Twin.arg args 1)} must be a string"
 
+/-- The longest whole-character prefix of `value` within `limit` UTF-8 bytes: a streaming decode
+holds back a character the byte cut split (`sandbox/utils.ts:303`). -/
+private def utf8Prefix (value : String) (limit : Nat) : String :=
+  let rec go : List Char → Nat → List Char
+    | [], _ => []
+    | c :: cs, room => if c.utf8Size ≤ room then c :: go cs (room - c.utf8Size) else []
+  String.ofList (go value.toList limit)
+
 private def truncateText (args : Json) : Json :=
   let value := text (Twin.arg args 0)
   let limit := (Twin.arg args 1).getNat?.toOption.getD 0
   let truncated : Bool := value.toUTF8.size > limit
   Json.mkObj [("value", toJson (if truncated then
-    String.fromUTF8! (value.toUTF8.extract 0 limit) ++ "\n[output truncated]" else value)),
+    utf8Prefix value limit ++ "\n[output truncated]" else value)),
     ("truncated", toJson truncated)]
 
 private def workspacePath (args : Json) : Json :=

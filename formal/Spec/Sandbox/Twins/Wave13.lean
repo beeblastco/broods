@@ -1,4 +1,5 @@
 import Spec.Twin
+import Spec.Sandbox.Model
 
 /-!
 Twins of the MicroVM executor's public methods. Its private helpers (`#acquire`, `#reconnect`,
@@ -624,13 +625,16 @@ private def refreshMountCredentials (cfg request id endpoint : Json) : M Unit :=
       let _ ← effect "markMountCredentialsFresh" [key]
       return
     let token ← authToken id proxyPort
+    let signal ← effect "AbortSignal.timeout" [toJson execGraceMs]
     let options := Json.mkObj
       [("method", toJson "POST"),
        ("headers", Json.mkObj [("content-type", toJson "application/json"),
           ("X-aws-proxy-auth", token), ("X-aws-proxy-port", toJson (toString proxyPort))]),
-       ("body", toJson (Twin.jsonStringify 64 (field mount "credentials")))]
+       ("body", toJson (Twin.jsonStringify 64 (field mount "credentials"))),
+       ("signal", signal)]
     let url := s!"https://{stripScheme (jsText endpoint)}/workspace/credentials"
     let response ← effect "fetch" [toJson url, options]
+    let _ ← effect "res.body?.cancel"
     let status := intOf (field (field response "$response") "status")
     if (status ≥ 200 && status ≤ 299) || status == 404 then
       let _ ← effect "markMountCredentialsFresh" [key]
@@ -734,7 +738,8 @@ private def logStream (call cfg : Json) : M Json := do
   let uuid ← effect "crypto.randomUUID" []
   let name := s!"{jsText account}/{jsText (part "project" (toJson "-"))}/{jsText (part "stage" (toJson "-"))}/{jsText uuid}"
   let key ← effect "optionalEnv" [toJson "OTEL_EXPORTER_OTLP_HEADERS"]
-  if truthy key then return ← unsupported "a signed log stream name"
+  if truthy key && Spec.Sandbox.jsTrim (str key) != "" then
+    return ← unsupported "a signed log stream name"
   return toJson name
 
 /-- `#runInput`. -/

@@ -2,8 +2,8 @@ kind	name	reason
 opaque	Daytona	The Daytona SDK client is only used to fetch a sandbox by id, and that answer is recorded.
 opaque	WorkdirHarnessDriver	The driver is the receiver; every field the twin reads is in its recorded private fields.
 external	^Sandbox\.(kill|create|connect|createSnapshot)$	The E2B SDK's static calls; the trace checks id and options, and the answer is the provider's.
-external	^sandbox\.commands\.run$	The E2B SDK runs the command in the provider; the trace checks command, timeout and env.
-external	^sandbox\.kill$	The E2B SDK ends the sandbox; it takes no arguments and its result is unused.
+external	^sandbox\.commands ?\.run$	The E2B SDK runs the command in the provider; the trace checks command, timeout and env.
+external	^sandbox\.kill$	The E2B SDK ends the sandbox; it takes no arguments, and its outcome only picks endMeter or a log line.
 external	^handle\.disconnect$	The E2B SDK detaches from a background command; failures are ignored by the caller.
 external	^endMeter$	The stop function meterEphemeralSandbox returned; it takes no arguments and its result is unused.
 external	^new Daytona$	The Daytona SDK builds a client from options the trace checks.
@@ -17,6 +17,6 @@ external	^this\.#sandbox\.exposePort$	The Workdir sandbox gives the public URL f
 external	^new WorkdirHarnessSession$	Constructs the session from options the trace checks; the twin passes the instance on unread.
 external	^this\.#executor( \.release|\.acquireHarnessReservation|\.resumeHarnessReservation)$	The injected executor, whose methods have their own recordings; the trace checks each request.
 external	^\$enter:arg[34]$	Marks the recorder entering a callback this function passed; it carries no answer to trust.
-internal	apps/core/src/harness/sandbox/e2b-executor.ts#e2bSandboxApi	A dynamic import of the e2b SDK that hands back its Sandbox class unchanged, so there is no logic to twin.
+internal	apps/core/src/harness/sandbox/e2b-executor.ts#e2bModule	A dynamic import of the e2b SDK that hands back the module unchanged, so there is no logic to twin.
 internal	apps/core/src/harness/sandbox/worker-executor.ts#serializedByReservation	Only chains the caller's callback per reservation; the answer is that callback's, which WorkerSandboxExecutor.run models.
 internal	apps/core/src/harness/sandbox/utils.ts#meterEphemeralSandbox	Its mirror write never finishes inside a recording, so no recording can grade it; callers only invoke the stop function it returns.

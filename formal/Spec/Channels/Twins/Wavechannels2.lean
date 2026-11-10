@@ -914,12 +914,11 @@ private def normalizeMentions (c : Json) : Prog Json := do
   Prog.effect "cleanSlackText" [.str replaced]
 
 private def formatSlackText (c : Json) : Prog Json := do
-  let normalized ← Prog.effect "normalizeSlackMentions" [a c 0, a c 3, a c 4]
+  let normalized := a c 0
   if !live (a c 2) || !live (a c 1) || !live normalized then return normalized
   let command ← Prog.effect "parseCommand" [normalized]
   if live command then return normalized
-  let name ← Prog.effect "resolveSlackUserName" [a c 1, a c 4]
-  return .str s!"{text name}: {text normalized}"
+  return .str s!"{text (a c 1)}: {text normalized}"
 
 private def sealedLink (c : Json) : Prog Json := do
   let base ← Prog.effect "getHarnessPublicUrl"
@@ -1121,6 +1120,11 @@ private def gatewayEvent (c : Json) : Prog Json := do
         [("userId", get author "id")] ++ (if live name then [("userName", name)] else []))),
       ("source", source)]))]
 
+private def outcomeValue : Outcome → Prog Json
+  | .ok value => pure value
+  | .threw error _ => .fail error
+  | .pending => Prog.unsupported "unfinished concurrent effect"
+
 private def eventCallback (c : Json) : Prog Json := do
   let parsed ← Prog.effect "parseChannelWebhookBody" [.str "slack", a c 0]
   if get parsed "kind" == .str "ignore" then return parsed
@@ -1161,11 +1165,15 @@ private def eventCallback (c : Json) : Prog Json := do
   let raw := if kind == .str "app_mention" && (items (get botIds "$set")).isEmpty
     then .str (replaceFirst (seqs [lit "<@", plus (noneOf ">"), lit ">", star space]) (text content))
     else content
-  let body ← Prog.effect "formatSlackMessageText" [raw, user, .bool (!direct), botIds, a c 4]
+  let normalize := ("normalizeSlackMentions", [raw, botIds, a c 4])
+  let lookups ← Prog.all
+    (if live user then [normalize, ("resolveSlackUserName", [user, a c 4])] else [normalize])
+  let normalized ← outcomeValue (lookups.getD 0 .pending)
+  let userName ← if live user then outcomeValue (lookups.getD 1 .pending)
+    else pure Twin.undefinedJson
+  let body ← Prog.effect "formatSlackMessageText" [normalized, userName, .bool (!direct)]
   let threadTs := nullish (get event "thread_ts") ts
   let replyTs ← Prog.effect "getSlackReplyThreadTs" [event, ts]
-  let userName ← if live user then Prog.effect "resolveSlackUserName" [user, a c 4]
-    else pure Twin.undefinedJson
   let attachments ← Prog.effect "slackAttachments"
     [nullish (get event "files") (jarr []), a c 1]
   let team := get payload "team_id"
@@ -1236,11 +1244,6 @@ private def attachmentBytes (c : Json) : Prog Json := do
   if !live (get att "url") then
     return ← Prog.throwError "Error" "attachment carries neither data, a reader, nor a URL"
   Prog.effect "fetchAttachmentUrl" [get att "url", a c 1]
-
-private def outcomeValue : Outcome → Prog Json
-  | .ok value => pure value
-  | .threw error _ => .fail error
-  | .pending => Prog.unsupported "unfinished concurrent effect"
 
 private def discordUploadsValue (c : Json) : Prog Json := do
   let attachments := items (a c 0)

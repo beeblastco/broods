@@ -200,10 +200,12 @@ private def postPancakeMessage (call : Json) : Prog Json := do
   let path := "pages/" ++ encodeComponent (text (get source "pageId")) ++ "/conversations/" ++
     encodeComponent (text (get source "conversationId")) ++ "/messages"
   let url ← Prog.effect "pancakeApiUrl" [.str path, token]
+  -- `FETCH_TIMEOUT_MS`, apps/core/src/harness/isolate/runner/pinned-fetch.mjs:9.
+  let signal ← Prog.effect "AbortSignal.timeout" [num 30000]
   let response ← Prog.effect "fetch" [url, Json.mkObj
     [("method", .str "POST"),
      ("headers", Json.mkObj [("Content-Type", .str "application/json")]),
-     ("body", .str (pancakeBody source (Twin.callArg call 2)))]]
+     ("body", .str (pancakeBody source (Twin.callArg call 2))), ("signal", signal)]]
   let bodyText ← Prog.effect "response.text"
   let body ← Prog.effect "parseJsonBody" [bodyText]
   let status := (asNum (get (get response "$response") "status")).mantissa

@@ -9,6 +9,8 @@ private def source (name : String) : String :=
 
 private def apiVersion : String := "2022-11-28"
 private def maxContextComments : Nat := 50
+/-- `FETCH_TIMEOUT_MS`, `apps/core/src/harness/isolate/runner/pinned-fetch.mjs:9`. -/
+private def fetchTimeoutMs : Nat := 30000
 
 private def present (fields : List (String × Json)) : List (String × Json) :=
   fields.filter (!missing ·.2)
@@ -85,18 +87,25 @@ private def createRestClient (call : Json) : Prog Json := do
   let base := trimTrailingSlashes (if nullish apiUrl then "https://api.github.com" else text apiUrl)
   let _ ← Prog.effect "channelApiFetch" [apiUrl]
   let jwt ← Prog.effect "createGitHubAppJwt" [get options "appId", get options "privateKey"]
+  let signal ← Prog.effect "AbortSignal.timeout" [num fetchTimeoutMs]
   let response ← Prog.effect "request"
     [.str s!"{base}/app/installations/{show' (get options "installationId")}/access_tokens",
      Json.mkObj [("method", .str "POST"), ("headers", Json.mkObj
        [("Accept", .str "application/vnd.github+json"),
         ("Authorization", .str s!"Bearer {text jwt}"),
-        ("X-GitHub-Api-Version", .str apiVersion)])]]
+        ("X-GitHub-Api-Version", .str apiVersion)]), ("signal", signal)]]
   if !isOk response then
     return ← Prog.throwError "Error" s!"installation token request failed ({statusOf response})"
   let body ← Prog.effect "tokenResponse.json"
   if text (get body "token") == "" then
     return ← Prog.throwError "Error" "installation token response did not include a token"
   return Json.mkObj [("get", fnJson "get")]
+
+/-- `await` of a request that already settled. -/
+private def awaited : Outcome → Prog Json
+  | .ok value => pure value
+  | .threw error _ => throw error
+  | .pending => throw (Json.mkObj [("pending", true)])
 
 private def hydrate (call : Json) : Prog Json := do
   let options := Twin.callArg call 0
@@ -107,15 +116,19 @@ private def hydrate (call : Json) : Prog Json := do
   Prog.catchFail
     (do
       let _ ← Prog.effect "createGitHubRestClient" [options]
-      let thread ← Prog.effect "client.get"
-        [.str (repoPath ++ (if isIssue then "/issues/" else "/pulls/") ++ number)]
-      let issueComments ← Prog.effect "client.get"
-        [.str (repoPath ++ "/issues/" ++ number ++ "/comments?per_page=100")]
+      let threadGet := ("client.get",
+        [.str (repoPath ++ (if isIssue then "/issues/" else "/pulls/") ++ number)])
+      let issueGet := ("client.get",
+        [.str (repoPath ++ "/issues/" ++ number ++ "/comments?per_page=100")])
+      let reviewGet := ("client.get",
+        [.str (repoPath ++ "/pulls/" ++ number ++ "/comments?per_page=100")])
+      let withReview := jsTruthy (get options "includeReviewComments")
+      -- All requests settle together; awaiting in order lets the thread's error win.
+      let outcomes ← Prog.all ([threadGet, issueGet] ++ (if withReview then [reviewGet] else []))
+      let thread ← awaited (outcomes.getD 0 .pending)
+      let issueComments ← awaited (outcomes.getD 1 .pending)
       let reviewComments ←
-        if jsTruthy (get options "includeReviewComments") then
-          Prog.effect "client.get"
-            [.str (repoPath ++ "/pulls/" ++ number ++ "/comments?per_page=100")]
-        else pure (Json.arr #[])
+        if withReview then awaited (outcomes.getD 2 .pending) else pure (Json.arr #[])
       let content ← Prog.effect "formatGitHubThreadContext" [Json.mkObj (present
         [("owner", get options "owner"), ("repo", get options "repo"),
          ("resource", get options "resource"), ("number", get options "number"),

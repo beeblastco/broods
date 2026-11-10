@@ -4,7 +4,7 @@ external	^storage\.workspaceConfigs\.getById$	Convex owns workspace records; rep
 external	^new Daytona$	Vendor client constructor; replay checks the options it is given.
 external	^client\.create$	Daytona SDK boundary; replay checks the create options and the twin handles the answer or the failure.
 external	^sandbox\.process\.executeCommand$	Daytona SDK boundary; replay checks the command, cwd, env and timeout.
-external	^sandbox\.delete$	Daytona SDK boundary; replay checks it runs once on every exit path.
+external	^sandbox\.delete$	Daytona SDK boundary; replay checks it runs once on every exit path, and its outcome only picks endMeter or a log line.
 external	^endMeter$	The stop callback returned by meterEphemeralSandbox; replay checks it runs after the delete.
 external	^new SandboxCapacityError$	Constructs the repository's own error class from the message the twin computed.
 opaque	Daytona	The vendor client is only passed along, never inspected.
