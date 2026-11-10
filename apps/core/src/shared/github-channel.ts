@@ -882,7 +882,7 @@ function parseIssuesEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnIssueOpen === false) {
@@ -993,7 +993,7 @@ function parsePullRequestEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnPROpen === false) {
