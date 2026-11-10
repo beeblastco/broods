@@ -224,14 +224,15 @@ export const failRun = internalMutation({
     settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
+// Takes any string: an id the model made up is a miss, not a validation error.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
-    cronId: v.id("crons"),
+    cronId: v.string(),
   },
   returns: v.union(cronDoc, v.null()),
   handler: (ctx, { accountId, cronId }): Promise<Doc<"crons"> | null> =>
-    getOwned(ctx, accountId, cronId),
+    getOwnedByString(ctx, accountId, cronId),
 });
 
 export const isLive = internalQuery({
@@ -707,7 +708,7 @@ async function getOwnedAgent(
 }
 
 async function getOwnedByString(
-  ctx: MutationCtx,
+  ctx: Ctx,
   accountId: Id<"accounts">,
   cronId: string,
 ): Promise<Doc<"crons"> | null> {
