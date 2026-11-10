@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { purgeUser } from "../model/cascade";
+import { purgeUser, sharedOwnedOrgs } from "../model/cascade";
 
 const SWEEP_BATCH = 25;
 
@@ -40,7 +40,7 @@ export const listSoleOwnedAccounts = internalQuery({
 });
 
 // Claims past-due `user.requestAccountDeletion` rows in the transaction that reads them: a cancel
-// lands first or is refused. Every row read leaves the index range, so the batch never stalls.
+// or new org member lands first or is too late. Every row read leaves the index range.
 export const sweep = internalMutation({
   args: {},
   returns: v.null(),
@@ -56,6 +56,13 @@ export const sweep = internalMutation({
       )
       .take(SWEEP_BATCH);
     for (const user of users) {
+      if ((await sharedOwnedOrgs(ctx, user)).length > 0) {
+        console.warn(
+          `Account deletion for ${user.authId} dropped: they own an org with other members`,
+        );
+        await ctx.db.patch(user._id, { deletionScheduledFor: undefined });
+        continue;
+      }
       await ctx.db.patch(user._id, { workosDeletionRequestedAt: now });
       await ctx.scheduler.runAfter(
         0,
