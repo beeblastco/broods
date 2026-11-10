@@ -43,6 +43,7 @@ import type { AgentRecord } from "../shared/domain/agents.ts";
 import { errorResponse, type CoreRequest } from "../shared/http.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
+  publicConversationKeyFromScoped,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -119,6 +120,39 @@ const FINISHED_STATUSES: ReadonlySet<RunStatus["status"]> = new Set([
   "failed",
   "expired",
 ]);
+const CONVERSATIONS_ARGS = z.object({
+  agent: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+const CONVERSATIONS_TOOL = "list_conversations";
+const CONVERSATIONS_TOOL_DEFINITION: ToolV2 = {
+  name: CONVERSATIONS_TOOL,
+  description:
+    "List recent conversations with your agents, newest first, to continue one: pass its conversationId to ask_agent.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      agent: {
+        type: "string",
+        description: "Only this agent's conversations: a name or id.",
+      },
+      limit: { type: "number", description: "How many, 1 to 50. Default 20." },
+    },
+  },
+};
+const GET_RUN_TOOL = "get_run";
+const GET_RUN_TOOL_DEFINITION: ToolV2 = {
+  name: GET_RUN_TOOL,
+  description:
+    "Read a run without waiting: its answer if it finished, what it asked if it is waiting, or that it is still working.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      runId: { type: "string", description: "The runId you were given." },
+    },
+    required: ["runId"],
+  },
+};
 const LIST_ARGS = z.object({
   project: z.string().trim().min(1).optional(),
   stage: z.string().trim().min(1).optional(),
@@ -139,10 +173,20 @@ const LIST_TOOL_DEFINITION: ToolV2 = {
 const MAX_APPROVAL_INPUT_CHARS = 300;
 const POLL_INTERVAL_MS = 2_000;
 const QUESTION_KEY_PREFIX = "question-";
+// Read wider than any one answer, so a filter by agent still fills its page.
+const RECENT_CONVERSATIONS = 200;
+const RUN_ARGS = z.object({ runId: z.string().min(1) });
 const RUN_PATH = "/v1/runs";
 // Prefixes the event id and conversation key of every run a task starts.
 const RUN_PREFIX = "mcp-";
 const SERVER_INFO = { name: "broods", version: "1.0.0" };
+const STOP_TOOL = "stop_run";
+const STOP_TOOL_DEFINITION: ToolV2 = {
+  name: STOP_TOOL,
+  description:
+    "Stop a run that is still working. It ends at its next model step.",
+  inputSchema: GET_RUN_TOOL_DEFINITION.inputSchema,
+};
 // Under the 60 second default request timeout most MCP clients apply.
 const SYNC_WAIT_MS = 50_000;
 const SYNC_FIRST_POLL_MS = 250;
@@ -286,6 +330,9 @@ function createTaskServer(caller: McpCaller): Server {
       tools: [
         LIST_TOOL_DEFINITION,
         ASK_TOOL_DEFINITION,
+        GET_RUN_TOOL_DEFINITION,
+        STOP_TOOL_DEFINITION,
+        CONVERSATIONS_TOOL_DEFINITION,
         ...(declaresTasks(ctx) ? [] : [CONTINUE_TOOL_DEFINITION]),
       ],
     }),
@@ -298,6 +345,12 @@ function createTaskServer(caller: McpCaller): Server {
       const { signal } = ctx.mcpReq;
       if (params.name === LIST_TOOL) {
         return await listAgents(caller, params.arguments);
+      }
+      if (params.name === CONVERSATIONS_TOOL) {
+        return await listConversations(caller, params.arguments);
+      }
+      if (params.name === GET_RUN_TOOL || params.name === STOP_TOOL) {
+        return await readOrStopRun(caller, params.name, params.arguments);
       }
       if (direct && params.name === CONTINUE_TOOL) {
         return await continueRun(caller, params.arguments, signal);
@@ -714,6 +767,60 @@ async function listAgents(
   );
 }
 
+async function listConversations(
+  caller: McpCaller,
+  args: Record<string, unknown>,
+): Promise<CallToolResultV2> {
+  const input = CONVERSATIONS_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  const { auth } = caller;
+  // A runtime key is embedded in apps, so it must not read other users' conversations.
+  if (auth.kind !== "account") {
+    return toolResult(
+      "Only an account key or an OAuth sign-in can list conversations.",
+      true,
+    );
+  }
+  const only = input.data.agent
+    ? await findAgent(caller, input.data.agent)
+    : undefined;
+  if (typeof only === "string") return toolResult(only, true);
+  const { accountId } = auth.account;
+  const names = new Map(
+    (await listRunnableAgents(auth)).map(({ agentId, name }) => [
+      agentId,
+      name,
+    ]),
+  );
+  const recent = await runtime.query("listRecentConversations", {
+    accountId: accountId,
+    limit: RECENT_CONVERSATIONS,
+  });
+  const conversations = recent
+    .filter(
+      ({ agentId }) =>
+        names.has(agentId) && (!only || only.agentId === agentId),
+    )
+    .slice(0, input.data.limit)
+    .map(({ agentId, conversationKey, updatedAt }) => ({
+      conversationId: publicConversationKeyFromScoped(
+        conversationKey,
+        accountId,
+        agentId,
+      ),
+      agent: names.get(agentId),
+      agentId: agentId,
+      lastActiveAt: new Date(updatedAt).toISOString(),
+    }));
+
+  return toolResult(
+    conversations.length
+      ? JSON.stringify({ conversations: conversations })
+      : "No recent conversations.",
+    false,
+  );
+}
+
 async function mcpAuth(request: CoreRequest): Promise<McpAuth | Response> {
   const { headers } = request;
   const auth = await resolveBearerAuth(headers);
@@ -790,6 +897,36 @@ async function readRun(
     ProtocolErrorCode.InternalError,
     await errorText(response),
   );
+}
+
+/** `get_run` and `stop_run`: a run this caller cannot read answers like an unknown one. */
+async function readOrStopRun(
+  caller: McpCaller,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<CallToolResultV2> {
+  const input = RUN_ARGS.safeParse(args);
+  if (!input.success) return toolResult(z.prettifyError(input.error), true);
+  try {
+    const runs = await resolveTask(caller, input.data.runId);
+    if (tool === GET_RUN_TOOL) {
+      return taskFromRuns(runs).status === "working"
+        ? toolResult(`Still working. Call ${GET_RUN_TOOL} again later.`, false)
+        : directReply(runs);
+    }
+    if (FINISHED_STATUSES.has(runs.current.status)) {
+      return toolResult("The run had already finished.", false);
+    }
+    await cancelTask(caller, input.data.runId);
+
+    return toolResult(
+      `Stopping. The run ends at its next model step; ${GET_RUN_TOOL} shows when it has.`,
+      false,
+    );
+  } catch (error) {
+    if (error instanceof ProtocolError) return toolResult(error.message, true);
+    throw error;
+  }
 }
 
 function requireTaskCapability(ctx: ServerContext): void {

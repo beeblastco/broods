@@ -256,6 +256,41 @@ export async function insertConversationEvents(
   return stored;
 }
 
+const RECENT_CONVERSATION_SCAN = 200;
+
+/** An account's newest direct-API conversations; channel, cron and subagent ones are left out. */
+export const listRecentConversations = internalQuery({
+  args: { accountId: v.id("accounts"), limit: v.number() },
+  returns: v.array(
+    v.object({
+      agentId: v.string(),
+      conversationKey: v.string(),
+      updatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const newest = await ctx.db
+      .query("runtimeConversationCoordinators")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .order("desc")
+      .take(RECENT_CONVERSATION_SCAN);
+
+    return newest
+      .filter(({ agentId, conversationKey }) =>
+        conversationKey.startsWith(
+          `acct:${args.accountId}:agent:${agentId}:api:`,
+        ),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, args.limit)
+      .map(({ agentId, conversationKey, updatedAt }) => ({
+        agentId: agentId,
+        conversationKey: conversationKey,
+        updatedAt: updatedAt,
+      }));
+  },
+});
+
 export const listConversationEvents = internalQuery({
   args: {
     conversationKey: v.string(),

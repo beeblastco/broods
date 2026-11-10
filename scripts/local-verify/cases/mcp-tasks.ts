@@ -105,6 +105,22 @@ export async function mcpTasks(context: VerifyContext): Promise<void> {
       (refused.content[0]?.text ?? "").includes("Call list_agents"),
     JSON.stringify(unknown),
   );
+  const read = await mcp(context, "tools/call", {
+    name: "get_run",
+    arguments: { runId: task.taskId },
+  });
+  const conversations = await mcp(context, "tools/call", {
+    name: "list_conversations",
+    arguments: { agent: agentId },
+  });
+  assertStep(
+    "get_run reads the finished run, and list_conversations names its conversation",
+    (read.result as Task["result"])?.isError === !context.hasModelKey &&
+      (
+        (conversations.result as Task["result"])?.content[0]?.text ?? ""
+      ).includes('"conversationId":"mcp-'),
+    JSON.stringify({ read: read, conversations: conversations }),
+  );
   const callback = await fetch(
     `${context.edgeUrl}/v1/mcp-connections/callback?code=x&state=forged`,
   );
@@ -152,8 +168,9 @@ async function assertAgentTool(
     (tool) => tool.name,
   );
   assertStep(
-    "tools/list is list_agents, ask_agent and continue_run",
-    names.join() === "list_agents,ask_agent,continue_run",
+    "tools/list is the same six tools for a client without tasks",
+    names.join() ===
+      "list_agents,ask_agent,get_run,stop_run,list_conversations,continue_run",
     JSON.stringify(names),
   );
 

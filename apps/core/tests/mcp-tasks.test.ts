@@ -40,6 +40,18 @@ const TASKS = { extensions: { [TASKS_EXTENSION_ID_V2]: {} } };
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 const stops: unknown[] = [];
 const approvalReplies = new Map<string, string>();
+const recentConversations = [
+  {
+    agentId: "agent_1",
+    conversationKey: "acct:acct_1:agent:agent_1:api:mcp-9",
+    updatedAt: Date.parse("2026-11-02T00:00:00.000Z"),
+  },
+  {
+    agentId: "agent_deleted",
+    conversationKey: "acct:acct_1:agent:agent_deleted:api:mcp-8",
+    updatedAt: Date.parse("2026-11-01T00:00:00.000Z"),
+  },
+];
 
 await mock.module("../src/shared/auth.ts", () => ({
   ...authModule,
@@ -56,6 +68,7 @@ await mock.module("../src/shared/convex/runtime.ts", () => ({
       name: string,
       args: { eventId: string },
     ): Promise<unknown> => {
+      if (name === "listRecentConversations") return recentConversations;
       expect(name).toBe("getIngressStatusByEventId");
       const runId = approvalReplies.get(args.eventId);
 
@@ -398,12 +411,65 @@ describe("handleMcpRequest", () => {
       );
     };
 
-    expect(await names({})).toEqual([
+    const always = [
       "list_agents",
       "ask_agent",
-      "continue_run",
-    ]);
-    expect(await names(TASKS)).toEqual(["list_agents", "ask_agent"]);
+      "get_run",
+      "stop_run",
+      "list_conversations",
+    ];
+    expect(await names({})).toEqual([...always, "continue_run"]);
+    expect(await names(TASKS)).toEqual(always);
+  });
+
+  it("reads a run without waiting, and stops one that still works", async () => {
+    const replay = replayOf({
+      run_done: run({ runId: "run_done", status: "completed", response: "ok" }),
+      run_busy: run({ runId: "run_busy" }),
+    });
+    const call = async (name: string, runId: string): Promise<string> => {
+      const { result } = await rpc(
+        mcpRequest("tools/call", { name: name, arguments: { runId: runId } }),
+        replay,
+      );
+
+      return JSON.stringify(result);
+    };
+
+    expect(await call("get_run", "run_done")).toContain('"text":"ok"');
+    expect(await call("get_run", "run_busy")).toContain("Still working");
+    expect(await call("get_run", "run_gone")).toContain("No task run_gone");
+    expect(await call("stop_run", "run_done")).toContain("already finished");
+    expect(stops).toEqual([]);
+    expect(await call("stop_run", "run_busy")).toContain("Stopping");
+    expect(stops).toHaveLength(1);
+  });
+
+  it("lists recent conversations of agents that still exist, for an account only", async () => {
+    const list = async (token: string): Promise<string> => {
+      const { result } = await rpc(
+        mcpRequest(
+          "tools/call",
+          { name: "list_conversations", arguments: {} },
+          { token: token },
+        ),
+        replayOf({}),
+      );
+
+      return (result as { content: { text: string }[] }).content[0]!.text;
+    };
+
+    expect(JSON.parse(await list("account"))).toEqual({
+      conversations: [
+        {
+          conversationId: "mcp-9",
+          agent: "agent_1",
+          agentId: "agent_1",
+          lastActiveAt: "2026-11-02T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(await list("frontend")).toContain("Only an account key");
   });
 
   it("tells a client without tasks what the agent asked and takes its answer", async () => {

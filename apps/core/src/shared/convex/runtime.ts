@@ -14,6 +14,7 @@ export const runtimeQueries = {
     internal.runtime.listAccountSandboxReservations,
   listBuildingSandboxSnapshots: internal.runtime.listBuildingSandboxSnapshots,
   listConversationEvents: internal.runtime.listConversationEvents,
+  listRecentConversations: internal.runtime.listRecentConversations,
   listExpiredSandboxReservations:
     internal.runtime.listExpiredSandboxReservations,
   listOrphanedSandboxInstances: internal.runtime.listOrphanedSandboxInstances,
