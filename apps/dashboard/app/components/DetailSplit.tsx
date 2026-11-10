@@ -1,18 +1,23 @@
 "use client";
 
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/app/components/ui/resizable";
-import {
   DETAIL_DEFAULT_WIDTH,
   DETAIL_MIN_WIDTH,
   TABLE_MIN_WIDTH,
 } from "@/app/lib/detailSplit";
 import { cn } from "@/app/lib/utils";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+
+const KEY_STEP_PX = 16;
+
+// The separator's keys, as the detail width they move to.
+const KEY_MOVES: Partial<Record<string, (width: number) => number>> = {
+  ArrowLeft: (width) => width + KEY_STEP_PX,
+  ArrowRight: (width) => width - KEY_STEP_PX,
+  End: () => DETAIL_MIN_WIDTH,
+  Home: () => Infinity,
+};
 
 interface DetailPanelProps {
   title: ReactNode;
@@ -62,41 +67,91 @@ export function DetailPanel({
   );
 }
 
+// The table flexes above its floor; the detail keeps its width and shrinks only to its minimum.
 export function DetailSplit({
   children,
   detail,
   flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
-  const frame = cn(
-    "relative min-h-0 flex-1 overflow-hidden bg-card",
-    !flush && "rounded-lg border border-border",
-    // On a phone the table stays laid out under the open detail, so closing keeps its
-    // scroll; CSS only, so nothing remounts across widths.
-    detail &&
-      "max-md:[&>[data-panel]:first-child]:invisible max-md:[&>[data-panel]:first-child]:absolute max-md:[&>[data-panel]:first-child]:inset-0",
-  );
+  const group = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ from: number; room: number } | null>(null);
+  const [width, setWidth] = useState(DETAIL_DEFAULT_WIDTH);
+  if (!detail && width !== DETAIL_DEFAULT_WIDTH) setWidth(DETAIL_DEFAULT_WIDTH);
+
+  const room = (handle: HTMLElement): number =>
+    (group.current?.clientWidth ?? 0) - handle.offsetWidth - tableMinWidth;
+  const resize = (next: number, max: number): void =>
+    setWidth(Math.max(DETAIL_MIN_WIDTH, Math.min(next, max)));
 
   return (
-    <ResizablePanelGroup className={frame}>
-      <ResizablePanel
-        minSize={tableMinWidth}
-        className="min-h-0 min-w-0 overflow-auto"
+    <div
+      ref={group}
+      data-slot="resizable-panel-group"
+      style={{
+        "--detail-min": `${DETAIL_MIN_WIDTH}px`,
+        "--detail-width": `${width}px`,
+        "--table-min": `${tableMinWidth}px`,
+      }}
+      className={cn(
+        "relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
+        !flush && "rounded-lg border border-border",
+      )}
+    >
+      <div
+        data-slot="resizable-panel"
+        className={cn(
+          "min-h-0 min-w-0 flex-1 overflow-auto",
+          // On a phone the table stays laid out under the open detail, so closing keeps its
+          // scroll; CSS only, so nothing remounts across widths.
+          detail &&
+            "min-w-(--table-min) max-md:invisible max-md:absolute max-md:inset-0",
+        )}
       >
         {children}
-      </ResizablePanel>
+      </div>
       {detail && (
         <>
-          <ResizableHandle className="max-md:hidden" />
-          <ResizablePanel
-            defaultSize={DETAIL_DEFAULT_WIDTH}
-            minSize={DETAIL_MIN_WIDTH}
-            className="flex min-h-0 flex-col bg-card"
+          <div
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a focusable splitter; lint bars handlers on an hr
+            role="separator"
+            aria-label="Resize details"
+            aria-orientation="vertical"
+            aria-valuemin={DETAIL_MIN_WIDTH}
+            aria-valuenow={width}
+            tabIndex={0}
+            data-slot="resizable-handle"
+            onKeyDown={(event) => {
+              const move = KEY_MOVES[event.key];
+              if (!move) return;
+              event.preventDefault();
+              resize(move(width), room(event.currentTarget));
+            }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              drag.current = {
+                from: event.clientX + width,
+                room: room(event.currentTarget),
+              };
+            }}
+            onPointerMove={(event) => {
+              if (drag.current)
+                resize(drag.current.from - event.clientX, drag.current.room);
+            }}
+            onLostPointerCapture={() => {
+              drag.current = null;
+            }}
+            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden max-md:hidden"
+          />
+          <div
+            data-slot="resizable-panel"
+            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card max-md:grow"
           >
             {detail}
-          </ResizablePanel>
+          </div>
         </>
       )}
-    </ResizablePanelGroup>
+    </div>
   );
 }

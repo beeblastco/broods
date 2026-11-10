@@ -7,6 +7,7 @@ import {
 } from "@playwright/test";
 import {
   DETAIL_DEFAULT_WIDTH,
+  DETAIL_MIN_WIDTH,
   TABLE_MIN_WIDTH,
 } from "../../app/lib/detailSplit";
 import { openGallery } from "../lib/gallery";
@@ -90,6 +91,31 @@ test("the handle owns the resize cursor, the group holds it through a drag, and 
   await page.mouse.up();
   await expect(group).toHaveCSS("cursor", "auto");
   await expect(close).toHaveCSS("cursor", "pointer");
+});
+
+test("the separator resizes from the keyboard within both floors", async ({
+  page,
+}) => {
+  await openGallery(page);
+  const fixture = page.locator('[data-fixture="detail-split"]');
+  await fixture.getByRole("button", { name: "Open details" }).click();
+  const group = fixture.locator('[data-slot="resizable-panel-group"]');
+  const detail = group.locator('[data-slot="resizable-panel"]').last();
+  const handle = group.getByRole("separator");
+  const frame = await group.evaluate((element) => element.clientWidth);
+  const handleWidth = await width(handle);
+
+  await handle.focus();
+  await page.keyboard.press("ArrowLeft");
+  const wider = await width(detail);
+  expect(wider).toBeGreaterThan(DETAIL_DEFAULT_WIDTH);
+  await page.keyboard.press("ArrowRight");
+  expectNear(await width(detail), DETAIL_DEFAULT_WIDTH);
+
+  await page.keyboard.press("End");
+  expectNear(await width(detail), DETAIL_MIN_WIDTH);
+  await page.keyboard.press("Home");
+  expectNear(await width(detail), frame - handleWidth - TABLE_MIN_WIDTH);
 });
 
 test("on a phone the open detail takes the table's place, and closing it brings the table back", async ({
