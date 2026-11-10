@@ -394,17 +394,9 @@ const PROVIDER_SETTINGS = z.pipe(
       headers: z.optional(stringRecord("must be an object with string values")),
     })
     .check(
+      // Both base URL spellings too: a provider SDK reads baseURL even when base_url is set.
       z.superRefine((settings, ctx): void => {
-        const baseURL = providerBaseURL(settings);
-        if (baseURL) {
-          const problem = publicHttpsUrlProblem(baseURL);
-          const label =
-            typeof settings.base_url === "string" ? "base_url" : "baseURL";
-          if (problem)
-            ctx.addIssue({ code: "custom", path: [label], message: problem });
-        }
         for (const key of Object.keys(settings)) {
-          if (key === "baseURL" || (key === "base_url" && baseURL)) continue;
           const endpoint = settings[key];
           if (!PROVIDER_ENDPOINT_SETTING.test(key) || endpoint === undefined)
             continue;
@@ -1064,7 +1056,9 @@ export function normalizeModelConfig(
 }
 
 export function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // A trailing DNS dot names the same host: `localhost.` is `localhost`.
+  const bare = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = bare.endsWith(".") ? bare.slice(0, -1) : bare;
   if (
     host === "localhost" ||
     host.endsWith(".localhost") ||

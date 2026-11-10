@@ -530,6 +530,26 @@ describe("agent rules", () => {
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
     );
+    for (const base_url of ["https://localhost./v1", "https://api.local./v1"])
+      expect(() =>
+        normalizeAgentConfig({ provider: { custom: { base_url: base_url } } }),
+      ).toThrow(
+        "config.provider.custom.base_url must not point to a private or internal address",
+      );
+    // A provider SDK reads baseURL itself, so a blank base_url beside it does not exempt it.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openai: {
+            apiKey: "sk",
+            base_url: "",
+            baseURL: "https://127.0.0.1/v1",
+          },
+        },
+      }),
+    ).toThrow(
+      "config.provider.openai.baseURL must not point to a private or internal address",
+    );
     // Every endpoint a factory reads is held to the base URL's rule, not just broods's two.
     expect(() =>
       normalizeAgentConfig({
