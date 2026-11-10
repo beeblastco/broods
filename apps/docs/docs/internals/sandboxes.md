@@ -243,7 +243,7 @@ stateDiagram-v2
 
 ## Lifecycle actions and terminal
 
-The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row with the actor source. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
+The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row naming the actor. Only the config plane, on the service token, may name the dashboard user it acts for in the body's `actor`; any other caller is recorded as its own credential, `service`, with the role id for a scoped key or role session. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
 
 `terminal` opens a real TTY on `sandbox`, `lambda` and `cloudflare`. Other providers answer it as unsupported and the dashboard keeps the bounded `exec` runner.
 
