@@ -1344,6 +1344,7 @@ export declare const api: {
           branch: string;
           conclusion?: string;
           error?: string;
+          runId: number;
           sha: string;
           status: string;
           updatedAt: number;
@@ -6216,6 +6217,7 @@ export declare const internal: {
           branch: string;
           conclusion?: string;
           error?: string;
+          runId: number;
           sha: string;
           status: string;
           updatedAt: number;

@@ -15,6 +15,7 @@ import {
   proposedNodes,
   settleApplies,
   settleVerified,
+  trackDeploy,
   type CopilotAction,
   type CopilotPlan,
   type DockApply,
@@ -238,31 +239,7 @@ export function CopilotProvider({
     projectId && following ? { projectId: projectId } : "skip",
   );
   const deploys = useMemo(
-    () =>
-      commits.map((commit): TrackedDeploy => {
-        const run = github?.deploys.find(
-          (deploy) => deploy.branch === commit.branch,
-        );
-        // A newer run on the branch carries this commit too.
-        if (
-          !run ||
-          (run.sha !== commit.sha && run.updatedAt < commit.committedAt)
-        ) {
-          return { ...commit, state: "waiting" };
-        }
-        if (run.status !== "completed") {
-          return { ...commit, runUrl: run.url, state: "deploying" };
-        }
-
-        return {
-          ...commit,
-          conclusion: run.conclusion,
-          error: run.error,
-          finishedAt: run.updatedAt,
-          runUrl: run.url,
-          state: run.conclusion === "success" ? "deployed" : "failed",
-        };
-      }),
+    () => commits.map((commit) => trackDeploy(commit, github?.deploys)),
     [commits, github],
   );
 
@@ -777,6 +754,9 @@ export function CopilotProvider({
               startedAt: startedAt,
             };
       }
+      const prior = await convex.query(api.github.status, {
+        projectId: projectId,
+      });
       const result = await commitChange({
         baseSha: landed ?? via.baseSha,
         branch: via.branch,
@@ -800,15 +780,17 @@ export function CopilotProvider({
         ...prev,
         {
           branch: via.branch,
-          committedAt: Date.now(),
           messageId: messageId,
+          priorRunId:
+            prior.deploys.find((deploy) => deploy.branch === via.branch)
+              ?.runId ?? 0,
           sha: result.sha,
         },
       ]);
 
       return { phase: "applying", sha: result.sha, startedAt: startedAt };
     },
-    [applySource, commitChange, currentStageId, projectId],
+    [applySource, commitChange, convex, currentStageId, projectId],
   );
 
   // A proposal being applied ignores a second press and a Discard until it settles.
