@@ -163,10 +163,6 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       rawPath: rawPath,
     });
 
-    if (method === "GET" && rawPath === "/") {
-      return jsonResponse(200, { status: "ok" });
-    }
-
     const isAccountSelfDelete =
       method === "DELETE" && rawPath === "/v1/account";
     const auth = await resolveBearerAuth(headers, {

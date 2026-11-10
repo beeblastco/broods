@@ -21,27 +21,15 @@ export interface CommandContext {
   compact?: (instructions: string) => Promise<number>;
 }
 
-interface DiscordCommandOption {
-  type: number;
-  name: string;
-  description: string;
-  required?: boolean;
-}
-
 interface DiscordCommandMetadata {
   names: string[];
-  description: string;
-  options?: DiscordCommandOption[];
-  integrationTypes?: number[];
-  contexts?: number[];
 }
 
 interface CommandHandler {
   aliases: string[];
   description: string;
-  execute?: (ctx: CommandContext) => Promise<string>;
+  execute: (ctx: CommandContext) => Promise<string>;
   discord?: DiscordCommandMetadata;
-  showInHelp?: boolean;
   // Rewrites the ingress text in this mode; `execute` then only answers a bare command.
   rewriteMode?: ChannelCommandMode;
   // Waits in the queue like a follow-up; the drain loop runs `execute` under its own lease.
@@ -58,14 +46,6 @@ export interface CommandResult {
   error?: string;
 }
 
-export interface DiscordCommandRegistration {
-  name: string;
-  description: string;
-  options?: DiscordCommandOption[];
-  integration_types?: number[];
-  contexts?: number[];
-}
-
 export interface DiscordCommandResolution {
   contentText: string;
   commandToken?: string;
@@ -76,8 +56,6 @@ export type ChannelCommandOutcome =
   | { kind: "reply"; commandToken: string }
   | { kind: "passthrough" };
 
-const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
-const DEFAULT_DISCORD_CONTEXTS = [0, 1];
 const CLEAR_CONVERSATION_MAX_BATCHES = 100;
 const INGRESS_CLEAR_LEASE_TTL_MS = 15 * 60 * 1000;
 
@@ -87,7 +65,6 @@ export const commands: CommandHandler[] = [
     description: "Clear conversation context and start fresh",
     discord: {
       names: ["new", "clear"],
-      description: "Clear conversation context and start fresh",
     },
     execute: async function (ctx) {
       return withIngressClearLease(
@@ -118,15 +95,6 @@ export const commands: CommandHandler[] = [
     queued: true,
     discord: {
       names: ["compact"],
-      description: "Compact conversation context into a summary",
-      options: [
-        {
-          type: 3,
-          name: "instructions",
-          description: "What the summary should focus on",
-          required: false,
-        },
-      ],
     },
     execute: async function (ctx) {
       const compact = ctx.compact;
@@ -148,15 +116,6 @@ export const commands: CommandHandler[] = [
     rewriteMode: "steer",
     discord: {
       names: ["steer"],
-      description: "Steer the active turn at the next model boundary",
-      options: [
-        {
-          type: 3,
-          name: "text",
-          description: "Guidance for the active turn",
-          required: true,
-        },
-      ],
     },
     execute: async function () {
       return "Usage: /steer <message>";
@@ -167,7 +126,6 @@ export const commands: CommandHandler[] = [
     description: "Stop the active run at the next model boundary",
     discord: {
       names: ["stop"],
-      description: "Stop the active run",
     },
     execute: async function (ctx) {
       if (!ctx.accountId || !ctx.agentId) {
@@ -191,15 +149,6 @@ export const commands: CommandHandler[] = [
     rewriteMode: "followup",
     discord: {
       names: ["queue"],
-      description: "Queue a follow-up message",
-      options: [
-        {
-          type: 3,
-          name: "text",
-          description: "Message to run after the active turn",
-          required: true,
-        },
-      ],
     },
     execute: async function () {
       return "Usage: /queue <message>";
@@ -210,14 +159,10 @@ export const commands: CommandHandler[] = [
     description: "Show available commands",
     discord: {
       names: ["help"],
-      description: "Show available commands",
     },
     execute: async function () {
       const lines = ["Available commands:"];
-      for (const cmd of getExecutableCommands()) {
-        if (cmd.showInHelp === false) {
-          continue;
-        }
+      for (const cmd of commands) {
         lines.push(`${cmd.aliases.join(", ")}: ${cmd.description}`);
       }
 
@@ -230,10 +175,8 @@ export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
 ): Promise<CommandResult | undefined> {
-  const handler = getExecutableCommands().find((c) =>
-    c.aliases.includes(commandToken),
-  );
-  if (!handler?.execute) return undefined;
+  const handler = commands.find((c) => c.aliases.includes(commandToken));
+  if (!handler) return undefined;
 
   let result: CommandResult;
   try {
@@ -251,34 +194,10 @@ export async function executeCommand(
   return result;
 }
 
-export function getDiscordCommandRegistrations(
-  scope: "global" | "guild" = "global",
-): DiscordCommandRegistration[] {
-  return commands.flatMap((command) => {
-    const discord = command.discord;
-    if (!discord) {
-      return [];
-    }
-
-    return discord.names.map((name) => ({
-      name: name,
-      description: discord.description,
-      ...(discord.options ? { options: discord.options } : {}),
-      ...(scope === "global"
-        ? {
-            integration_types:
-              discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
-            contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
-          }
-        : {}),
-    }));
-  });
-}
-
 export function parseCommand(text: string): string | null {
   const token = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
   if (!token.startsWith("/")) return null;
-  const match = getExecutableCommands().find((c) => c.aliases.includes(token));
+  const match = commands.find((c) => c.aliases.includes(token));
 
   return match ? token : null;
 }
@@ -356,18 +275,6 @@ export function resolveDiscordCommand(
     contentText: optionText.trim(),
     commandToken: handler.aliases[0],
   };
-}
-
-function getExecutableCommands(): Array<
-  CommandHandler & { execute: NonNullable<CommandHandler["execute"]> }
-> {
-  return commands.filter(
-    (
-      command,
-    ): command is CommandHandler & {
-      execute: NonNullable<CommandHandler["execute"]>;
-    } => typeof command.execute === "function",
-  );
 }
 
 // Trim first: parseCommand ignores leading whitespace, so the token can be indented.

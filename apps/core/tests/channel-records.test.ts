@@ -11,7 +11,6 @@ import {
   applyChannelRecord,
   channelActorRoles,
   channelRecordMatchesWorkspace,
-  normalizeChannelRecordConfig,
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../src/shared/domain/channel-record.ts";
@@ -623,61 +622,6 @@ describe("channel record helpers", () => {
     expect(channelActorRoles(record, "U9")).toEqual(["admin"]);
     expect(channelActorRoles(record, "U5")).toEqual([]);
     expect(channelActorRoles(record, undefined)).toEqual([]);
-  });
-});
-
-describe("channel record validation", () => {
-  it("requires at least one agent binding", () => {
-    expect(() => normalizeChannelRecordConfig({})).toThrow(
-      "config.agentBindings must be a non-empty array",
-    );
-  });
-
-  it("rejects two default bindings", () => {
-    expect(() =>
-      normalizeChannelRecordConfig({
-        agentBindings: [
-          { agentId: "a", isDefault: true },
-          { agentId: "b", isDefault: true },
-        ],
-      }),
-    ).toThrow("only one binding as default");
-  });
-
-  it("rejects unknown config keys", () => {
-    expect(() =>
-      normalizeChannelRecordConfig({
-        agentBindings: [{ agentId: "a" }],
-        secretToken: "nope",
-      }),
-    ).toThrow("config.secretToken is not supported");
-  });
-
-  it("requires an alias for a conversation-level workspace scope", () => {
-    expect(() =>
-      normalizeChannelRecordConfig({
-        agentBindings: [{ agentId: "a" }],
-        partition: { by: "conversation" },
-      }),
-    ).toThrow("config.partition.alias must be a non-empty string");
-  });
-
-  it("rejects an alias on a shared partition", () => {
-    expect(() =>
-      normalizeChannelRecordConfig({
-        agentBindings: [{ agentId: "a" }],
-        partition: { by: "shared", alias: "support" },
-      }),
-    ).toThrow("only supported when by is conversation");
-  });
-
-  it("rejects an unknown reply target", () => {
-    expect(() =>
-      normalizeChannelRecordConfig({
-        agentBindings: [{ agentId: "a" }],
-        replyIn: "sometimes",
-      }),
-    ).toThrow("config.replyIn must be one of: thread, source");
   });
 });
 

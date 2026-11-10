@@ -160,6 +160,6 @@ Each workspace has its own `AGENTS.md` with the gotchas for that folder. Read it
 
 Core handles chat commands such as `/new`, `/compact` and `/queue` before the agent sees the message.
 
-1. Add an entry to `commands` in `apps/core/src/shared/commands.ts` with `aliases`, a `description` and an `execute` that returns the reply text. Optional: `discord` metadata to register a slash command, `showInHelp: false` to hide it from `/help`.
+1. Add an entry to `commands` in `apps/core/src/shared/commands.ts` with `aliases`, a `description` and an `execute` that returns the reply text. Optional: `discord.names`, the Discord slash command names that run it.
 2. Use only the channel-agnostic `ChannelActions` interface. No channel-specific imports.
 3. A command that touches history must hold the conversation lease. `/new` takes it and is refused while busy. `/compact` sets `queued: true`, so the drain loop runs it under the lease after the current turn. See [queue and steer](queue-and-steer.md).

@@ -1651,7 +1651,7 @@ describe("runAgentLoop", () => {
 
     expect(stream.didFail()).toBe(false);
     expect(stream.failureText()).toBeNull();
-    expect(stream.approvalSummaries()).toEqual([
+    expect(onApprovalRequired).toHaveBeenCalledWith([
       {
         approvalId: "approval-1",
         toolCallId: "tool-call-1",
@@ -1660,7 +1660,6 @@ describe("runAgentLoop", () => {
       },
     ]);
     expect(onErrorText).not.toHaveBeenCalled();
-    expect(onApprovalRequired).toHaveBeenCalledWith(stream.approvalSummaries());
     expect(persistModelMessages).toHaveBeenCalledWith(
       [
         {
@@ -1755,7 +1754,6 @@ describe("runAgentLoop", () => {
 
     // Pending would persist a denial for an answered approvalId on a channel turn,
     // and the next model call rejects that history with AI_InvalidToolApprovalError.
-    expect(stream.approvalSummaries()).toEqual([]);
     expect(onApprovalRequired).not.toHaveBeenCalled();
     expect(onErrorText).not.toHaveBeenCalled();
     expect(stream.didFail()).toBe(false);

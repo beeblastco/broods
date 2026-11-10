@@ -245,6 +245,75 @@ test("attaches virtual and private child streams through durable parent deployme
   }
 });
 
+test("an attach cursor resumes only with its event key", async (): Promise<void> => {
+  const fixture = gatewaySubagentFixture("private");
+  const originalFetch = globalThis.fetch;
+  const sockets: ReturnType<typeof gatewaySocket>[] = [];
+  const attach = (
+    sent: Array<Record<string, unknown>>,
+    afterCursor?: string,
+  ): void => {
+    const socket = gatewaySocket(sent);
+    sockets.push(socket);
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-cursor",
+        agentId: fixture.childAgentId,
+        conversationKey: fixture.publicConversationKey,
+        eventId: fixture.taskId,
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ...(afterCursor ? { afterCursor: afterCursor } : {}),
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => replayThenLiveConnection(fixture) as never,
+    );
+  };
+  globalThis.fetch = Object.assign(
+    async (): Promise<Response> =>
+      Response.json({
+        eventId: fixture.taskId,
+        agentId: fixture.childAgentId,
+        conversationKey: fixture.publicConversationKey,
+        status: "processing",
+      }),
+    { preconnect: originalFetch.preconnect },
+  );
+
+  try {
+    const first: Array<Record<string, unknown>> = [];
+    attach(first);
+    await waitForGatewayMessage(
+      first,
+      (message): boolean => message.type === "output",
+    );
+    const cursor = String(
+      first.find((message): boolean => message.type === "output")?.cursor,
+    );
+    expect(cursor.split(":")).toHaveLength(4);
+
+    const answers: unknown[] = [];
+    for (const afterCursor of [
+      cursor,
+      cursor.slice(0, cursor.lastIndexOf(":")),
+    ]) {
+      const sent: Array<Record<string, unknown>> = [];
+      attach(sent, afterCursor);
+      await waitForGatewayMessage(
+        sent,
+        (message): boolean =>
+          message.type === "attached" || message.type === "replay_unavailable",
+      );
+      answers.push(sent[0]?.type);
+    }
+    expect(answers).toEqual(["attached", "replay_unavailable"]);
+  } finally {
+    for (const socket of sockets) stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("an attach polls core by run id, with no agent in the query", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
@@ -431,7 +500,6 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
@@ -544,7 +612,6 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
@@ -641,7 +708,6 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   // The shared stream's oldest retained frame (seq 2) is another conversation's; ours start at 10.
   const connection = zeroBufferConnection(
@@ -869,7 +935,6 @@ test("does not duplicate a streamed error when durable failure arrives without d
             sequence: 1,
           }),
         ),
-        ack: () => {},
       };
       for (;;) {
         if (consumerClosed) break;
@@ -3579,7 +3644,6 @@ function replayThenLiveConnection(
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const messages = [
     streamMessage(10, { type: "reasoning-delta", text: "thinking" }),
@@ -3661,7 +3725,6 @@ function zeroBufferConnection(
     [Symbol.asyncIterator](): AsyncIterator<{
       seq: number;
       data: Uint8Array;
-      ack(): void;
     }>;
     close(): Promise<void>;
   }>,

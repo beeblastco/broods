@@ -515,13 +515,6 @@ const channelRecords: Storage["channelRecords"] = {
 
     return channelRecordFromConvex(doc);
   },
-  list: async function (accountId) {
-    const docs = await adminQuery(internal.channel.records.listActive, {
-      accountId: accountId,
-    });
-
-    return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
-  },
   removeAllForAccount: async function (accountId) {
     // Not listActive: soft-deleted tombstones go with the account too.
     const docs = await adminQuery(internal.channel.records.list, {

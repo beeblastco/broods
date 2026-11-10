@@ -11,7 +11,6 @@ import { runtime } from "../src/shared/convex/runtime.ts";
 import type { ChannelActions } from "../src/shared/channels.ts";
 import {
   executeCommand,
-  getDiscordCommandRegistrations,
   parseCommand,
   queuedCommand,
   resolveChannelCommand,
@@ -303,59 +302,6 @@ describe("resolveDiscordCommand", () => {
 
     expect(result?.commandToken).toBe("/help");
     expect(result?.contentText).toBe("extra text");
-  });
-});
-
-describe("getDiscordCommandRegistrations", () => {
-  it("returns registrations for all commands with discord metadata", () => {
-    const registrations = getDiscordCommandRegistrations();
-
-    expect(registrations).toHaveLength(7);
-    expect(registrations.map((r) => r.name)).toEqual([
-      "new",
-      "clear",
-      "compact",
-      "steer",
-      "stop",
-      "queue",
-      "help",
-    ]);
-  });
-
-  it("includes integration_types and contexts for global scope", () => {
-    const registrations = getDiscordCommandRegistrations("global");
-
-    for (const reg of registrations) {
-      expect(reg.integration_types).toBeDefined();
-      expect(reg.contexts).toBeDefined();
-    }
-
-    const newCmd = registrations.find((r) => r.name === "new");
-    expect(newCmd?.integration_types).toEqual([0]);
-    expect(newCmd?.contexts).toEqual([0, 1]);
-  });
-
-  it("omits integration_types and contexts for guild scope", () => {
-    const registrations = getDiscordCommandRegistrations("guild");
-
-    for (const reg of registrations) {
-      expect(reg.integration_types).toBeUndefined();
-      expect(reg.contexts).toBeUndefined();
-    }
-  });
-
-  it("registers options only for commands that accept arguments", () => {
-    const registrations = getDiscordCommandRegistrations();
-
-    expect(
-      registrations.find((r) => r.name === "new")?.options,
-    ).toBeUndefined();
-    expect(registrations.find((r) => r.name === "steer")?.options).toHaveLength(
-      1,
-    );
-    expect(registrations.find((r) => r.name === "queue")?.options).toHaveLength(
-      1,
-    );
   });
 });
 

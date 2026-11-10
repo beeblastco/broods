@@ -3606,7 +3606,6 @@ describe("background job scripts", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
       jobId: "job_cb",
-      envVars: { PATH: "/evil", EXTRA: "1", __CB_TOKEN: "spoofed" },
       callback: { url: "https://fn.example/c", token: "tok-real" },
     });
 
@@ -4018,16 +4017,18 @@ describe("mergeSandboxEnv", () => {
       mergeSandboxEnv(
         { FOO: "account", KEEP: "yes", HOME: "/operator" },
         {
-          FOO: "request",
-          PATH: "/evil",
-          LD_PRELOAD: "/tmp/x.so",
-          NODE_OPTIONS: "--require /tmp/x.js",
-          __CB_TOKEN: "spoofed",
-          NEW: "1",
+          requestEnv: {
+            FOO: "request",
+            PATH: "/evil",
+            LD_PRELOAD: "/tmp/x.so",
+            NODE_OPTIONS: "--require /tmp/x.js",
+            __CB_TOKEN: "spoofed",
+            NEW: "1",
+          },
         },
       ),
     ).toEqual({ FOO: "request", KEEP: "yes", HOME: "/operator", NEW: "1" });
-    expect(mergeSandboxEnv(undefined, undefined)).toEqual({});
+    expect(mergeSandboxEnv(undefined)).toEqual({});
     for (const key of [
       "PATH",
       "HOME",
@@ -4057,8 +4058,10 @@ describe("mergeSandboxEnv with a run principal", () => {
     expect(
       mergeSandboxEnv(
         { BROODS_RUN_TOKEN: "spoofed-by-account", KEEP: "yes" },
-        { BROODS_AGENT_ID: "spoofed-by-request", NEW: "1" },
-        principal,
+        {
+          requestEnv: { BROODS_AGENT_ID: "spoofed-by-request", NEW: "1" },
+          principal: principal,
+        },
       ),
     ).toEqual({
       KEEP: "yes",
@@ -4073,14 +4076,18 @@ describe("mergeSandboxEnv with a run principal", () => {
       BROODS_AGENT_ID: "spoofed",
       BROODS_BASE_URL: "https://elsewhere.example.test",
     };
-    expect(mergeSandboxEnv({ ...planted, KEEP: "yes" }, planted)).toEqual({
+    expect(
+      mergeSandboxEnv({ ...planted, KEEP: "yes" }, { requestEnv: planted }),
+    ).toEqual({
       KEEP: "yes",
     });
     expect(
-      mergeSandboxEnv(planted, undefined, {
-        accountId: "acct_1",
-        agentId: "agent_1",
-        runToken: "brt_token",
+      mergeSandboxEnv(planted, {
+        principal: {
+          accountId: "acct_1",
+          agentId: "agent_1",
+          runToken: "brt_token",
+        },
       }),
     ).toEqual({
       BROODS_ACCOUNT_ID: "acct_1",

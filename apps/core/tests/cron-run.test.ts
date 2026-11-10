@@ -263,7 +263,6 @@ describe("background job continuation", () => {
       query: new URLSearchParams(),
       headers: { "x-job-token": "token" },
       body: JSON.stringify({ status: "completed", response: "done" }),
-      cookies: [],
       clientIp: "127.0.0.1",
     });
 
@@ -348,7 +347,6 @@ describe("background job continuation", () => {
           nextPageToken: "page-2",
         },
       }),
-      cookies: [],
       clientIp: "127.0.0.1",
     });
 

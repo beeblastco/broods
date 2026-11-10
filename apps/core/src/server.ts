@@ -127,12 +127,6 @@ export async function toCoreRequest(
         .findLast(Boolean) ?? "")
     : (socketAddress ?? "");
 
-  const cookies =
-    headers["cookie"]
-      ?.split(";")
-      .map((cookie) => cookie.trim())
-      .filter(Boolean) ?? [];
-
   return {
     method: request.method,
     path: url.pathname,
@@ -140,7 +134,6 @@ export async function toCoreRequest(
     query: url.searchParams,
     headers: headers,
     body: await request.text(),
-    cookies: cookies,
     clientIp: clientIp,
   };
 }

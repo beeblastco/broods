@@ -28,6 +28,23 @@ export function slugifyName(name: string, fallback = "project"): string {
   return slug.length > 0 ? slug : fallback;
 }
 
+export async function uniqueOrgSlug(
+  ctx: QueryCtx,
+  baseName: string,
+): Promise<string> {
+  const baseSlug = slugifyName(baseName);
+  let suffix = 0;
+  for (;;) {
+    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
+    const existing = await ctx.db
+      .query("orgs")
+      .withIndex("by_slug", (q) => q.eq("slug", candidate))
+      .first();
+    if (!existing) return candidate;
+    suffix += 1;
+  }
+}
+
 export async function uniqueProjectSlug(
   ctx: QueryCtx,
   orgId: Id<"orgs">,

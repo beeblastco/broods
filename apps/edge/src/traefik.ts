@@ -27,7 +27,7 @@ type MiddlewareBody =
   | (typeof FIXED_MIDDLEWARES)[keyof typeof FIXED_MIDDLEWARES]
   | ReturnType<typeof headersMiddleware>;
 
-export interface FileRouter {
+interface FileRouter {
   rule: string;
   priority: number;
   entryPoints: string[];
@@ -47,7 +47,7 @@ export interface FileConfig {
   };
 }
 
-export interface KubeService {
+interface KubeService {
   name: string;
   namespace?: string;
   port: number;

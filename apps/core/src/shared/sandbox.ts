@@ -45,11 +45,6 @@ export function resolveSandboxLifecycle(lifecycle?: {
   };
 }
 
-// Shared by harness S3 calls and the sandbox mount; callers append their own `/` and sub-path.
-export function workspaceNamespacePrefix(namespace: string): string {
-  return namespace;
-}
-
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {

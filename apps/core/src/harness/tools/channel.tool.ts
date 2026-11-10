@@ -21,7 +21,7 @@ import {
   workspaceMediaUrl,
   workspaceParamSchema,
 } from "./filesystem-utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 // Telegram and Discord take ten per batch, and an upload holds every file in memory at once.
 const MAX_ATTACHMENTS_PER_CALL = 10;
@@ -103,7 +103,7 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
-          return toolText("Files blocked by the outbound message hook.");
+          return "Files blocked by the outbound message hook.";
         }
 
         return await deliverFiles(context, files, transformed);
@@ -138,15 +138,13 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
-          return toolText("Images blocked by the outbound message hook.");
+          return "Images blocked by the outbound message hook.";
         }
         if (actions.sendImages) {
           try {
             await actions.sendImages(images, transformed || undefined);
 
-            return toolText(
-              `${images.length} image(s) sent to the current ${channelName} conversation.`,
-            );
+            return `${images.length} image(s) sent to the current ${channelName} conversation.`;
           } catch (error) {
             logWarn("Channel rejected an image batch, falling back to files", {
               channel: channelName,
@@ -191,9 +189,7 @@ export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
       execute: async function (input): Promise<string> {
         const result = await dispatch(input);
 
-        return toolText(
-          `Message ${result.status} for conversation ${result.conversationKey}.`,
-        );
+        return `Message ${result.status} for conversation ${result.conversationKey}.`;
       },
     }),
   };
@@ -223,9 +219,7 @@ export function sendReactionsTool(context: ChannelToolContext): ToolSet {
         const { emoji } = input;
         await actions.reactToMessage(emoji);
 
-        return toolText(
-          `Reaction added to the inbound ${channelName} message.`,
-        );
+        return `Reaction added to the inbound ${channelName} message.`;
       },
     }),
   };
@@ -257,9 +251,7 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
         const { sticker } = input;
         await sendSticker(sticker);
 
-        return toolText(
-          `Sticker sent to the current ${channelName} conversation.`,
-        );
+        return `Sticker sent to the current ${channelName} conversation.`;
       },
     }),
   };
@@ -287,13 +279,11 @@ export function sendUpdateTool(context: ChannelToolContext): ToolSet {
       execute: async function (input): Promise<string> {
         const transformed = await context.transformText(input.message);
         if (transformed === null) {
-          return toolText("Update blocked by the outbound message hook.");
+          return "Update blocked by the outbound message hook.";
         }
         await actions.sendText(transformed);
 
-        return toolText(
-          `Update sent to the current ${channelName} conversation. The final reply is still owed.`,
-        );
+        return `Update sent to the current ${channelName} conversation. The final reply is still owed.`;
       },
     }),
   };
@@ -309,9 +299,7 @@ async function deliverFiles(
     try {
       await actions.sendFiles(files, caption || undefined);
 
-      return toolText(
-        `${files.length} file(s) sent to the current ${channelName} conversation.`,
-      );
+      return `${files.length} file(s) sent to the current ${channelName} conversation.`;
     } catch (error) {
       // Discord caps a free guild at 10 MB, Slack needs files:write; a link needs neither.
       logWarn("Channel rejected a file upload, falling back to links", {
@@ -326,9 +314,7 @@ async function deliverFiles(
     caption ? `${caption}\n${lines.join("\n")}` : lines.join("\n"),
   );
 
-  return toolText(
-    `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
-  );
+  return `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`;
 }
 
 async function resolveImages(

@@ -67,9 +67,12 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
   const closed = closeOf(daemon);
   const executor = new MachineSandboxExecutor(machineExecutorConfig());
 
-  const before = await executor.run({
+  const before = await new MachineSandboxExecutor(
+    machineExecutorConfig({
+      envVars: { FRESH_SECRET: "sent-while-the-ticket-lives" },
+    }),
+  ).run({
     code: "fixture-only-never-executed",
-    envVars: { FRESH_SECRET: "sent-while-the-ticket-lives" },
     timeoutSeconds: 5,
     outputLimitBytes: 1024,
   });
@@ -108,9 +111,12 @@ test("a stage ticket's daemon that sends no fresh one is closed at the ticket's 
     refused.send(JSON.stringify({ type: "hello", sandbox: "my-mac" }));
   expect((await refusal).code).toBe(MACHINE_CLOSE.unauthorized.code);
   await expect(
-    executor.run({
+    new MachineSandboxExecutor(
+      machineExecutorConfig({
+        envVars: { FRESH_SECRET: "created-after-expiry" },
+      }),
+    ).run({
       code: "fixture-only-never-executed",
-      envVars: { FRESH_SECRET: "created-after-expiry" },
       timeoutSeconds: 1,
       outputLimitBytes: 1024,
     }),
@@ -205,9 +211,12 @@ test("a frame bound for a daemon past its ticket is refused even before the expi
   jest.setSystemTime(expiresAt);
 
   await expect(
-    new MachineSandboxExecutor(machineExecutorConfig()).run({
+    new MachineSandboxExecutor(
+      machineExecutorConfig({
+        envVars: { FRESH_SECRET: "created-after-expiry" },
+      }),
+    ).run({
       code: "fixture-only-never-executed",
-      envVars: { FRESH_SECRET: "created-after-expiry" },
       timeoutSeconds: 1,
       outputLimitBytes: 1024,
     }),

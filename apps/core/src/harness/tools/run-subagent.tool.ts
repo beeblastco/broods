@@ -43,9 +43,7 @@ export type RunSubagentDispatch = (
   parentEphemeralSystem?: SystemModelMessage[],
 ) => Promise<RunSubagentDispatchResult>;
 
-export function buildRunSubagentInputSchema(
-  mode?: RunSubagentMode,
-): JSONSchema7 {
+function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7 {
   const taskProperties: Record<string, JSONSchema7> = {
     agentId: {
       type: "string",

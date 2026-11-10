@@ -1,4 +1,4 @@
-let service = "discord-forwarder";
+const service = "discord-forwarder";
 
 export type LogFields = Record<string, string | number | boolean | undefined>;
 
@@ -12,10 +12,6 @@ export function logInfo(message: string, fields: LogFields = {}): void {
 
 export function logWarn(message: string, fields: LogFields = {}): void {
   emit("warn", message, fields);
-}
-
-export function setLogService(name: string): void {
-  service = name;
 }
 
 /** Log this, never the bot token itself. */

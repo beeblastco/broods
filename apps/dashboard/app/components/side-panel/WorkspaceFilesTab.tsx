@@ -4,6 +4,7 @@ import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
 import {
   FilePreview,
+  formatBytes,
   isImageFile,
   usePreviewTabs,
   type FileContent,
@@ -1138,13 +1139,6 @@ function writeRuntimeFileCache(
   } catch {
     // Cache failures must never block workspace access.
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function collectEntries(

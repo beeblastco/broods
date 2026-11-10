@@ -6,16 +6,6 @@ declare module "*.css" {
   export default content;
 }
 
-declare module "*.scss" {
-  const content: Record<string, string>;
-  export default content;
-}
-
-declare module "*.sass" {
-  const content: Record<string, string>;
-  export default content;
-}
-
 // Lets `style` carry CSS custom properties for classes to read, as in `w-(--bar-width)`.
 declare namespace React {
   interface CSSProperties {

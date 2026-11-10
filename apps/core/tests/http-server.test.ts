@@ -64,15 +64,6 @@ describe("toCoreRequest", () => {
     const request = await buildCoreRequest({}, "192.0.2.4");
     expect(request.clientIp).toBe("192.0.2.4");
   });
-
-  it("splits the Cookie header into the cookies array", async () => {
-    const request = await buildCoreRequest({
-      method: "POST",
-      headers: { Cookie: "session=abc; theme=dark" },
-      body: "{}",
-    });
-    expect(request.cookies).toEqual(["session=abc", "theme=dark"]);
-  });
 });
 
 describe("routesToAccountManage", () => {

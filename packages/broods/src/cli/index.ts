@@ -22,7 +22,6 @@ import {
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
-  stageFromEnv,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
@@ -641,7 +640,7 @@ function renderCommandHelp(command: string, args: string[]): string {
   if (command !== "deploy" || optionValue(args, "--stage") !== undefined) {
     return `${formatTarget(project, context.stage, HELP_STDOUT)}\n\n${page}`;
   }
-  const selected = stageFromEnv();
+  const selected = process.env.BROODS_STAGE;
   const note =
     selected && selected !== "production"
       ? `ignores stage ${selected}`
@@ -727,7 +726,8 @@ async function login(args: string[]): Promise<void> {
   if (account) console.log(`Account: ${account}`);
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
   if (!project) return;
-  const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+  const stage =
+    optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
@@ -1753,7 +1753,8 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     optionValue(args, "--project") ??
     process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
-  let stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+  let stage =
+    optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
   let region =
     optionValue(args, "--region") ??
     process.env.BROODS_REGION ??
@@ -2029,7 +2030,8 @@ function targetScope(args: string[]): { project: string; stage: string } {
       optionValue(args, "--project") ??
       process.env.BROODS_PROJECT ??
       inferProjectName(process.cwd()),
-    stage: optionValue(args, "--stage") ?? stageFromEnv() ?? "development",
+    stage:
+      optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development",
   };
 }
 
@@ -2584,7 +2586,7 @@ async function resolveProjectStage(
 ): Promise<{ project: string; stage: string }> {
   loadBroodsRuntimeConfig();
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
-  const stage = optionValue(args, "--stage") ?? stageFromEnv();
+  const stage = optionValue(args, "--stage") ?? process.env.BROODS_STAGE;
   if (!project) {
     throw new Error(
       "Project name is required. Pass --project <name> or set BROODS_PROJECT in .env.local.",

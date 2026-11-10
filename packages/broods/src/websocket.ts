@@ -10,14 +10,10 @@ import {
 } from "./run-input.ts";
 import type {
   AgentRunAnswerInput,
-  WebSocketClientCancelMessage,
   WebSocketClientAttachMessage,
   WebSocketClientControlMessage,
-  WebSocketClientExecuteMessage,
-  WebSocketClientMessage,
   WebSocketOutputMessage,
   WebSocketServerMessage,
-  WebSocketStreamMessage,
 } from "./websocket-contracts.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
@@ -437,16 +433,6 @@ export function webSocketSubprotocols(
 
 export { BroodsWebSocketClient as WebSocketClient };
 export { BroodsWebSocketClient as WebsocketClient };
-export type {
-  WebSocketClientCancelMessage,
-  WebSocketClientAttachMessage,
-  WebSocketClientControlMessage,
-  WebSocketClientExecuteMessage,
-  WebSocketClientMessage,
-  WebSocketOutputMessage,
-  WebSocketServerMessage,
-  WebSocketStreamMessage,
-};
 
 function formatWireError(error: unknown): string {
   if (typeof error === "string") return error;

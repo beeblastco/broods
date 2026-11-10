@@ -234,7 +234,7 @@ const tokenLifetimes = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
   ReturnType<typeof setTimeout>
 >();
-export const USER_TOKEN_EXPIRED_CLOSE = {
+const USER_TOKEN_EXPIRED_CLOSE = {
   code: 4419,
   reason: "User token expired",
 };
@@ -431,7 +431,6 @@ async function followExecution(
             );
             const event = decodeNatsStreamEvent(natsMessage.data);
             if (!event || event.headers.eventId !== execution.eventId) {
-              ackNatsMessage(natsMessage);
               continue;
             }
             lastFrameAt = Date.now();
@@ -450,7 +449,6 @@ async function followExecution(
                 data: event.data as WebSocketServerMessage,
               });
             }
-            ackNatsMessage(natsMessage);
             if (event.data.type === "done") {
               sawDone = true;
               break;
@@ -744,7 +742,7 @@ async function attachCoreStream(
     if (
       (message.afterCursor && !cursor) ||
       (cursor && cursor.generation !== snapshot.generation) ||
-      (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey)
+      (cursor && cursor.eventKey !== eventKey)
     ) {
       unavailable();
 
@@ -978,14 +976,6 @@ async function responseJson(response: Response): Promise<IngressHttpResponse> {
     : {};
 }
 
-function ackNatsMessage(message: { ack?: () => void }): void {
-  try {
-    message.ack?.();
-  } catch {
-    return;
-  }
-}
-
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
   const parsed = parseJson(decoder.decode(data));
 
@@ -1045,17 +1035,17 @@ function formatCursor(
 function parseCursor(value: string): {
   generation: string;
   sequence: number;
-  eventKey?: string;
+  eventKey: string;
 } | null {
-  const match = /^ws-responses:([^:]+):(\d+)(?::([^:]+))?$/.exec(value);
-  if (!match?.[1] || !match[2]) return null;
+  const match = /^ws-responses:([^:]+):(\d+):([^:]+)$/.exec(value);
+  if (!match?.[1] || !match[2] || !match[3]) return null;
   const sequence = Number(match[2]);
   if (!Number.isSafeInteger(sequence) || sequence < 0) return null;
 
   return {
     generation: match[1],
     sequence: sequence,
-    ...(match[3] ? { eventKey: match[3] } : {}),
+    eventKey: match[3],
   };
 }
 

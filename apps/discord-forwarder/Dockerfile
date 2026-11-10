@@ -33,7 +33,6 @@ RUN bun build apps/discord-forwarder/src/main.ts --compile --minify --outfile /o
 FROM alpine:3.22 AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
-    HOSTNAME=0.0.0.0 \
     PORT=3000
 RUN apk add --no-cache ca-certificates libgcc libstdc++ \
     && addgroup --system --gid 1001 forwarder \

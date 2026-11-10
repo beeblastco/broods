@@ -29,11 +29,6 @@ export function coreRequest(
         : typeof body === "string"
           ? body
           : JSON.stringify(body),
-    cookies:
-      lowerHeaders.cookie
-        ?.split(";")
-        .map((cookie) => cookie.trim())
-        .filter(Boolean) ?? [],
     clientIp:
       lowerHeaders["x-forwarded-for"]
         ?.split(",")

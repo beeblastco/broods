@@ -100,11 +100,9 @@ export class MachineSandboxExecutor implements SandboxExecutor {
       id: crypto.randomUUID(),
       code: request.code,
       cwd: configString(this.#config.options?.cwd),
-      env: mergeSandboxEnv(
-        this.#config.envVars,
-        request.envVars,
-        request.principal,
-      ),
+      env: mergeSandboxEnv(this.#config.envVars, {
+        principal: request.principal,
+      }),
       timeoutSeconds: request.timeoutSeconds,
       outputLimitBytes: request.outputLimitBytes,
     };
@@ -121,7 +119,7 @@ export class MachineSandboxExecutor implements SandboxExecutor {
 
     return {
       ok: reply.exitCode === 0,
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       exitCode: reply.exitCode,
       stdout: stdout.value,
       stderr: stderr.value,

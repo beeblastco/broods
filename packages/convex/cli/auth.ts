@@ -10,7 +10,7 @@ import {
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
-import { slugifyName } from "../lib/slug";
+import { uniqueOrgSlug } from "../lib/slug";
 import { bearerToken } from "../config/routes/shared";
 import {
   CLI_TOKEN_PREFIX,
@@ -702,21 +702,4 @@ async function conversationObserved(
     .first();
 
   return mark !== null;
-}
-
-async function uniqueOrgSlug(
-  ctx: MutationCtx,
-  baseName: string,
-): Promise<string> {
-  const baseSlug = slugifyName(baseName);
-  let suffix = 0;
-  for (;;) {
-    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
-      .query("orgs")
-      .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!existing) return candidate;
-    suffix += 1;
-  }
 }
