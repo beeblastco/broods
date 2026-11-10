@@ -21,15 +21,15 @@
     "@convex-dev/workos-authkit": "^0.3.0",
     "@noble/hashes": "2.4.0",
     "convex": "^1.49.0",
-    "convex-helpers": "^0.1.133",
+    "convex-helpers": "^0.1.134",
     "stripe": "^22.6.2",
     "tweetnacl": "1.0.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",
-    "convex-test": "^0.0.66",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.5"
+    "convex-test": "^0.0.67",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   }
 }
