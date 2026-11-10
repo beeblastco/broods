@@ -5,7 +5,8 @@ Model of one `runtimeIngressEnvelopes` row (the run behind `GET /v1/runs/{runId}
 under the mutations in `packages/convex/runtimeIngress.ts`. Each mutation is a
 Convex transaction, so a run is a sequence of `Step`s. A queued run either runs
 or ends unrun: expired, or completed by the owner's history write that already
-tells the result it resumes. The polling row written next to it lives in
+tells the result it resumes. An owner that never started puts its rows back in the
+queue (`releaseOwner` with `requeue`). The polling row written next to it lives in
 `Broods.AsyncResults`.
 -/
 
@@ -43,7 +44,8 @@ structure Envelope where
 
 /-- One envelope write, named after the helper that performs it. -/
 inductive Step where
-  /-- `promoteQueuedGroup` and `applySteering`: queued to processing. -/
+  /-- `promoteQueuedGroup` and `applySteering`: queued to processing. `takeNext` promotes
+  only for an active account; a suspended one takes no such step. -/
   | promote (generation appliedTo : Nat)
   /-- `stepBoundary`: the steer claim, behind the fence and the stop check of the
   same transaction that stores the step and renews the lease. `claim`: `claimSteering`
@@ -59,6 +61,10 @@ inductive Step where
   (processing rows) and the claim (which reads the queue after it), so those mutations
   are this step then theirs, under one coordinator and clock. -/
   | insertOwnedEvents (ownerEventId generation : Nat) (stored : Bool)
+  /-- `releaseOwner`: the owner's own fence (event and generation, not the lease). With
+  `requeue` it puts the rows it applied in that generation back to queued. `requeue`: the
+  call set it and the row is among the first `MAX_DRAIN_ENVELOPES` applied to the owner. -/
+  | releaseOwner (ownerEventId generation : Nat) (requeue : Bool)
   /-- `expireQueuedEnvelopes`. -/
   | expireQueued
   /-- `expireStaleOwner`. -/
@@ -128,6 +134,12 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
     if stored && requireOwner c owner g now && e.status == .queued then
       { e with status := .completed }
     else e
+  | .releaseOwner owner g requeue, e =>
+    if requeue && c.ownerEventId == some owner && c.ownerGeneration == g &&
+        e.appliedToEventId == some owner && e.ownerGeneration == some g &&
+        e.status == .processing then
+      { e with status := .queued, ownerGeneration := none, appliedToEventId := none }
+    else e
   | .expireQueued, e =>
     if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
   | .expireStaleOwner, e =>
@@ -155,6 +167,8 @@ inductive Allowed : Status → Status → Prop where
   | finish (o : Outcome) : Allowed .processing o.status
   /-- A queued resume whose result the owner's history already tells. -/
   | storedQueued : Allowed .queued .completed
+  /-- An owner that never started gives its rows back to the queue. -/
+  | requeue : Allowed .processing .queued
 
 /-! ## Properties -/
 
@@ -175,8 +189,8 @@ theorem run_terminal {e : Envelope} (steps : List (Coord × Nat × Step))
     simp only [run, List.foldl_cons] at ih ⊢
     rw [ih (by rw [hs]; exact h), hs]
 
-/-- Every step is a forward transition: nothing re-opens a finished run and nothing
-returns a running row to the queue. -/
+/-- Every step is an allowed transition: nothing re-opens a finished run, and a running
+row returns to the queue only through `requeue` (see `requeue_fenced`). -/
 theorem step_allowed {c : Coord} {now : Nat} {e : Envelope} (s : Step) :
     Allowed e.status (step c now s e).status := by
   cases s with
@@ -260,6 +274,31 @@ theorem store_fenced {c : Coord} {now : Nat} {e : Envelope} (s : Step)
     simp only [step] at h
     (repeat' split at h) <;> simp_all
 
+/-- A running row goes back to the queue only through its own owner's `releaseOwner` with
+`requeue`, for the generation that applied it, and comes back unowned. -/
+theorem requeue_fenced {c : Coord} {now : Nat} {e : Envelope} (s : Step)
+    (hp : e.status = .processing) (h : (step c now s e).status = .queued) :
+    ∃ owner g, s = .releaseOwner owner g true ∧ c.ownerEventId = some owner ∧
+      c.ownerGeneration = g ∧ e.appliedToEventId = some owner ∧ e.ownerGeneration = some g ∧
+      (step c now s e).ownerGeneration = none ∧ (step c now s e).appliedToEventId = none := by
+  cases s with
+  | releaseOwner owner g requeue =>
+    simp only [step] at h ⊢
+    split at h
+    · rename_i hc
+      simp only [Bool.and_eq_true, beq_iff_eq] at hc
+      obtain ⟨⟨⟨⟨⟨hr, ho⟩, hg⟩, ha⟩, heg⟩, _⟩ := hc
+      subst hr
+      refine ⟨owner, g, rfl, ho, hg, ha, heg, ?_⟩
+      simp [ho, hg, ha, heg, hp]
+    · simp_all
+  | settle owner g o =>
+    simp only [step] at h
+    split at h <;> cases o <;> simp_all [Outcome.status]
+  | _ =>
+    simp only [step] at h
+    (repeat' split at h) <;> simp_all
+
 /-- A boundary that proceeds leaves its owner fenced in for 9/10 of the TTL. -/
 theorem boundary_lease {c : Coord} {owner g now ttl n : Nat}
     (hp : boundaryProceeds c owner g now = true) (hn : 10 * n ≤ 10 * now + 9 * ttl) :
@@ -324,6 +363,18 @@ example :
       (step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1 true) e).status =
         .processing ∧
       step { c with stopRequestedGeneration := none } 5 (.stepBoundary 7 1 false) e = e := by
+  decide
+
+/-- A shed dispatch requeues the row its owner applied, which a later `takeNext` promotes
+again; without `requeue`, or for another generation, the row is left running. -/
+example :
+    let c : Coord := ⟨1, some 7, some 10, none, false⟩
+    let e : Envelope := ⟨7, .processing, 20, some 1, some 7, false⟩
+    let r := step c 5 (.releaseOwner 7 1 true) e
+    r.status = .queued ∧ (step c 6 (.promote 2 7) r).status = .processing ∧
+      step c 5 (.releaseOwner 7 1 false) e = e ∧
+      step c 5 (.releaseOwner 7 1 true) { e with ownerGeneration := some 0 } =
+        { e with ownerGeneration := some 0 } := by
   decide
 
 /-- A queued row that names the owner is left queued by its settle. -/

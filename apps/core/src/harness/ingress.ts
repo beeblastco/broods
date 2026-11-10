@@ -553,11 +553,15 @@ export async function recoverQueuedIngress(
   return page;
 }
 
-export async function releaseIngressOwner(owner: LiveOwner): Promise<void> {
+export async function releaseIngressOwner(
+  owner: LiveOwner,
+  requeue = false,
+): Promise<void> {
   await runtime.mutate("releaseIngressOwner", {
     conversationKey: owner.conversationKey,
     ownerEventId: owner.ownerEventId,
     ownerGeneration: owner.ownerGeneration,
+    ...(requeue ? { requeue: true } : {}),
   });
   forgetOwner(owner);
 }
