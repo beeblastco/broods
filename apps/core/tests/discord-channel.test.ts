@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { discordForwarderToken } from "../src/shared/discord-wire.ts";
+import { requestBodyText } from "./helpers/http.ts";
 
 const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 
@@ -607,7 +608,9 @@ async function sendSlashCommandReplies(texts: string[]): Promise<string[]> {
       init?: RequestInit,
     ): Promise<Response> {
       const url = new URL(input instanceof Request ? input.url : input);
-      const body = JSON.parse(String(init?.body)) as { content: string };
+      const body = JSON.parse(requestBodyText(init?.body)) as {
+        content: string;
+      };
       sent.push(
         `${init?.method} ${url.pathname.replace(/^\/api(\/v10)?/, "")}${url.search} ${body.content}`,
       );
