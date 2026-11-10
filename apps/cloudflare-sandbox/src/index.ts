@@ -47,6 +47,7 @@ export type ExecResult = SandboxExecAnswer;
 export class Sandbox extends DurableObject<Env> {
   #starting: Promise<void> | null = null;
   #booting = false;
+  #bootingLaunch = "";
 
   // The idle window lives on this DO instance, so a restarted one must set it again or the
   // platform default stops the running Container within a minute.
@@ -203,9 +204,14 @@ export class Sandbox extends DurableObject<Env> {
   }
 
   // `running` reads false until the first exec after start() gets through; #booting covers that.
-  // Internet and size are fixed at start(), so a Container under another policy is replaced.
+  // Internet and size are fixed at start(): a running Container under another policy is replaced,
+  // a booting one refuses, since replacing it could hand its waiting exec the new policy.
   #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
     const launch = `${request.enableInternet ? "internet" : "offline"}:${request.instance}`;
+    if (this.#booting && this.#bootingLaunch !== launch)
+      throw new Error(
+        `it is starting as ${this.#bootingLaunch}, not ${launch}; retry once it is up`,
+      );
     const relaunch =
       container.running &&
       this.ctx.storage.kv.get<string>(LAUNCH_KEY) !== launch;
@@ -215,6 +221,7 @@ export class Sandbox extends DurableObject<Env> {
       (!this.#booting && !container.running)
     ) {
       this.#booting = true;
+      this.#bootingLaunch = launch;
       this.#starting = (async (): Promise<void> => {
         if (relaunch) await container.destroy();
         if (!container.running) {
