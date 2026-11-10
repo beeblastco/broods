@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
@@ -481,10 +482,13 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error("a persistent sandbox reservation key is required");
+      throw new ClientError("a persistent sandbox reservation key is required");
     const name = await getSandboxExternalId("vercel", key);
     if (!name)
-      throw new Error("no reserved vercel sandbox for this reservation");
+      throw new ClientError(
+        "no reserved vercel sandbox for this reservation",
+        "not_found",
+      );
     const Sandbox = await this.#Sandbox();
     const sandbox = await Sandbox.get({
       name: name,

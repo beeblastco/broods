@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   authorize,
   rolePrincipal,
@@ -474,8 +475,9 @@ function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
     registryKey(plane.accountId, plane.sandboxConfigId),
   );
   if (!connection) {
-    throw new Error(
+    throw new ClientError(
       `machine sandbox "${plane.name}" is not connected. Run \`broods machine ${plane.name}\` on that computer.`,
+      "conflict",
     );
   }
 

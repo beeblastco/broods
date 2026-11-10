@@ -1062,6 +1062,8 @@ paths:
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
                       attachmentObjectsDeleted: 3
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/accounts/{accountId}/rotate-secret:
     post:
@@ -1183,6 +1185,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteResponse"
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/account/rotate-secret:
     post:
@@ -2412,6 +2416,7 @@ paths:
           {
             description: Reservation does not belong to this account or sandbox config,
           }
+        "404": { description: No reserved instance for this reservation key }
         "409":
           {
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",

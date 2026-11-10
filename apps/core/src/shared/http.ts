@@ -119,13 +119,15 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${label} must be a valid URL`);
+    throw new ClientError(`${label} must be a valid URL`);
   }
   if (url.protocol !== "https:") {
-    throw new Error(`${label} must use https`);
+    throw new ClientError(`${label} must use https`);
   }
   if (isPrivateHostname(url.hostname)) {
-    throw new Error(`${label} must not point to a private or internal address`);
+    throw new ClientError(
+      `${label} must not point to a private or internal address`,
+    );
   }
 
   return url;

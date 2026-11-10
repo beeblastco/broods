@@ -85,6 +85,7 @@ import {
   CLIENT_ERROR_STATUS,
   ClientError,
   clientErrorData,
+  clientErrorResponse,
 } from "@broods/convex/model/clientError";
 import {
   sealTerminalTicket,
@@ -796,12 +797,10 @@ function errorResponseForError(err: unknown): Response {
   if (err instanceof SandboxProviderUnreachableError) {
     return errorResponse(502, err.message);
   }
-  const refusal = clientErrorData(err);
-  if (refusal) {
-    return errorResponse(CLIENT_ERROR_STATUS[refusal.code], refusal.message);
-  }
 
-  return errorResponse(500, "Internal server error");
+  return (
+    clientErrorResponse(err) ?? errorResponse(500, "Internal server error")
+  );
 }
 
 // Any error but the refusal is answered generically, so its text stays out of the response.

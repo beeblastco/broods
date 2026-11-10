@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   callMcpToolResult,
   listMcpTools,
@@ -81,7 +82,9 @@ export async function handleMcpServiceRpc(
   }
 
   if (method === "tools/list") {
-    const tools = await listMcpTools(connection);
+    const tools = await callerServerCall(connection, () =>
+      listMcpTools(connection),
+    );
 
     return jsonResponse(200, { tools: tools });
   }
@@ -91,9 +94,12 @@ export async function handleMcpServiceRpc(
   }
   const args = parseOr(configObject, body.args, {});
   const started = Date.now();
-  const result = await callMcpToolResult(connection, body.toolName, args, {
-    abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-  });
+  const toolName = body.toolName;
+  const result = await callerServerCall(connection, () =>
+    callMcpToolResult(connection, toolName, args, {
+      abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+    }),
+  );
 
   return jsonResponse(200, {
     result: result,
@@ -140,6 +146,22 @@ async function agentSandboxCandidate(
     target: target,
     liveSince: live ? reservation.claimedAt : undefined,
   };
+}
+
+// A plain http server is the caller's own, so its failure is theirs to fix, not core's.
+async function callerServerCall<T>(
+  connection: McpConnection,
+  call: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    const record = connection.record;
+    if (record.transport !== "http" || record.connected === true) throw err;
+    throw new ClientError(
+      `MCP server ${record.name} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 async function explorerSandboxTarget(
