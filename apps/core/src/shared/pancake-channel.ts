@@ -307,18 +307,13 @@ function formatPancakeError(
   return body?.message ?? (bodyText || "unknown_error");
 }
 
-// Pancake reuses a message id across edits, so the event id folds in the text and the
-// attachment URLs, or two captionless photos would dedupe as one.
-function hashEventContent(
-  text: string | undefined,
-  attachments: Attachment[],
-): string {
-  const identity = [
-    text ?? "",
-    ...attachments.map((attachment) => attachment.url ?? ""),
-  ].join("\n");
-
-  return createHash("sha256").update(identity).digest("hex").slice(0, 12);
+// Pancake reuses a message id across edits, so the text stays out of the event id and an edit
+// dedupes. Attachment URLs go in, or two captionless photos would dedupe as one.
+function hashEventContent(attachments: Attachment[]): string {
+  return createHash("sha256")
+    .update(attachments.map((attachment) => attachment.url ?? "").join("\n"))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 function pancakeAttachments(
@@ -497,7 +492,7 @@ function parsePancakeWebhook(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(text, attachments)}`,
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(attachments)}`,
       conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
       content: [{ type: "text", text: text ?? "" }],

@@ -296,7 +296,7 @@ if (telegramRef) {
         body: new URLSearchParams({
           url: telegramUrl,
           secret_token: webhookSecret,
-          allowed_updates: JSON.stringify(["message", "edited_message"]),
+          allowed_updates: JSON.stringify(["message"]),
         }),
       },
     );

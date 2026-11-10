@@ -58,7 +58,7 @@ describe("pancake channel adapter", () => {
 
     expect(parsed.ack).toEqual({ statusCode: 200 });
     expect(parsed.message.eventId).toBe(
-      `pancake:page-1:message-1:${hashText("hello pancake")}`,
+      `pancake:page-1:message-1:${hashText("")}`,
     );
     expect(parsed.message.conversationKey).toBe(
       "pancake:page-1:conversation-1",
@@ -293,6 +293,13 @@ describe("pancake channel adapter", () => {
     });
 
     expect(first.eventId).not.toBe(second.eventId);
+  });
+
+  it("gives an edit of a message the same event id, so it never runs twice", async () => {
+    const original = await parsePancakeMedia({ message: "see you at 5" });
+    const edited = await parsePancakeMedia({ message: "see you at 6" });
+
+    expect(edited.eventId).toBe(original.eventId);
   });
 
   it("bounds every Pancake API call with a timeout", async () => {

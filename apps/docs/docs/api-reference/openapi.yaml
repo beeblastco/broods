@@ -6400,10 +6400,10 @@ components:
               description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
             triggerOnIssueOpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new issues (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new issues (opened, reopened). Defaults to true.
             triggerOnPROpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new pull requests (opened, reopened). Defaults to true.
             trace:
               type: string
               enum: [enabled, disabled]
