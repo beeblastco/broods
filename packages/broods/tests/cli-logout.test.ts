@@ -63,6 +63,54 @@ test("logout revokes the login on its server and keeps other servers' logins", a
   expect(Object.keys(config.logins)).toEqual([OTHER_SERVER]);
 });
 
+test("logout with BROODS_TOKEN set revokes only the saved login it removes and says the env token stays", async (): Promise<void> => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request): Response => {
+      requests.push(request.headers.get("authorization") ?? "");
+
+      return new Response(null, { status: 204 });
+    },
+  });
+  servers.push(server);
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const home = await mkdtemp(join(tmpdir(), "broods-home-"));
+  workdirs.push(home);
+  await mkdir(join(home, ".broods"));
+  const configPath = join(home, ".broods", "config.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      current: baseUrl,
+      logins: { [baseUrl]: login(baseUrl, "bcli_mine") },
+    }),
+    "utf8",
+  );
+
+  const proc = Bun.spawn({
+    cmd: [process.execPath, CLI, "logout"],
+    cwd: home,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: home,
+      BROODS_TOKEN: "bcli_ci",
+      BROODS_BASE_URL: baseUrl,
+    },
+  });
+
+  expect(await proc.exited).toBe(0);
+  expect(requests).toEqual(["Bearer bcli_mine"]);
+  const output = `${await new Response(proc.stdout).text()}${await new Response(proc.stderr).text()}`;
+  expect(output).toContain("BROODS_TOKEN is set");
+  const config = JSON.parse(await readFile(configPath, "utf8")) as {
+    logins: Record<string, unknown>;
+  };
+  expect(config.logins).toEqual({});
+});
+
 function login(
   baseUrl: string,
   token: string,

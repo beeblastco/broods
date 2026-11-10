@@ -49,8 +49,14 @@ export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
     };
   }
 
+  return readStoredLogin(baseUrl);
+}
+
+/** The login saved in `~/.broods/config.json`, never the `BROODS_TOKEN` one. */
+export function readStoredLogin(baseUrl?: string): StoredAuthConfig | null {
   const file = readStoredAuthFile();
   if (!file) return null;
+  const envBaseUrl = baseUrl ?? process.env.BROODS_BASE_URL;
   if (envBaseUrl) return file.logins[stripTrailingSlash(envBaseUrl)] ?? null;
   const envDashboardUrl = process.env.BROODS_DASHBOARD_URL;
   if (envDashboardUrl) {

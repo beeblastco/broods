@@ -22,6 +22,7 @@ import {
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
+  readStoredLogin,
   removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
@@ -275,7 +276,8 @@ ${GLOBAL_OPTIONS}`,
   logout: `Usage: broods logout [options]
 
 Revokes the stored login on the server and removes it from
-~/.broods/config.json. Other servers' logins stay.
+~/.broods/config.json. Other servers' logins stay. A BROODS_TOKEN
+in the environment is not touched: unset it yourself.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -744,10 +746,16 @@ async function login(args: string[]): Promise<void> {
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
-// A 401 means the server already refuses the token, so the local copy goes either way.
+// Revokes the saved login it removes; a 401 means the server already refuses that token.
 async function logout(args: string[]): Promise<void> {
   loadBroodsRuntimeConfig();
-  const auth = await requireAuth(optionValue(args, "--base-url"));
+  const envTokenNote = process.env.BROODS_TOKEN
+    ? "BROODS_TOKEN is set, so commands keep using it. The CLI cannot remove it: unset it where it is set."
+    : "";
+  const auth = readStoredLogin(optionValue(args, "--base-url"));
+  if (!auth) {
+    throw new Error(`No saved login to remove. ${envTokenNote}`.trim());
+  }
   const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${auth.token}` },
@@ -759,6 +767,7 @@ async function logout(args: string[]): Promise<void> {
   }
   await removeStoredAuth(auth.baseUrl);
   printSuccess(`Logged out of ${auth.baseUrl}`);
+  if (envTokenNote) printWarning(envTokenNote);
 }
 
 function apiErrorMessage(error: unknown): string {
