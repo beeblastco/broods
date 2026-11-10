@@ -6,8 +6,7 @@ name: JiTTest
 # pull request. Never blocks a merge. Billed per run, so it runs only on request: the
 # jittest label (remove and add it again to re-run), or a manual run on a branch.
 # The same label on an issue reproduces the report with a failing test on dev and names
-# the commit that broke it. Label an issue only after reading it: its text reaches a
-# model that runs commands next to the key.
+# the commit that broke it, when a maintainer wrote the issue.
 on:
   pull_request:
     types: [labeled]
@@ -71,7 +70,11 @@ jobs:
           retention-days: 30
 
   diagnose:
-    if: github.event_name == 'issues' && github.event.label.name == 'jittest'
+    # A maintainer's own issue only: the text reaches a model that runs commands next to
+    # the key. For an outside report, file the symptom again in your own words.
+    if: >-
+      github.event_name == 'issues' && github.event.label.name == 'jittest' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
     concurrency:
       group: jittest-issue-${{ github.event.issue.number }}
       cancel-in-progress: true
