@@ -431,6 +431,15 @@ function createDiscordActions(
       channelId:
         source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
     });
+  // Shared so the first reply fills the deferred response and later ones post follow-ups.
+  const slashCommand: DiscordSlashCommandContext | undefined =
+    source.interactionToken
+      ? {
+          channelId: threadId,
+          interactionToken: source.interactionToken,
+          initialResponseSent: false,
+        }
+      : undefined;
 
   const sendAttachments = async function (
     attachments: ChannelFile[] | ChannelImage[],
@@ -465,20 +474,15 @@ function createDiscordActions(
     },
 
     sendText: async function (text) {
-      if (!source.interactionToken) {
+      if (!slashCommand) {
         await discord.postMessage(threadId, { markdown: text });
 
         return;
       }
 
       try {
-        await discord.runWithSlashCommandContext(
-          {
-            channelId: threadId,
-            interactionToken: source.interactionToken,
-            initialResponseSent: false,
-          },
-          () => discord.postMessage(threadId, { markdown: text }),
+        await discord.runWithSlashCommandContext(slashCommand, () =>
+          discord.postMessage(threadId, { markdown: text }),
         );
       } catch (err) {
         if (source.channelId) {

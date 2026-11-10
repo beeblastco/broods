@@ -584,7 +584,66 @@ describe("discord channel adapter", () => {
 
     expect(parsed.kind).toBe("ignore");
   });
+
+  it("posts a slash command's later replies as follow-ups, keeping the first", async () => {
+    const sent = await sendSlashCommandReplies([
+      "first update",
+      "final answer",
+    ]);
+
+    expect(sent).toEqual([
+      "PATCH /webhooks/app-1/token-1/messages/@original first update",
+      "POST /webhooks/app-1/token-1?wait=true final answer",
+    ]);
+  });
 });
+
+async function sendSlashCommandReplies(texts: string[]): Promise<string[]> {
+  const sent: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async function (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const body = JSON.parse(String(init?.body)) as { content: string };
+      sent.push(
+        `${init?.method} ${url.pathname.replace(/^\/api(\/v10)?/, "")}${url.search} ${body.content}`,
+      );
+
+      return Response.json({ id: `message-${sent.length}` });
+    },
+    { preconnect: originalFetch.preconnect },
+  );
+  try {
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+      null,
+    ).actions({
+      eventId: "discord:interaction-1",
+      conversationKey: "discord:guild-1:channel-1",
+      channelName: "discord",
+      content: "",
+      source: {
+        applicationId: "app-1",
+        interactionToken: "token-1",
+        interactionId: "interaction-1",
+        guildId: "guild-1",
+        channelId: "channel-1",
+      },
+    });
+    for (const text of texts) {
+      await actions.sendText(text);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  return sent;
+}
 
 async function parseGatewayMedia(
   id: string,
