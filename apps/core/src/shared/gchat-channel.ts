@@ -16,7 +16,11 @@ import type {
   ChannelParseResult,
   InboundMessage,
 } from "./channels.ts";
-import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import {
+  chunkChannelText,
+  isAllowedId,
+  parseChannelWebhookBody,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { GCHAT_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -26,6 +30,8 @@ const SERVICE_ACCOUNT_KEY = z.looseObject({
 });
 // The SDK adapter caches Google's certificates and the access token, so one lives per app.
 const TRANSPORT_CACHE_MAX = 100;
+// Google Chat caps a message at 32,000 bytes; 3 UTF-8 bytes per code unit keeps this under.
+const GCHAT_TEXT_LIMIT = 8000;
 const transports = new Map<string, GoogleChatAdapter>();
 
 // What a Chat app that is not a Workspace add-on is posted; an add-on gets `chat.messagePayload`.
@@ -151,7 +157,9 @@ export function createGoogleChatChannel(
 
       return {
         sendText: async function (text): Promise<void> {
-          await transport.postMessage(source.threadId, { markdown: text });
+          for (const chunk of chunkChannelText(text, GCHAT_TEXT_LIMIT)) {
+            await transport.postMessage(source.threadId, { markdown: chunk });
+          }
         },
         // No typing indicator, and an app can react only with a user's credentials.
         sendTyping: async function (): Promise<void> {
