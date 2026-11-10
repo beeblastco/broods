@@ -105,6 +105,7 @@ sequenceDiagram
 - A commit that did not trigger an awaited workflow is judged by the branch's newest push run of it, so a failing backend deploy blocks every image behind it.
 - The gateway waits for core because it trusts core's answer about each observability and agent socket's credential, and refuses one missing a field it needs (an observability scope with no ticket expiry is a 502). The agent socket asks `/v1/internal/agent-socket-scope`, which an older core does not serve. A gateway that rolled first would refuse every such socket until core caught up.
 - Images are `ghcr.io/beeblastco/broods-*`, tagged with the commit sha plus a floating `dev` or `main` tag.
+- Each build workflow runs one at a time per branch, in push order, and a newer push replaces a run still waiting, so the newest commit rolls last. An awaited run cancelled that way is judged by the newer run that replaced it, so an image whose prerequisite was replaced still rolls once the newer one succeeds. A manual `deploy.yaml` run titled for another stage (`Deploy to <stage>`) never counts, by the same rule as drift cleanup.
 - The rollout job has a 40 minute budget: 20 for prerequisites, 20 for the roll. It needs `INFRA_DISPATCH_TOKEN`.
 
 ## Deploy pipeline
