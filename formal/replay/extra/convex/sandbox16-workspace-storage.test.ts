@@ -42,9 +42,9 @@ describe("r2AccountId", (): void => {
 describe("assertStorageEndpoint", (): void => {
   test("a private endpoint passes only when the cluster flag is set", (): void => {
     process.env.ALLOW_PRIVATE_STORAGE_ENDPOINTS = "true";
-    expect(
+    expect((): void =>
       assertStorageEndpoint("http://minio:9000", "config.storage.endpoint"),
-    ).toBeUndefined();
+    ).not.toThrow();
   });
 
   test("an unparsable endpoint is refused with the flag set", (): void => {

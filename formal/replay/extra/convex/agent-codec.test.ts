@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   agentCanvasBadge,
   assertEnvVarName,
-  isEntirelyEnvPlaceholders,
   substituteEnvPlaceholders,
 } from "../../../../packages/convex/model/agentConfigCodec";
 import { defaultSandboxOf } from "../../../../packages/convex/model/agentRules";
@@ -62,15 +61,6 @@ const envNames: Array<[string, boolean]> = [
   [`A${"B".repeat(64)}`, false],
 ];
 
-const placeholderValues: Array<[string, boolean]> = [
-  ["${A}", true],
-  ["${A}${B_1}", true],
-  ["", false],
-  ["x${A}", false],
-  ["${a}", false],
-  ["${1A}", false],
-];
-
 const defaultSandboxes: Array<
   [string, Record<string, unknown>, string | undefined]
 > = [
@@ -95,13 +85,6 @@ describe("agent config helpers", (): void => {
     else
       expect((): void => assertEnvVarName(name)).toThrow("env name must match");
   });
-
-  test.each(placeholderValues)(
-    "placeholders only: %s",
-    (value: string, expected: boolean): void => {
-      expect(isEntirelyEnvPlaceholders(value)).toBe(expected);
-    },
-  );
 
   test("substitutes a known variable", (): void => {
     expect(substituteEnvPlaceholders({ a: "${A}" }, { A: "1" })).toEqual({

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import {
-  asyncAdmissionResponse,
   directAdmissionResponse,
   emptySseResponse,
   natsStartResponse,
@@ -10,7 +9,6 @@ import { waitUntilMs } from "../../../../apps/core/src/harness/continuation.ts";
 import type { NatsConnection } from "../../../../apps/core/src/shared/nats.ts";
 
 type DirectEvent = Parameters<typeof directAdmissionResponse>[0];
-type AsyncEvent = Parameters<typeof asyncAdmissionResponse>[0];
 type Admission = Parameters<typeof directAdmissionResponse>[1];
 type StartEvent = Parameters<typeof natsStartResponse>[0];
 type Context = Parameters<typeof waitUntilMs>[0];
@@ -143,10 +141,6 @@ describe("admission responses", () => {
       expect(directAdmissionResponse(event, admission, false).status).toBe(
         status,
       );
-      expect(
-        asyncAdmissionResponse(baseEvent as unknown as AsyncEvent, admission)
-          .status,
-      ).toBe(status);
     },
   );
 
@@ -165,13 +159,6 @@ describe("admission responses", () => {
     expect(direct).toMatchObject({
       runId: "run_first",
       status: "completed",
-      statusUrl: "https://core.test/v1/runs/run_first",
-    });
-    const queued = await asyncAdmissionResponse(
-      baseEvent as unknown as AsyncEvent,
-      admission,
-    ).json();
-    expect(queued).toMatchObject({
       statusUrl: "https://core.test/v1/runs/run_first",
     });
   });

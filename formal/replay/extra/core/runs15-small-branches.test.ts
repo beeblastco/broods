@@ -6,7 +6,7 @@ import {
   resumeLostAsyncToolResults,
 } from "../../../../apps/core/src/harness/async-tools.ts";
 import { prepareSessionMessage } from "../../../../apps/core/src/harness/ingress.ts";
-import { refreshTokenGrant } from "../../../../apps/core/src/harness/mcp/oauth.ts";
+import { tokenGrant } from "../../../../apps/core/src/harness/mcp/oauth.ts";
 import {
   openWorkAfterRun,
   type RunOpenWorkSources,
@@ -153,16 +153,37 @@ describe("openWorkAfterRun", (): void => {
   });
 });
 
-describe("refreshTokenGrant", (): void => {
+describe("tokenGrant", (): void => {
+  test("sends a refresh_token grant unless the form overrides the type", async (): Promise<void> => {
+    const bodies: string[] = [];
+    const capture = async (
+      _url: string,
+      init: RequestInit,
+    ): Promise<Response> => {
+      if (typeof init.body === "string") bodies.push(init.body);
+
+      return new Response('{"access_token":"tok"}');
+    };
+    await tokenGrant(TOKEN_URL, { client_id: "c" }, capture);
+    await tokenGrant(TOKEN_URL, { grant_type: "client_credentials" }, capture);
+
+    expect(new URLSearchParams(bodies[0]).get("grant_type")).toBe(
+      "refresh_token",
+    );
+    expect(new URLSearchParams(bodies[1]).get("grant_type")).toBe(
+      "client_credentials",
+    );
+  });
+
   test("refuses a token endpoint that does not answer JSON", async (): Promise<void> => {
     await expect(
-      refreshTokenGrant(TOKEN_URL, {}, tokenFetch("<html>")),
+      tokenGrant(TOKEN_URL, {}, tokenFetch("<html>")),
     ).rejects.toThrow("token endpoint returned non-JSON");
   });
 
   test("refuses a response without an access token", async (): Promise<void> => {
     await expect(
-      refreshTokenGrant(TOKEN_URL, {}, tokenFetch('{"access_token":""}')),
+      tokenGrant(TOKEN_URL, {}, tokenFetch('{"access_token":""}')),
     ).rejects.toThrow("token response carries no access_token");
   });
 });

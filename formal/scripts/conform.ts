@@ -356,6 +356,12 @@ async function record(wanted: string[]): Promise<boolean> {
         console.log(`  ONLY ${got} OF ${expected} TESTS RAN IN ${file}`);
         broken = true;
       }
+      // A file that fails to load runs nothing with or without the recorder, so the comparison
+      // sees no difference. The specification's own tests must run.
+      if (got === 0 && path.startsWith(join(FORMAL, "replay/extra"))) {
+        console.log(`  NO TESTS RAN IN ${file}`);
+        broken = true;
+      }
     }
     if (ran === 0) {
       console.log("  NO TESTS RAN");
