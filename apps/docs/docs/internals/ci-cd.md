@@ -115,8 +115,7 @@ flowchart TD
   B -->|no| V["validate: check, test, build"]
   B -->|yes| T
   V --> T["Resolve targets:<br/>stage, region, sandbox flag"]
-  T --> L["sst unlock each target"]
-  L --> S{"SANDBOX_IMAGE_READY_*<br/>true and ECR image missing?"}
+  T --> S{"SANDBOX_IMAGE_READY_*<br/>true and ECR image missing?"}
   S -->|yes| S1["sst deploy without sandbox,<br/>crane copy latest-arm64"]
   S1 --> D
   S -->|no| D["sst deploy, 3 tries, 15 s apart"]
@@ -134,7 +133,7 @@ flowchart TD
 | manual, other stage         | that stage             | `DEV_AWS_REGION`                      | `development`      |
 
 - Production stages deploy only from `main`. `production_targets()` in `deploy.yaml` lists `eu-west-1` alone. `microvmPrereqsEnabled` in `sst.config.ts` skips the MicroVM pieces in `ap-southeast-1`.
-- The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once.
+- The deploy job shares the `sst-<stage>` concurrency group with drift cleanup, so the two never touch a stage at once. Neither runs `sst unlock`: a lock left by a crashed run, or held by a deploy started outside CI, fails the deploy. Clear it by hand after checking nothing runs.
 - With a Cloudflare token, `sst deploy` itself ships the [Cloudflare MCP runtime](../guides/tools.md#where-a-hosted-server-runs), the [sandbox bridge](sandboxes.md#cloudflare) and the [V8 Worker](sandboxes.md#worker), each named per stage, by running its workspace's `deploy` script (`deployCloudflareWorker` in `sst.config.ts`). A Worker redeploys only when its files or a var it gets change, or `bun.lock` for the MCP and V8 Workers. The MCP script creates the `broods-mcp-bundles` R2 bucket if missing, sets its 30-day expiry and sets `BUNDLE_ORIGIN` to the stage's tool-bundles bucket; the V8 Worker's script creates `broods-worker-state`; the bridge's script builds its Container image with the runner's Docker only when the registry lacks `broods-sandbox:<Dockerfile hash>` (first deploy to the account, or a `Dockerfile` change), shared by every stage, and deploys it by digest. They ship code only: the infra repo generates each key and writes it to the Worker and to core. A failed Worker deploy fails the stage deploy like any other resource.
 
 ## Secrets and variables
