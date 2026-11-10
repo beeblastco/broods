@@ -15,7 +15,11 @@ import { syncApiAgentCanvasWiring } from "../model/apiCanvasSync";
 import type { CanvasNode } from "../model/canvasShapes";
 import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getProjectForRole } from "../model/ownership/project";
-import { agentsInProject, agentsInStage } from "../model/projectScope";
+import {
+  agentsInProject,
+  agentsInStage,
+  resourceStageScope,
+} from "../model/projectScope";
 import { agentsFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
@@ -255,6 +259,41 @@ export const listForEndpoint = internalQuery({
       },
       args.accountId,
     );
+  },
+});
+
+/** The project and stage names of each agent that runs in exactly one stage of this account. */
+export const scopes = internalQuery({
+  args: { accountId: v.id("accounts"), agentIds: v.array(v.string()) },
+  returns: v.array(
+    v.object({ agentId: v.string(), project: v.string(), stage: v.string() }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ agentId: string; project: string; stage: string }[]> => {
+    const scopes = await Promise.all(
+      args.agentIds.map((agentId) =>
+        resourceStageScope(ctx, args.accountId, "agents", agentId),
+      ),
+    );
+    // Many agents share a few stages, so each project and stage is read once.
+    const names = new Map<string, string | undefined>();
+    for (const scope of scopes) {
+      for (const id of scope ? [scope.projectId, scope.stageId] : []) {
+        if (!names.has(id)) names.set(id, (await ctx.db.get(id))?.name);
+      }
+    }
+
+    return args.agentIds.flatMap((agentId, index) => {
+      const scope = scopes[index];
+      const project = scope && names.get(scope.projectId);
+      const stage = scope && names.get(scope.stageId);
+
+      return project && stage
+        ? [{ agentId: agentId, project: project, stage: stage }]
+        : [];
+    });
   },
 });
 

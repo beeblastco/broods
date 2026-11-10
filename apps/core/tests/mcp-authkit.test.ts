@@ -95,8 +95,8 @@ describe("AuthKit sign-in at /mcp", () => {
     const replayed: AuthContext[] = [];
     const response = await handleMcpRequest(
       request(await token({}), "tools/call", {
-        name: "helper",
-        arguments: { prompt: "hi" },
+        name: "ask_agent",
+        arguments: { agent: "helper", prompt: "hi" },
       }),
       async (_request, auth): Promise<Response> => {
         replayed.push(auth);

@@ -9,9 +9,9 @@
     "deploy": "broods deploy"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.96",
-    "@ai-sdk/openai": "^4.0.108",
-    "ai": "^7.0.162",
+    "@ai-sdk/anthropic": "^4.0.99",
+    "@ai-sdk/openai": "^4.0.111",
+    "ai": "^7.0.166",
     "broods": "file:../../broods"
   },
   "devDependencies": {

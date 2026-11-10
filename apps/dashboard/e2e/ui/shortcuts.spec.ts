@@ -56,6 +56,27 @@ test("the palette opens on its key and on its trigger, and Escape closes it", as
   await expect(page.locator(DIALOG)).toBeVisible();
 });
 
+test("a palette chunk that fails to load leaves a notice, not a broken page", async ({
+  page,
+}) => {
+  let loaded = false;
+  page.on("load", () => {
+    loaded = true;
+  });
+  // Chunk names are hashed; every chunk fetched after the load event is a lazy one.
+  await page.route(/\/_next\/static\/chunks\//, (route) =>
+    loaded ? route.abort() : route.fallback(),
+  );
+  await openSurfaces(page);
+
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Couldn't load search" }),
+  ).toBeVisible();
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator(DIALOG)).toHaveCount(0);
+});
+
 test("typing ranks real rows under their headings and Enter runs the top one", async ({
   page,
 }) => {

@@ -1843,7 +1843,8 @@ function sdkStubPlugin(): Plugin {
     name: "broods-sdk-stub",
     setup: function (build): void {
       build.onResolve(
-        { filter: /^broods(\/.*)?$/ },
+        // `broods/account` and `broods/mcp` are runtime code a handler calls, so they ship.
+        { filter: /^broods$/ },
         (): { path: string; namespace: string } => ({
           path: "broods",
           namespace: "broods-stub",
