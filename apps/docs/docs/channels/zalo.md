@@ -92,7 +92,7 @@ See [Channel records](channel-records.md) for how lists expand.
 
 ## What works
 
-- Text in private chats and groups. Replies are split into 2000-character chunks, the Zalo text limit.
+- Text in private chats and groups. Replies are split at a line break or space into pieces of at most 2000 characters, the Zalo text limit.
 - Inbound pictures, stickers and voice notes. Zalo hosts each one, so the agent gets a link, not the bytes. Pictures and stickers arrive as images, voice notes as audio. A caption arrives as the message text.
 - The model must accept that input. A picture sent to a text-only model fails the run with the provider's error. `.aac` is the only audio format Zalo uses, so a voice note with any other URL is passed along as a plain link.
 - Outbound images through `sendPhoto`. Zalo fetches the picture itself, so it must be a public `http(s)` URL. Local paths, `data:` URLs and private links are rejected. Captions are cut at 2000 characters. Workspace files go out as durable media links.

@@ -409,6 +409,7 @@ describe("discord channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
       jsonResponse({ id: "reply-1" }),
+      jsonResponse({ id: "reply-2" }),
       new Response("", { status: 204 }),
     );
 
@@ -426,23 +427,31 @@ describe("discord channel actions", () => {
       }),
     );
 
-    await actions.sendText(`${"hello ".repeat(450)}tail`);
+    const text = `${"hello ".repeat(450)}tail`;
+    await actions.sendText(text);
     await actions.sendTyping();
     await actions.reactToMessage();
 
-    expect(fetchMock.calls).toHaveLength(2);
+    expect(fetchMock.calls).toHaveLength(3);
     expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://discord.com/api/v10/webhooks/app-1/interaction-token/messages/@original",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
-    expect(
-      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)).content,
-    ).toHaveLength(2000);
-
     expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://discord.com/api/v10/webhooks/app-1/interaction-token?wait=true",
+    );
+    expect(fetchMock.calls[1]!.init?.method).toBe("POST");
+    expect(
+      fetchMock.calls
+        .slice(0, 2)
+        .map((call) => JSON.parse(requestBodyText(call.init?.body)).content)
+        .join(" "),
+    ).toBe(text);
+
+    expect(requestUrl(fetchMock.calls[2]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/typing",
     );
-    expect(fetchMock.calls[1]!.init?.headers).toEqual({
+    expect(fetchMock.calls[2]!.init?.headers).toEqual({
       Authorization: "Bot bot-token",
     });
   });
