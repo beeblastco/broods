@@ -115,7 +115,11 @@ export const ROUTERS: readonly EdgeRouter[] = [
     upstream: "core",
     limit: "none",
     secretPath: true,
-    rules: [{ path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] }],
+    rules: [
+      { path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] },
+      // An MCP sign-in lands here with its authorization `code` and `state` in the query.
+      { path: "/v1/mcp-connections/callback", methods: ["GET"] },
+    ],
   },
   // `/mcp` sits off `/v1` because `/v1/mcp` is the config plane's server CRUD. MCP clients read
   // its OAuth metadata at the RFC 9728 well-known path.

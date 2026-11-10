@@ -22,7 +22,6 @@ import {
 import {
   authorizationHeaderName,
   ENV_PLACEHOLDER_PATTERN,
-  isGoogleMcpUrl,
   type McpOauth,
   type McpRecord,
 } from "../../shared/domain/mcp.ts";
@@ -94,8 +93,6 @@ export interface McpCallOptions {
   abortSignal?: AbortSignal;
   onCpuUsec?: (cpuUsec: number) => void;
   onRetry?: (waitMs: number) => void;
-  /** A rate-limited call is resent only when the server says resending is safe. */
-  retryRateLimited?: boolean;
 }
 
 interface CachedDiscover {
@@ -126,7 +123,7 @@ export async function callMcpTool(
   let result = await callMcpToolResult(connection, toolName, args, options);
   for (
     let attempt = 1;
-    result.isError && options.retryRateLimited && attempt <= RATE_LIMIT_RETRIES;
+    result.isError && attempt <= RATE_LIMIT_RETRIES;
     attempt += 1
   ) {
     const waitMs = rateLimitWaitMs(renderContent(result.content), attempt);
@@ -626,17 +623,8 @@ function resolveOauth(
     clientSecret: resolved("clientSecret"),
     refreshToken: resolved("refreshToken"),
     // From the row alone: registration is the one place that checked it is https.
-    tokenUrl: tokenUrlFor(record),
+    tokenUrl: record.oauth?.tokenUrl ?? DEFAULT_OAUTH_TOKEN_URL,
   };
-}
-
-// The default sends the client secret to Google, so it is for Google's own servers only.
-function tokenUrlFor(record: McpRecord): string {
-  if (record.oauth?.tokenUrl) return record.oauth.tokenUrl;
-  if (isGoogleMcpUrl(record.url)) return DEFAULT_OAUTH_TOKEN_URL;
-  throw new Error(
-    `config.mcp.${record.serverId} oauth needs tokenUrl: only Google servers have a default`,
-  );
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

@@ -209,22 +209,6 @@ describe("mcpConnection oauth overlay", () => {
     });
   });
 
-  it("refuses to send a non-Google server's secrets to Google's token endpoint", () => {
-    expect(() =>
-      mcpConnection(
-        oauthRecord({
-          url: "https://mcp.example.com/mcp",
-          oauth: {
-            clientId: "client",
-            clientSecret: "secret",
-            refreshToken: "refresh",
-          },
-        }),
-        undefined,
-      ),
-    ).toThrow("oauth needs tokenUrl");
-  });
-
   it("takes tokenUrl from the row, never from the agent config", () => {
     const record = oauthRecord({
       oauth: {

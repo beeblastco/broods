@@ -134,7 +134,7 @@ export const gmail = defineMcp({
     clientId: "1234.apps.googleusercontent.com",
     clientSecret: env("GMAIL_CLIENT_SECRET"),
     refreshToken: env("GMAIL_REFRESH_TOKEN"),
-    // tokenUrl defaults to https://oauth2.googleapis.com/token, on googleapis.com hosts only
+    // tokenUrl defaults to https://oauth2.googleapis.com/token
   },
 });
 

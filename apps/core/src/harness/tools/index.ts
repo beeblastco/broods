@@ -468,7 +468,10 @@ async function registerMcpTools(
             serverName: record.name,
             error: message,
           });
-          if (MCP_AUTH_FAILURE_PATTERN.test(message)) {
+          if (
+            record.transport === "http" &&
+            MCP_AUTH_FAILURE_PATTERN.test(message)
+          ) {
             tools[mcpToolName(record.name, "sign_in_needed")] =
               mcpSignInTool(record);
           }

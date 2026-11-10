@@ -556,13 +556,23 @@ async function continueRun(
   const { runId, answers = {} } = input.data;
   try {
     const { current } = await resolveTask(caller, runId);
+    const answering = (current.questions ?? []).filter((prompt) =>
+      prompt.questions.some(({ id }) => id in answers),
+    );
+    const missing = answering.flatMap((prompt) =>
+      prompt.questions.filter(({ id }) => !(id in answers)).map(({ id }) => id),
+    );
+    if (missing.length > 0) {
+      return toolResult(
+        `Answer these questions too: ${missing.join(", ")}`,
+        true,
+      );
+    }
     const responses = Object.fromEntries(
-      (current.questions ?? [])
-        .filter((prompt) => prompt.questions.some(({ id }) => id in answers))
-        .map((prompt) => [
-          `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
-          { action: "accept", content: answers },
-        ]),
+      answering.map((prompt) => [
+        `${QUESTION_KEY_PREFIX}${prompt.statusId}`,
+        { action: "accept", content: answers },
+      ]),
     );
     if (Object.keys(responses).length === 0) {
       return await waitForRun(caller, runId, signal);
@@ -586,16 +596,15 @@ function declaresTasks(ctx: ServerContext): boolean {
 function directReply(runs: TaskRuns): CallToolResultV2 {
   const { root, current } = runs;
   const task = taskFromRuns(runs);
-  if (task.status === "completed") return task.result as CallToolResultV2;
+  if (task.status === "completed") {
+    return task.statusMessage === undefined
+      ? answerResult(current, root.conversationKey)
+      : toolResult(task.statusMessage, true);
+  }
   if (task.status === "cancelled") {
     return toolResult("The run was cancelled.", true);
   }
-  if (task.status !== "input_required") {
-    return toolResult(
-      `Still working. Call ${CONTINUE_TOOL} with runId "${root.runId}" for the answer.`,
-      false,
-    );
-  }
+  if (task.status !== "input_required") return stillWorking(root.runId);
   const questions = (current.questions ?? []).flatMap((prompt) =>
     prompt.questions.map(
       ({ id, options, question }) =>
@@ -839,6 +848,13 @@ async function startedTask(
   };
 }
 
+function stillWorking(runId: string): CallToolResultV2 {
+  return toolResult(
+    `Still working. Call ${CONTINUE_TOOL} with runId "${runId}" for the answer.`,
+    false,
+  );
+}
+
 function toolResult(text: string, isError: boolean): CallToolResultV2 {
   return {
     resultType: "complete",
@@ -868,7 +884,19 @@ async function waitForRun(
   const deadline = Date.now() + SYNC_WAIT_MS;
   let pollMs = SYNC_FIRST_POLL_MS;
   for (;;) {
-    const runs = await resolveTask(caller, runId);
+    const runs = await resolveTask(caller, runId).catch((error: unknown) => {
+      if (
+        error instanceof ProtocolError &&
+        error.code === ProtocolErrorCode.InvalidParams
+      ) {
+        throw error;
+      }
+
+      return null;
+    });
+    // The run is already going: a failed read still hands back its id, so a retry
+    // does not start a second run.
+    if (!runs) return stillWorking(runId);
     const { status } = taskFromRuns(runs);
     const settled =
       status !== "working" &&

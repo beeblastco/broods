@@ -1448,6 +1448,33 @@ describe("connected MCP servers", () => {
     expect(disabled).toEqual({});
   });
 
+  it("offers a sign-in tool for a remote server that answers 401, never for a hosted one", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setMcpForTests({
+      listTools: async function () {
+        throw new Error("HTTP 401 Unauthorized");
+      },
+    });
+    const tools = async (record: McpRecord): Promise<string[]> => {
+      setStorageForTests(storageWithMcp(record));
+
+      return Object.keys(
+        await createTools(createToolContext(), { mcp: { [serverId]: {} } }),
+      );
+    };
+
+    expect(await tools(mcpRecord())).toEqual(["search__sign_in_needed"]);
+    expect(
+      await tools(
+        mcpRecord({
+          transport: "hosted",
+          url: undefined,
+          sha256: "a".repeat(64),
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("surfaces an isError tool result as a thrown error", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     setStorageForTests(storageWithMcp(mcpRecord()));

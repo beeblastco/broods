@@ -1,12 +1,7 @@
 // Server-run OAuth for a remote MCP server: the caller makes one request and a person opens a link.
 // Discovery, client registration, PKCE and the code exchange all happen here.
 
-import {
-  createCipheriv,
-  createDecipheriv,
-  hkdfSync,
-  randomBytes,
-} from "node:crypto";
+import { hkdfSync, randomBytes } from "node:crypto";
 import {
   discoverAuthorizationServerMetadata,
   discoverOAuthProtectedResourceMetadata,
@@ -23,17 +18,23 @@ import {
   publicHostFetch,
   type CoreRequest,
 } from "../../shared/http.ts";
+import { NODE_CRYPTO } from "../../shared/node-aead.ts";
 import { getStorage, type StoredMcpConnection } from "../../shared/storage.ts";
-import { tokenFetch, type Fetch, type TokenSource } from "../connections.ts";
+import {
+  forgetTokens,
+  tokenFetch,
+  type Fetch,
+  type TokenSource,
+} from "../connections.ts";
 import { tokenGrant } from "./oauth.ts";
 
 const CALLBACK_SEGMENT = "callback";
 const HKDF_INFO = "broods-mcp-oauth-state";
 const IV_BYTES = 12;
 const KEY_BYTES = 32;
+const NO_AAD = new Uint8Array();
 const PATH_PREFIX = "/v1/mcp-connections/";
 const STATE_TTL_MS = 10 * 60_000;
-const TAG_BYTES = 16;
 
 // Sealed into the OAuth `state`, so a sign-in in progress needs no row.
 interface PendingSignIn {
@@ -67,12 +68,13 @@ export async function handleMcpConnectionRequest(
     return jsonResponse(200, { connected: record.connected === true });
   }
   if (event.method === "DELETE") {
-    return jsonResponse(200, {
-      deleted: await getStorage().mcpConnections.disconnect(
-        record.accountId,
-        record.serverId,
-      ),
-    });
+    const deleted = await getStorage().mcpConnections.disconnect(
+      record.accountId,
+      record.serverId,
+    );
+    forgetTokens(tokenKey(record.accountId, record.serverId));
+
+    return jsonResponse(200, { deleted: deleted });
   }
 
   return errorResponse(405, "Use POST, GET or DELETE");
@@ -109,7 +111,7 @@ function connectionSource(record: McpRecord): TokenSource<StoredMcpConnection> {
   const store = getStorage().mcpConnections;
 
   return {
-    key: `mcp:${record.accountId}:${record.serverId}`,
+    key: tokenKey(record.accountId, record.serverId),
     missing: `MCP server ${record.name} has no connection. ${reconnect}`,
     load: () => store.load(record.accountId, record.serverId),
     refresh: async (stored) => {
@@ -141,7 +143,7 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
       status: status,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
-  const pending = openState(event.query.get("state") ?? "");
+  const pending = await openState(event.query.get("state") ?? "");
   if (!pending || pending.expiresAt < Date.now()) {
     return page(400, "This sign-in link expired. Start the connection again.");
   }
@@ -186,6 +188,7 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
       refreshToken: tokens.refreshToken ?? "",
       ...(pending.clientSecret ? { clientSecret: pending.clientSecret } : {}),
     });
+    forgetTokens(tokenKey(pending.accountId, pending.serverId));
   } catch (error) {
     return page(502, `Sign-in failed: ${toErrorMessage(error)}`);
   }
@@ -193,36 +196,46 @@ async function finishSignIn(event: CoreRequest): Promise<Response> {
   return page(200, `${record.name} is connected. You can close this tab.`);
 }
 
-function openState(state: string): PendingSignIn | null {
-  try {
-    const sealed = Buffer.from(state, "base64url");
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      stateKey(),
-      sealed.subarray(0, IV_BYTES),
-    );
-    decipher.setAuthTag(sealed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
+// The first secret seals and every one opens, so rotating it keeps sign-ins in flight.
+async function openState(state: string): Promise<PendingSignIn | null> {
+  const sealed = Buffer.from(state, "base64url");
+  for (const secret of requireSecretsEnv("MEDIA_TICKET_SECRET")) {
+    const opened = await openWith(stateKey(secret), sealed);
+    if (opened) return opened;
+  }
 
-    return JSON.parse(
-      Buffer.concat([
-        decipher.update(sealed.subarray(IV_BYTES + TAG_BYTES)),
-        decipher.final(),
-      ]).toString(),
-    ) as PendingSignIn;
+  return null;
+}
+
+async function openWith(
+  key: Buffer,
+  sealed: Buffer,
+): Promise<PendingSignIn | null> {
+  try {
+    const plain = await NODE_CRYPTO.open(
+      key,
+      sealed.subarray(0, IV_BYTES),
+      NO_AAD,
+      sealed.subarray(IV_BYTES),
+    );
+
+    return JSON.parse(Buffer.from(plain).toString()) as PendingSignIn;
   } catch {
     return null;
   }
 }
 
-function sealState(pending: PendingSignIn): string {
+async function sealState(pending: PendingSignIn): Promise<string> {
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", stateKey(), iv);
-  const body = Buffer.concat([
-    cipher.update(JSON.stringify(pending)),
-    cipher.final(),
-  ]);
+  const key = stateKey(requireSecretsEnv("MEDIA_TICKET_SECRET")[0]!);
+  const body = await NODE_CRYPTO.seal(
+    key,
+    iv,
+    NO_AAD,
+    Buffer.from(JSON.stringify(pending)),
+  );
 
-  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString("base64url");
+  return Buffer.concat([iv, body]).toString("base64url");
 }
 
 async function startSignIn(record: McpRecord): Promise<Response> {
@@ -278,7 +291,7 @@ async function startSignIn(record: McpRecord): Promise<Response> {
     );
     authorizationUrl.searchParams.set(
       "state",
-      sealState({
+      await sealState({
         accountId: record.accountId,
         serverId: record.serverId,
         url: url,
@@ -306,14 +319,10 @@ async function startSignIn(record: McpRecord): Promise<Response> {
 }
 
 // Derived, so a sealed sign-in and a media ticket can never open each other.
-function stateKey(): Buffer {
-  return Buffer.from(
-    hkdfSync(
-      "sha256",
-      requireSecretsEnv("MEDIA_TICKET_SECRET")[0]!,
-      "",
-      HKDF_INFO,
-      KEY_BYTES,
-    ),
-  );
+function stateKey(secret: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", secret, "", HKDF_INFO, KEY_BYTES));
+}
+
+function tokenKey(accountId: string, serverId: string): string {
+  return `mcp:${accountId}:${serverId}`;
 }

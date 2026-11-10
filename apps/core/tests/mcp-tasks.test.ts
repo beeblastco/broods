@@ -268,6 +268,65 @@ describe("handleMcpRequest", () => {
     });
   });
 
+  it("hands back the run id when a read fails after the run started", async () => {
+    const replay = replayOf({});
+    const { result } = await rpc(
+      mcpRequest(
+        "tools/call",
+        { name: "agent_1", arguments: { prompt: "hi" } },
+        { capabilities: {} },
+      ),
+      {
+        ...replay,
+        replay: async (request): Promise<Response> =>
+          request.method === "POST"
+            ? await replay.replay(request)
+            : Response.json({ error: { message: "down" } }, { status: 503 }),
+      },
+    );
+
+    expect(replay.posts).toHaveLength(1);
+    expect(JSON.stringify(result)).toContain('runId \\"run_1\\"');
+  });
+
+  it("refuses answers that leave a question of the prompt open", async () => {
+    const replay = replayOf({
+      run_1: run({
+        runId: "run_1",
+        status: "awaiting_input",
+        questions: [
+          {
+            statusId: "status_1",
+            answerBy: "2026-11-10T00:00:00.000Z",
+            questions: ["color", "size"].map((id) => ({
+              id: id,
+              header: id,
+              question: `Which ${id}?`,
+              options: [{ label: "A" }],
+            })),
+          },
+        ],
+      }),
+    });
+    const { result } = await rpc(
+      mcpRequest(
+        "tools/call",
+        {
+          name: "continue_run",
+          arguments: { runId: "run_1", answers: { color: "A" } },
+        },
+        { capabilities: {} },
+      ),
+      replay,
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      content: [{ text: "Answer these questions too: size" }],
+    });
+    expect(replay.posts).toHaveLength(0);
+  });
+
   it("lists continue_run only for a client without tasks", async () => {
     const names = async (capabilities: object): Promise<string[]> => {
       const { result } = await rpc(

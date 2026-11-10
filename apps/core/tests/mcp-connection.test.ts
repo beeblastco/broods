@@ -10,6 +10,7 @@ import type { AccountRecord } from "../src/shared/domain/accounts.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import * as httpModule from "../src/shared/http.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
+import { resetConnectionsForTests } from "../src/harness/connections.ts";
 import {
   setStorageForTests,
   type Storage,
@@ -189,6 +190,57 @@ describe("MCP connections", () => {
     expect(await response.json()).toEqual({ auth: "Bearer access_new" });
     expect(tokenForms[0]?.get("refresh_token")).toBe("refresh_old");
     expect(rotatedSaves[0]).toMatchObject({ refreshToken: "refresh_new" });
+  });
+
+  it("opens a sign-in started before the secret rotated", async () => {
+    const started = await handleMcpConnectionRequest(
+      request("POST", "/v1/mcp-connections/server_1"),
+    );
+    const { authorizeUrl } = (await started.json()) as { authorizeUrl: string };
+    process.env.MEDIA_TICKET_SECRET = "next-secret,test-secret";
+
+    const finished = await handleMcpConnectionRequest(
+      request(
+        "GET",
+        "/v1/mcp-connections/callback",
+        `code=code_1&state=${new URL(authorizeUrl).searchParams.get("state")}`,
+        "",
+      ),
+    );
+
+    expect(finished.status).toBe(200);
+  });
+
+  it("stops sending the cached token once the connection is deleted", async () => {
+    resetConnectionsForTests();
+    let stored: StoredMcpConnection = {
+      clientId: "client_1",
+      tokenUrl: `${ISSUER}/token`,
+      resource: SERVER_URL,
+      accessToken: "access_first",
+      refreshToken: "refresh_1",
+      expiresAt: Date.now() + 3_600_000,
+      updatedAt: 1,
+    };
+    setStorageForTests({
+      mcp: { getById: async (): Promise<McpRecord> => record() },
+      mcpConnections: {
+        load: async (): Promise<StoredMcpConnection> => stored,
+        disconnect: async (): Promise<boolean> => {
+          stored = { ...stored, accessToken: "access_second", updatedAt: 2 };
+
+          return true;
+        },
+      },
+    } as unknown as Storage);
+    const auth = async (): Promise<unknown> =>
+      await (await mcpConnectionFetch(record())(SERVER_URL)).json();
+
+    expect(await auth()).toEqual({ auth: "Bearer access_first" });
+    await handleMcpConnectionRequest(
+      request("DELETE", "/v1/mcp-connections/server_1"),
+    );
+    expect(await auth()).toEqual({ auth: "Bearer access_second" });
   });
 });
 

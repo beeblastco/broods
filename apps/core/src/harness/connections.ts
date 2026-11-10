@@ -78,6 +78,12 @@ export function tokenFetch<Stored extends StoredTokens>(
   };
 }
 
+/** After a new sign-in or a disconnect: the next request loads the stored tokens. */
+export function forgetTokens(key: string): void {
+  cache.delete(key);
+  rejected.delete(key);
+}
+
 export function resetConnectionsForTests(): void {
   cache.clear();
   inFlight.clear();

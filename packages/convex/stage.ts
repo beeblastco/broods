@@ -23,6 +23,7 @@ import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { deploymentRegionValidator, stagesFields } from "./schema";
 import { deleteStageSources } from "./stageSources";
 import { LIVE_DEPLOYMENT_REGIONS } from "./cli/types";
+import { dropMcpConnection } from "./account/mcpConnections";
 
 const stageDoc = v.object({
   ...stagesFields,
@@ -334,7 +335,10 @@ export async function deleteStageContents(
       q.eq("stageId", stageId),
     )
     .collect();
-  for (const server of mcpRows) await ctx.db.delete(server._id);
+  for (const server of mcpRows) {
+    await dropMcpConnection(ctx, server._id);
+    await ctx.db.delete(server._id);
+  }
 
   const variables = await ctx.db
     .query("environmentVariables")
@@ -427,9 +431,11 @@ export async function duplicateStageContents(
     .collect();
   const mcpIdMap = new Map<string, string>();
   for (const server of sourceMcpServers) {
+    // A sign-in belongs to its own row: the copy starts signed out.
     const newServerId = await ctx.db.insert("mcp", {
       ...stripSystemFields(server),
       stageId: targetStageId,
+      connected: undefined,
       updatedAt: now,
     });
     mcpIdMap.set(server._id, newServerId);

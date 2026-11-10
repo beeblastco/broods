@@ -6393,6 +6393,9 @@ components:
             type: string
         oauth:
           $ref: "#/components/schemas/McpOauth"
+        connected:
+          type: boolean
+          description: Signed in through `POST /v1/mcp-connections/{serverId}`; core sends that token.
         allowedTools:
           type: array
           items:

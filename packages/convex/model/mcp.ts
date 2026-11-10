@@ -109,15 +109,6 @@ export function assertMcpRow(row: {
       `oauth mints the Authorization header itself; drop the explicit ${authorization} header`,
     );
   }
-  if (row.oauth.tokenUrl === undefined && !isGoogleMcpUrl(row.url)) {
-    throw new ClientError(
-      "oauth.tokenUrl is required: only Google servers have a default",
-    );
-  }
-}
-
-export function isGoogleMcpUrl(url: string | undefined): boolean {
-  return url !== undefined && new URL(url).hostname.endsWith(".googleapis.com");
 }
 
 export function authorizationHeaderName(
