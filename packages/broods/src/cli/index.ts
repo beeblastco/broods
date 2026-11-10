@@ -863,6 +863,7 @@ async function whoami(args: string[]): Promise<void> {
     auth = await requireAuth(optionValue(args, "--base-url"));
   } catch (error) {
     printWarning(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
 
     return;
   }

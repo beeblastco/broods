@@ -136,7 +136,7 @@ Forgets the connection and revokes its refresh token at the provider.
 
 ## whoami
 
-Shows the login, server, organization, plan, project and stage the next command will use.
+Shows the login, server, organization, plan, project and stage the next command will use. Exits 1 when no login is saved for the server, so `broods whoami && broods deploy` stops early.
 
 ```bash
 broods whoami
