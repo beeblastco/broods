@@ -173,6 +173,7 @@ jobs:
 
       # Production ships by manual run (promote), dev by push. A manual run that
       # named another stage carries it in its title (deploy.yaml run-name).
+      # rollout.yaml applies the same rule.
       - name: Find the commit deploy.yaml last shipped to this stage
         id: deployed
         env:

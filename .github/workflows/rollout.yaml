@@ -56,6 +56,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AWAIT_WORKFLOWS: ${{ inputs.awaitWorkflows }}
           SHA: ${{ inputs.tag }}
+          # deploy.yaml's default stage for this branch.
+          DEPLOY_STAGE: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
         # A push fans out to every workflow whose paths it touched, and nothing
         # orders them. Left alone, a core image reaches the cluster while the
         # Convex deploy carrying the schema it expects is still running.
@@ -67,16 +69,19 @@ jobs:
           # anyway is the failure this gate exists to stop.
           DEADLINE=120
 
-          # Id of the newest run a query matches, empty when none does. Plain
-          # assignments below so a failing gh call stops the step under set -e.
+          # Id of the newest run a query matches that ships $DEPLOY_STAGE, empty
+          # when none does: a manual deploy.yaml run titled for another stage
+          # does not. Same rule as drift-cleanup.yaml. Plain assignments below
+          # so a failing gh call stops the step under set -e.
           newest_run() {
-            gh api "$1" --jq '.workflow_runs[0].id // empty'
+            gh api "$1" \
+              | jq -r --arg stage "$DEPLOY_STAGE" '[.workflow_runs[] | select(.event == "push" or .name != "Deploy" or (.display_title | ltrimstr("Deploy to ") | IN("Deploy", $stage)))][0].id // empty'
           }
 
           for AWAIT in $AWAIT_WORKFLOWS; do
             WORKFLOW_RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs"
             TARGET="$SHA"
-            RUN_ID=$(newest_run "$WORKFLOW_RUNS?head_sha=$SHA&per_page=1")
+            RUN_ID=$(newest_run "$WORKFLOW_RUNS?head_sha=$SHA&per_page=20")
 
             # GitHub creates a run for every workflow a push triggers before any
             # job starts, and this job only runs after the image build. So by
@@ -95,14 +100,15 @@ jobs:
 
             # The run is pinned by id, so a newer push during the wait does not
             # move the target. A cancelled run was most often replaced while it
-            # waited in its concurrency group: the branch's newest run stands in.
+            # waited in its concurrency group: the branch's newest run for
+            # $DEPLOY_STAGE stands in.
             echo "Waiting for $AWAIT run $RUN_ID to settle for $TARGET"
             for _ in $(seq 1 "$DEADLINE"); do
               STATE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '"\(.status) \(.conclusion // "none")"')
               read -r STATUS CONCLUSION <<<"$STATE"
               if [[ "$STATUS" == "completed" && "$CONCLUSION" == "cancelled" ]]; then
-                NEWEST=$(newest_run "$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&per_page=1")
-                if [[ "$NEWEST" != "$RUN_ID" ]]; then
+                NEWEST=$(newest_run "$WORKFLOW_RUNS?branch=$GITHUB_REF_NAME&per_page=20")
+                if [[ -n "$NEWEST" && "$NEWEST" != "$RUN_ID" ]]; then
                   RUN_ID="$NEWEST"
                   TARGET="the newer $GITHUB_REF_NAME run that replaced it"
                   echo "Cancelled; waiting for $AWAIT run $RUN_ID, $TARGET"

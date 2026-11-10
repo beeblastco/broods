@@ -5,7 +5,7 @@
 #   Requires the development Convex credentials.
 
 name: Deploy
-# Names the stage a manual run picked; drift-cleanup.yaml skips runs for other stages.
+# Names the stage a manual run picked; drift-cleanup and rollout skip runs for other stages.
 run-name: ${{ inputs.stage && format('Deploy to {0}', inputs.stage) || '' }}
 
 on:
