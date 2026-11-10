@@ -1718,7 +1718,7 @@ function reservationExpiresAt(ttlSeconds: number | undefined): number {
   return Math.floor(Date.now() / 1000) + ttl;
 }
 
-async function sandboxStillReserved(
+export async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,
 ): Promise<boolean> {

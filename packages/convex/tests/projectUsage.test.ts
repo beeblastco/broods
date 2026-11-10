@@ -37,6 +37,8 @@ describe("usage lands on its project's day", () => {
     const t = meterTest();
     const org = await seedOrg(t, "beeblast", ["Support bot"]);
     const [projectId] = org.projects;
+    await reserve(t, org.accountId, "fs-project", "vm-fs-project");
+    await reserve(t, org.accountId, "fs-account", "vm-fs-account");
     vi.setSystemTime(NOW);
 
     for (const [key, scope] of [
@@ -80,7 +82,7 @@ describe("usage lands on its project's day", () => {
   });
 
   test("a reservation relaunched in another project bills the launch to the new one", async () => {
-    vi.useFakeTimers({ now: NOW });
+    vi.useFakeTimers({ now: NOW - 1000 });
     const t = meterTest();
     const org = await seedOrg(t, "beeblast", ["Support bot", "Sales"]);
     const [support, sales] = org.projects;
@@ -95,7 +97,10 @@ describe("usage lands on its project's day", () => {
         specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
       });
 
+    await reserve(t, org.accountId, "fs-moved", "vm-1");
+    vi.setSystemTime(NOW);
     await launch(support, "vm-1");
+    await reserve(t, org.accountId, "fs-moved", "vm-2");
     vi.setSystemTime(NOW + 60 * 1000);
     await launch(sales, "vm-2");
 
@@ -361,6 +366,30 @@ describe("getForActiveOrg with projects", () => {
     expect(plain?.projects).toBeUndefined();
   });
 });
+
+async function reserve(
+  t: T,
+  accountId: Id<"accounts">,
+  reservationKey: string,
+  externalId: string,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const held = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q.eq("provider", "lambda").eq("reservationKey", reservationKey),
+      )
+      .unique();
+    if (held) await ctx.db.delete(held._id);
+    await ctx.db.insert("sandboxReservations", {
+      accountId: accountId,
+      provider: "lambda",
+      reservationKey: reservationKey,
+      externalId: externalId,
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+  });
+}
 
 async function seedOrg(
   t: T,

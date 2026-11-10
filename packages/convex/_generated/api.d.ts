@@ -8529,7 +8529,7 @@ export declare const internal: {
           workspaceId?: string;
           workspaceName?: string;
         },
-        null
+        boolean
       >;
     };
     machines: {
