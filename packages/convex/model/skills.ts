@@ -8,13 +8,7 @@ import {
   MAX_SKILL_METADATA_BYTES,
   SKILL_FILE,
 } from "./skillRules";
-import {
-  deleteS3Prefix,
-  listS3Prefix,
-  readS3Bytes,
-  readS3Text,
-  writeS3Object,
-} from "./s3";
+import { deleteS3Prefix, listS3Prefix, readS3Text, writeS3Object } from "./s3";
 import { ClientError } from "./clientError";
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
@@ -241,16 +235,6 @@ export async function readCapped(
   }
 
   return bytes;
-}
-
-export async function readSkillFileBytes(
-  skillPath: string,
-  filePath: string,
-): Promise<Uint8Array> {
-  return readS3Bytes(
-    skillsBucketName(),
-    `${skillPath}/${normalizeBundlePath(filePath)}`,
-  );
 }
 
 export function skillsBucketName(): string {

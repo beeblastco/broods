@@ -24,7 +24,7 @@ flowchart TD
 
 - The namespace is `fs-` plus the first 40 hex of a scoped SHA-256 of `accountId:workspaceId` (`workspaceNamespace()` in `src/shared/workspaces.ts`, `normalizeFilesystemNamespace()` in `src/shared/runtime-keys.ts`).
 - `isolatedWorkspaceNamespace()` adds child folders for agent isolation and conversation partitions, never another bucket.
-- `workspaceNamespacePrefix()` in `src/shared/sandbox.ts` is the one place the prefix is built. Harness S3 calls and the sandbox mount both use it, and the per-mount IAM session policy is scoped to it.
+- The prefix is the namespace itself. Harness S3 calls and the sandbox mount both use it, and the per-mount IAM session policy is scoped to it.
 
 Every S3-backed provider mounts the prefix with Mountpoint for S3 (`mount-s3`) at `/mnt/workspaces/<namespace>`. `src/harness/sandbox/s3-mount.ts` resolves target and credentials the same way for all of them.
 

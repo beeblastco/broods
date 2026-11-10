@@ -25,6 +25,7 @@ import {
   type SessionMessageResult,
 } from "./ingress.ts";
 import type { DirectInboundEvent } from "./integrations.ts";
+import { isToolApprovalResponseMessage } from "./pruning.ts";
 import type { PendingQuestionSummary } from "./questions.ts";
 import type { Session, TurnContextSnapshot } from "./session.ts";
 import {
@@ -81,12 +82,7 @@ export function isRunnableModelInput(
     | TurnContextSnapshot["messages"][number]
     | undefined,
 ): boolean {
-  return (
-    message?.role === "user" ||
-    (message?.role === "tool" &&
-      message.content.length > 0 &&
-      message.content.every((part) => part.type === "tool-approval-response"))
-  );
+  return message?.role === "user" || isToolApprovalResponseMessage(message);
 }
 
 export async function runAgentLoopUntilSubagentsIdle(

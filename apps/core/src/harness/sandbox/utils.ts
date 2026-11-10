@@ -22,6 +22,7 @@ import {
   snapshotBootRefusal,
 } from "@broods/convex/model/sandboxRules";
 import type {
+  SandboxEnvLayers,
   SandboxExecutorConfig,
   SandboxProvider,
   SandboxRunPrincipal,
@@ -94,7 +95,7 @@ export function execRunResult(
 
   return {
     ok: response.ok,
-    runtime: request.runtime ?? "bash",
+    runtime: "bash",
     exitCode: response.exit_code ?? null,
     stdout: stdout.value,
     stderr: stderr.value,
@@ -174,20 +175,19 @@ export function isSandboxGoneError(error: unknown): boolean {
 
 export function mergeSandboxEnv(
   accountEnv: Record<string, string | undefined> | undefined,
-  requestEnv: Record<string, string> | undefined,
-  principal?: SandboxRunPrincipal,
+  layers: SandboxEnvLayers = {},
 ): Record<string, string> {
   const account = Object.entries(stringRecord(accountEnv)).filter(
     ([key]) => !IDENTITY_ENV_KEYS.has(key),
   );
-  const overrides = Object.entries(requestEnv ?? {}).filter(
+  const overrides = Object.entries(layers.requestEnv ?? {}).filter(
     ([key]) => !RESERVED_SANDBOX_ENV_KEYS.has(key),
   );
 
   return {
     ...Object.fromEntries(account),
     ...Object.fromEntries(overrides),
-    ...(principal ? principalEnv(principal) : {}),
+    ...(layers.principal ? principalEnv(layers.principal) : {}),
   };
 }
 

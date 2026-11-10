@@ -45,7 +45,6 @@
   --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
-  --color-run-subagent: var(--run-subagent);
   --color-run-reasoning: var(--run-reasoning);
   --color-span-task: var(--span-task);
   --color-span-cron: var(--span-cron);
@@ -82,7 +81,6 @@
   --color-usage-reasoning: #a78bfa;
   --color-usage-cache-read: #fbbf24;
   --color-usage-cache-write: #fb7185;
-  --color-usage-runtime: #818cf8;
   --color-usage-agent-sandbox: #2dd4bf;
   --color-usage-mcp-sandbox: #fb923c;
   --color-usage-tasks: #22d3ee;
@@ -262,7 +260,6 @@ body {
   --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
-  --run-subagent: oklch(0.609 0.126 221.723);
   --run-reasoning: oklch(0.558 0.288 302.321);
   /* Trace bar hues, tuned for protan/deutan separation; see KIND_THEME in TracingPanel. */
   --span-task: oklch(0.606 0.25 292.717);
@@ -311,7 +308,6 @@ body {
   --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
-  --run-subagent: oklch(0.789 0.154 211.53);
   --run-reasoning: oklch(0.714 0.203 305.504);
   --span-task: oklch(0.606 0.25 292.717);
   --span-cron: oklch(0.879 0.169 91.605);

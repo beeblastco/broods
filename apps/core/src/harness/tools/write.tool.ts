@@ -10,7 +10,7 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 interface WriteInput {
   file_path: string;
@@ -59,7 +59,7 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout.trim());
+          return result.stdout.trim();
         } catch (cause) {
           // toolError already threw; re-wrapping would prefix a setup error twice.
           throw cause instanceof Error ? cause : new Error(String(cause));

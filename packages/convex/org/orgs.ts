@@ -4,7 +4,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { internalQuery, mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { purgeOrg } from "../model/cascade";
-import { slugifyName } from "../lib/slug";
+import { uniqueOrgSlug } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
 import { assertCanCreateOrg } from "../model/orgBilling";
@@ -375,23 +375,4 @@ async function insertOwnedOrg(
   await ctx.db.patch(user._id, { activeOrgId: orgId });
 
   return orgId;
-}
-
-async function uniqueOrgSlug(
-  ctx: MutationCtx,
-  baseName: string,
-): Promise<string> {
-  const baseSlug = slugifyName(baseName);
-  let suffix = 0;
-  for (;;) {
-    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
-      .query("orgs")
-      .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!existing) {
-      return candidate;
-    }
-    suffix += 1;
-  }
 }

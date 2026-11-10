@@ -249,7 +249,6 @@ function mediaRequest(token: string): CoreRequest {
     query: new URLSearchParams(),
     headers: {},
     body: "",
-    cookies: [],
     clientIp: "203.0.113.1",
   };
 }

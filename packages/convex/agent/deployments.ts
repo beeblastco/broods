@@ -715,7 +715,7 @@ async function resolveStageContext(
 
   return {
     account: account,
-    projectSlug: project.slug ?? "project",
+    projectSlug: project.slug,
     stageSlug: stage.name.toLowerCase(),
     authId: project.authId,
   };

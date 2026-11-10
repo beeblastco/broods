@@ -7,13 +7,16 @@ import type {
   ToolSet,
 } from "ai";
 import { stripUndefined } from "@broods/convex/model/objects";
-import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
+import {
+  extractBearerToken,
+  isServiceToken,
+  type AuthContext,
+} from "../shared/auth.ts";
 import {
   extractText,
   formatChannelErrorText,
   sendChannelFailure,
 } from "../shared/channels.ts";
-import { markHandlerEntry } from "../shared/cold-start.ts";
 import {
   executeCommand,
   queuedCommand,
@@ -125,6 +128,7 @@ import {
   routeIncomingEvent,
   sendChannelReply,
   type AsyncDirectInboundEvent,
+  type IntegrationRoutingOptions,
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
@@ -133,7 +137,16 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { handleMcpRequest, MCP_PATH } from "./mcp-tasks.ts";
+import {
+  handleMcpConnectionRequest,
+  routesToMcpConnection,
+} from "./mcp/connection.ts";
+import {
+  handleProtectedResourceRequest,
+  MCP_PATH,
+  routesToProtectedResource,
+} from "./mcp/authkit.ts";
+import { handleMcpRequest } from "./mcp-tasks.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
@@ -160,7 +173,6 @@ import {
 } from "./questions.ts";
 import {
   acceptedAsyncResponse,
-  asyncAdmissionResponse,
   continuationResponse,
   CONVERSATION_BUSY,
   directAdmissionResponse,
@@ -318,8 +330,6 @@ async function handleRequest(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  markHandlerEntry(Date.now());
-
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
 
@@ -344,12 +354,32 @@ async function handleRequest(
   if (event.path === APPLY_RUN_PATH) {
     return handleApplyRunRequest(event);
   }
+  if (routesToMcpConnection(event.path)) {
+    return handleMcpConnectionRequest(event);
+  }
+  if (routesToProtectedResource(normalizePath(event.path))) {
+    return handleProtectedResourceRequest();
+  }
   if (normalizePath(event.path) === MCP_PATH) {
-    return handleMcpRequest(event, (replayed): Promise<Response> =>
-      handleRequest(replayed, context),
+    // `/mcp` already resolved the caller: its replays skip a second lookup, and an AuthKit token
+    // stays good only here.
+    return handleMcpRequest(event, (replayed, auth): Promise<Response> =>
+      routeCoreRequest(
+        replayed,
+        context,
+        async (): Promise<AuthContext> => auth,
+      ),
     );
   }
 
+  return routeCoreRequest(event, context);
+}
+
+function routeCoreRequest(
+  event: CoreRequest,
+  context: RequestContext | undefined,
+  authResolver?: IntegrationRoutingOptions["authResolver"],
+): Promise<Response> {
   return routeIncomingEvent(
     event,
     {
@@ -374,6 +404,7 @@ async function handleRequest(
     {
       directApiEnabled: ENABLE_DIRECT_API,
       cacheAgentLists: true,
+      ...(authResolver ? { authResolver: authResolver } : {}),
       ...(context?.waitUntil
         ? { waitUntil: context.waitUntil.bind(context) }
         : {}),
@@ -645,7 +676,7 @@ export async function loadReentryTarget(
   return await resolveReentryTarget({
     accountId: accountId,
     agentId: agentId,
-    publicConversationKey: eventPublicConversationKey(
+    publicConversationKey: publicConversationKeyFromScoped(
       conversationKey,
       accountId,
       agentId,
@@ -679,7 +710,7 @@ async function resumeConversation(options: {
   if (!target) {
     return { kind: "skip" };
   }
-  const publicConversationKey = eventPublicConversationKey(
+  const publicConversationKey = publicConversationKeyFromScoped(
     options.conversationKey,
     options.accountId,
     options.agentId,
@@ -1098,7 +1129,7 @@ async function handleAsyncRequest(
   });
   await dispatchRecoveredIngress(event, admission);
   if (admission.outcome !== "owner") {
-    return asyncAdmissionResponse(event, admission);
+    return directAdmissionResponse(event, admission, true);
   }
   await startOwnedAsyncRun({
     ...event,
@@ -1596,7 +1627,7 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     accountId: event.accountId,
     agentId: event.agentId,
     conversationKey: event.conversationKey,
-    publicConversationKey: eventPublicConversationKey(
+    publicConversationKey: publicConversationKeyFromScoped(
       event.conversationKey,
       event.accountId,
       event.agentId,
@@ -2021,7 +2052,7 @@ async function handleStatusRequest(
       runId: event.runId,
       eventId: event.publicEventId,
       agentId: event.agentId,
-      conversationKey: eventPublicConversationKey(
+      conversationKey: publicConversationKeyFromScoped(
         result.conversationKey,
         event.accountId,
         event.agentId,
@@ -2947,14 +2978,6 @@ function createChannelApprovalDenial(
       reason: CHANNEL_APPROVAL_DENIAL_REASON,
     })),
   };
-}
-
-function eventPublicConversationKey(
-  conversationKey: string,
-  accountId: string,
-  agentId?: string,
-): string {
-  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
 }
 
 function parseAccountAgentFromScopedKey(

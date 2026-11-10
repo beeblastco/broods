@@ -36,9 +36,7 @@ describe("HttpSandboxExecutor", () => {
         config(endpoint, { token: "tok", headers: { "x-team": "ops" } }),
         seams(),
       );
-      const result = await executor.run(
-        run({ code: "echo hello", envVars: { FOO: "bar" } }),
-      );
+      const result = await executor.run(run({ code: "echo hello" }));
 
       expect(result).toEqual({
         ok: true,
@@ -63,7 +61,7 @@ describe("HttpSandboxExecutor", () => {
         runtime: "bash",
         code: "echo hello",
         timeout_ms: 5000,
-        env: { BASE: "1", FOO: "bar" },
+        env: { BASE: "1" },
       });
     });
   });

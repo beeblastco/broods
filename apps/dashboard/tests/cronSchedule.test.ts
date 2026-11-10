@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   describeSchedule,
   nextFireAt,
-  nextRunAt,
   untilLabel,
 } from "../app/lib/cronSchedule";
 
@@ -12,7 +11,7 @@ const NOW = Date.UTC(2026, 9, 7, 12, 0, 0);
 
 function cron(
   expression: string,
-  extra: Partial<Parameters<typeof nextRunAt>[0]> = {},
+  extra: Partial<Parameters<typeof nextFireAt>[0]> = {},
 ) {
   return {
     scheduleExpression: expression,
@@ -56,36 +55,35 @@ describe("describeSchedule", () => {
   });
 });
 
-describe("nextRunAt", () => {
-  test("a paused job has no next run, but still a time it would fire", () => {
+describe("nextFireAt", () => {
+  test("a paused job still has a time it would fire", () => {
     const paused = cron("rate(1 hour)", { status: "paused" });
-    expect(nextRunAt(paused, NOW)).toBe(null);
     expect(nextFireAt(paused, NOW)).toBe(NOW + HOUR);
   });
 
   test("an interval counts from the last fire, else from creation", () => {
     expect(
-      nextRunAt(
+      nextFireAt(
         cron("rate(1 hour)", { lastInvokedAt: NOW - 20 * 60_000 }),
         NOW,
       ),
     ).toBe(NOW + 40 * 60_000);
-    expect(nextRunAt(cron("rate(3 hours)"), NOW)).toBe(NOW + 2 * HOUR);
+    expect(nextFireAt(cron("rate(3 hours)"), NOW)).toBe(NOW + 2 * HOUR);
   });
 
   test("a cron expression fires at its next wall-clock match", () => {
-    expect(nextRunAt(cron("cron(0 9 * * ? *)"), NOW)).toBe(
+    expect(nextFireAt(cron("cron(0 9 * * ? *)"), NOW)).toBe(
       Date.UTC(2026, 9, 8, 9, 0, 0),
     );
-    expect(nextRunAt(cron("cron(0 9 ? * MON *)"), NOW)).toBe(
+    expect(nextFireAt(cron("cron(0 9 ? * MON *)"), NOW)).toBe(
       Date.UTC(2026, 9, 12, 9, 0, 0),
     );
   });
 
   test("a one-time job fires once, then has no next run", () => {
-    expect(nextRunAt(cron("at(2026-10-07T13:00:00)"), NOW)).toBe(NOW + HOUR);
+    expect(nextFireAt(cron("at(2026-10-07T13:00:00)"), NOW)).toBe(NOW + HOUR);
     expect(
-      nextRunAt(
+      nextFireAt(
         cron("at(2026-10-07T11:00:00)", { lastInvokedAt: NOW - HOUR }),
         NOW,
       ),
@@ -93,7 +91,7 @@ describe("nextRunAt", () => {
   });
 
   test("a one-time job whose time passed unfired is due now", () => {
-    expect(nextRunAt(cron("at(2026-10-07T11:00:00)"), NOW)).toBe(NOW);
+    expect(nextFireAt(cron("at(2026-10-07T11:00:00)"), NOW)).toBe(NOW);
   });
 });
 

@@ -1,4 +1,9 @@
-import { pruneMessages, type ImagePart, type ModelMessage } from "ai";
+import {
+  pruneMessages,
+  type ImagePart,
+  type ModelMessage,
+  type ToolModelMessage,
+} from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { STORED_ITEM_PROVIDERS } from "./provider.ts";
 import { toolContentItems, type ToolContentPart } from "./tools/utils.ts";
@@ -55,12 +60,16 @@ export function stripReasoningFromMessages(
 export function hasPendingToolApprovalResponse(
   messages: ModelMessage[],
 ): boolean {
-  const lastMessage = messages.at(-1);
+  return isToolApprovalResponseMessage(messages.at(-1));
+}
 
+export function isToolApprovalResponseMessage(
+  message: ModelMessage | undefined,
+): message is ToolModelMessage {
   return (
-    lastMessage?.role === "tool" &&
-    lastMessage.content.length > 0 &&
-    lastMessage.content.every((part) => part.type === "tool-approval-response")
+    message?.role === "tool" &&
+    message.content.length > 0 &&
+    message.content.every((part) => part.type === "tool-approval-response")
   );
 }
 

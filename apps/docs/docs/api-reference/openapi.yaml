@@ -433,16 +433,19 @@ paths:
       description: |
         A Model Context Protocol server (revision 2026-07-28, stateless HTTP)
         with the `io.modelcontextprotocol/tasks` extension. Each agent the
-        credential can run is one tool named by its agent id, with input
-        `{prompt}`. `tools/call` starts a background run in a fresh
-        conversation and answers a task handle (`resultType: "task"`) whose
-        `taskId` is the run id; `tasks/get`, `tasks/update` and `tasks/cancel`
-        follow it. A `tools/call` or `tasks/*` request that does not declare
-        the tasks extension gets `-32021`; `tools/list` answers without it.
-        Run reads and writes go through `/v1/runs`, so
-        the same credential rules apply: an account key lists every agent of
-        the account, a member's stage ticket its stage, the runtime key its
-        stage's public agents. A run token lists no tools yet. 2025-era
+        credential can run is one tool named after the agent, with input
+        `{prompt, conversationId?}`. With the tasks extension, `tools/call`
+        starts a background run and answers a task handle (`resultType:
+        "task"`) whose `taskId` is the run id; `tasks/get`, `tasks/update` and
+        `tasks/cancel` follow it. Without it, `tools/call` answers directly
+        within 50 seconds and lists a `continue_run` tool for longer runs and
+        questions; `tasks/*` then gets `-32021`. Run reads and writes go
+        through `/v1/runs`, so the same credential rules apply: an account
+        key lists every agent of the account, a member's stage ticket its
+        stage, the runtime key its stage's public agents. A run token lists no
+        tools yet. With `WORKOS_AUTHKIT_DOMAIN` set, a 401 names
+        `/.well-known/oauth-protected-resource/mcp`, and an AuthKit access
+        token for an org owner or admin acts as that org's account. 2025-era
         (`initialize`) traffic is refused with `-32022`.
       requestBody:
         required: true
@@ -480,7 +483,7 @@ paths:
                   id: 1
                   method: tools/call
                   params:
-                    name: agent_123
+                    name: support_bot
                     arguments:
                       prompt: Summarize yesterday's support tickets.
                     _meta:
@@ -2937,6 +2940,62 @@ paths:
                       type: rate_limit_error
                       code: upload_quota_exceeded
 
+  /v1/mcp-connections/{serverId}:
+    parameters:
+      - name: serverId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Start an OAuth sign-in
+      description: Broods does discovery, client registration and PKCE. Give `authorizeUrl` to a person to open.
+      responses:
+        "200":
+          description: Sign-in started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, authorizeUrl, next]
+                properties:
+                  status: { type: string, enum: [pending] }
+                  authorizeUrl: { type: string, format: uri }
+                  next: { type: string }
+        "422":
+          {
+            description: The server offers no OAuth sign-in Broods can register with,
+          }
+    get:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Read whether the server is connected
+      responses:
+        "200":
+          description: Connection state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connected]
+                properties:
+                  connected: { type: boolean }
+    delete:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Disconnect and forget the tokens
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
+
   /v1/mcp/{serverId}:
     get:
       tags: [MCP servers]
@@ -4275,12 +4334,6 @@ components:
         - $ref: "#/components/schemas/TextContent"
         - $ref: "#/components/schemas/ImageContent"
         - $ref: "#/components/schemas/FileContent"
-        - $ref: "#/components/schemas/ToolCallContent"
-        - $ref: "#/components/schemas/ToolResultContent"
-        - $ref: "#/components/schemas/ReasoningContent"
-        - $ref: "#/components/schemas/SourceUrlContent"
-        - $ref: "#/components/schemas/SourceDocumentContent"
-        - $ref: "#/components/schemas/ToolApprovalRequestContent"
         - $ref: "#/components/schemas/ToolApprovalResponseContent"
 
     TextContent:
@@ -4308,7 +4361,7 @@ components:
         image:
           type: string
           description: Base64-encoded image data, URL, or File reference
-        mimeType:
+        mediaType:
           type: string
           description: MIME type of the image (e.g., `image/png`, `image/jpeg`)
 
@@ -4317,6 +4370,7 @@ components:
       required:
         - type
         - data
+        - mediaType
       properties:
         type:
           type: string
@@ -4324,127 +4378,11 @@ components:
         data:
           type: string
           description: Base64-encoded file data, URL, or File reference
-        mimeType:
+        mediaType:
           type: string
           description: MIME type of the file
         filename:
           type: string
-
-    ToolCallContent:
-      type: object
-      required:
-        - type
-        - toolCallId
-        - toolName
-        - input
-      properties:
-        type:
-          type: string
-          example: tool-call
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        input:
-          type: object
-          description: Tool input arguments as generated by the model
-
-    ToolResultContent:
-      type: object
-      required:
-        - type
-        - toolCallId
-        - toolName
-        - output
-      properties:
-        type:
-          type: string
-          example: tool-result
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        output:
-          description: Tool execution result. Can be any JSON value.
-        isError:
-          type: boolean
-
-    ReasoningContent:
-      type: object
-      required:
-        - type
-        - reasoning
-      properties:
-        type:
-          type: string
-          example: reasoning
-        reasoning:
-          type: string
-          description: Model's internal reasoning trace (not shown to end users)
-
-    SourceUrlContent:
-      type: object
-      required:
-        - type
-        - source
-      properties:
-        type:
-          type: string
-          example: source-url
-        source:
-          type: object
-          properties:
-            sourceType:
-              type: string
-              example: url
-            url:
-              type: string
-            title:
-              type: string
-
-    SourceDocumentContent:
-      type: object
-      required:
-        - type
-        - source
-      properties:
-        type:
-          type: string
-          example: source-document
-        source:
-          type: object
-          properties:
-            sourceType:
-              type: string
-              example: document
-            documentId:
-              type: string
-            title:
-              type: string
-            mediaType:
-              type: string
-
-    ToolApprovalRequestContent:
-      type: object
-      required:
-        - type
-        - approvalId
-        - toolCallId
-        - toolName
-        - input
-      properties:
-        type:
-          type: string
-          example: tool-approval-request
-        approvalId:
-          type: string
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        input:
-          type: object
-          description: Tool input awaiting user approval
 
     ToolApprovalResponseContent:
       type: object
@@ -6337,6 +6275,9 @@ components:
             type: string
         oauth:
           $ref: "#/components/schemas/McpOauth"
+        connected:
+          type: boolean
+          description: Signed in through `POST /v1/mcp-connections/{serverId}`; core sends that token.
         allowedTools:
           type: array
           items:

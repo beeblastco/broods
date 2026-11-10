@@ -460,7 +460,7 @@ Serves the account config plane to a coding agent over MCP on stdio. Start it fr
 claude mcp add broods -- broods mcp
 ```
 
-Tools mirror the account SDK in kebab-case, so `listAgents` is `list-agents`. Every config resource gets the verbs it supports. That covers agents, crons, sandboxes, workspaces, policies, roles, channels, skills and MCP servers. The extra tools are `list-cron-runs` and `upload-skill`. The sandbox lifecycle tools are `suspend-sandbox`, `resume-sandbox`, `terminate-sandbox`, `snapshot-sandbox` and `open-sandbox-terminal`. The env tools are `list-env-vars`, `set-env-var` and `delete-env-var`. The account tools are `get-account`, `update-account`, `rotate-secret` and `assume-role`. MCP server tools take `project` and `stage`, defaulted from `BROODS_PROJECT` and `BROODS_STAGE`.
+Tools are few on purpose, since each one costs the agent context on every session. `list-resources`, `get-resource`, `create-resource`, `update-resource` and `delete-resource` take a `resource`: `agent`, `cron`, `sandbox`, `workspace`, `policy`, `role`, `channel`, `skill` or `mcp`. A list returns only the fields that pick a record, and `get-resource` returns the rest. `sandbox-action` suspends, resumes, terminates, snapshots or opens a terminal on a reservation. The others are `list-cron-runs`, `upload-skill`, `list-env-vars`, `set-env-var`, `delete-env-var`, `get-account`, `update-account`, `rotate-secret` and `assume-role`. An `mcp` record takes `project` and `stage`, defaulted from `BROODS_PROJECT` and `BROODS_STAGE`.
 
 With a stored `broods login`, it also registers `list-orgs`, `create-org`, `select-org`, `list-projects`, `list-stages` and `create-stage`. Creating a stage under a new project name creates the project.
 

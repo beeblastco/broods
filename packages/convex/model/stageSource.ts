@@ -1,4 +1,5 @@
 import { z } from "zod/mini";
+import { sha256Hex } from "./accountSecrets";
 
 /** What a stage's source may hold: its `broods/` folder plus the manifest it installs from. */
 export const STAGE_SOURCE_LIMITS = {
@@ -81,14 +82,8 @@ export async function stageSourceHash(
   const sorted = [...files].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(
-      JSON.stringify(sorted.map((file) => [file.path, file.content])),
-    ),
-  );
 
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return await sha256Hex(
+    JSON.stringify(sorted.map((file) => [file.path, file.content])),
+  );
 }

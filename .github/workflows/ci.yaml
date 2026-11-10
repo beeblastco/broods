@@ -1,7 +1,6 @@
-# CI for community / OSS builds (PRs + pushes to dev).
-# Validates the core SST app (Convex path), SDK/Convex types, gateway, and
-# dashboard before branch deployment workflows are allowed to become the first
-# place cross-workspace failures appear.
+# CI for pull requests and pushes to dev: lint, types and tests for every
+# workspace and the core compile, plus the secrets scan, dependency audit,
+# benchmarks, local stack and dashboard suites.
 
 name: CI
 
@@ -103,7 +102,7 @@ jobs:
         if: always()
         run: bun scripts/coverage-summary.ts core apps/core/coverage/lcov.info
 
-      - name: Build Lambda binaries
+      - name: Compile the core server binary
         run: bun run build
 
   secrets-scan:
@@ -165,11 +164,6 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      # The gate and the dependency watch. No install here, so only the tests that
-      # need no package; the rest of scripts/ runs in `validate`.
-      - name: Test the audit gate
-        run: bun test ./scripts/audit-gate.test.ts ./scripts/dependency-watch.test.ts
-
       - name: Check dependency advisories
         run: bun run deps:audit
 
@@ -187,11 +181,6 @@ jobs:
 
       - name: Install dependencies
         uses: ./.github/actions/bun-install
-
-      - name: Test the regression gate
-        # The gate's own grading rules. A gate that silently stops failing is
-        # worse than no gate, so it is tested before it is trusted.
-        run: bun run bench:test
 
       - name: Set up Node for isolated-vm 7
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7

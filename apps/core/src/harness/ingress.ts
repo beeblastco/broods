@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { queuedCommand } from "../shared/commands.ts";
@@ -24,10 +25,10 @@ import { getStorage } from "../shared/storage.ts";
 import type { AsyncAgentOutcome } from "./async-agent-result.ts";
 
 export const CHANNEL_SESSION_KEY_FORMAT = `channel prefix plus platform ids, e.g. ${TELEGRAM_INTEGRATION_PREFIX}<chatId> (negative for groups), ${SLACK_INTEGRATION_PREFIX}<teamId>:<channelId>[:<threadTs>]`;
-export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
-export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-export const DEFAULT_INGRESS_MAX_COUNT = 100;
-export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
+const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;
+const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_INGRESS_MAX_COUNT = 100;
+const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
 export const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 
@@ -36,7 +37,6 @@ export const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
 const liveOwners = new Map<string, LiveOwner>();
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
-export type AppliedIngressMode = IngressMode;
 export type IngressStatus =
   | "accepted"
   | "queued"
@@ -189,7 +189,7 @@ export interface AppliedIngress {
   events: ModelMessage[];
   delivery: IngressDelivery;
   requestedMode: IngressMode;
-  appliedMode: AppliedIngressMode;
+  appliedMode: IngressMode;
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
@@ -222,7 +222,7 @@ export interface IngressStatusRecord {
   agentId: string;
   conversationKey: string;
   requestedMode: IngressMode;
-  appliedMode?: AppliedIngressMode;
+  appliedMode?: IngressMode;
   appliedToEventId?: string;
   status: IngressStatus;
   createdAt: number;
@@ -254,18 +254,20 @@ export async function acceptIngress(
       : {}),
   });
   // Every execution-changing field, so a retry with other overrides conflicts, not dedupes.
-  const payloadDigest = await sha256Hex(
-    JSON.stringify({
-      events: candidate.events,
-      requestedMode: candidate.requestedMode,
-      deliveryKind: candidate.delivery.kind,
-      activeOwnerOnly: candidate.activeOwnerOnly,
-      expectedOwnerTaskId: candidate.expectedOwnerTaskId,
-      ownerTaskId: candidate.ownerTaskId,
-      configRef: candidate.configRef,
-      ephemeralSystem: candidate.ephemeralSystem,
-    }),
-  );
+  const payloadDigest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        events: candidate.events,
+        requestedMode: candidate.requestedMode,
+        deliveryKind: candidate.delivery.kind,
+        activeOwnerOnly: candidate.activeOwnerOnly,
+        expectedOwnerTaskId: candidate.expectedOwnerTaskId,
+        ownerTaskId: candidate.ownerTaskId,
+        configRef: candidate.configRef,
+        ephemeralSystem: candidate.ephemeralSystem,
+      }),
+    )
+    .digest("hex");
 
   const { channelTarget, ...admitted } = candidate;
   const admission = await runtime.mutate("acceptIngress", {
@@ -628,17 +630,6 @@ function forgetOwner(owner: LiveOwner): void {
   ) {
     liveOwners.delete(owner.conversationKey);
   }
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(digest)]
-    .map((byte): string => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 function trackOwner(owner: LiveOwner): void {

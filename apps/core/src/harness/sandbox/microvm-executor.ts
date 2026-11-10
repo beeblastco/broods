@@ -50,7 +50,6 @@ import {
 } from "./instance-store.ts";
 import {
   callbackEnv,
-  generateJobId,
   launchScript,
   lifecycleScript,
   logsScript,
@@ -65,6 +64,8 @@ import {
   resolveS3Mount,
 } from "./s3-mount.ts";
 import type {
+  SandboxBackgroundRequest,
+  SandboxEnvLayers,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxInstanceInfo,
@@ -76,7 +77,6 @@ import type {
   SandboxReleaseRequest,
   SandboxReservationRef,
   SandboxReservedPost,
-  SandboxRunPrincipal,
   SandboxRunRequest,
   SandboxRunResult,
   SandboxSnapshotBuildState,
@@ -305,7 +305,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       timeout_ms:
         (request.timeoutSeconds ?? this.#config.timeout ?? 120) * 1000,
       env: {
-        ...this.#sandboxEnvVars(request.env),
+        ...this.#sandboxEnvVars({ requestEnv: request.env }),
         ...homeEnv(this.#workDir(request.reservationKey)),
       },
     });
@@ -457,14 +457,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     const key = this.#requirePersistent(request);
     const acquired = await this.#acquire(request);
     const { microvmId, endpoint } = acquired;
     const workDir = this.#workDir(this.#workspaceKey(request));
     await this.#prepareWorkspaceMount(request, acquired, workDir);
     await this.#runLifecycle(microvmId, endpoint, workDir);
-    const jobId = request.jobId ?? generateJobId();
+    const jobId = request.jobId;
     const script = launchScript(
       this.#jobsDir(key),
       jobId,
@@ -1211,7 +1213,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         : undefined;
 
     return {
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       code: request.code,
       ...(request.namespace
         ? { namespace: microvmLocalNamespace(request.namespace) }
@@ -1220,21 +1222,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         ? { workspace_root: request.workspaceRoot }
         : {}),
       timeout_ms: request.timeoutSeconds * 1000,
-      ...(request.args && request.args.length > 0
-        ? { args: request.args }
-        : {}),
       env: {
-        ...this.#sandboxEnvVars(request.envVars, request.principal),
+        ...this.#sandboxEnvVars({ principal: request.principal }),
         ...homeEnv(home),
       },
     };
   }
 
-  #sandboxEnvVars(
-    requestEnvVars?: Record<string, string>,
-    principal?: SandboxRunPrincipal,
-  ): Record<string, string> {
-    return mergeSandboxEnv(this.#config.envVars, requestEnvVars, principal);
+  #sandboxEnvVars(layers?: SandboxEnvLayers): Record<string, string> {
+    return mergeSandboxEnv(this.#config.envVars, layers);
   }
 
   async #exec(

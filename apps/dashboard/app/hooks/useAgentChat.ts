@@ -39,41 +39,8 @@ export interface AgentChat {
 type WsServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
   | Extract<WebSocketStreamMessage, { type: "question-request" }>
-  | { type: "continuation_delta"; delta: string }
-  | {
-      type: "subagent_delta";
-      sessionId: string;
-      taskId: string;
-      agentName?: string;
-      delta: string;
-    }
-  | {
-      type: "subagent_activity";
-      sessionId: string;
-      taskId: string;
-      agentName?: string;
-      phase: "started" | "tool_call" | "tool_result";
-      toolNames?: string[];
-    }
-  | { type: "subagent_result"; output: string; taskId?: string }
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
-
-type SubagentPanelEvent = {
-  phase: "started" | "tool_call" | "tool_result";
-  text: string;
-  toolNames?: string[];
-};
-
-type SubagentPanelPart = {
-  type: "subagent-panel";
-  taskId: string;
-  sessionId: string;
-  agentName?: string;
-  status: "running" | "completed";
-  events: SubagentPanelEvent[];
-  text: string;
-};
 
 type WebSocketStreamResult = {
   stream: ReadableStream<Uint8Array>;
@@ -90,14 +57,12 @@ export function useAgentChat({
   apiKey,
   projectSlug,
   stageSlug,
-  webSocketEnabled,
 }: {
   endpointId: string;
   agentId: string;
   apiKey: string;
   projectSlug?: string;
   stageSlug?: string;
-  webSocketEnabled: boolean;
 }): AgentChat {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("ready");
@@ -108,8 +73,6 @@ export function useAgentChat({
   const sessionIdRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const mainAssistantMessageIdRef = useRef<string | null>(null);
-  const continuationMessageIdRef = useRef<string | null>(null);
-  const subagentMessageIdsRef = useRef<Record<string, string>>({});
   const coreEndpoint = resolveCoreEndpoint();
   const coreEndpointOk = coreEndpoint.ok;
   const coreEndpointMessage = coreEndpoint.ok ? "" : coreEndpoint.message;
@@ -140,8 +103,6 @@ export function useAgentChat({
       const controller = new AbortController();
       abortRef.current = controller;
       mainAssistantMessageIdRef.current = null;
-      continuationMessageIdRef.current = null;
-      subagentMessageIdsRef.current = {};
 
       // A model streams far more chunks than a reader can see: queue each chunk's update and
       // commit the queue once per window, as a transition so React yields between markdown
@@ -174,11 +135,7 @@ export function useAgentChat({
         }
 
         let streamBody: ReadableStream<Uint8Array> | null = null;
-        if (
-          webSocketEnabled &&
-          typeof window !== "undefined" &&
-          "WebSocket" in window
-        ) {
+        if (typeof window !== "undefined" && "WebSocket" in window) {
           try {
             const wsResult = await startWebSocketSseStream({
               endpointId: endpointId,
@@ -195,92 +152,6 @@ export function useAgentChat({
                 sessionIdRef.current = sessionId;
               },
               onQuestions: setPendingQuestions,
-              onContinuationDelta: (delta) => {
-                queueUpdate((prev) => {
-                  const next = appendAssistantTextDelta({
-                    previousMessages: prev,
-                    messageId: continuationMessageIdRef.current,
-                    delta: delta,
-                  });
-                  continuationMessageIdRef.current = next.messageId;
-
-                  return next.messages;
-                });
-              },
-              onSubagentDelta: ({ taskId, sessionId, delta, agentName }) => {
-                queueUpdate((prev) => {
-                  const currentMessageId =
-                    subagentMessageIdsRef.current[taskId] ?? null;
-                  const next = upsertSubagentPanel({
-                    previousMessages: prev,
-                    messageId: currentMessageId,
-                    taskId: taskId,
-                    sessionId: sessionId,
-                    delta: delta,
-                    agentName: agentName,
-                  });
-                  subagentMessageIdsRef.current[taskId] = next.messageId;
-
-                  return next.messages;
-                });
-              },
-              onSubagentActivity: ({
-                taskId,
-                sessionId,
-                agentName,
-                phase,
-                toolNames,
-              }) => {
-                queueUpdate((prev) => {
-                  const currentMessageId =
-                    subagentMessageIdsRef.current[taskId] ?? null;
-                  const next = upsertSubagentPanel({
-                    previousMessages: prev,
-                    messageId: currentMessageId,
-                    taskId: taskId,
-                    sessionId: sessionId,
-                    agentName: agentName,
-                    activityEvent: {
-                      phase: phase,
-                      toolNames: toolNames,
-                    },
-                  });
-                  subagentMessageIdsRef.current[taskId] = next.messageId;
-
-                  return next.messages;
-                });
-              },
-              onSubagentResult: (output, resultTaskId) => {
-                queueUpdate((prev) => {
-                  const tracked = Object.keys(subagentMessageIdsRef.current);
-                  // No taskId (older servers): complete every tracked panel, but attach the
-                  // output only to a lone one, or it lands in another subagent's panel.
-                  const taskIds =
-                    resultTaskId && tracked.includes(resultTaskId)
-                      ? [resultTaskId]
-                      : tracked;
-                  if (taskIds.length === 0) {
-                    return prev;
-                  }
-
-                  let nextMessages = prev;
-                  for (const taskId of taskIds) {
-                    const next = upsertSubagentPanel({
-                      previousMessages: nextMessages,
-                      messageId: subagentMessageIdsRef.current[taskId] ?? null,
-                      taskId: taskId,
-                      sessionId: sessionIdRef.current ?? "",
-                      markCompleted: true,
-                      completedOutput:
-                        taskIds.length === 1 ? output : undefined,
-                    });
-                    subagentMessageIdsRef.current[taskId] = next.messageId;
-                    nextMessages = next.messages;
-                  }
-
-                  return nextMessages;
-                });
-              },
             });
             streamBody = wsResult.stream;
           } catch (error) {
@@ -374,7 +245,6 @@ export function useAgentChat({
       coreEndpointMessage,
       baseUrl,
       websocketBaseUrl,
-      webSocketEnabled,
     ],
   );
 
@@ -403,8 +273,6 @@ export function useAgentChat({
     setPendingQuestions([]);
     sessionIdRef.current = undefined;
     mainAssistantMessageIdRef.current = null;
-    continuationMessageIdRef.current = null;
-    subagentMessageIdsRef.current = {};
   }, []);
 
   return {
@@ -505,7 +373,7 @@ async function startHttpSseStream(options: {
 
   return {
     stream: response.body,
-    sessionId: response.headers.get("X-Session-Id") ?? conversationKey,
+    sessionId: conversationKey,
   };
 }
 
@@ -522,21 +390,6 @@ async function startWebSocketSseStream(options: {
   signal: AbortSignal;
   onMeta: (meta: { sessionId: string; taskId: string }) => void;
   onQuestions: (questions: PendingQuestion[]) => void;
-  onContinuationDelta: (delta: string) => void;
-  onSubagentDelta: (event: {
-    sessionId: string;
-    taskId: string;
-    agentName?: string;
-    delta: string;
-  }) => void;
-  onSubagentActivity: (event: {
-    sessionId: string;
-    taskId: string;
-    agentName?: string;
-    phase: "started" | "tool_call" | "tool_result";
-    toolNames?: string[];
-  }) => void;
-  onSubagentResult: (output: string, taskId?: string) => void;
 }): Promise<WebSocketStreamResult> {
   const {
     endpointId,
@@ -551,10 +404,6 @@ async function startWebSocketSseStream(options: {
     signal,
     onMeta,
     onQuestions,
-    onContinuationDelta,
-    onSubagentDelta,
-    onSubagentActivity,
-    onSubagentResult,
   } = options;
 
   const wsUrl = `${websocketBaseUrl}${agentEndpointPath({
@@ -682,41 +531,6 @@ async function startWebSocketSseStream(options: {
         return;
       }
 
-      if (payload.type === "subagent_result") {
-        onSubagentResult(payload.output, payload.taskId);
-
-        return;
-      }
-
-      if (payload.type === "continuation_delta") {
-        onContinuationDelta(payload.delta);
-
-        return;
-      }
-
-      if (payload.type === "subagent_delta") {
-        onSubagentDelta({
-          sessionId: payload.sessionId,
-          taskId: payload.taskId,
-          agentName: payload.agentName,
-          delta: payload.delta,
-        });
-
-        return;
-      }
-
-      if (payload.type === "subagent_activity") {
-        onSubagentActivity({
-          sessionId: payload.sessionId,
-          taskId: payload.taskId,
-          agentName: payload.agentName,
-          phase: payload.phase,
-          toolNames: payload.toolNames,
-        });
-
-        return;
-      }
-
       if (payload.type === "done") {
         finishStream();
 
@@ -764,88 +578,6 @@ async function startWebSocketSseStream(options: {
   });
 }
 
-function isSubagentPanelPart(value: unknown): value is SubagentPanelPart {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    (value as { type?: unknown }).type === "subagent-panel" &&
-    typeof (value as { taskId?: unknown }).taskId === "string"
-  );
-}
-
-function appendAssistantTextDelta(options: {
-  previousMessages: UIMessage[];
-  messageId: string | null;
-  delta: string;
-}): { messages: UIMessage[]; messageId: string } {
-  if (!options.delta) {
-    return {
-      messages: options.previousMessages,
-      messageId: options.messageId ?? crypto.randomUUID(),
-    };
-  }
-
-  if (options.messageId) {
-    const index = options.previousMessages.findIndex(
-      (message) => message.id === options.messageId,
-    );
-    if (index >= 0) {
-      const existing = options.previousMessages[index];
-      const currentText = existing.parts
-        .filter((part) => part.type === "text")
-        .map((part) => ("text" in part ? part.text : ""))
-        .join("");
-      const nextMessages = [...options.previousMessages];
-      nextMessages[index] = {
-        ...existing,
-        parts: [{ type: "text", text: `${currentText}${options.delta}` }],
-      };
-
-      return {
-        messages: nextMessages,
-        messageId: options.messageId,
-      };
-    }
-  }
-
-  const newMessageId = options.messageId ?? crypto.randomUUID();
-
-  return {
-    messages: [
-      ...options.previousMessages,
-      {
-        id: newMessageId,
-        role: "assistant",
-        parts: [{ type: "text", text: options.delta }],
-      },
-    ],
-    messageId: newMessageId,
-  };
-}
-
-function formatSubagentActivityText(event: {
-  phase: "started" | "tool_call" | "tool_result";
-  toolNames?: string[];
-}): string | null {
-  if (event.phase === "started") {
-    return null;
-  }
-
-  const toolNames = Array.isArray(event.toolNames)
-    ? event.toolNames.filter(
-        (name) => typeof name === "string" && name.trim().length > 0,
-      )
-    : [];
-  const formattedTools =
-    toolNames.length > 0 ? ` (${toolNames.join(", ")})` : "";
-
-  if (event.phase === "tool_call") {
-    return `Using tools${formattedTools}`;
-  }
-
-  return `Received tool results${formattedTools}`;
-}
-
 function upsertMainAssistantMessage(options: {
   previousMessages: UIMessage[];
   messageId: string | null;
@@ -888,100 +620,5 @@ function upsertMainAssistantMessage(options: {
   return {
     messages: [...options.previousMessages, normalizedMessage],
     messageId: resolvedId,
-  };
-}
-
-function upsertSubagentPanel(options: {
-  previousMessages: UIMessage[];
-  messageId: string | null;
-  taskId: string;
-  sessionId: string;
-  agentName?: string;
-  delta?: string;
-  activityEvent?: {
-    phase: "started" | "tool_call" | "tool_result";
-    toolNames?: string[];
-  };
-  markCompleted?: boolean;
-  completedOutput?: string;
-}): { messages: UIMessage[]; messageId: string } {
-  const updatePanel = (part: SubagentPanelPart): SubagentPanelPart => {
-    const nextEvents = [...part.events];
-    if (options.activityEvent) {
-      const activityText = formatSubagentActivityText(options.activityEvent);
-      if (activityText) {
-        nextEvents.push({
-          phase: options.activityEvent.phase,
-          text: activityText,
-          toolNames: options.activityEvent.toolNames,
-        });
-      }
-    }
-
-    let nextText = part.text;
-    if (options.delta && options.delta.length > 0) {
-      nextText += options.delta;
-    }
-    if (options.completedOutput && nextText.trim().length === 0) {
-      nextText = options.completedOutput;
-    }
-
-    return {
-      ...part,
-      sessionId: options.sessionId || part.sessionId,
-      agentName: options.agentName ?? part.agentName,
-      status: options.markCompleted ? "completed" : part.status,
-      events: nextEvents,
-      text: nextText,
-    };
-  };
-
-  const existingIndex = options.messageId
-    ? options.previousMessages.findIndex(
-        (message) => message.id === options.messageId,
-      )
-    : -1;
-
-  if (existingIndex >= 0) {
-    const existingMessage = options.previousMessages[existingIndex];
-    const existingPanel = existingMessage.parts.find((part) =>
-      isSubagentPanelPart(part),
-    );
-    if (existingPanel) {
-      const nextMessages = [...options.previousMessages];
-      nextMessages[existingIndex] = {
-        ...existingMessage,
-        parts: [
-          updatePanel(existingPanel) as unknown as UIMessage["parts"][number],
-        ],
-      } as UIMessage;
-
-      return {
-        messages: nextMessages,
-        messageId: options.messageId ?? crypto.randomUUID(),
-      };
-    }
-  }
-
-  const newMessageId = crypto.randomUUID();
-  const initialPanel: SubagentPanelPart = updatePanel({
-    type: "subagent-panel",
-    taskId: options.taskId,
-    sessionId: options.sessionId,
-    agentName: options.agentName,
-    status: options.markCompleted ? "completed" : "running",
-    events: [],
-    text: "",
-  });
-
-  const nextMessage = {
-    id: newMessageId,
-    role: "assistant",
-    parts: [initialPanel as unknown],
-  } as unknown as UIMessage;
-
-  return {
-    messages: [...options.previousMessages, nextMessage],
-    messageId: newMessageId,
   };
 }

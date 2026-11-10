@@ -11,6 +11,8 @@ const MAX_TOKEN_CACHE_ENTRIES = 256;
 export const REFRESH_MARGIN_MS = 60_000;
 
 const tokenCache = new Map<string, Promise<MintedToken>>();
+// A rotating server spends the configured token. This lasts until a restart; a connection persists.
+const rotatedRefreshTokens = new Map<string, string>();
 
 export type ResolvedMcpOauth = Required<McpOauth>;
 
@@ -33,6 +35,7 @@ export interface RefreshedToken {
 
 export function clearMcpOauthTokens(): void {
   tokenCache.clear();
+  rotatedRefreshTokens.clear();
 }
 
 // Secrets are identity (a rotated one re-mints) and ride the long-lived key only as a digest.
@@ -61,7 +64,7 @@ export async function mcpAccessToken(
       return mcpAccessToken(serverName, oauth);
     tokenCache.delete(key);
   }
-  const mint = mintAccessToken(serverName, oauth);
+  const mint = mintAccessToken(serverName, oauth, key);
   mint.catch(() => {
     if (tokenCache.get(key) === mint) tokenCache.delete(key);
   });
@@ -75,7 +78,7 @@ export async function mcpAccessToken(
   return (await mint).accessToken;
 }
 
-export async function refreshTokenGrant(
+export async function tokenGrant(
   tokenUrl: string,
   form: Record<string, string>,
   fetchToken: (url: string, init: RequestInit) => Promise<Response>,
@@ -120,17 +123,28 @@ export async function refreshTokenGrant(
 async function mintAccessToken(
   serverName: string,
   oauth: ResolvedMcpOauth,
+  key: string,
 ): Promise<MintedToken> {
   try {
-    const token = await refreshTokenGrant(
+    const token = await tokenGrant(
       oauth.tokenUrl,
       {
         client_id: oauth.clientId,
         client_secret: oauth.clientSecret,
-        refresh_token: oauth.refreshToken,
+        refresh_token: rotatedRefreshTokens.get(key) ?? oauth.refreshToken,
       },
       publicHostFetch,
     );
+    if (token.refreshToken) {
+      if (
+        !rotatedRefreshTokens.has(key) &&
+        rotatedRefreshTokens.size >= MAX_TOKEN_CACHE_ENTRIES
+      ) {
+        // Oldest only: every entry is the one valid token for its server.
+        rotatedRefreshTokens.delete(rotatedRefreshTokens.keys().next().value!);
+      }
+      rotatedRefreshTokens.set(key, token.refreshToken);
+    }
 
     return {
       accessToken: token.accessToken,

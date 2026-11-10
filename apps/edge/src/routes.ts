@@ -12,11 +12,11 @@ export const METHODS = [
 
 const SEGMENT = "[^/]+";
 
-export type Method = (typeof METHODS)[number];
+type Method = (typeof METHODS)[number];
 
 export type Upstream = "config" | "core" | "gateway";
 
-export type Limit = "http" | "none" | "upgrade";
+type Limit = "http" | "none" | "upgrade";
 
 export interface EdgeRule {
   /** Anchored regex without `^` and `$`, matched after trailing slashes are stripped. */
@@ -115,14 +115,23 @@ export const ROUTERS: readonly EdgeRouter[] = [
     upstream: "core",
     limit: "none",
     secretPath: true,
-    rules: [{ path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] }],
+    rules: [
+      { path: "/v1/media/.*[^/]", methods: ["GET", "HEAD"] },
+      // An MCP sign-in lands here with its authorization `code` and `state` in the query.
+      { path: "/v1/mcp-connections/callback", methods: ["GET"] },
+    ],
   },
-  // `/mcp` sits off `/v1` because `/v1/mcp` is the config plane's server CRUD.
+  // `/mcp` sits off `/v1` because `/v1/mcp` is the config plane's server CRUD. MCP clients read
+  // its OAuth metadata at the RFC 9728 well-known path.
   {
     name: "core",
     upstream: "core",
     limit: "http",
-    rules: [{ path: "/v1(?:/.*)?" }, { path: "/mcp" }],
+    rules: [
+      { path: "/v1(?:/.*)?" },
+      { path: "/mcp" },
+      { path: "/\\.well-known/oauth-protected-resource(?:/mcp)?" },
+    ],
   },
 ];
 

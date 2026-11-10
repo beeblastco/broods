@@ -13,8 +13,9 @@ import {
   getSandboxExternalId,
   saveSandboxInstance,
 } from "./instance-store.ts";
-import { callbackEnv, callbackSnippet, generateJobId } from "./jobs.ts";
+import { callbackEnv, callbackSnippet } from "./jobs.ts";
 import type {
+  SandboxBackgroundRequest,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
@@ -61,11 +62,9 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       const result = await sandbox.commands.run(request.code, {
         timeoutMs: request.timeoutSeconds * 1000,
-        envs: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
+        envs: mergeSandboxEnv(this.#config.envVars, {
+          principal: request.principal,
+        }),
       });
       const stdout = truncateText(
         result.stdout ?? "",
@@ -78,7 +77,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
 
       return {
         ok: (result.exitCode ?? null) === 0,
-        runtime: request.runtime ?? "bash",
+        runtime: "bash",
         exitCode: result.exitCode ?? null,
         stdout: stdout.value,
         stderr: stderr.value,
@@ -94,17 +93,19 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
-    const jobId = request.jobId ?? generateJobId();
+    const jobId = request.jobId;
     const handle = await sandbox.commands.run(
       e2bBackgroundCommand(request, jobId),
       {
         background: true,
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
-          ...mergeSandboxEnv(this.#config.envVars, request.envVars),
+          ...mergeSandboxEnv(this.#config.envVars),
           ...callbackEnv(request.callback),
         },
       },

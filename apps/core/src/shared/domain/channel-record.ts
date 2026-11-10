@@ -15,7 +15,6 @@ import {
 import type { AgentRecord } from "./agents.ts";
 
 export type { ChannelReplyIn } from "@broods/convex/model/channelRules";
-export { normalizeChannelRecordConfig } from "@broods/convex/model/channelRules";
 
 export interface ChannelAgentBinding {
   agentId: string;

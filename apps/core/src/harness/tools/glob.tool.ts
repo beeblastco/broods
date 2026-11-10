@@ -11,7 +11,7 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 interface GlobInput {
   pattern: string;
@@ -67,11 +67,9 @@ Usage notes:
               ? "(listing cut at the sandbox's output limit; narrow the path)\n"
               : "";
 
-            return toolText(
-              matches.length > 0
-                ? `${matches.join("\n")}\n${cut}`
-                : `No files found\n${cut}`,
-            );
+            return matches.length > 0
+              ? `${matches.join("\n")}\n${cut}`
+              : `No files found\n${cut}`;
           }
           const code = globScript(toBase64(pattern), toBase64(root));
           const result = await runSandbox(runner, ws.namespace, code, {
@@ -83,7 +81,7 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout);
+          return result.stdout;
         } catch (cause) {
           // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));

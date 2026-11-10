@@ -11,7 +11,7 @@ import {
 } from "./filesystem-utils.ts";
 import type { SandboxRunResult } from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 interface EditInput {
   file_path: string;
@@ -50,14 +50,12 @@ Usage notes:
             metadata: sandboxRunMetadata(context, ws),
           };
           if (SHELL_ONLY_SANDBOX_PROVIDERS.has(sandbox.provider)) {
-            return toolText(
-              await editOnShell(
-                (code) => runSandbox(sandbox, ws.namespace, code, options),
-                rel,
-                old_string ?? "",
-                new_string ?? "",
-                replace_all === true,
-              ),
+            return await editOnShell(
+              (code) => runSandbox(sandbox, ws.namespace, code, options),
+              rel,
+              old_string ?? "",
+              new_string ?? "",
+              replace_all === true,
             );
           }
           const code = editScript(
@@ -78,7 +76,7 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout.trim());
+          return result.stdout.trim();
         } catch (cause) {
           // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));

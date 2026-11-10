@@ -301,7 +301,6 @@ describe("refusal over HTTP", () => {
         accountId: ACCOUNT_ID,
         cronId: "cron_1",
       }),
-      cookies: [],
       clientIp: "",
     });
 

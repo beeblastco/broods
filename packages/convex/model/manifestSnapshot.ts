@@ -1,6 +1,7 @@
 // The manifest as `broods diff` compares it, shared by the CLI and the config plane so a stage's
 // manifest hash is the same number on both sides.
 
+import { sha256Hex } from "./accountSecrets";
 import { stableJson } from "./objects";
 
 // Bytes the server snapshot drops, and an upload handle only it has; sha256 still diffs content.
@@ -26,14 +27,8 @@ export async function manifestHash(
       stableJson(snapshotResource(resource)),
     ])
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(JSON.stringify(entries)),
-  );
 
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  return await sha256Hex(JSON.stringify(entries));
 }
 
 export function snapshotResource(resource: SnapshotInput): unknown {

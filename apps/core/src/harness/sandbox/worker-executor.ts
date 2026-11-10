@@ -136,13 +136,11 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
         "POST",
         {
           script: request.code,
-          args: request.args ?? [],
+          args: [],
           cwd: requiredWorkspacePath(request, "/workspace"),
-          env: mergeSandboxEnv(
-            this.#config.envVars,
-            request.envVars,
-            request.principal,
-          ),
+          env: mergeSandboxEnv(this.#config.envVars, {
+            principal: request.principal,
+          }),
           timeoutMs: timeoutMs,
           outputLimitBytes: Math.min(
             request.outputLimitBytes,

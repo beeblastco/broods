@@ -2,10 +2,7 @@
 
 import { v, type Infer, type Value } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
-import {
-  ACCOUNT_ENV_PLACEHOLDER_PATTERN,
-  ACCOUNT_ENV_REFS_ONLY_PATTERN,
-} from "./envRefs";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 import { ClientError } from "./clientError";
 import { configObject, parseOr } from "./storedJson";
 
@@ -182,10 +179,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   patch.extraConfig = collectExtraConfig(nested, agent, model, tools);
 
   return patch;
-}
-
-export function isEntirelyEnvPlaceholders(value: string): boolean {
-  return ACCOUNT_ENV_REFS_ONLY_PATTERN.test(value);
 }
 
 export function substituteAccountEnvPlaceholders<T>(

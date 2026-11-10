@@ -1,4 +1,4 @@
-// The config plane as tools named after BroodsAccountClient methods in kebab-case.
+// The config plane as tools shaped for an agent: few tools, compact results, one verb per job.
 
 import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -20,9 +20,6 @@ import {
   type BroodsAccount,
   type CreateAgentResult,
   type RotateSecretResult,
-  type SandboxLifecycleResult,
-  type SandboxSnapshotResult,
-  type SandboxTerminalTicket,
 } from "./account.ts";
 import type { CreateCronInput } from "./contracts.ts";
 import type {
@@ -51,6 +48,35 @@ const LIFECYCLE_FIELDS = {
   reservationKey: z.string().min(1),
 };
 
+const RESOURCE_NAMES = [
+  "agent",
+  "cron",
+  "sandbox",
+  "workspace",
+  "policy",
+  "role",
+  "channel",
+  "skill",
+  "mcp",
+] as const;
+
+type ResourceName = (typeof RESOURCE_NAMES)[number];
+
+const RESOURCE_FIELD = z.enum(RESOURCE_NAMES);
+
+// A list carries what picks a record; get-resource carries the rest.
+const SUMMARY_FIELDS: ReadonlySet<string> = new Set([
+  "agentId",
+  "description",
+  "disabled",
+  "name",
+  "scheduleExpression",
+  "status",
+  "transport",
+]);
+
+const READ_ONLY = { readOnlyHint: true };
+
 const CONFIRM_FIELD = z
   .boolean()
   .describe("Must be true, after the owner has agreed to this delete.");
@@ -59,16 +85,13 @@ const SECRET_MERGE_HINT =
   "'********' keeps a stored secret and null deletes a field: never send a placeholder you did not read from a get.";
 
 interface ResourceSpec {
-  singular: string;
-  plural: string;
   key: string;
   scoped?: boolean;
   createHint?: string;
-  deleteHint?: string;
   updateHint?: string;
-  list?: (client: BroodsAccountClient, scope?: StageScope) => Promise<unknown>;
-  get?: (client: BroodsAccountClient, id: string) => Promise<unknown>;
-  create?: (
+  list: (client: BroodsAccountClient, scope?: StageScope) => Promise<object[]>;
+  get: (client: BroodsAccountClient, id: string) => Promise<unknown>;
+  create: (
     client: BroodsAccountClient,
     body: JsonBody,
     scope?: StageScope,
@@ -78,17 +101,14 @@ interface ResourceSpec {
     id: string,
     body: JsonBody,
   ) => Promise<unknown>;
-  remove?: (client: BroodsAccountClient, id: string) => Promise<boolean>;
+  remove: (client: BroodsAccountClient, id: string) => Promise<boolean>;
 }
 
 // Wire bodies are untyped JSON; the config plane re-validates each one.
-const RESOURCES: ResourceSpec[] = [
-  {
-    singular: "agent",
-    plural: "agents",
+const RESOURCES: Record<ResourceName, ResourceSpec> = {
+  agent: {
     key: "agentId",
     createHint: "Needs name and config; a 409 returns the existing agentId.",
-    deleteHint: "Deleting an agent also drops its runtime rows.",
     updateHint: SECRET_MERGE_HINT,
     list: (client): Promise<AccountAgent[]> => client.listAgents(),
     get: (client, id): Promise<AccountAgent | null> => client.getAgent(id),
@@ -100,9 +120,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateAgent(id, body as unknown as UpdateAgentInput),
     remove: (client, id): Promise<boolean> => client.deleteAgent(id),
   },
-  {
-    singular: "cron",
-    plural: "crons",
+  cron: {
     key: "cronId",
     createHint:
       "Needs name, agentId, scheduleExpression (rate/cron/at) and input or events.",
@@ -114,9 +132,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateCron(id, body),
     remove: (client, id): Promise<boolean> => client.deleteCron(id),
   },
-  {
-    singular: "sandbox",
-    plural: "sandboxes",
+  sandbox: {
     key: "sandboxId",
     updateHint: SECRET_MERGE_HINT,
     list: (client): Promise<AccountSandbox[]> => client.listSandboxes(),
@@ -129,9 +145,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateSandbox(id, body),
     remove: (client, id): Promise<boolean> => client.deleteSandbox(id),
   },
-  {
-    singular: "workspace",
-    plural: "workspaces",
+  workspace: {
     key: "workspaceId",
     list: (client): Promise<AccountWorkspace[]> => client.listWorkspaces(),
     get: (client, id): Promise<AccountWorkspace | null> =>
@@ -146,9 +160,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateWorkspace(id, body),
     remove: (client, id): Promise<boolean> => client.deleteWorkspace(id),
   },
-  {
-    singular: "policy",
-    plural: "policies",
+  policy: {
     key: "policyId",
     createHint:
       "Agent-runtime policy document (tool.call, skill.load), not API credential scoping.",
@@ -162,9 +174,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updatePolicy(id, body),
     remove: (client, id): Promise<boolean> => client.deletePolicy(id),
   },
-  {
-    singular: "role",
-    plural: "roles",
+  role: {
     key: "roleId",
     createHint:
       "Needs name and a version-1 policy over the API namespace, e.g. agents:read. Account key only.",
@@ -178,9 +188,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateRole(id, body),
     remove: (client, id): Promise<boolean> => client.deleteRole(id),
   },
-  {
-    singular: "channel",
-    plural: "channels",
+  channel: {
     key: "channelId",
     list: (client): Promise<AccountChannel[]> => client.listChannels(),
     get: (client, id): Promise<AccountChannel | null> => client.getChannel(id),
@@ -192,9 +200,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateChannel(id, body),
     remove: (client, id): Promise<boolean> => client.deleteChannel(id),
   },
-  {
-    singular: "skill",
-    plural: "skills",
+  skill: {
     key: "skillName",
     createHint:
       'source is "files" (base64), "json" or "github". The stored name comes from the SKILL.md frontmatter.',
@@ -204,9 +210,7 @@ const RESOURCES: ResourceSpec[] = [
       client.createSkill(body as unknown as SkillUploadInput),
     remove: (client, id): Promise<boolean> => client.deleteSkill(id),
   },
-  {
-    singular: "mcp",
-    plural: "mcp",
+  mcp: {
     key: "serverId",
     scoped: true,
     list: (client, scope): Promise<AccountMcp[]> =>
@@ -218,7 +222,7 @@ const RESOURCES: ResourceSpec[] = [
       client.updateMcp(id, body),
     remove: (client, id): Promise<boolean> => client.deleteMcp(id),
   },
-];
+};
 
 /** The same typed tools `broods mcp` serves, on a server of your own, for a credential you hold. */
 export function registerBroodsTools(
@@ -227,7 +231,7 @@ export function registerBroodsTools(
   scope: McpScopeDefaults = {},
   login: BroodsAccountClient = client,
 ): void {
-  for (const spec of RESOURCES) registerResource(server, client, spec, scope);
+  registerResources(server, client, scope);
   registerExtras(server, client);
   registerObservability(server, client, login, scope);
 }
@@ -257,22 +261,22 @@ function failure(error: unknown): CallToolResult {
 
 function reply(value: unknown): CallToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(value ?? null, null, 2) }],
+    content: [{ type: "text", text: JSON.stringify(value ?? null) }],
   };
 }
 
 function requireScope(
-  spec: ResourceSpec,
+  resource: ResourceName,
   defaults: McpScopeDefaults,
   project: string | undefined,
   stage: string | undefined,
 ): StageScope | undefined {
-  if (!spec.scoped) return undefined;
+  if (!RESOURCES[resource].scoped) return undefined;
   const resolvedProject = project ?? defaults.project;
   const resolvedStage = stage ?? defaults.stage;
   if (!resolvedProject || !resolvedStage)
     throw new Error(
-      `${spec.plural} live in one stage, so this call needs both 'project' and 'stage'`,
+      `${resource} lives in one stage, so this call needs both 'project' and 'stage'`,
     );
 
   return { project: resolvedProject, stage: resolvedStage };
@@ -288,6 +292,7 @@ export function registerCliScope(
     {
       description:
         "Every organization this login can reach, with the current one marked.",
+      annotations: READ_ONLY,
       inputSchema: {},
     },
     async (): Promise<CallToolResult> =>
@@ -336,6 +341,7 @@ export function registerCliScope(
     {
       description:
         "Every project in the current org, empty ones last. Project names are not unique, so take the id from here.",
+      annotations: READ_ONLY,
       inputSchema: {},
     },
     async (): Promise<CallToolResult> =>
@@ -348,6 +354,7 @@ export function registerCliScope(
     "list-stages",
     {
       description: "Every stage of one project, by project name.",
+      annotations: READ_ONLY,
       inputSchema: { project: z.string().min(1) },
     },
     async ({ project }): Promise<CallToolResult> =>
@@ -431,6 +438,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "Run history for one cron, newest first. Check this before telling anyone a cron fired.",
+      annotations: READ_ONLY,
       inputSchema: {
         cronId: z.string().min(1),
         limit: z.number().int().positive().max(100).optional(),
@@ -446,68 +454,56 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
       ),
   );
 
-  const lifecycleTools: Array<
-    [
-      string,
-      string,
-      (sandboxId: string, reservationKey: string) => Promise<unknown>,
-    ]
-  > = [
-    [
-      "suspend-sandbox",
-      "Suspend a persistent sandbox reservation.",
-      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
-        client.suspendSandbox(sandboxId, reservationKey),
-    ],
-    [
-      "resume-sandbox",
-      "Resume a suspended sandbox reservation.",
-      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
-        client.resumeSandbox(sandboxId, reservationKey),
-    ],
-    [
-      "terminate-sandbox",
-      "Terminate a sandbox reservation and drop its live-instance row. Terminate only a sandbox you created, and never one holding state you did not put there.",
-      (sandboxId, reservationKey): Promise<SandboxLifecycleResult> =>
-        client.terminateSandbox(sandboxId, reservationKey),
-    ],
-    [
-      "open-sandbox-terminal",
-      "Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox.",
-      (sandboxId, reservationKey): Promise<SandboxTerminalTicket> =>
-        client.openSandboxTerminal(sandboxId, reservationKey),
-    ],
-  ];
-  for (const [name, description, call] of lifecycleTools) {
-    server.registerTool(
-      name,
-      { description: description, inputSchema: LIFECYCLE_FIELDS },
-      async ({ sandboxId, reservationKey }): Promise<CallToolResult> =>
-        await attempt(
-          async (): Promise<unknown> => await call(sandboxId, reservationKey),
-        ),
-    );
-  }
-
   server.registerTool(
-    "snapshot-sandbox",
+    "sandbox-action",
     {
       description:
-        "Snapshot a sandbox reservation into an image its provider's sandboxes can pin with `snapshot` (sandbox, lambda, daytona, e2b or vercel; lambda builds for a few minutes).",
-      inputSchema: { ...LIFECYCLE_FIELDS, name: z.string().min(1) },
+        "Act on one persistent sandbox reservation. suspend and resume keep its state. terminate drops it: only for a sandbox you created. open-terminal mints a short-lived PTY ticket. snapshot needs name and makes an image its provider's sandboxes can pin (lambda builds for a few minutes).",
+      inputSchema: {
+        action: z.enum([
+          "suspend",
+          "resume",
+          "terminate",
+          "open-terminal",
+          "snapshot",
+        ]),
+        ...LIFECYCLE_FIELDS,
+        name: z.string().min(1).optional(),
+      },
     },
-    async ({ sandboxId, reservationKey, name }): Promise<CallToolResult> =>
-      await attempt(
-        async (): Promise<SandboxSnapshotResult> =>
-          await client.snapshotSandbox(sandboxId, reservationKey, name),
-      ),
+    async ({
+      action,
+      name,
+      reservationKey,
+      sandboxId,
+    }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<unknown> => {
+        switch (action) {
+          case "suspend":
+            return await client.suspendSandbox(sandboxId, reservationKey);
+          case "resume":
+            return await client.resumeSandbox(sandboxId, reservationKey);
+          case "terminate":
+            return await client.terminateSandbox(sandboxId, reservationKey);
+          case "open-terminal":
+            return await client.openSandboxTerminal(sandboxId, reservationKey);
+          case "snapshot":
+            if (!name) throw new Error("snapshot needs a name for the image");
+
+            return await client.snapshotSandbox(
+              sandboxId,
+              reservationKey,
+              name,
+            );
+        }
+      }),
   );
 
   server.registerTool(
     "upload-skill",
     {
       description:
-        "Replace one skill's bundle wholesale (PUT, not a merge) by skillName. 'body' is the same source shape create-skill takes.",
+        "Replace one skill's bundle wholesale (PUT, not a merge) by skillName. 'body' is the same source shape create-resource takes for a skill.",
       inputSchema: {
         id: z.string().min(1).describe("The skillName."),
         body: z.record(z.string(), z.unknown()),
@@ -525,6 +521,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "List environment variable names. Values are write-only: the plane never returns them, so there is no read.",
+      annotations: READ_ONLY,
       inputSchema: {},
     },
     async (): Promise<CallToolResult> =>
@@ -616,6 +613,7 @@ function registerExtras(server: McpServer, client: BroodsAccountClient): void {
     {
       description:
         "The account this server's credential resolves to. Run it first to confirm which tenant you are about to change.",
+      annotations: READ_ONLY,
       inputSchema: {},
     },
     async (): Promise<CallToolResult> =>
@@ -653,6 +651,7 @@ export function registerObservability(
     {
       description:
         "The account's audit events, newest first: runs, deploys and changes. Filter by agent id or action. Says how much of the log it checked.",
+      annotations: READ_ONLY,
       inputSchema: {
         limit: z.number().int().positive().max(100).optional(),
         agentId: z.string().min(1).optional(),
@@ -675,6 +674,7 @@ export function registerObservability(
     {
       description:
         "One stage's tokens, invocations, model calls, run time and sandbox CPU over a range.",
+      annotations: READ_ONLY,
       inputSchema: {
         range: z.enum(USAGE_RANGES).optional(),
         ...SCOPE_FIELDS,
@@ -692,6 +692,7 @@ export function registerObservability(
     "list-runs",
     {
       description: `A stage's recent runs, newest first: status, duration, tokens, error and trace id. Filter by agent id or status. ${UNTRUSTED}`,
+      annotations: READ_ONLY,
       inputSchema: {
         limit: z.number().int().positive().max(50).optional(),
         agentId: z.string().min(1).optional(),
@@ -720,6 +721,7 @@ export function registerObservability(
     "read-trace",
     {
       description: `One run's model steps and tool calls in order, with status, duration, tokens and errors. ${UNTRUSTED}`,
+      annotations: READ_ONLY,
       inputSchema: { traceId: z.string().min(1), ...SCOPE_FIELDS },
     },
     async ({ project, stage, traceId }): Promise<CallToolResult> =>
@@ -733,6 +735,7 @@ export function registerObservability(
     "read-logs",
     {
       description: `A stage's recent logs, or one sandbox's with sandboxId. ${UNTRUSTED}`,
+      annotations: READ_ONLY,
       inputSchema: {
         limit: z.number().int().positive().max(200).optional(),
         level: z.enum(LOG_LEVELS).optional(),
@@ -758,134 +761,122 @@ export function registerObservability(
   );
 }
 
-function registerResource(
+function registerResources(
   server: McpServer,
   client: BroodsAccountClient,
-  spec: ResourceSpec,
   defaults: McpScopeDefaults,
 ): void {
-  const idField = z.string().min(1).describe(`The ${spec.key}.`);
-  const scopeNote = spec.scoped
-    ? ` ${spec.plural} live in one stage, so this also takes 'project' and 'stage'.`
-    : "";
-  const { list, get, create, update, remove } = spec;
+  const idField = z.string().min(1).describe("The record's id, or skill name.");
+  const scopeNote =
+    "An mcp record lives in one stage, so it also takes project and stage.";
+  const hints = (field: "createHint" | "updateHint"): string =>
+    RESOURCE_NAMES.flatMap((name): string[] => {
+      const hint = RESOURCES[name][field];
 
-  // Registered apart so handler args stay typed; a conditional schema widens them to unknown.
-  if (list) {
-    const description = `List every ${spec.singular} on the account.${scopeNote}`;
-    if (spec.scoped) {
-      server.registerTool(
-        `list-${spec.plural}`,
-        { description: description, inputSchema: SCOPE_FIELDS },
-        async ({ project, stage }): Promise<CallToolResult> =>
-          await attempt(
-            async (): Promise<unknown> =>
-              await list(client, requireScope(spec, defaults, project, stage)),
+      return hint ? [`${name}: ${hint}`] : [];
+    }).join(" ");
+
+  server.registerTool(
+    "list-resources",
+    {
+      description: `List one kind of record, with only the fields that pick one. Use get-resource for the rest. ${scopeNote}`,
+      annotations: READ_ONLY,
+      inputSchema: { resource: RESOURCE_FIELD, ...SCOPE_FIELDS },
+    },
+    async ({ project, resource, stage }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<object[]> => {
+        const spec = RESOURCES[resource];
+        const items = await spec.list(
+          client,
+          requireScope(resource, defaults, project, stage),
+        );
+
+        return items.map((item): object =>
+          Object.fromEntries(
+            Object.entries(item).filter(
+              ([field]): boolean =>
+                field === spec.key || SUMMARY_FIELDS.has(field),
+            ),
           ),
-      );
-    } else {
-      server.registerTool(
-        `list-${spec.plural}`,
-        { description: description, inputSchema: {} },
-        async (): Promise<CallToolResult> =>
-          await attempt(async (): Promise<unknown> => await list(client)),
-      );
-    }
-  }
+        );
+      }),
+  );
 
-  if (get) {
-    server.registerTool(
-      `get-${spec.singular}`,
-      {
-        description: `Read one ${spec.singular} by ${spec.key}.`,
-        inputSchema: { id: idField },
+  server.registerTool(
+    "get-resource",
+    {
+      description: "Read one whole record by id.",
+      annotations: READ_ONLY,
+      inputSchema: { resource: RESOURCE_FIELD, id: idField },
+    },
+    async ({ id, resource }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<unknown> => await RESOURCES[resource].get(client, id),
+      ),
+  );
+
+  server.registerTool(
+    "create-resource",
+    {
+      description: `Create one record. 'body' is the request body the config plane documents. ${hints("createHint")} ${scopeNote} Prefer changing the broods/ manifest and deploying for anything the project already declares.`,
+      inputSchema: {
+        resource: RESOURCE_FIELD,
+        body: z.record(z.string(), z.unknown()),
+        ...SCOPE_FIELDS,
       },
-      async ({ id }): Promise<CallToolResult> =>
-        await attempt(async (): Promise<unknown> => await get(client, id)),
-    );
-  }
-
-  if (create) {
-    const description =
-      `Create one ${spec.singular}. 'body' is the request body the config plane documents.` +
-      (spec.createHint ? ` ${spec.createHint}` : "") +
-      scopeNote +
-      " Prefer changing the broods/ manifest and deploying for anything the project already declares.";
-    if (spec.scoped) {
-      server.registerTool(
-        `create-${spec.singular}`,
-        {
-          description: description,
-          inputSchema: {
-            body: z.record(z.string(), z.unknown()),
-            ...SCOPE_FIELDS,
-          },
-        },
-        async ({ body, project, stage }): Promise<CallToolResult> =>
-          await attempt(
-            async (): Promise<unknown> =>
-              await create(
-                client,
-                body,
-                requireScope(spec, defaults, project, stage),
-              ),
+    },
+    async ({ body, project, resource, stage }): Promise<CallToolResult> =>
+      await attempt(
+        async (): Promise<unknown> =>
+          await RESOURCES[resource].create(
+            client,
+            body,
+            requireScope(resource, defaults, project, stage),
           ),
-      );
-    } else {
-      server.registerTool(
-        `create-${spec.singular}`,
-        {
-          description: description,
-          inputSchema: { body: z.record(z.string(), z.unknown()) },
-        },
-        async ({ body }): Promise<CallToolResult> =>
-          await attempt(
-            async (): Promise<unknown> => await create(client, body),
-          ),
-      );
-    }
-  }
+      ),
+  );
 
-  if (update) {
-    server.registerTool(
-      `update-${spec.singular}`,
-      {
-        description:
-          `Deep-merge a patch into one ${spec.singular} and return the updated record, so there is no need to read it back.` +
-          (spec.updateHint ? ` ${spec.updateHint}` : ""),
-        inputSchema: {
-          id: idField,
-          body: z.record(z.string(), z.unknown()),
-        },
+  server.registerTool(
+    "update-resource",
+    {
+      description: `Deep-merge a patch into one record and return it, so there is no need to read it back. A skill cannot be patched: use upload-skill. ${SECRET_MERGE_HINT}`,
+      inputSchema: {
+        resource: RESOURCE_FIELD,
+        id: idField,
+        body: z.record(z.string(), z.unknown()),
       },
-      async ({ id, body }): Promise<CallToolResult> =>
-        await attempt(
-          async (): Promise<unknown> => await update(client, id, body),
-        ),
-    );
-  }
+    },
+    async ({ body, id, resource }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<unknown> => {
+        const { update } = RESOURCES[resource];
+        if (!update) throw new Error(`A ${resource} cannot be patched`);
 
-  if (remove) {
-    server.registerTool(
-      `delete-${spec.singular}`,
-      {
-        description:
-          `Delete one ${spec.singular}. Requires confirm:true, and takes one ${spec.key} per call: never loop this over a list.` +
-          (spec.deleteHint ? ` ${spec.deleteHint}` : ""),
-        inputSchema: {
-          id: idField,
-          confirm: CONFIRM_FIELD,
-        },
+        return await update(client, id, body);
+      }),
+  );
+
+  server.registerTool(
+    "delete-resource",
+    {
+      description:
+        "Delete one record. Requires confirm:true, and takes one id per call: never loop this over a list. Deleting an agent also drops its runtime rows.",
+      inputSchema: {
+        resource: RESOURCE_FIELD,
+        id: idField,
+        confirm: CONFIRM_FIELD,
       },
-      async ({ id, confirm }): Promise<CallToolResult> =>
-        await attempt(async (): Promise<{ deleted: boolean; id: string }> => {
-          assertConfirmed(
-            confirm,
-            `Deleting ${spec.singular} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,
-          );
+    },
+    async ({ confirm, id, resource }): Promise<CallToolResult> =>
+      await attempt(async (): Promise<{ deleted: boolean; id: string }> => {
+        assertConfirmed(
+          confirm,
+          `Deleting ${resource} '${id}' goes away for good: name it, get the owner's agreement, then retry.`,
+        );
 
-          return { deleted: await remove(client, id), id: id };
-        }),
-    );
-  }
+        return {
+          deleted: await RESOURCES[resource].remove(client, id),
+          id: id,
+        };
+      }),
+  );
 }
