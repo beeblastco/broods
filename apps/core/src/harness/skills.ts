@@ -255,7 +255,7 @@ export async function loadSkillContent(
 }
 
 function canonicalStagedPath(skillName: string): string {
-  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
+  return `${SKILL_CANONICAL_DIR}/${skillName}`;
 }
 
 function compareSkillBundlePath(a: string, b: string): number {
@@ -303,7 +303,7 @@ function formatLoadedSkillPrompt(
       ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
       : "";
   const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
+    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged in the workspace at \`${staged.stagedPath}\`, relative to the directory \`bash\` starts in. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or \`./${staged.stagedPath}/script.sh\` when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
 
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
@@ -335,7 +335,7 @@ async function listSkillSourceFiles(
 }
 
 function mirrorStagedPaths(skillName: string): string[] {
-  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
+  return SKILL_MIRROR_DIRS.map((dir) => `${dir}/${skillName}`);
 }
 
 // A config saved before the config-time cap keeps running on its first MAX_CONFIGURED_SKILLS.
