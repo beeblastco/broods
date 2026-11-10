@@ -61,6 +61,42 @@ test("a past-due account deletion removes the user and their org, a cancelled on
   expect(await t.run(async (ctx) => ctx.db.get(staying.orgId))).not.toBe(null);
 });
 
+test("an owner of an org with other members cannot delete their account, and the sweep skips them", async (): Promise<void> => {
+  vi.useFakeTimers();
+  const t = convexTest(schema, modules);
+  const owner = await seedSoleOwner(t, LEAVING);
+  await t.run(async (ctx) => {
+    const memberId = await ctx.db.insert("users", {
+      authId: STAYING,
+      email: "member@example.com",
+      name: "Member",
+      plan: "free",
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: owner.orgId,
+      userId: memberId,
+      role: "admin",
+      createdAt: Date.now(),
+    });
+  });
+
+  caller.authId = LEAVING;
+  await expect(t.mutation(api.user.requestAccountDeletion, {})).rejects.toThrow(
+    /other members/,
+  );
+
+  // A request made before this rule existed.
+  await t.run(async (ctx) =>
+    ctx.db.patch(owner.userId, { deletionScheduledFor: Date.now() }),
+  );
+  vi.advanceTimersByTime(DAY_MS);
+  await sweep(t);
+
+  expect(deleteUser).not.toHaveBeenCalled();
+  expect(await t.run(async (ctx) => ctx.db.get(owner.userId))).not.toBe(null);
+  expect(await t.run(async (ctx) => ctx.db.get(owner.orgId))).not.toBe(null);
+});
+
 async function seedSoleOwner(
   t: TestConvex<typeof schema>,
   authId: string,

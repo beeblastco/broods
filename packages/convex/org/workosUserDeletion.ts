@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { purgeUser } from "../model/cascade";
+import { purgeUser, sharedOwnedOrgs } from "../model/cascade";
 
 export const listSoleOwnedAccounts = internalQuery({
   args: { authId: v.string() },
@@ -37,7 +37,8 @@ export const listSoleOwnedAccounts = internalQuery({
   },
 });
 
-// Past-due account deletion requests whose teardown has not started yet.
+// Past-due account deletion requests whose teardown has not started yet. An owner of a shared
+// org waits: the request predates the refusal in `user.requestAccountDeletion`.
 export const listDue = internalQuery({
   args: { now: v.number() },
   returns: v.array(v.string()),
@@ -49,9 +50,19 @@ export const listDue = internalQuery({
       )
       .collect();
 
-    return users
-      .filter((user) => !user.workosDeletionRequestedAt)
-      .map((user) => user.authId);
+    const due: string[] = [];
+    for (const user of users) {
+      if (user.workosDeletionRequestedAt) continue;
+      if ((await sharedOwnedOrgs(ctx, user)).length > 0) {
+        console.warn(
+          `Account deletion for ${user.authId} skipped: they own an org with other members`,
+        );
+        continue;
+      }
+      due.push(user.authId);
+    }
+
+    return due;
   },
 });
 
