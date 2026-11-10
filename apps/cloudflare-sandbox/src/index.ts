@@ -192,7 +192,7 @@ export class Sandbox extends DurableObject<Env> {
   }
 
   status(): { running: boolean } {
-    return { running: this.#container().running };
+    return { running: this.#container().running || this.#booting };
   }
 
   #container(): Container {
