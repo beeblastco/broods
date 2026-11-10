@@ -36,7 +36,7 @@ theorem secret_nonvacuous : secretPath .downloads = true := by decide
 
 theorem log_all_breaks : false ≠ secretPath .downloads := by decide
 
-def leak : PublicLeak := ⟨some .health, 1, 10000, 200, "request"⟩
+def leak : PublicLeak := ⟨some .health, 200, "request"⟩
 
 theorem privacy_nonvacuous : Spec.NonVacuous publicSystem (fun _ => True) (fun e => e = leak) := by
   exact ⟨[⟨leak, "hidden"⟩], trivial, leak, by exact List.mem_append_left [] (List.mem_singleton.mpr rfl), rfl⟩

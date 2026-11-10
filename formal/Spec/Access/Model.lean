@@ -216,11 +216,9 @@ def upgrade (origin blocked capacity terminal machine known token available vali
   else if !token then 401 else if machine then 101 else if !available then 502
   else if !valid then 401 else if !expiry then 502 else if !scope then 403 else 101
 
-/-- Public observations before authentication: route, health counters, fixed guard error, request id. -/
+/-- Public observations before authentication: route, fixed guard error, request id. -/
 structure PublicLeak where
   route : Option Route
-  healthActive : Nat
-  healthMax : Nat
   guardStatus : Nat
   requestId : String
   deriving DecidableEq, Repr

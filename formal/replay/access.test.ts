@@ -703,11 +703,7 @@ test("public health and refusal expose only gateway metadata", async (): Promise
     new Request("https://gateway.invalid/healthz"),
     server,
   );
-  expect(await health?.json()).toEqual({
-    status: "ok",
-    activeWebSockets: 0,
-    maxWebSockets: 10000,
-  });
+  expect(await health?.json()).toEqual({ status: "ok" });
   const response = await gateway.fetch(
     new Request("https://gateway.invalid/v1/agents/a/ws", {
       headers: { upgrade: "websocket", origin: "https://allowed.test" },
