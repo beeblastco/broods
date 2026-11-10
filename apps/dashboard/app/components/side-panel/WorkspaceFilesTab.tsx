@@ -49,7 +49,7 @@ export type FileRecord = {
   updatedAt?: string | number;
 };
 
-export type UploadEntry = { file: File; path: string };
+type UploadEntry = { file: File; path: string };
 
 type FileNode = FileRecord & {
   children?: FileNode[];

@@ -47,7 +47,7 @@ type RollupCounters = {
   modelCalls: number;
 };
 
-// Rows only serve retry dedup (minutes); their counts already live in `usageRollups`.
+// Retry dedup plus the Usage tab's task list; counts also live in `usageRollups`.
 export const pruneExpiredTaskUsage = internalMutation({
   args: {},
   returns: v.number(),

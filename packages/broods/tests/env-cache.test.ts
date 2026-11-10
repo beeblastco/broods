@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   isShellOwnedEnv,
   loadBroodsRuntimeConfig,
+  parseEnv,
 } from "../src/runtime-config.ts";
 
 test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env", async (): Promise<void> => {
@@ -122,3 +123,23 @@ function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 }
+
+test("parseEnv reads back every value the CLI writes", (): void => {
+  const values = [
+    "C:\\dir\\new",
+    "p\\ss",
+    "a\\nb",
+    'say "hi"',
+    "a # b",
+    "k=v=w",
+    "line one\nline two",
+    "it's",
+  ];
+  // `writeEnvValue` writes JSON.stringify(value), as every CLI release has.
+  const source = values
+    .map((value, index): string => `K${index}=${JSON.stringify(value)}`)
+    .join("\n");
+
+  expect(Object.values(parseEnv(source))).toEqual(values);
+  expect(parseEnv('HAND="C:\\dir"').HAND).toBe("C:\\dir");
+});

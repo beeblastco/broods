@@ -115,7 +115,7 @@ fi
 job convex timeout 240 docker pull "${convex_image}" >/tmp/setup-convex.log 2>&1 &
 job traefik timeout 240 docker pull "${traefik_image}" >/tmp/setup-traefik.log 2>&1 &
 job playwright timeout 240 npx -y "playwright@${playwright_version}" install --with-deps chromium >/tmp/setup-playwright.log 2>&1 &
-job lean timeout 240 bash -c 'curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+job lean timeout 240 bash -c 'curl -sSf https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh |
   sh -s -- -y --default-toolchain "${lean_toolchain}" && "\$HOME"/.elan/bin/elan toolchain install "${lean_toolchain}" &&
   ln -sf "\$HOME"/.elan/bin/* /usr/local/bin/' >/tmp/setup-lean.log 2>&1 &
 # User-scope plugins never reach a cloud session, so install them here.

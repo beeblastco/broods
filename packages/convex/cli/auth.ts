@@ -25,7 +25,7 @@ import {
   userByAuthId,
 } from "../model/ownership/org";
 import { accountDoc } from "../model/accountDoc";
-import { ClientError } from "../model/clientError";
+import { ClientError, clientErrorResponse } from "../model/clientError";
 import { assertCanCreateOrg } from "../model/orgBilling";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
@@ -217,13 +217,9 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
 
     return json(result);
   } catch (error) {
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     console.error("CLI login exchange failed", error);
-    if (
-      error instanceof Error &&
-      error.message.includes("CLI login code is invalid or expired")
-    ) {
-      return jsonError(400, "Login code is invalid or expired");
-    }
 
     return jsonError(500, "Login exchange failed");
   }
@@ -251,7 +247,7 @@ export const exchangeLoginCode = internalMutation({
   }),
   handler: async (ctx, { code, codeVerifier }) => {
     if (!code.startsWith(CLI_CODE_PREFIX)) {
-      throw new Error("CLI login code is invalid or expired");
+      throw new ClientError("Login code is invalid or expired");
     }
     const codeHash = await sha256Hex(code);
     const row = await ctx.db
@@ -260,15 +256,15 @@ export const exchangeLoginCode = internalMutation({
       .unique();
     const now = Date.now();
     if (!row || row.usedAt || row.expiresAt < now) {
-      throw new Error("CLI login code is invalid or expired");
+      throw new ClientError("Login code is invalid or expired");
     }
     if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
-      throw new Error("CLI login code is invalid or expired");
+      throw new ClientError("Login code is invalid or expired");
     }
 
     const account = await ctx.db.get(row.accountId);
     if (!account || account.status !== "active")
-      throw new Error("Account is not active");
+      throw new ClientError("Account is not active", "forbidden");
     const org = await ctx.db.get(row.orgId);
     if (!org) throw new Error("Organization not found");
     const user = await ctx.db
@@ -526,7 +522,10 @@ export const selectOnboardingOrg = internalMutation({
       !membership ||
       (membership.role !== "owner" && membership.role !== "admin")
     ) {
-      throw new Error("CLI org selection requires owner or admin role");
+      throw new ClientError(
+        "CLI org selection requires owner or admin role",
+        "forbidden",
+      );
     }
 
     const account = await ctx.db
@@ -534,7 +533,7 @@ export const selectOnboardingOrg = internalMutation({
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
       .unique();
     if (!account || account.status !== "active") {
-      throw new Error("Selected org does not have an active API account");
+      throw new ClientError("Selected org does not have an active API account");
     }
 
     await ctx.db.patch(token._id, {

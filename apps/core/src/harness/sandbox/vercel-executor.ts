@@ -60,7 +60,6 @@ import {
   sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   truncateText,
   workspacePath,
 } from "./utils.ts";
@@ -164,7 +163,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       cmd: "bash",
       args: ["-lc", script],
       env: {
-        ...stringRecord(this.#config.envVars),
+        ...mergeSandboxEnv(this.#config.envVars),
         ...callbackEnv(request.callback),
       },
       timeoutMs: request.timeoutSeconds * 1000,
@@ -505,7 +504,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       cmd: "bash",
       args: ["-lc", code],
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: { ...stringRecord(this.#config.envVars), ...opts.env },
+      env: { ...mergeSandboxEnv(this.#config.envVars), ...opts.env },
     });
     if (result.exitCode !== 0) {
       throw new Error(

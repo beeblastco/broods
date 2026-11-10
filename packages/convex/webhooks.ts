@@ -4,6 +4,7 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { normalizeWebhookHookConfig } from "./model/agentRules";
+import { ClientError } from "./model/clientError";
 import {
   ensureAgentsRowForConfig,
   pushEncryptedConfigToAgentRow,
@@ -198,7 +199,7 @@ async function mutateAgentWebhooks(
   const config = await ctx.db.get(agentConfigId);
   if (!config) throw new Error("Agent config not found.");
   if (!(await getProjectForWrite(ctx, authId, config.projectId, "admin"))) {
-    throw new Error(WEBHOOK_ADMIN_REQUIRED);
+    throw new ClientError(WEBHOOK_ADMIN_REQUIRED, "forbidden");
   }
 
   const extra = parseOr(configObject, config.extraConfig, {});
