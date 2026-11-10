@@ -8094,6 +8094,7 @@ export declare const internal: {
         accountId: Id<"accounts">;
         agentId: string;
         conversationKey: string;
+        expectedOwnerEventId?: string;
         expectedOwnerTaskId?: string;
       },
       { queuedCount: number; stopped: boolean }
