@@ -246,7 +246,7 @@ describe("agent dock", () => {
       connections: [],
       project: "Tracy",
       projectSlug: "tracy",
-      stage: "development",
+      stage: "Development",
     });
 
     expect(prompt).toContain(

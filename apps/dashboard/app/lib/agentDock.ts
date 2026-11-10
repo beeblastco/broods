@@ -33,7 +33,7 @@ export interface DockFacts {
   page?: string;
   project?: string;
   projectId?: string;
-  /** What the account API takes as `project`; a stage's name is already its slug. */
+  /** What the account API takes as `project`; a stage's slug is its name in lowercase. */
   projectSlug?: string;
   /** One line on what the stage runs: its source revision, how its deploy went, any drift. */
   progress?: string;
@@ -90,7 +90,7 @@ export function dockPrompt(
       : []),
     ...(facts.projectSlug && facts.stage
       ? [
-          `For account tools: project "${facts.projectSlug}", stage "${facts.stage}"`,
+          `For account tools: project "${facts.projectSlug}", stage "${facts.stage.toLowerCase()}"`,
         ]
       : []),
     pagesLine(facts),
