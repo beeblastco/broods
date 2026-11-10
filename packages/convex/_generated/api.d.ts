@@ -5976,6 +5976,7 @@ export declare const internal: {
         null | {
           accountId: Id<"accounts">;
           deployKeyId?: Id<"deployKeys">;
+          lastUsedAt?: number;
           scoped: boolean;
           secretHash: string;
         }
@@ -6102,6 +6103,14 @@ export declare const internal: {
         { blocked: boolean; retryAfterMs?: number }
       >;
     };
+  };
+  deployKeys: {
+    touchLastUsed: FunctionReference<
+      "mutation",
+      "internal",
+      { keyId: Id<"deployKeys">; usedAt: number },
+      null
+    >;
   };
   github: {
     beginFor: FunctionReference<

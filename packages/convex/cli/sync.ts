@@ -935,6 +935,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: v.string(),
       scoped: v.boolean(),
       deployKeyId: v.optional(v.id("deployKeys")),
+      lastUsedAt: v.optional(v.number()),
     }),
   ),
   handler: async (
@@ -945,6 +946,7 @@ export const resolveCliAuth = internalQuery({
     secretHash: string;
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
+    lastUsedAt?: number;
   } | null> => {
     const { tokenHash, keyKind, project, stage } = args;
 
@@ -979,6 +981,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: keyAccount.secretHash,
       scoped: true,
       deployKeyId: deployKey._id,
+      lastUsedAt: deployKey.lastUsedAt,
     };
   },
 });
