@@ -63,7 +63,7 @@ flowchart TD
 - Limits come from `packages/convex/model/sandboxRules.ts`: `timeout` 30 s default, capped by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`; output capped by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. A blocking call also stays inside `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`. Background jobs are bound by neither.
 - Env: `mergeSandboxEnv()` in `utils.ts` starts from the account's `envVars`. Only a harness shell command on `lambda` adds a per-call layer (`requestEnv`), and `RESERVED_SANDBOX_ENV_KEYS` (`PATH`, `HOME`, `LD_PRELOAD`, `NODE_OPTIONS`, the `__CB_*` callback slots and the rest) are dropped from it. The `BROODS_*` identity names are dropped from both, then the run's `BROODS_*` identity is set on top.
 - The exec wire contract a MicroVM image, the Cloudflare bridge and a `custom` server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`. `parseExecResponse` and `execRunResult` in `utils.ts` read it.
-- CPU: `sandbox` reports CPU from the workdir cgroup and `lambda` from the image's `getrusage`. `src/harness/harness.ts` sums it into `sandboxUsage` rows and puts `tool.compute.type` and `tool.compute.cpu_usec` on the `tool.call` span. Other providers report none.
+- CPU: `sandbox` reports CPU from the workdir cgroup and `lambda` from the image's `getrusage`. `src/harness/usage-metering.ts` sums it per task into the `sandboxUsage` field of the run's `taskUsage` row and puts `tool.compute.type` and `tool.compute.cpu_usec` on the `tool.call` span. Other providers report none.
 
 ### Contribute a provider
 
@@ -555,7 +555,7 @@ stateDiagram-v2
 
 ## Worker
 
-Bash in a V8 isolate, no container and no Durable Object. `isolate-executor.ts` calls the Worker in `apps/cloudflare-worker` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `gzip`, and `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
+Bash in a V8 isolate, no container and no Durable Object. `worker-executor.ts` calls the Worker in `apps/cloudflare-worker` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `gzip`, and `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
 
 ```mermaid
 sequenceDiagram

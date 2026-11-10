@@ -204,6 +204,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ? workspacePath(request, this.#workspaceRoot())
         : undefined;
       // The workdir API has no exec timeout, so the command carries its own.
+      const execStartedAt = Date.now();
       const result = await sandbox.exec(
         `timeout -k 5 ${request.timeoutSeconds} bash -c ${shellQuote(request.code)}`,
         {
@@ -222,15 +223,21 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         request.outputLimitBytes,
       );
 
+      // 124/137 are timeout's TERM/KILL, but before the deadline the command's own exit or an OOM.
+      const pastDeadline =
+        Date.now() - execStartedAt >= request.timeoutSeconds * 1000;
+      const timedOut =
+        pastDeadline && (result.exit_code === 124 || result.exit_code === 137);
+
       return {
         ok: result.exit_code === 0,
         runtime: "bash",
-        exitCode: result.exit_code,
+        exitCode: timedOut ? null : result.exit_code,
         stdout: stdout.value,
         stderr: stderr.value,
         durationMs: Date.now() - startedAt,
         truncated: stdout.truncated || stderr.truncated,
-        timedOut: result.exit_code === 124 || result.exit_code === 137,
+        timedOut: timedOut,
         provider: "sandbox",
       };
     } finally {

@@ -62,14 +62,14 @@ export const myAgent = defineAgent({
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
   sandboxes: [lambdaSandbox],
-  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and
-  // `broods run` can reach this agent. Off by default: a private agent is
-  // only reachable via internal endpoints or channel webhooks.
+  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key can
+  // reach this agent. Off by default: a private agent is only reachable via
+  // internal endpoints, channel webhooks or `broods run`.
   publicAccess: true,
 });
 ```
 
-`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the runtime key reach this agent, which `broods run` and the SDK use.
+`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the runtime key, which the SDK uses, reach this agent. `broods run` uses your login and works either way.
 
 Leave `broods dev` running. Every save re-syncs.
 
@@ -88,10 +88,13 @@ This opens a chat in the terminal. Reasoning streams in, tool calls show as card
 `broods dev` generates typed references in `broods/_generated/`:
 
 ```ts title="index.ts"
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient(); // reads BROODS_API_KEY from .env.local
+// reads BROODS_API_KEY and BROODS_USER_TOKEN_SECRET from .env.local
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
 
 const result = await client.run(api.agents.myAgent, {
   input: "What is the capital of France?",
@@ -108,6 +111,8 @@ for await (const part of client.stream(api.agents.myAgent, {
 ```bash
 bun index.ts
 ```
+
+A new agent requires a user token beside the runtime key. On a real site your server signs one per user, see [Users behind the runtime key](guides/security.md#users-behind-the-runtime-key).
 
 Other languages use the same endpoint over HTTP. See [HTTP API](reference/http-api.md).
 
