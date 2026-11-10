@@ -12,6 +12,8 @@ import * as harness from "../src/harness/harness.ts";
 import * as ingress from "../src/harness/ingress.ts";
 import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
 import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
+import * as questions from "../src/harness/questions.ts";
+import type { PendingQuestionInput } from "../src/harness/questions.ts";
 import { Session } from "../src/harness/session.ts";
 import { createTools } from "../src/harness/tools/index.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
@@ -804,6 +806,56 @@ describe("streamed runs", (): void => {
 
       expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
       expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
+
+    it("refuses an answer to an open question once the budget is used, before it resumes the run", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 100,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 60,
+        warned: false,
+      });
+      const message = channelMessage(1);
+      const pending: PendingQuestionInput = {
+        questions: [
+          { id: "q", header: "Stage", question: "Which stage?", options: [] },
+        ],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      };
+      spyOn(questions, "listOpenQuestions").mockResolvedValue([
+        {
+          pending: pending,
+          record: {
+            resultId: "async_tool_1",
+            parentEventId: `${message.eventId}:async-question:async_tool_1`,
+            conversationKey: message.conversationKey,
+            toolName: "ask_questions",
+            toolCallId: "call_1",
+            input: pending,
+            status: "processing",
+            createdAt: "2026-10-01T00:00:00.000Z",
+            updatedAt: "2026-10-01T00:00:00.000Z",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      ]);
+
+      await handleChannelRequest(message);
+
+      expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
+      expect(runtime.mutate).not.toHaveBeenCalledWith(
+        "updateAsyncToolResult",
+        expect.anything(),
+      );
     });
   });
 });
