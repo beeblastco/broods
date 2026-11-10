@@ -2,11 +2,13 @@
 
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
+import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 // An id the caller cannot read (deleted, another org's) resolves to null: not found.
 export default function ProjectLayout({
@@ -16,8 +18,31 @@ export default function ProjectLayout({
 }): React.ReactNode {
   const { projectId } = useParams<{ projectId: Id<"projects"> }>();
   const project = useQuery(api.project.getById, { projectId: projectId });
+  const active = useQuery(api.org.orgs.getActive, useSignedIn() ? {} : "skip");
+  const setActive = useMutation(api.org.orgs.setActive);
+  // The pages act on the active org, so opening another org's project switches to that org once.
+  const [opened, setOpened] = useState<{
+    foreign: Id<"orgs"> | null;
+    projectId: Id<"projects">;
+  } | null>(null);
+  if (project && active && opened?.projectId !== projectId) {
+    setOpened({
+      foreign: project.orgId === active._id ? null : project.orgId,
+      projectId: projectId,
+    });
+  }
+  const foreign = opened?.projectId === projectId ? opened.foreign : null;
+  const [refused, setRefused] = useState<Id<"orgs"> | null>(null);
 
-  if (project !== null) return children;
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- the active org is the user's Convex row
+  useEffect(() => {
+    if (!foreign) return;
+    void setActive({ orgId: foreign }).catch((): void => setRefused(foreign));
+  }, [foreign, setActive]);
+
+  if (project !== null && (!foreign || refused !== foreign)) {
+    return foreign && active?._id !== foreign ? null : children;
+  }
 
   return (
     <StatusPage
