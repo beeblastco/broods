@@ -22,6 +22,7 @@ import {
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
+  removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
@@ -44,6 +45,7 @@ import {
   type CliProject,
   type CliStage,
   type CliStageSession,
+  cliFetch,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -155,7 +157,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage  github
   Inspect   agent  runs  trace  audit  usage  whoami
-  Account   login  connect  disconnect  org  project
+  Account   login  logout  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help inside an error goes to stderr, so it stays plain rather than guess that stream's TTY.
@@ -268,6 +270,12 @@ Authenticates through the dashboard and stores the token in
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logout: `Usage: broods logout [options]
+
+Revokes the stored login on the server and removes it from
+~/.broods/config.json. Other servers' logins stay.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -501,6 +509,10 @@ async function main(): Promise<void> {
       await login(args);
 
       return;
+    case "logout":
+      await logout(args);
+
+      return;
     case "connect":
       await connectCommand(args);
 
@@ -730,6 +742,23 @@ async function login(args: string[]): Promise<void> {
     optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
+}
+
+// A 401 means the server already refuses the token, so the local copy goes either way.
+async function logout(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const auth = await requireAuth(optionValue(args, "--base-url"));
+  const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(
+      `Logout failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  await removeStoredAuth(auth.baseUrl);
+  printSuccess(`Logged out of ${auth.baseUrl}`);
 }
 
 function apiErrorMessage(error: unknown): string {

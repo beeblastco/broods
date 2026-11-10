@@ -81,6 +81,20 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   );
 }
 
+export async function removeStoredAuth(baseUrl: string): Promise<void> {
+  const file = readStoredAuthFile();
+  if (!file?.logins[baseUrl]) return;
+  const logins = Object.fromEntries(
+    Object.entries(file.logins).filter(([url]): boolean => url !== baseUrl),
+  );
+  const current =
+    file.current === baseUrl ? (Object.keys(logins)[0] ?? "") : file.current;
+  await writePrivateFile(
+    USER_CONFIG_PATH,
+    `${JSON.stringify({ current: current, logins: logins }, null, 2)}\n`,
+  );
+}
+
 export async function writePrivateFile(
   path: string,
   body: string,

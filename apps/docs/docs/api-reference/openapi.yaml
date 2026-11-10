@@ -1184,6 +1184,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeleteResponse"
 
+  /v1/account/auth/token:
+    delete:
+      tags:
+        - Accounts
+      summary: Revoke own CLI login
+      description: Revokes the `bcli_` login token sent as the bearer. `broods logout` calls it.
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Login revoked
+        "401":
+          description: Not a `bcli_` login, unknown, or already revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /v1/account/rotate-secret:
     post:
       tags:
