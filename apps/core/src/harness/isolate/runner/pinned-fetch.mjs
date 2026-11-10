@@ -8,6 +8,12 @@ import { lookup as defaultLookup } from "node:dns/promises";
 export const BODY_LIMIT_BYTES = 5 * 1024 * 1024;
 export const FETCH_TIMEOUT_MS = 30_000;
 export const REDIRECT_LIMIT = 5;
+const BODY_HEADERS = new Set([
+  "content-encoding",
+  "content-language",
+  "content-location",
+  "content-type",
+]);
 const CREDENTIAL_HEADERS = new Set([
   "authorization",
   "cookie",
@@ -78,7 +84,7 @@ async function guardedFetchWithDeadline(url, init, state) {
 
     return guardedFetchWithDeadline(
       next.toString(),
-      next.origin === parsed.origin ? init : withoutCredentials(init),
+      redirectInit(response.status, init, next.origin !== parsed.origin),
       {
         ...state,
         redirects: state.redirects + 1,
@@ -338,10 +344,27 @@ function concatBytes(chunks, total) {
   return result;
 }
 
-function withoutCredentials(init) {
+// Fetch's redirect rules: 303 (and 301/302 after a POST) turn into a bodiless GET.
+function redirectInit(status, init, crossOrigin) {
+  const next = crossOrigin ? withoutHeaders(init, CREDENTIAL_HEADERS) : init;
+  const method = (next.method ?? "GET").toUpperCase();
+  const asGet =
+    status === 303
+      ? method !== "HEAD"
+      : (status === 301 || status === 302) && method === "POST";
+  if (!asGet) return next;
+
+  return {
+    ...withoutHeaders(next, BODY_HEADERS),
+    method: "GET",
+    body: undefined,
+  };
+}
+
+function withoutHeaders(init, names) {
   const headers = normalizeRequestHeaders(init.headers);
   for (const key of Object.keys(headers)) {
-    if (CREDENTIAL_HEADERS.has(key.toLowerCase())) delete headers[key];
+    if (names.has(key.toLowerCase())) delete headers[key];
   }
 
   return { ...init, headers: headers };
