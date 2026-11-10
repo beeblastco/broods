@@ -14,7 +14,7 @@ import { Label } from "@/app/components/ui/label";
 import { toErrorMessage } from "@/app/lib/errors";
 import { type FormEvent, useRef, useState } from "react";
 
-export const CRITICAL_SAFETY_PHRASE =
+const CRITICAL_SAFETY_PHRASE =
   "I understand that it will delete all data and can't undo";
 
 interface Props {

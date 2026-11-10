@@ -185,7 +185,7 @@ Core writes compact JSON lines for metric-bearing events, so CloudWatch Logs Ins
 
 Common fields: `accountId`, `agentId`, `conversationKey`, `eventId`, `modelProvider`, `modelId`, `stepNumber`, `durationMs`.
 
-A `tool.call` span for off-process work carries `tool.compute.type` and `tool.compute.cpu_usec`: `sandbox` (host cgroup), `lambda` (image `getrusage`) or `mcp-sandbox` (hosted MCP, an even share of its batch's CPU; Cloudflare reports none). The same samples sum per task into `sandboxUsage` rows.
+A `tool.call` span for off-process work carries `tool.compute.type` and `tool.compute.cpu_usec`: `sandbox` (host cgroup), `lambda` (image `getrusage`) or `mcp-sandbox` (hosted MCP, an even share of its batch's CPU; Cloudflare reports none). The same samples sum per task into the `sandboxUsage` field of `taskUsage`.
 
 A rate-limited MCP call waits out the window and retries inside the call, up to three times. Its span then carries `tool.retry.count` and `tool.retry.wait_ms`, so a slow call shows whether the server or the waits took the time. A failed `tool.call` has no `tool.output`; its error text is the span's `error` (the OTel status message).
 

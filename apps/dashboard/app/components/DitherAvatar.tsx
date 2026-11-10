@@ -17,7 +17,7 @@ const BAYER_4X4: readonly (readonly number[])[] = [
   [15, 7, 13, 5],
 ];
 
-export type DitherAvatarProps = {
+type DitherAvatarProps = {
   seed: string;
   size?: number;
   className?: string;

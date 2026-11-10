@@ -875,7 +875,7 @@ export function TracingPanel({
         },
       );
       if (response.ok) return;
-      const payload = (await response.json()) as {
+      const payload = (await response.json().catch(() => ({}))) as {
         error?: string | { message?: string };
       };
       const error =

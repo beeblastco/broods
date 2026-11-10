@@ -14,7 +14,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { ChevronDown } from "lucide-react";
 
-export interface FilterColumn {
+interface FilterColumn {
   label: string;
   filter: HeadFilter;
 }
