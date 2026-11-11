@@ -153,7 +153,7 @@ const { secret } = await account.rotateSecret();
 
 `get`/`update` methods return `null` (and `delete` returns `false`) when the
 resource does not exist, so upsert flows need no try/catch; other API errors
-throw `BroodsAccountApiError` with the HTTP status. Secrets inside configs are
+throw `BroodsAccountApiError` with the HTTP `status` and the server's `code`. Secrets inside configs are
 encrypted at rest and come back redacted on reads.
 
 ## License

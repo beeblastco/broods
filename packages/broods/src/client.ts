@@ -1,12 +1,13 @@
-import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
+import type { ModelMessage } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
   resolveRunEvents,
   type AgentRunEventInput,
   type AgentRunOverrides,
 } from "./run-input.ts";
-import { readSseStream } from "./stream.ts";
+import { readSseStream, type AgentStreamPart } from "./stream.ts";
 import type {
   AnswersAccepted,
   AsyncRequestAccepted,
@@ -24,19 +25,29 @@ type AgentRunInputBase = {
   mode?: "reject" | "followup" | "collect" | "steer";
   /** Defaults to `eventId`. */
   idempotencyKey?: string;
+  /**
+   * `run`/`stream`: aborting closes the stream, and core fails the run when it next writes a frame.
+   * `runAsync`: cancels only the request; a run core already accepted keeps going, so pass an
+   * `eventId` and reuse it on a retry, or the retry starts a second run.
+   */
+  signal?: AbortSignal;
 } & AgentRunOverrides;
 
 export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
 
 export interface AgentRunResult {
   text: string;
-  events: TextStreamPart<ToolSet>[];
+  events: AgentStreamPart[];
+  /** The agent's `model.output` result, from the run's `structured-output` frame. */
+  output?: unknown;
 }
 
 export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
+  /** Cancels only the request; an accepted continue keeps going, so retry with its `eventId`. */
+  signal?: AbortSignal;
 }
 
 export interface AgentAnswerInput {
@@ -45,6 +56,8 @@ export interface AgentAnswerInput {
   /** One per open prompt, from an `awaiting_input` status's `questions`. */
   answers: [QuestionAnswer, ...QuestionAnswer[]];
   eventId?: string;
+  /** Cancels only the request; accepted answers still resume, so retry with their `eventId`. */
+  signal?: AbortSignal;
 }
 
 export class IngressAcceptedError extends Error {
@@ -129,7 +142,7 @@ export type AgentHandle = {
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
   continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
   answer: (input: AgentAnswerInput) => Promise<AnswersAccepted>;
-  stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
+  stream: (input: AgentRunInput) => AsyncGenerator<AgentStreamPart>;
 };
 
 export class BroodsClient {
@@ -200,9 +213,7 @@ export class BroodsClient {
           this.continue({ ...input, agentId: id }),
         answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
           this.answer({ ...input, agentId: id }),
-        stream: (
-          input: AgentRunInput,
-        ): AsyncGenerator<TextStreamPart<ToolSet>> =>
+        stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
     }
@@ -223,7 +234,7 @@ export class BroodsClient {
         this.continue(ref, input),
       answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
         this.answer(ref, input),
-      stream: (input: AgentRunInput): AsyncGenerator<TextStreamPart<ToolSet>> =>
+      stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
         this.stream(ref, input),
     };
   }
@@ -238,8 +249,9 @@ export class BroodsClient {
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
   ): Promise<AgentRunResult> {
-    const events: TextStreamPart<ToolSet>[] = [];
+    const events: AgentStreamPart[] = [];
     let text = "";
+    let output: unknown;
 
     const stream = maybeInput
       ? this.stream(refOrInput as AgentReference, maybeInput)
@@ -250,24 +262,25 @@ export class BroodsClient {
     for await (const part of stream) {
       events.push(part);
       if (part.type === "text-delta") text += part.text;
+      if (part.type === "structured-output") output = part.output;
     }
 
-    return { text: text, events: events };
+    return { text: text, events: events, output: output };
   }
 
   stream(
     ref: AgentReference,
     input: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   stream(
     input: AgentRunInput & { agentId: string; agentName?: string },
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   async *stream(
     refOrInput:
       | AgentReference
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>> {
+  ): AsyncGenerator<AgentStreamPart> {
     const input = maybeInput
       ? {
           ...maybeInput,
@@ -280,10 +293,12 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    const response = await this.openStream(body, targetUrl);
+    const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
-      throw new Error(
-        `Run failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Run failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
     if (response.status === 202) {
       throw new IngressAcceptedError(
@@ -293,9 +308,9 @@ export class BroodsClient {
     if (!response.body) throw new Error("Run response has no body");
 
     for await (const data of readSseStream(response.body)) {
-      let part: TextStreamPart<ToolSet>;
+      let part: AgentStreamPart;
       try {
-        part = JSON.parse(data) as TextStreamPart<ToolSet>;
+        part = JSON.parse(data) as AgentStreamPart;
       } catch {
         continue;
       }
@@ -331,7 +346,7 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Async run");
+    return this.postAcceptedRun(targetUrl, body, "Async run", input.signal);
   }
 
   /** Re-enter a conversation whose last turn stopped short (step cap, provider fault). */
@@ -356,7 +371,7 @@ export class BroodsClient {
     };
     const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Continue");
+    return this.postAcceptedRun(targetUrl, body, "Continue", input.signal);
   }
 
   /** Settles open `ask_questions` prompts; the conversation resumes in the background. */
@@ -384,7 +399,14 @@ export class BroodsClient {
       method: "POST",
       headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: input.signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `Answer failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `Answer failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
@@ -405,8 +427,10 @@ export class BroodsClient {
 
     if (response.status === 404) return { status: "not_found" };
     if (!response.ok)
-      throw new Error(
-        `Status check failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Status check failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
 
     return (await response.json()) as AsyncStatus;
@@ -469,12 +493,20 @@ export class BroodsClient {
     targetUrl: string,
     body: { agentId: string; conversationKey: string },
     label: string,
+    signal?: AbortSignal,
   ): Promise<AsyncAgentRun> {
     const response = await this.fetchJson(targetUrl, {
       method: "POST",
       headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `${label} failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `${label} failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
@@ -490,12 +522,18 @@ export class BroodsClient {
   private async openStream(
     body: unknown,
     targetUrl: string,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     if (this.apiKey) {
-      return await this.fetchCore(body, targetUrl, {
-        Authorization: `Bearer ${this.apiKey}`,
-        ...(await this.userTokenHeaders()),
-      });
+      return await this.fetchCore(
+        body,
+        targetUrl,
+        {
+          Authorization: `Bearer ${this.apiKey}`,
+          ...(await this.userTokenHeaders()),
+        },
+        signal,
+      );
     }
 
     throw new Error(
@@ -509,6 +547,7 @@ export class BroodsClient {
     body: unknown,
     targetUrl: string,
     authHeaders: Record<string, string>,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     try {
       return await this.fetchImpl(targetUrl, {
@@ -519,8 +558,10 @@ export class BroodsClient {
           ...authHeaders,
         },
         body: JSON.stringify(body),
+        signal: signal,
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or BROODS_HOST/BROODS_BASE_URL ` +
@@ -558,6 +599,7 @@ export class BroodsClient {
     try {
       return await this.fetchImpl(targetUrl, init);
     } catch (error) {
+      if (init.signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `Cause: ${error instanceof Error ? error.message : String(error)}`,
