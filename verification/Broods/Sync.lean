@@ -2,10 +2,11 @@
 # SDK manifest sync
 
 Model of `broods dev` / `broods deploy` against one stage. The CLI PUTs the whole
-manifest with a `prune` flag (`packages/broods/src/sync.ts` `putManifest`). The
+manifest with `prune` (`packages/broods/src/sync.ts` `putManifest`): `true`, or the
+list of deletes `broods dev` asked about and the user confirmed. The
 server upserts every resource by name, claims an undeclared CLI row with the same
 content as a rename, and with prune drops the CLI-managed rows the manifest no
-longer declares (`packages/convex/model/cliSyncResources.ts`, and
+longer declares, only those the list names when it sends one (`packages/convex/model/cliSyncResources.ts`, and
 `recordExternalResourcesBySecretHash` for skills, hooks and MCP servers; `syncCrons`
 prunes only `managedBy: "cli"` crons). `GET /manifest` (`resourcesForStage` in
 `packages/convex/model/cliSyncManifest.ts`) reads the CLI-managed rows back, plus
@@ -144,6 +145,14 @@ def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : Stat
   let upserted := m.foldl (upsert store m) s
   if prune then upserted.filter (fun row => !row.cli || m.any (·.key == row.res.key))
   else upserted
+
+/-- `PUT /manifest` with `prune: [{ kind, name }]`: the sync without prune, then
+only the undeclared CLI rows `chosen` names are dropped (`prunes` in
+`packages/convex/model/cliSync.ts`). -/
+def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind × Nat))
+    (s : State) : State :=
+  (sync store m false s).filter
+    (fun row => !row.cli || m.any (·.key == row.res.key) || !chosen.contains row.res.key)
 
 /-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
 replaced by its storage handle; its `sha256` stays. -/
@@ -362,6 +371,25 @@ theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Res
     · exact storeExternal_snapshot large r (by assumption)
     · exact hround r (by simpa using ‹¬r.kind.external = true›)
 
+/-- A prune list deletes nothing it does not name: a row the sync without prune
+keeps survives unless the list names its key. -/
+theorem syncOnly_keeps_unnamed {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
+    {row : Row} (hrow : row ∈ sync store m false s)
+    (hc : chosen.contains row.res.key = false) :
+    row ∈ syncOnly store m chosen s := by
+  have h : row.res.key ∉ chosen := by simpa using hc
+  simp [syncOnly, hrow, h]
+
+/-- A list naming every row's key prunes exactly like `prune: true`. -/
+theorem syncOnly_all {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
+    (hall : ∀ row ∈ sync store m false s, chosen.contains row.res.key = true) :
+    syncOnly store m chosen s = sync store m true s := by
+  simp only [syncOnly, sync, Bool.false_eq_true, ite_false, ite_true] at hall ⊢
+  apply List.filter_congr
+  intro row hrow
+  have h : row.res.key ∈ chosen := by simpa using hall row hrow
+  simp [h]
+
 /-! ## Findings, fixed, as executable witnesses -/
 
 /-- A hosted MCP server converges: small bundles are stored without their bytes,
@@ -387,6 +415,16 @@ example :
     let m : Manifest := [⟨.agent, 2, ⟨7, none, none⟩⟩]
     let s := sync id m false [⟨old, true⟩]
     read s = m ∧ diff m (read s) = [] := by
+  decide
+
+/-- `broods dev` prunes only what the user confirmed: a declined agent survives
+the prune that removes the one they said yes to. `prune: true`, the only prune it
+used to send after asking once, removes both. -/
+example :
+    let a : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
+    let b : Resource := ⟨.agent, 2, ⟨8, none, none⟩⟩
+    read (syncOnly id [] [b.key] [⟨a, true⟩, ⟨b, true⟩]) = [a] ∧
+      read (sync id [] true [⟨a, true⟩, ⟨b, true⟩]) = [] := by
   decide
 
 /-- A cron an agent scheduled on its CLI agent survives `deploy --prune`, as

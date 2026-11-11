@@ -4,7 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { storedWorkspaceRef } from "./agentRules";
 import { normalizeChannelRecordConfig } from "./channelRules";
-import { resourceName, type CliResource } from "./cliSync";
+import { prunes, resourceName, type CliResource } from "./cliSync";
 import { ClientError } from "./clientError";
 import { parseInput } from "./inputSchema";
 import { configObject, parseOr } from "./storedJson";
@@ -66,6 +66,7 @@ export async function pruneChannelRecordResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   const declared = new Set(
     resources
@@ -77,7 +78,11 @@ export async function pruneChannelRecordResources(
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const record of existing) {
-    if (record.managedBy === "cli" && !declared.has(record.name)) {
+    if (
+      record.managedBy === "cli" &&
+      !declared.has(record.name) &&
+      prunes(pruneOnly, "channelRecord", record.name)
+    ) {
       await ctx.db.patch(record._id, {
         status: "deleted",
         deletedAt: Date.now(),
