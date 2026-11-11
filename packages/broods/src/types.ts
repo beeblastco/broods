@@ -32,7 +32,7 @@ export interface AnswersAccepted {
   status: "accepted";
   resultId: string;
   eventId?: string;
-  /** Pass to `waitForAsyncStatus` to follow the resumed turn. */
+  /** For `waitForAsyncStatus`. Set only when a turn started or queued: the last answer's. */
   runId?: string;
   statusUrl?: string;
   invoked?: boolean;

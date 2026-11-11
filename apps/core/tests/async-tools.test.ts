@@ -158,7 +158,6 @@ describe("resumeLostAsyncToolResults", () => {
         admission: "capacity",
         invoked: false,
         publicEventId: "async-tools-async_tool_full",
-        runId: "run_async_tool_full",
       },
       async_tool_gone: { kind: "skip" },
     };

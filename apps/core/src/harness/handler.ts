@@ -783,7 +783,7 @@ async function resumeConversation(options: {
       admission: admission.outcome,
       invoked: false,
       publicEventId: continuationEvent.publicEventId,
-      runId: admission.runId ?? continuationEvent.runId,
+      ...(admission.runId ? { runId: admission.runId } : {}),
     };
   }
   try {
@@ -805,7 +805,7 @@ async function resumeConversation(options: {
     admission: admission.outcome,
     invoked: true,
     publicEventId: continuationEvent.publicEventId,
-    runId: admission.runId ?? continuationEvent.runId,
+    ...(admission.runId ? { runId: admission.runId } : {}),
   };
 }
 

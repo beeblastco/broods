@@ -810,14 +810,8 @@ describe("streamed runs", (): void => {
           : null,
     );
 
-    spyOn(ingress, "acceptIngress").mockResolvedValue({
-      outcome: "owner",
-      runId: "run_resumed",
-      ownerGeneration: 1,
-    });
-    process.env.PUBLIC_BASE_URL = "https://api.example.test";
-    try {
-      const response = await handler(
+    const answer = async (): Promise<Response> =>
+      handler(
         coreRequest(
           "POST",
           "/v1/runs",
@@ -833,16 +827,32 @@ describe("streamed runs", (): void => {
           },
         ),
       );
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      const admit = spyOn(ingress, "acceptIngress").mockResolvedValue({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const admitted = await answer();
+      // A full queue admits nothing, so there is no run to name.
+      admit.mockResolvedValue({ outcome: "capacity" });
+      const refused = await answer();
 
-      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
-      expect(response.status).toBe(202);
-      expect(await response.json()).toMatchObject({
+      expect(admit).toHaveBeenCalledTimes(2);
+      expect(admitted.status).toBe(202);
+      expect(await admitted.json()).toMatchObject({
         status: "accepted",
         resultId: "async_tool_a",
         runId: "run_resumed",
         statusUrl: "https://api.example.test/v1/runs/run_resumed",
         alreadyAnswered: ["async_tool_b"],
       });
+      expect(refused.status).toBe(202);
+      const refusedBody = (await refused.json()) as Record<string, unknown>;
+      expect(refusedBody).toMatchObject({ status: "accepted", invoked: false });
+      expect(refusedBody).not.toHaveProperty("runId");
+      expect(refusedBody).not.toHaveProperty("statusUrl");
     } finally {
       delete process.env.PUBLIC_BASE_URL;
     }

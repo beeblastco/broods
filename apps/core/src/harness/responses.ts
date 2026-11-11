@@ -18,7 +18,8 @@ export type ContinuationOutcome =
       admission: IngressAdmission["outcome"];
       invoked: boolean;
       publicEventId: string;
-      runId: string;
+      // Absent when nothing was admitted (capacity, conflict, a stored result): no run to poll.
+      runId?: string;
     }
   | { kind: "skip" };
 
@@ -38,13 +39,15 @@ export function continuationResponse(
     });
   }
 
-  const statusUrl = directStatusUrl({ runId: outcome.runId });
+  const statusUrl = outcome.runId
+    ? directStatusUrl({ runId: outcome.runId })
+    : null;
 
   return jsonResponse(202, {
     status: "accepted",
     resultId: settled.resultId,
     eventId: outcome.publicEventId,
-    runId: outcome.runId,
+    ...(outcome.runId ? { runId: outcome.runId } : {}),
     ...(statusUrl ? { statusUrl: statusUrl } : {}),
     invoked: outcome.invoked,
     ...skipped,
