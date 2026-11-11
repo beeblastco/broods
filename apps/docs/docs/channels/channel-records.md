@@ -72,8 +72,8 @@ The room id field is named after the provider:
 | Discord     | `channelId`      | `guildId`   |
 | GitHub      | `repo`           |             |
 | Linear      | `team`           |             |
-| Telegram    | `chatId`         |             |
-| Zalo        | `chatId`         |             |
+| Telegram    | `chatId`         | `botId`     |
+| Zalo        | `chatId`         | `botId`     |
 | WhatsApp    | `waId`           |             |
 | Teams       | `channelId`      | `teamId`    |
 | Google Chat | `spaceName`      |             |
@@ -81,6 +81,8 @@ The room id field is named after the provider:
 | Pancake     | `conversationId` |             |
 | Instagram   | `igsid`          |             |
 | Messenger   | `psid`           |             |
+
+The extra field ties the record to one team, guild or bot: a message from another one skips the record. WhatsApp and Twilio records are tied to the connection's `phoneNumberId` or `phoneNumber` without an extra field, unless that value is an env ref. Telegram and Zalo take `botId`, the digits before `:` in the bot token. A record with no tie applies on every number or bot the account has; deploying it again with a tie scopes it.
 
 Notes on the fields:
 

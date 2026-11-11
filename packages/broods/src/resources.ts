@@ -35,6 +35,7 @@ import type {
   WhatsAppSource,
 } from "./contracts.ts";
 import type { Tool } from "ai";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
@@ -508,6 +509,8 @@ export type TeamsChannelInput = ChannelRulesInput & {
 export type TelegramChannelInput = ChannelRulesInput & {
   connection: TelegramConnectionDefinition;
   chatId: string;
+  /** The digits before ":" in the bot token. Omit and the record applies on every bot. */
+  botId?: string;
 };
 
 export type TwilioChannelInput = ChannelRulesInput & {
@@ -519,6 +522,8 @@ export type TwilioChannelInput = ChannelRulesInput & {
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
   chatId: string | readonly string[];
+  /** The digits before ":" in the bot token. Omit and the record applies on every bot. */
+  botId?: string;
 };
 
 export type InstagramChannelInput = ChannelRulesInput & {
@@ -1086,33 +1091,47 @@ export function defineTeamsChannel<const Name extends string>(
 export function defineTelegramChannel<const Name extends string>(
   input: ResourceInput<Name, TelegramChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, chatId, ...rules } = input;
+  const { name, description, chatId, botId, ...rules } = input;
 
-  return defineChannelResource(name, description, chatId, undefined, rules);
+  return defineChannelResource(name, description, chatId, botId, rules);
 }
 
 export function defineTwilioChannel<const Name extends string>(
   input: ResourceInput<Name, TwilioChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, from, ...rules } = input;
+  const { phoneNumber } = rules.connection.config;
 
-  return defineChannelResource(name, description, from, undefined, rules);
+  return defineChannelResource(
+    name,
+    description,
+    from,
+    literalId(phoneNumber),
+    rules,
+  );
 }
 
 export function defineWhatsAppChannel<const Name extends string>(
   input: ResourceInput<Name, WhatsAppChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, waId, ...rules } = input;
+  const { phoneNumberId } = rules.connection.config;
 
-  return defineChannelResource(name, description, waId, undefined, rules);
+  return defineChannelResource(
+    name,
+    description,
+    waId,
+    literalId(phoneNumberId),
+    rules,
+  );
 }
 
 export function defineZaloChannel<const Name extends string>(
   input: ResourceInput<Name, ZaloChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, chatId, ...rules } = input;
+  const { name, description, chatId, botId, ...rules } = input;
 
-  return defineChannelResource(name, description, chatId, undefined, rules);
+  return defineChannelResource(name, description, chatId, botId, rules);
 }
 
 export function isBroodsConfig(
@@ -1189,4 +1208,12 @@ function defineResource<
     ...(description ? { description: description } : {}),
     config: config,
   };
+}
+
+// An env ref resolves only at run time, so it cannot tie a record to a number.
+function literalId(value: string | EnvRef | undefined): string | undefined {
+  return typeof value === "string" &&
+    !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value)
+    ? value
+    : undefined;
 }
