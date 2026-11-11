@@ -306,6 +306,7 @@ describe("queued ingress recovery", () => {
       admission: "queued",
       invoked: false,
       publicEventId: "async-tools-async_tool_lost",
+      runId: "run_async_tool_lost",
     });
     try {
       startIngressRecovery();

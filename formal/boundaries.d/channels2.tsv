@@ -1,0 +1,45 @@
+kind	name	reason
+external	^WEBHOOK_BODY\.safeParse$	Zod validates the webhook schema; its success flag and parsed data are checked by the caller.
+external	^response\.body\?\.getReader$	The standard Response stream provides the reader; subsequent reads are checked separately.
+external	^response\.body\?\.cancel$	The standard stream cancellation promise signals completion before the size error.
+external	^reader\?\.(read|cancel)$	Standard stream reads supply bytes and completion; cancellation is awaited before rejecting oversized input.
+external	^getTopLevelMediaType$	The provider-utils media parser supplies the top-level MIME type used for wildcard matching.
+external	^detectMediaType$	The provider-utils signature detector supplies a sniffed MIME type, with claim precedence modelled here.
+opaque	ReadableStreamDefaultReader	The standard stream reader is accessed only through the recorded read and cancel methods.
+external	^SERVICE_ACCOUNT_KEY\.safeParse$	Zod validates the service-account key and returns the typed fields; the twin models parse failure and success selection.
+external	^fetchData$	The caller-supplied reader supplies Buffer or ArrayBuffer bytes; the twin preserves the bytes through normalization.
+external	^channel\.(sendReplyButtons|sendText)$	The ChannelActions contract sends the requested reply; effect arguments verify failure UI selection.
+external	^sendSlackResponseUrl$	The Chat SDK handles Slack delivery; the caller selects payload fields and translates SDK errors.
+external	^transport\.postMessage$	The Telegram SDK handles posting each attachment batch; order and payloads are modelled by the twin.
+external	^this\.parseSlashCommand$	The Discord SDK parses slash options; this method forwards both arguments unchanged.
+external	^this\.requestContext\.run$	AsyncLocalStorage invokes the callback with the supplied slash-command context.
+external	^this\.verifySignature$	The WhatsApp SDK verifies Meta signatures; this wrapper only normalizes a missing signature.
+opaque	BroodsDiscordAdapter	Only recorded SDK methods and scalar fields are used; network and cryptographic work stays at explicit effect calls.
+opaque	BroodsWhatsAppAdapter	Only scalar phone configuration and recorded SDK methods are used.
+external	^random$	Injected jitter source: only its numeric answer is used and the arithmetic is modelled.
+external	^createHash(\("sha256"\) ?\.(update|update\((eventId|bytes)\) ?\.digest))?$	Node SHA-256: the input and encoding are compared, and the hex digest is only sliced.
+external	^mediaTypeToExtension$	The media-type table is a library lookup; the twin only formats its answer.
+external	^new Intl\.DateTimeFormat$	The runtime validates the time zone and throws for an unknown one; the options are compared.
+external	^(cardToFallbackText|cardToBlockKit|postSlackMessage|answeredSlackInputBlocks)$	Chat SDK Slack rendering and delivery; the twin compares inputs and threads their answers.
+external	^resolveUserName$	Caller-supplied name lookup whose answer is only cleaned.
+external	^fetch$	Standard fetch: URL and options are compared, and status and headers are read from the recorded response.
+external	^AbortSignal\.timeout$	Standard timeout signal handed to fetch unchanged.
+external	^Bun\.sleep$	Runtime sleep whose delay is compared and which returns nothing.
+external	^response\.json$	Standard body parse for a fetch whose status the twin has already checked.
+external	^this\.fetchChannel$	The method's own 429 retry; its twin covers the retried call.
+external	^transport\.parseMessage$	Chat SDK message parse; the input is compared and scalar fields of the answer are read.
+external	^getHarnessPublicUrl$	Deployment configuration read; the twin models the unset case.
+external	^requireSecretsEnv$	Environment secret read; the first value is passed on to sealing.
+external	^this\.live$	Reads the private stamp map, which the recorder cannot carry; callers only count or index the answer.
+opaque	BroodsTelegramAdapter	Only passed through to the recorded transport.postMessage effect.
+opaque	Hash	Node hash objects are never read; only the final digest is used.
+opaque	DateTimeFormat	The formatter is returned unchanged.
+opaque	IdentifyBudget	Only the scalar limit and windowMs are read.
+opaque	ThreadDirectory	Only the scalar botToken is read.
+opaque	_Message	Only the scalar id, threadId and text are read; calls that need other fields are unsupported.
+opaque	Timeout	Timer handles are only passed to clearTimeout.
+internal	apps/discord-forwarder/src/identify-budget.ts#IdentifyBudget.live	Filters a private Map the recorder cannot carry, so no twin can compute it; callers use only the pruned list it returns.
+external	^(guardedFetch|writeS3Object|requireEnv|locateMediaObject|readMediaObject|basename|unreadableMediaNote|channelAdapterFromConfig|adapter\?\.rehydrateAttachment|discord\.encodeThreadId)$	Storage, fetch and adapter calls outside this subsystem: inputs are compared and their answers are only threaded through.
+internal	apps/core/src/harness/channel-media.ts#cacheMedia	Writes a module-private LRU the recorder cannot carry, and returns nothing callers read.
+internal	apps/core/src/harness/channel-media.ts#cachedMedia	Reads a module-private LRU the recorder cannot carry; callers only use the bytes it returns or a miss.
+internal	apps/core/src/harness/channel-media.ts#mapToolItems	Its callback's answers are not recorded; callers' twins recompute the mapped message from their own callback results.

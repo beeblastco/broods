@@ -1,0 +1,2 @@
+kind	name	reason
+external	^this\.options\.onMessageCreate$	Hook the forwarder passes to the socket in its constructor options; the twin checks the message it is handed and reads no answer.

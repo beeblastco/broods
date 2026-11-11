@@ -16,12 +16,18 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest, DeploymentRegion } from "../contracts.ts";
+import type {
+  CliManifest,
+  CliPruneTarget,
+  DeploymentRegion,
+} from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
+  readStoredLogin,
+  removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
@@ -44,6 +50,8 @@ import {
   type CliProject,
   type CliStage,
   type CliStageSession,
+  cliFetch,
+  type DiffEntry,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -121,16 +129,11 @@ import {
   majorVersion,
   updateTarget,
 } from "./update.ts";
-import { z } from "zod/mini";
 import packageJson from "../../package.json" with { type: "json" };
 import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
 import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
 
 const VERSION = packageJson.version;
-// Manifest branches `agent get` prints, read leniently: one that does not fit prints as none.
-const CONFIG_BRANCH = z.record(z.string(), z.unknown());
-const SUBAGENT_REFS = z.looseObject({ allowed: z.array(z.unknown()) });
-const WEBHOOK_LIST = z.looseObject({ webhooks: z.array(z.unknown()) });
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const DEV_SYNC_ATTEMPTS = 3;
@@ -155,7 +158,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage  github
   Inspect   agent  runs  trace  audit  usage  whoami
-  Account   login  connect  disconnect  org  project
+  Account   login  logout  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help inside an error goes to stderr, so it stays plain rather than guess that stream's TTY.
@@ -268,6 +271,13 @@ Authenticates through the dashboard and stores the token in
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logout: `Usage: broods logout [options]
+
+Revokes the stored login on the server and removes it from
+~/.broods/config.json. Other servers' logins stay. A BROODS_TOKEN
+in the environment is not touched: unset it yourself.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -405,8 +415,8 @@ takes. Authenticates with your \`broods login\`.
 
 Options:
   --limit <n>           How many to print. Default 20
-  --agent <id>          Only this agent's runs
-  --status <status>     waiting, needs_input, ok or error
+  --agent <id>          Only this agent's runs, from the last seven days
+  --status <status>     waiting, needs_input, ok or error, among the newest 500
   --json                Print them as JSON
 
 ${GLOBAL_OPTIONS}`,
@@ -499,6 +509,10 @@ async function main(): Promise<void> {
       return;
     case "login":
       await login(args);
+
+      return;
+    case "logout":
+      await logout(args);
 
       return;
     case "connect":
@@ -732,16 +746,43 @@ async function login(args: string[]): Promise<void> {
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
-function apiErrorMessage(error: unknown): string {
-  if (!(error instanceof BroodsAccountApiError))
-    return error instanceof Error ? error.message : String(error);
-  try {
-    const body = JSON.parse(error.body) as { error?: { message?: string } };
-
-    return body.error?.message ?? error.message;
-  } catch {
-    return error.message;
+// Revokes the saved login it removes; on a 401 the server revoked nothing, so it only warns.
+async function logout(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const envTokenNote = process.env.BROODS_TOKEN
+    ? "BROODS_TOKEN is set, so commands keep using it. The CLI cannot remove it: unset it where it is set."
+    : "";
+  const auth = readStoredLogin(optionValue(args, "--base-url"));
+  if (!auth) {
+    throw new Error(`No saved login to remove. ${envTokenNote}`.trim());
   }
+  const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(
+      `Logout failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  await removeStoredAuth(auth.baseUrl);
+  if (response.ok) printSuccess(`Logged out of ${auth.baseUrl}`);
+  else
+    printWarning(
+      `Removed the saved login for ${auth.baseUrl}. The server did not revoke it: it was already invalid, or it is lent to an agent and ends with that session.`,
+    );
+  if (envTokenNote) printWarning(envTokenNote);
+}
+
+function apiErrorMessage(error: unknown): string {
+  // With no envelope the server message is the raw body: keep the method, path and status.
+  if (
+    error instanceof BroodsAccountApiError &&
+    error.serverMessage !== error.body
+  )
+    return error.serverMessage;
+
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function connectCommand(args: string[]): Promise<void> {
@@ -863,6 +904,7 @@ async function whoami(args: string[]): Promise<void> {
     auth = await requireAuth(optionValue(args, "--base-url"));
   } catch (error) {
     printWarning(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
 
     return;
   }
@@ -2219,46 +2261,49 @@ async function syncDevOnce(
   const undecided = deletes.filter(
     (entry): boolean => !declined.has(`${entry.kind}:${entry.name}`),
   );
-  let pruned = false;
+  const chosen: DiffEntry[] = [];
   if (undecided.length > 0) {
-    // The server prunes every undeclared resource at once, earlier-declined ones too.
     printWarning("These remote resources are no longer declared locally:");
-    printDiffEntries(deletes);
-    if (
-      await promptConfirm(
-        `Delete all ${deletes.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
+    printDiffEntries(undecided);
+    for (const entry of undecided) {
+      const key = `${entry.kind}:${entry.name}`;
+      if (
+        await promptConfirm(
+          `Delete ${key} from ${manifest.project}/${manifest.stage}?`,
+        )
       )
-    ) {
-      result = await client.putManifest(
-        manifest,
-        true,
-        false,
-        result.revision,
-        source,
-      );
-      await writeGeneratedFiles(
-        manifest,
-        result.ids,
-        process.cwd(),
-        resourceAliases,
-        result.deployment,
-        channels,
-      );
-      await clearDeclinedDeletes();
-      pruned = true;
-    } else {
-      await rememberDeclinedDeletes(
-        undecided.map((entry): string => `${entry.kind}:${entry.name}`),
-      );
+        chosen.push(entry);
+      else await rememberDeclinedDeletes([key]);
     }
   }
+  if (chosen.length > 0) {
+    result = await client.putManifest(
+      manifest,
+      chosen.map(({ kind, name }): CliPruneTarget => ({
+        kind: kind,
+        name: name,
+      })),
+      false,
+      result.revision,
+      source,
+    );
+    await writeGeneratedFiles(
+      manifest,
+      result.ids,
+      process.cwd(),
+      resourceAliases,
+      result.deployment,
+      channels,
+    );
+  }
 
-  if (!pruned && deletes.length > 0) {
-    const names = deletes
+  const kept = deletes.filter((entry): boolean => !chosen.includes(entry));
+  if (kept.length > 0) {
+    const names = kept
       .map((entry): string => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
-      `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+      `${kept.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
     );
   }
 
@@ -2450,12 +2495,6 @@ async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
   const path = process.env.BROODS_DECLINED_FILE;
   if (!path || keys.length === 0) return;
   await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
-}
-
-async function clearDeclinedDeletes(): Promise<void> {
-  const path = process.env.BROODS_DECLINED_FILE;
-  if (!path) return;
-  await writeFile(path, "", "utf8");
 }
 
 async function envCommand(args: string[]): Promise<void> {
@@ -3059,6 +3098,8 @@ async function agentList(args: string[]): Promise<void> {
     return;
   }
   console.log(`Agents in ${manifest.project}/${manifest.stage}:`);
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel } = await import("./manifest-branches.ts");
   for (const agent of agents) {
     const model = agentModelLabel(agent.config);
     const access = agent.config.publicAccess === true ? "public" : "private";
@@ -3076,6 +3117,9 @@ async function agentGet(
   const agent = agents.find((entry): boolean => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel, CONFIG_BRANCH, SUBAGENT_REFS, WEBHOOK_LIST } =
+    await import("./manifest-branches.ts");
   const config = agent.config;
   const sandboxes = [config.sandboxes]
     .flat()
@@ -3143,16 +3187,6 @@ async function agentGet(
       console.log(`    [${index}] ${state} → ${url} (${events})`);
     });
   }
-}
-
-function agentModelLabel(config: Record<string, unknown>): string {
-  const model = CONFIG_BRANCH.safeParse(config.model).data ?? {};
-  const provider =
-    typeof model.provider === "string" ? model.provider : undefined;
-  const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
-  if (provider && modelId) return `${provider}/${modelId}`;
-
-  return modelId ?? provider ?? "unconfigured model";
 }
 
 async function run(args: string[]): Promise<void> {

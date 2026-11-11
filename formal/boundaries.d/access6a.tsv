@@ -1,0 +1,6 @@
+kind	name	reason
+external	^activeRuns\.has$	Module WeakMap of runs per socket; the membership answer is the recorded state of that map at the call, and replay checks the socket asked about.
+external	^state\.upstream\.send$	The upstream sandbox WebSocket's send; the twin only forwards the chunk, and replay checks the exact bytes.
+external	^terminalState\.set$	Module WeakMap write; nothing is read back from it, and replay checks the initial state stored for the socket.
+external	^sandboxInstanceIsControllable$	Convex query on the sandbox registry, mocked by the suites that reach it; the twin checks the ids and branches on the recorded answer. The ownership rule itself lives in the Convex function and is not verified here.
+external	^recordSandboxAuditEvent$	Audit write, replaced by a module mock in some suites; replay checks the whole event and the twin reads nothing back.

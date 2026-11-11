@@ -52,6 +52,15 @@ paths = [
 regexes = ['''(?i)(conversation_?key|reservationKey)\b''']
 
 [[allowlists]]
+description = "Made-up filesystem reservation id in a formal spec test"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(^|/)formal/replay/extra/core/sandbox(8b|11)-vercel-[a-z-]+\.test\.ts$''',
+]
+regexes = ['''fs-0123456789abcdef''']
+
+[[allowlists]]
 description = "Truncated example value in the OpenAPI spec"
 targetRules = ["generic-api-key"]
 condition = "AND"

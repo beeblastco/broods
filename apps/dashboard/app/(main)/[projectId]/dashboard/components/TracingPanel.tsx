@@ -112,12 +112,15 @@ interface Props {
 }
 
 const PAGE_SIZE = 50;
+// Core answers a continue with a 202 at once; past this the request is treated as lost.
+const CONTINUE_TIMEOUT_MS = 30_000;
 
 type SpanStatus = ObservabilitySpanRow["status"];
 
 // `error` stays null from the click until the continuation's trace replaces the button.
 interface ContinueAttempt {
   error: string | null;
+  eventId: string;
 }
 
 interface PayloadSection extends DetailRow {
@@ -841,9 +844,10 @@ export function TracingPanel({
   );
 
   const continueTask = async (root: ObservabilitySpanRow): Promise<void> => {
+    const eventId = continueEventId(continueAttempts.get(root.traceId));
     const settle = (error: string | null): void =>
       setContinueAttempts((current) =>
-        new Map(current).set(root.traceId, { error: error }),
+        new Map(current).set(root.traceId, { error: error, eventId: eventId }),
       );
     const endpoint = resolveCoreEndpoint();
     if (!endpoint.ok) return settle(endpoint.message);
@@ -862,13 +866,14 @@ export function TracingPanel({
         })}`,
         {
           method: "POST",
+          signal: AbortSignal.timeout(CONTINUE_TIMEOUT_MS),
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             agentId: root.agentId,
-            eventId: `continue-${crypto.randomUUID()}`,
+            eventId: eventId,
             conversationKey: root.conversationKey,
             continue: true,
           }),
@@ -884,7 +889,11 @@ export function TracingPanel({
           : payload.error?.message;
       settle(error ?? `Continue failed (${response.status})`);
     } catch (err) {
-      settle(toErrorMessage(err));
+      settle(
+        err instanceof DOMException && err.name === "TimeoutError"
+          ? `Core did not answer within ${CONTINUE_TIMEOUT_MS / 1000} seconds`
+          : toErrorMessage(err),
+      );
     }
   };
 
@@ -1171,6 +1180,13 @@ export function axisTicks(spanMs: number): number[] {
     { length: Math.floor(spanMs / step) + 1 },
     (_, index) => index * step,
   );
+}
+
+// A Retry resends the failed attempt's eventId, so core drops a continue it already admitted.
+export function continueEventId(attempt: ContinueAttempt | undefined): string {
+  return attempt && attempt.error !== null
+    ? attempt.eventId
+    : `continue-${crypto.randomUUID()}`;
 }
 
 export function runIssues(group: SpanGroup): RunIssues {

@@ -531,6 +531,7 @@ export declare const api: {
             skills?: Record<string, any> | null;
             subagent?: Record<string, any> | null;
             tools?: Record<string, Record<string, any>> | null;
+            transcription?: { modelId?: string; provider?: string } | null;
             workspaces?: Array<Record<string, any>> | null;
           };
           managedBy?: "cli" | "dashboard" | "api";
@@ -634,6 +635,7 @@ export declare const api: {
             skills?: Record<string, any> | null;
             subagent?: Record<string, any> | null;
             tools?: Record<string, Record<string, any>> | null;
+            transcription?: { modelId?: string; provider?: string } | null;
             workspaces?: Array<Record<string, any>> | null;
           };
           maxTokens?: number;
@@ -785,9 +787,9 @@ export declare const api: {
         "public",
         {
           agentId?: Id<"agents">;
-          conversationKey?: string;
+          conversationKey?: string | null;
           cronId: string;
-          description?: string;
+          description?: string | null;
           input?: string;
           name?: string;
           scheduleExpression?: string;
@@ -3915,6 +3917,12 @@ export declare const internal: {
       >;
     };
     uploads: {
+      claim: FunctionReference<
+        "mutation",
+        "internal",
+        { storageId: Id<"_storage"> },
+        null
+      >;
       grant: FunctionReference<
         "mutation",
         "internal",
@@ -4857,6 +4865,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -4924,6 +4933,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -5606,6 +5616,12 @@ export declare const internal: {
           }
         | { refused: string }
       >;
+      revokeToken: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        boolean
+      >;
       selectOnboardingOrg: FunctionReference<
         "mutation",
         "internal",
@@ -5752,6 +5768,7 @@ export declare const internal: {
           stage: string;
           target:
             | {
+                pruneOnly?: Array<string>;
                 resources: Array<{
                   config: any;
                   description?: string;
@@ -5893,6 +5910,7 @@ export declare const internal: {
             stage: string;
             version: 1;
           };
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         Array<string>
@@ -5908,6 +5926,7 @@ export declare const internal: {
           };
           project: string;
           prune?: boolean;
+          pruneOnly?: Array<string>;
           resources: Array<{
             config: any;
             description?: string;
@@ -5931,7 +5950,14 @@ export declare const internal: {
       removeEnvBySecretHash: FunctionReference<
         "mutation",
         "internal",
-        { name: string; project: string; secretHash: string; stage: string },
+        {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
+          name: string;
+          project: string;
+          secretHash: string;
+          stage: string;
+        },
         { removed: boolean }
       >;
       replaceSkillNodeFilesBySecretHash: FunctionReference<
@@ -5983,6 +6009,7 @@ export declare const internal: {
         null | {
           accountId: Id<"accounts">;
           deployKeyId?: Id<"deployKeys">;
+          lastUsedAt?: number;
           scoped: boolean;
           secretHash: string;
         }
@@ -6004,6 +6031,8 @@ export declare const internal: {
         "mutation",
         "internal",
         {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
           name: string;
           project: string;
           secretHash: string;
@@ -6038,6 +6067,7 @@ export declare const internal: {
             version: 1;
           };
           prune?: boolean;
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         {
@@ -6109,6 +6139,14 @@ export declare const internal: {
         { blocked: boolean; retryAfterMs?: number }
       >;
     };
+  };
+  deployKeys: {
+    touchLastUsed: FunctionReference<
+      "mutation",
+      "internal",
+      { keyId: Id<"deployKeys">; usedAt: number },
+      null
+    >;
   };
   github: {
     beginFor: FunctionReference<
@@ -8199,6 +8237,75 @@ export declare const internal: {
         events: Array<any>;
         ownerGeneration: number;
         requestedMode: "reject" | "followup" | "collect" | "steer";
+      } | null
+    >;
+  };
+  runtimeLookups: {
+    accountBySecretHash: FunctionReference<
+      "query",
+      "internal",
+      { secretHash: string },
+      {
+        _creationTime: number;
+        _id: Id<"accounts">;
+        auditRetentionDays?: number;
+        createdAt: number;
+        description?: string;
+        orgId: string;
+        secretHash: string;
+        secretHint?: string;
+        secretRotatedAt?: number;
+        secretRotatedBy?: Id<"users">;
+        status: "active" | "disabled";
+        storageExternalId?: string;
+        updatedAt: number;
+        username: string;
+      } | null
+    >;
+    agentById: FunctionReference<
+      "query",
+      "internal",
+      { accountId: Id<"accounts">; agentId: string },
+      {
+        _creationTime: number;
+        _id: Id<"agents">;
+        accountId: Id<"accounts">;
+        createdAt: number;
+        description?: string;
+        encryptedConfig?: string;
+        encryptedSourceConfig?: string;
+        encryptionIv?: string;
+        encryptionTag?: string;
+        name: string;
+        requireUserToken?: boolean;
+        sourceEncryptionIv?: string;
+        sourceEncryptionTag?: string;
+        updatedAt: number;
+      } | null
+    >;
+    sandboxConfigById: FunctionReference<
+      "query",
+      "internal",
+      { accountId: Id<"accounts">; sandboxId: string },
+      {
+        _creationTime: number;
+        _id: Id<"sandboxConfigs">;
+        accountId: Id<"accounts">;
+        createdAt: number;
+        description?: string;
+        encryptedConfig?: string;
+        encryptedSourceConfig?: string;
+        encryptionIv?: string;
+        encryptionTag?: string;
+        managedBy?: "cli" | "dashboard" | "api";
+        name: string;
+        projectId?: Id<"projects">;
+        runtimeVariables?: Array<{ key: string; value: string }>;
+        snapshotId?: string;
+        sourceEncryptionIv?: string;
+        sourceEncryptionTag?: string;
+        stageId?: Id<"stages">;
+        updatedAt: number;
       } | null
     >;
   };

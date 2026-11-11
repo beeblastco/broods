@@ -706,7 +706,14 @@ export const unlinkFor = internalMutation({
   args: { authId: v.string(), projectId: v.id("projects") },
   returns: v.null(),
   handler: async (ctx, { authId, projectId }): Promise<null> => {
-    await clearLink(ctx, await requireLinkAccess(ctx, authId, projectId));
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    if (!project.repo) {
+      throw new ClientError(
+        `${project.name} has no linked repository.`,
+        "not_found",
+      );
+    }
+    await clearLink(ctx, project);
 
     return null;
   },
@@ -837,7 +844,8 @@ export const webhook = httpAction(async (ctx, request): Promise<Response> => {
     }
   } else if (event === "installation") {
     const payload = JSON.parse(body) as InstallationEvent;
-    if (payload.action === "deleted" || payload.action === "suspend") {
+    // A suspend is reversible on GitHub, so only an uninstall drops the links and keys.
+    if (payload.action === "deleted") {
       await ctx.runMutation(internal.github.removeInstallation, {
         installationId: payload.installation.id,
       });
@@ -893,6 +901,7 @@ export const cliProject = internalQuery({
   returns: v.union(v.id("projects"), v.null()),
   handler: async (ctx, { orgId, slug }): Promise<Id<"projects"> | null> => {
     if (!slug.trim()) return null;
+    // Slug only, not resolveProject's order: existing repo links were made under this rule.
     const project = await ctx.db
       .query("projects")
       .withIndex("by_orgId_and_slug", (q) =>

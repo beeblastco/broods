@@ -218,6 +218,21 @@ describe("runtime ingress", () => {
     ).rejects.toThrow(/Validator error/);
   });
 
+  test("refuses a key scoped to another agent that embeds this agent's segment", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await expect(
+      t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: accountId,
+          conversationKey: `acct:${accountId}:agent:other-agent:api:x:agent:test-agent:y`,
+          eventId: "embedded-agent",
+          mode: "reject",
+        }),
+      }),
+    ).rejects.toThrow(/does not belong to agentId/);
+  });
+
   test("an idempotent retry keeps the first admission's run id", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2113,7 +2128,7 @@ describe("runtime ingress", () => {
     expect(queued.map((row) => row.eventId)).toEqual(["one"]);
   });
 
-  test("maintenance terminalizes expired accepted queue work", async () => {
+  test("maintenance terminalizes queued work its conversation's owner left long ago", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -2141,6 +2156,15 @@ describe("runtime ingress", () => {
         .withIndex("by_eventId", (q) => q.eq("eventId", "queued"))
         .unique();
       await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      await ctx.db.patch(coordinator!._id, {
+        leaseExpiresAt: Date.now() - 60 * 60 * 1000,
+      });
     });
 
     expect(
@@ -2152,6 +2176,119 @@ describe("runtime ingress", () => {
         runId: "run_queued",
       }),
     ).toMatchObject({ status: "expired" });
+  });
+
+  test.each(["followup", "steer"] as const)(
+    "a %s queued behind an owner that renews past its time to live still reaches the owner",
+    async (mode): Promise<void> => {
+      vi.useFakeTimers({ now: Date.now() });
+      try {
+        const t = runtimeTest();
+        const accountId = await createActiveAccount(t);
+        const conversationKey = conversationKeyFor(accountId);
+        const owner = {
+          conversationKey: conversationKey,
+          ownerEventId: "long-owner",
+          ownerGeneration: 1,
+          leaseTtlMs: 60_000,
+        };
+        for (const [eventId, requested] of [
+          ["long-owner", "followup"],
+          ["waiting", mode],
+        ] as const) {
+          await t.mutation(
+            internal.runtimeIngress.accept,
+            admission({
+              accountId: accountId,
+              conversationKey: conversationKey,
+              eventId: eventId,
+              mode: requested,
+            }),
+          );
+        }
+        // Three renewals carry the run well past the queued message's 60-second TTL.
+        for (let renewal = 0; renewal < 3; renewal += 1) {
+          vi.setSystemTime(Date.now() + 50_000);
+          await t.mutation(internal.runtimeIngress.renewOwner, owner);
+          expect(
+            await t.mutation(internal.runtimeIngress.maintain, {}),
+          ).toMatchObject({ expired: 0 });
+        }
+        expect(
+          await t.query(internal.runtimeIngress.getStatus, {
+            accountId: accountId,
+            runId: "run_waiting",
+          }),
+        ).toMatchObject({ status: "queued" });
+
+        const applied =
+          mode === "steer"
+            ? await t.mutation(internal.runtimeIngress.applySteering, owner)
+            : await t.mutation(internal.runtimeIngress.takeNext, {
+                ...owner,
+                settle: { status: "completed" },
+              });
+
+        expect(applied).toMatchObject({ contributingEventIds: ["waiting"] });
+        expect(
+          await t.query(internal.runtimeIngress.getStatus, {
+            accountId: accountId,
+            runId: "run_waiting",
+          }),
+        ).toMatchObject({ status: "processing" });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("recovery promotes a message whose time to live passed behind an owner whose lease then lapsed", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const eventId of ["dying-owner", "waiting"]) {
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: eventId,
+            mode: "followup",
+          }),
+        );
+      }
+      vi.setSystemTime(Date.now() + 50_000);
+      await t.mutation(internal.runtimeIngress.renewOwner, {
+        conversationKey: conversationKey,
+        ownerEventId: "dying-owner",
+        ownerGeneration: 1,
+        leaseTtlMs: 60_000,
+      });
+      // The owner stops renewing; its lease lapses after the message's TTL.
+      vi.setSystemTime(Date.now() + 90_000);
+      expect(
+        await t.mutation(internal.runtimeIngress.maintain, {}),
+      ).toMatchObject({ expired: 1 });
+
+      const { recovered } = await t.mutation(
+        internal.runtimeIngress.recoverQueued,
+        { leaseTtlMs: 60_000 },
+      );
+
+      expect(recovered.map((entry) => entry.applied.eventId)).toEqual([
+        "waiting",
+      ]);
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId: accountId,
+          runId: "run_dying-owner",
+        }),
+      ).toMatchObject({ status: "expired" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("maintenance moves a live owner's overdue row forward and expires an orphaned generation", async () => {
@@ -2612,7 +2749,8 @@ describe("runtime ingress", () => {
       ownerEventId: "released-owner",
       ownerGeneration: 1,
     });
-    vi.useFakeTimers({ now: Date.now() + 120_000 });
+    // convex-test can pin a mutation 1 ms ahead of the wall clock: stay off the grace boundary.
+    vi.useFakeTimers({ now: Date.now() + 121_000 });
     try {
       expect(
         await t.mutation(internal.runtimeIngress.recoverQueued, {
@@ -2641,7 +2779,7 @@ describe("runtime ingress", () => {
     ).toBe(2);
   });
 
-  test("a clear refused by a live owner still writes down the queued work it expired", async (): Promise<void> => {
+  test("a clear refused by a live owner leaves the queued work behind it queued", async (): Promise<void> => {
     vi.useFakeTimers({ now: Date.now() });
     try {
       const t = runtimeTest();
@@ -2658,7 +2796,7 @@ describe("runtime ingress", () => {
           envelopeTtlMs: 1_000,
         });
       }
-      // The queued envelope expires while the owner's lease still runs.
+      // The queued envelope's TTL passes while the owner's lease still runs.
       vi.setSystemTime(Date.now() + 1_001);
 
       expect(
@@ -2680,7 +2818,13 @@ describe("runtime ingress", () => {
               )
               .unique(),
         ),
-      ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+      ).toMatchObject({ queuedCount: 1, queuedBytes: 32 });
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId: accountId,
+          runId: "run_clear-queued",
+        }),
+      ).toMatchObject({ status: "queued" });
     } finally {
       vi.useRealTimers();
     }
@@ -3737,24 +3881,22 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
   test("leaves a queued result that expired to the sweep, whose retry is admitted again", async (): Promise<void> => {
     vi.useFakeTimers({ now: Date.now() });
     try {
-      const { t, conversationKey, ownerGeneration, resume } =
-        await busyConversation();
+      const { t, conversationKey, resume } = await busyConversation();
       const before = await kind.handback(t, "late");
       expect(await resume({ envelopeTtlMs: 1_000 })).toMatchObject({
         outcome: "queued",
       });
 
-      // The conversation stays busy past the queued envelope's TTL.
-      vi.setSystemTime(Date.now() + 1_001);
+      // The owner dies, and nothing recovers the queue before its grace ends.
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000);
       expect(
         await t.mutation(internal.runtimeIngress.maintain, {}),
-      ).toMatchObject({ expired: 1 });
+      ).toMatchObject({ expired: 2 });
       expect(await kind.handback(t, "late")).toBe(before);
       expect(await kind.listed(t, "late")).toBe(true);
 
       // The sweep's retry carries the same idempotency key, and delivers the
       // result once the conversation is free.
-      await finishBusy(t, conversationKey, ownerGeneration);
       expect(await resume()).toMatchObject({ outcome: "owner" });
       await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
       expect(await kind.handback(t, "late")).toBe("stored");

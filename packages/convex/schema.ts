@@ -817,6 +817,7 @@ export const auditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("accountApiKey"),
   v.literal("agent"),
+  v.literal("member"),
   v.literal("skill"),
   v.literal("hook"),
   v.literal("mcp"),
@@ -1461,14 +1462,14 @@ export default defineSchema({
   // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields)
     .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_orgId_and_name_and_slug", ["orgId", "name", "slug"])
     .index("by_repoId", ["repo.repoId"])
     .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
-  stageSources: defineTable(stageSourcesFields).index(
-    "by_stageId_and_revision",
-    ["stageId", "revision"],
-  ),
+  stageSources: defineTable(stageSourcesFields)
+    .index("by_stageId_and_revision", ["stageId", "revision"])
+    .index("by_storageId", ["storageId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),

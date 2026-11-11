@@ -47,7 +47,7 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
-import { isContextLengthError } from "../shared/errors.ts";
+import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
@@ -220,16 +220,19 @@ export function resolveConfiguredModel(
   };
 }
 
+// Speech-to-text on `config.transcription` or the agent's own provider, or why there is none.
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
-): Exclude<TranscriptionModel, string> | undefined {
-  const providerName = agentConfig.model?.provider;
-  if (!providerName) {
-    return undefined;
-  }
-  const source = PROVIDER_TRANSCRIPTION[providerName];
-  if (!source) {
-    return undefined;
+): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
+  const providerName =
+    agentConfig.transcription?.provider ?? agentConfig.model?.provider;
+  const source = providerName
+    ? PROVIDER_TRANSCRIPTION[providerName]
+    : undefined;
+  if (!providerName || !source) {
+    return {
+      reason: `${providerName ?? "this provider"} has no transcription model`,
+    };
   }
   try {
     const provider = source.factory(
@@ -238,11 +241,13 @@ export function resolveTranscriptionModel(
       ) as never,
     );
 
-    return provider.transcription(
-      agentConfig.model?.transcriptionModelId ?? source.modelId,
-    );
-  } catch {
-    return undefined;
+    return {
+      model: provider.transcription(
+        agentConfig.transcription?.modelId ?? source.modelId,
+      ),
+    };
+  } catch (error) {
+    return { reason: toErrorMessage(error) };
   }
 }
 
@@ -252,7 +257,6 @@ export function modelSettingsFromModelConfig(
   const {
     provider: _provider,
     modelId: _modelId,
-    transcriptionModelId: _transcriptionModelId,
     providerOptions: _providerOptions,
     output: _output,
     ...settings

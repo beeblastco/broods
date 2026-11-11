@@ -51,6 +51,9 @@ const EXPIRABLE_STATUSES = ["queued", "processing"] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
 
+// Past a lease's end, so core's 30-second recovery sweep promotes the queue before it expires.
+const QUEUED_GRACE_AFTER_LEASE_MS = 2 * 60 * 1_000;
+
 const RENEW_AFTER_TTL_FRACTION = 0.9;
 
 const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
@@ -630,6 +633,11 @@ export const maintain = internalMutation({
         await ctx.db.patch(row._id, { expiresAt: coordinator.leaseExpiresAt });
         continue;
       }
+      const deadline = queuedDeadline(row, coordinator);
+      if (row.status === "queued" && deadline > now) {
+        await ctx.db.patch(row._id, { expiresAt: deadline });
+        continue;
+      }
       await ctx.db.patch(row._id, {
         ...RELEASED_PAYLOAD,
         status: "expired",
@@ -653,7 +661,6 @@ export const maintain = internalMutation({
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
-          leaseExpiresAt: undefined,
           updatedAt: now,
         });
       }
@@ -734,7 +741,7 @@ export const recoverQueued = internalMutation({
       // The self-heal: reads past the counter, and a short page is the whole queue.
       const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
       const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-      const live = rows.filter((row) => row.expiresAt > now);
+      const live = rows.filter((row) => queuedDeadline(row, coordinator) > now);
       const queue =
         rows.length < MAX_DRAIN_ENVELOPES
           ? {
@@ -827,7 +834,7 @@ export const releaseOwner = internalMutation({
       ...queue,
       ownerEventId: undefined,
       stopRequestedGeneration: undefined,
-      leaseExpiresAt: undefined,
+      leaseExpiresAt: now,
       updatedAt: now,
     });
 
@@ -1033,7 +1040,7 @@ export const takeNext = internalMutation({
         ownerEventId: undefined,
         ownerTaskId: undefined,
         stopRequestedGeneration: undefined,
-        leaseExpiresAt: undefined,
+        leaseExpiresAt: now,
         updatedAt: now,
       });
 
@@ -1210,7 +1217,7 @@ function assertConversationScope(
   if (accountIdFromKey(conversationKey) !== accountId) {
     throw new Error("Runtime conversation does not belong to accountId");
   }
-  if (!conversationKey.includes(`:agent:${agentId}:`)) {
+  if (!conversationKey.startsWith(`acct:${accountId}:agent:${agentId}:`)) {
     throw new Error("Runtime conversation does not belong to agentId");
   }
 }
@@ -1479,7 +1486,7 @@ async function claimSteering(
   }
   const rows = await queuedPage(ctx, coordinator);
   const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-  const active = rows.filter((row) => row.expiresAt > now);
+  const active = rows.filter((row) => queuedDeadline(row, coordinator) > now);
   const steering = active[0]?.requestedMode === "steer";
   // A steer joins the running turn, so it must come from that turn's sender.
   const owner = steering
@@ -1692,7 +1699,7 @@ async function expireQueuedEnvelopes(
   let expiredCount = 0;
   let expiredBytes = 0;
   for (const row of page) {
-    if (row.expiresAt > now) continue;
+    if (queuedDeadline(row, coordinator) > now) continue;
     expiredCount += 1;
     expiredBytes += row.sizeBytes;
     await ctx.db.patch(row._id, {
@@ -1866,7 +1873,7 @@ async function promoteQueuedGroup(
 ): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
   const { coordinator, queue, now } = options;
   const rows = options.rows ?? (await queuedPage(ctx, coordinator));
-  const active = rows.filter((row) => row.expiresAt > now);
+  const active = rows.filter((row) => queuedDeadline(row, coordinator) > now);
   const first = active[0];
   if (!first) return null;
   // Every queued steer aimed at the same dead run, so their prefix runs as one follow-up.
@@ -1955,6 +1962,17 @@ async function patchQueueCounters(
   await ctx.db.patch(coordinator._id, patch);
 
   return { ...coordinator, ...patch };
+}
+
+// A queued row cannot expire before its conversation's last lease ends, plus the grace.
+function queuedDeadline(
+  row: Doc<"runtimeIngressEnvelopes">,
+  coordinator: Doc<"runtimeConversationCoordinators"> | null,
+): number {
+  return Math.max(
+    row.expiresAt,
+    (coordinator?.leaseExpiresAt ?? 0) + QUEUED_GRACE_AFTER_LEASE_MS,
+  );
 }
 
 async function queuedEnvelopes(

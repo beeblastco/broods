@@ -216,7 +216,7 @@ sequenceDiagram
 - `broods dev` sends the revision it read; `broods deploy` sends none and replaces the last completed sync.
 - The claim is released in `finally`; an abandoned claim expires after 45 minutes.
 - `verification/Broods/Sync*.lean` proves the next diff after a sync is deletes only and that overlapping PUTs are refused.
-- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. `GET /manifest` answers the live hash.
+- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. A sync whose content matches a newest revision whose stored file is gone stores the file again on that revision. `GET /manifest` answers the live hash.
 
 ### Dock Apply and drift
 

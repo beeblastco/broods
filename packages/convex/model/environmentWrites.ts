@@ -5,12 +5,50 @@ import {
   requireAccountIdForProject,
 } from "./accountKeys";
 import { assertEnvVarName } from "./agentConfigCodec";
+import {
+  accountIdForProject,
+  appendAuditEvent,
+  auditDetailsJson,
+  type AuditActor,
+} from "./auditEvents";
 import { refreshAgentConfigsForEnvironmentVariable } from "./agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./sandboxConfigSync";
 
 interface EnvironmentVariableWrite {
   id: Id<"environmentVariables">;
   change: "created" | "updated" | "unchanged";
+}
+
+// Audit details carry the name only, never the value.
+export async function recordEnvironmentVariableAudit(
+  ctx: MutationCtx,
+  actor: AuditActor,
+  input: {
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    variableId?: Id<"environmentVariables">;
+    action: string;
+    name: string;
+    summary: string;
+  },
+): Promise<void> {
+  const accountId = await accountIdForProject(ctx, input.projectId);
+  if (!accountId) return;
+
+  await appendAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: input.projectId,
+    stageId: input.stageId,
+    actor: actor,
+    action: input.action,
+    resource: {
+      kind: "environmentVariable",
+      id: input.variableId,
+      name: input.name,
+    },
+    summary: input.summary,
+    detailsJson: auditDetailsJson({ name: input.name }),
+  });
 }
 
 export async function upsertEnvironmentVariable(

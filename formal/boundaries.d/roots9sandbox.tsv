@@ -1,0 +1,2 @@
+kind	name	reason
+opaque	Module	The ES module namespace a test called through; it only appears as the receiver of a top-level function, which never reads this.

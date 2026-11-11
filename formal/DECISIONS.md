@@ -1,0 +1,19 @@
+# Decisions
+
+Choices the product owner made, which the model follows. A theorem that depends on one names it.
+Where the model and today's code disagree because of a decision, replay marks that case as a known
+mismatch in `GAPS.md`.
+
+| Id  | Question                                                       | Decision                                                                                                                                                                                                                                                                        |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | What does the rewrite replace?                                 | The runtime: `apps/core`, `apps/gateway`, `apps/edge`, `apps/discord-forwarder`, `apps/lambda`, `apps/cloudflare-*`, plus the Convex rule modules that code imports. Convex itself stays in TypeScript and is an assumed contract. The dashboard, SDK and CLI are out of scope. |
+| D2  | What does covered mean?                                        | Every in-scope function maps to a Lean definition or a listed exclusion, and generated vectors replay against both Lean and TypeScript. Measured, not asserted.                                                                                                                 |
+| D3  | When code and intent disagree?                                 | The model describes intended behaviour. Replay then fails on that case until the TypeScript is fixed, and the case stays listed in `GAPS.md` until then.                                                                                                                        |
+| D4  | Who is the attacker?                                           | Malicious tenants, model and tool output, webhook senders and tenant code, plus a crash or duplicate delivery at any step. Operators, Convex and cloud providers are trusted, and signatures are assumed unforgeable.                                                           |
+| D5  | May a `tool.call.started` hook rewrite arguments after policy? | Yes. Hooks are the account's own trusted code. Policy and approval judge the model's original call, and this is listed as a limit.                                                                                                                                              |
+| D6  | May a queued message expire behind an owner?                   | No. A queued message cannot expire while an owner holds the conversation's lease, and recovery gets a chance after the lease ends. Today's code lets it expire, so this is a known mismatch.                                                                                    |
+| D7  | May one cron firing start two runs?                            | No. At most one run per cron and fire time. Today's code uses a random event id, so this is a known mismatch.                                                                                                                                                                   |
+| D8  | May a finished async run's stored status change?               | Only through a continuation tied to that run, so polling shows the newest answer. Clients must not treat the first `completed` as final. Any other overwrite is a bug.                                                                                                          |
+
+Where no decision covers a disagreement, the model follows a documented or commented intent if the
+code has one, and today's behaviour otherwise. The disagreement is listed in `GAPS.md` for review.

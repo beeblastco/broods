@@ -1,0 +1,51 @@
+kind	name	reason
+external	^(?:clearTimeout)$	The host timer API cancels the supplied timer; its result is recorded at the call boundary.
+external	^(?:pending\.reject)$	The Promise rejection callback is supplied by the caller; the trace checks the exact error passed to it.
+external	^(?:execute)$	The selected tool callback belongs to the caller; the trace checks its input and execution options before releasing its answer.
+external	^(?:sandbox\.getInfo)$	The E2B SDK reports provider resources; the trace checks the timeout and supplies the provider response.
+external	^(?:toolModelMessageSchema\.safeParse)$	The AI SDK owns the tool message schema; its recorded validation answer is trusted only for the exact constructed message.
+external	^(?:optionalEnv)$	The environment reader returns a trimmed optional deployment setting; the trace checks each requested variable name.
+opaque	ServerWebSocket	These twins only pass the socket token through or ignore it; socket fields are never invented from the token.
+opaque	Timeout	Timer handles are passed back to clearTimeout unchanged and never inspected.
+external	^(?:schema\.safeParse)$	The caller supplies a Zod schema; the trace checks the JSON-decoded frame before releasing its validation result.
+external	^(?:Date\.now)$	The clock is an input supplied by the host; the trace records the instant at the exact call site.
+opaque	ZodDiscriminatedUnion	The supplied Zod schema is used solely through its recorded safeParse method.
+external	^(?:jsonSchema)$	The AI SDK wraps the exact schema supplied by the twin; its accessor token is carried unchanged into tool construction.
+external	^(?:tool)$	The AI SDK constructs a tool from the checked description, schema and callback identity; the returned tool is an external value.
+external	^(?:actions\.sendSticker\?\.bind)$	The caller supplies the channel method; binding it to the exact actions object preserves its receiver.
+external	^AbortSignal\.timeout$	The host builds a timeout signal; the trace checks the requested milliseconds and the token is passed on unchanged.
+external	^fetch$	The HTTP transport is external; the trace checks the URL and full request before releasing the response.
+external	^response\.text$	The transport reads the response body; the twin only forwards the text into the error.
+external	^new PlatformWorkerError$	The error class formats its message from the checked label, request, status and text.
+external	^(active\.(has|add|delete))$	A caller-owned WeakSet of objects on the current path; the trace checks each value and the twin follows the membership answer.
+external	^new (GetObjectCommand|ListObjectsV2Command|DeleteObjectsCommand)$	AWS SDK command constructors; the trace checks the exact input and the command token goes only to send.
+external	^(awsClient\(access\)|client)\.send$	AWS S3 transport; the trace checks which command token is sent and supplies the service answer.
+external	^result\.Body\.transformToWebStream(\(\)\.cancel)?$	AWS response stream; the twin only cancels it on the over-limit path.
+external	^body\.(transformToString|transformToByteArray)$	AWS response body decoder; the twin returns its answer unchanged.
+external	^Bun\.sleep$	Host timer; the trace checks the requested back-off delay.
+external	^getSignedUrl$	AWS presigner; the trace checks client, command and expiry before releasing the URL.
+external	^getIngressStatusByEventId$	Persistence read; the trace checks the scoped lookup key and the twin compares its conversation key.
+external	^randomUUID$	Host randomness; the twin takes only its leading characters.
+external	^getStorage$	Returns the storage adapter handle; the twin uses it only through the storage calls checked next.
+external	^getStorage\(\) ?\.(sandboxConfigs\.list|workspaceConfigs\.storageExternalId)$	Persistence read; the trace checks the account id and the twin returns the answer unchanged.
+internal	apps/core/src/shared/s3.ts#awsClient	Returns a memoised AWS client from a module cache and process.env, neither recorded; the token is only passed to send.
+opaque	S3Client	AWS client token, only passed to the send and presign calls.
+opaque	GetObjectCommand	AWS command token, only passed to the send and presign calls.
+opaque	ListObjectsV2Command	AWS command token, only passed to send.
+opaque	DeleteObjectsCommand	AWS command token, only passed to send.
+opaque	WeakSet	Traversal set identity passed unchanged through recursive isJSONValue calls and never inspected.
+external	^toolResultOutputTypeSchema\.safeParse$	Zod schema validation; the trace checks the value and the twin follows the success flag.
+external	^getAsyncAgentResult$	Persistence read; the trace checks the scoped event id and the twin validates ownership on the answer.
+external	^workspaceMediaBytes$	Workspace file read; the trace checks workspace and path, and the bytes go unchanged to the transcriber.
+external	^acceptsNativeMedia$	Model capability lookup; the trace checks provider and media type.
+external	^transcribeAudio$	Transcription provider call; the trace checks the config, bytes and retry count.
+external	^actions\.send(Files|Text)$	Channel transport supplied by the caller; the trace checks the files, caption and text.
+external	^(getSandboxExternalId|saveSandboxInstance|claimSandboxInstance|deleteSandboxInstance|getSandboxReleaseTarget)$	Persistence call; the trace checks provider, key and ids and the twin branches on the answer.
+external	^crypto\.randomUUID$	Host randomness; the twin takes only its leading characters.
+external	^drop$	Provider delete callback supplied by the caller; the trace checks the sandbox id.
+external	^getStorage\(\)\.workspaceConfigs\.mintR2Credentials$	Credential mint; the trace checks account, workspace and prefix.
+external	^executor\.release$	Provider release; the trace checks namespace and external id and the twin follows success or failure.
+external	^toErrorMessage$	Formats a caught error for logging; its answer is discarded.
+opaque	E2BSandboxExecutor	Executor token only used to call release.
+external	^detectMediaType$	AI SDK sniffs the media type from the checked base64 data.
+external	^adminMutation$	Convex write; the trace checks the audit row and the twin swallows its failure as the code does.

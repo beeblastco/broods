@@ -129,7 +129,7 @@ The account key is shown once when your organization's API account is provisione
 
 A scoped key is made on the same page with **New key**: a name, a scope (the whole organization, or one project and stage), an expiry (30 days, 90 days, 1 year or never) and a starting access, Read only or Full access. It is shown once and carries the `bask_` prefix, but it acts like a [role session](#roles) that never needs re-assuming: its permissions are the role's policy and its scope is the role's pin. Its panel then sets no access, read, or read and write for each config area, and changes the scope and expiry in place; each change applies to the next request the key makes. Read and write on sandboxes lets the key run commands and open a terminal in them. Revoke stops it at once, and deleting a stage deletes the keys pinned to it. The audit log names each scoped key as `accountApiKey`, and the list shows when it was last used.
 
-A project key is an API key created for one stage under Project settings, Keys, and shown once. That page asks `keys:write` per stage, so a grant on one stage rotates or revokes only that stage's keys; `keys:write` also sees the keys it may change. See [Deploying from CI](deploying.md#deploying-from-ci).
+A project key is an API key created for one stage under Project settings, Keys, and shown once. That page asks `keys:write` per stage, so a grant on one stage rotates or revokes only that stage's keys; `keys:write` also sees the keys it may change. The list shows when each key was last used, to within an hour. See [Deploying from CI](deploying.md#deploying-from-ci).
 
 ## Roles
 

@@ -1,0 +1,2 @@
+path	class	status	lean	replay	note
+apps/core/src/harness/worker-queue.ts	decision	replayed	Spec.Workers.Model	formal/replay/workers.test.ts	Queued-lease renewal (lines 157-197) is not modelled here: it belongs with ingress leases.

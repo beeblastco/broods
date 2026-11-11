@@ -1469,6 +1469,56 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
   }
 });
 
+test("a refused start keeps core's error code on the WebSocket error frame", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  globalThis.fetch = (async (): Promise<Response> =>
+    Response.json(
+      {
+        error: {
+          message: "Conversation is busy.",
+          type: "conflict_error",
+          code: "conversation_busy",
+        },
+      },
+      { status: 409 },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "busy-conversation",
+        input: "go",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> =>
+        zeroBufferConnection(async () => ({
+          [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+          close: async (): Promise<void> => {},
+        })) as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "error",
+    );
+    expect(sent.find((message) => message.type === "error")).toEqual({
+      type: "error",
+      status: 409,
+      error: "Conversation is busy.",
+      code: "conversation_busy",
+      errorType: "conflict_error",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a runtime key runs a public agent of its stage on the agent socket", async (): Promise<void> => {
   const { frames, consumers, credentials } =
     await runtimeKeyExecute("agent_public");
@@ -1494,6 +1544,7 @@ test("a runtime key is refused a private agent, and nothing of it is read", asyn
     type: "error",
     status: 403,
     error: "Agent agent_private is not publicly accessible.",
+    code: "public_access_disabled",
   });
   expect(consumers).toBe(0);
 });
@@ -2275,6 +2326,51 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
       "t24",
     );
     expect(pieces.at(-1)!.error).toBeUndefined();
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("a traces subscribe with agentId searches Tempo for that agent and echoes it on ready", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const searches: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = requestUrl(input);
+    if (url.includes("/api/search")) {
+      searches.push(new URL(url).searchParams.get("tags") ?? "");
+
+      return json({ traces: [] });
+    }
+
+    return json({ batches: [] });
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "traces",
+        backfill: 5,
+        historyOnly: true,
+        agentId: "ag_A",
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+
+    expect(sent[0]).toEqual({ type: "ready", agentId: "ag_A" });
+    expect(searches).toHaveLength(1);
+    expect(searches[0]).toEndWith(' agent_id="ag_A"');
   } finally {
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
