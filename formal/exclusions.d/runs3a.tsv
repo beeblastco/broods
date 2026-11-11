@@ -1,0 +1,6 @@
+pattern	category	reason
+apps/core/src/harness/connections.ts#resetConnectionsForTests	test-helper	A test seam that only clears or sets module state; it makes no decision and production never calls it.
+apps/core/src/shared/convex/account-keys.ts#resetAccountKeysForTests	test-helper	A test seam that only clears or sets module state; it makes no decision and production never calls it.
+apps/core/src/shared/convex/client.ts#resetConvexClientForTests	test-helper	A test seam that only clears or sets module state; it makes no decision and production never calls it.
+apps/core/src/shared/storage.ts#resetStorageForTests	test-helper	A test seam that only clears or sets module state; it makes no decision and production never calls it.
+apps/core/src/shared/storage.ts#setStorageForTests	test-helper	A test seam that only clears or sets module state; it makes no decision and production never calls it.

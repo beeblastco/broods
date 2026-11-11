@@ -1,0 +1,3 @@
+kind	name	reason
+external	^slotTimer\.unref$	Node's timer unref: its result is discarded and it changes nothing the twin reads
+external	^this\.parentSession \.persistModelMessages$	The parent session's write, stubbed in some tests: the twin reads only whether it threw

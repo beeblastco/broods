@@ -1,0 +1,23 @@
+kind	name	reason
+external	^readS3Text$	S3 object read; the twin checks bucket and key, and the stored text is the only answer.
+external	^collectSecretValues$	Collector in shared/log; the twin checks the exact values passed and only appends the user credential.
+external	^performance\.now$	Clock read whose value is passed on unchanged to confirmOwner.
+external	^runtime\.mutate$	Convex mutation; the twin checks function name and argument, and only reads the returned sequence.
+external	^new Date$	Clock read that is passed on unchanged into the prompt formatter.
+external	^getTracer$	OpenTelemetry tracer accessor; the tracer is only passed through.
+external	^tracer\.startSpan$	OpenTelemetry span start; the twin checks name, options and parent.
+external	^span\.spanContext$	Read of span ids, each checked for all zeros by the twin.
+external	^mintTraceId$	Random id generator; only its output is forwarded.
+external	^mintSpanId$	Random id generator; only its output is forwarded.
+external	^otelTraceApi\.setSpan$	OpenTelemetry context helper; result only passed through.
+external	^createCodex$	Third party harness factory; the twin checks every option passed.
+opaque	ProxyTracer	OpenTelemetry tracer, only passed through.
+opaque	ProxyTracerProvider	OpenTelemetry provider inside a tracer, only passed through.
+opaque	NonRecordingSpan	OpenTelemetry span, only passed through.
+opaque	BaseContext	OpenTelemetry context, only passed through.
+external	^Date\.now$	Clock read passed on unchanged.
+external	^session\.(flushPendingStoredEvents|loadHarnessSession|loadHarnessSkills|environmentText|secretValues|compactConversation)$	Methods of the session passed in; each has its own twin, or a test double in these recordings.
+external	^options\.(applySteering|createAgent|onOccupied|abortController\.abort)$	Callbacks and controller the caller supplies; the twin checks their arguments.
+external	^options \.openSession$	Callback the caller supplies to open the harness session; arguments are checked.
+external	^stopLeaseMonitor$	Stop function returned by startHarnessLeaseMonitor; takes no argument.
+opaque	AbortController	Platform abort controller, only passed through.

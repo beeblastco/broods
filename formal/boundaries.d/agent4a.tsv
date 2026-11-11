@@ -1,0 +1,8 @@
+kind	name	reason
+internal	apps/core/src/harness/skills.ts#readSkillOrSkip	Takes an already-started promise, whose settled value is not recorded, so no twin can compute it; callers use only its answer, which comes from the recorded read.
+internal	apps/core/src/harness/skills.ts#stageSkillFiles	Chained continuations of concurrent copies overlap in one group whose arguments depend on earlier answers; it returns nothing, so a caller takes only success or failure from it.
+external	^limit$	The closure skillReadLimit returns: it only bounds concurrency and hands back the result of the callback the twin also follows.
+external	^opaPolicy$	The ai-sdk policy constructor: the twin checks the client, path and callback it is given and only passes its result on.
+external	^shadow$	The ai-sdk policy wrapper: the twin checks the enforce flag it is given and only returns its result.
+external	^process\.stdout\.write$	Node's stream write: the twin computes the exact line and ignores the answer.
+external	^readS3TextHead$	S3 read of a skill head: its text is the recorded object body and the twin only passes it on.

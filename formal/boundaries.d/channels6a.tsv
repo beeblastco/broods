@@ -1,0 +1,4 @@
+kind	name	reason
+external	^Date\.now$	the clock is an input; the twin only compares it to a recorded expiry
+external	^channelAgentLists\.keys\(\)\.next$	Map iterator from the JS runtime; its answer only picks which entry to evict and is not read
+external	^load$	the caller-supplied loader; its agents are returned unchanged
