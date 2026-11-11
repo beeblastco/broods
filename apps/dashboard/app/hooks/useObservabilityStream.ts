@@ -148,6 +148,8 @@ export function useObservabilityStream(
   const destroyedRef = useRef(false);
   const connectRef = useRef<() => void>(() => {});
   const cursorRef = useRef<ResumeCursor | null>(null);
+  // A trace lookup answers with a backfill frame too; it says nothing about the list.
+  const traceFetchRef = useRef(false);
 
   const coreEndpoint = resolveCoreEndpoint();
   const wsBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
@@ -216,6 +218,7 @@ export function useObservabilityStream(
       `broods.token.${apiKey}`,
     ]);
     socketRef.current = socket;
+    traceFetchRef.current = false;
 
     socket.onopen = () => {
       if (destroyedRef.current || socketRef.current !== socket) {
@@ -274,7 +277,9 @@ export function useObservabilityStream(
       if (msg.type === "backfill") {
         if (!msg.more) {
           setHistory(msg.error ? "failed" : "loaded");
-          if (cursorRef.current) cursorRef.current.historyLoaded = !msg.error;
+          if (traceFetchRef.current) traceFetchRef.current = false;
+          else if (cursorRef.current)
+            cursorRef.current.historyLoaded = !msg.error;
         }
         if (msg.error) setError(msg.error);
         flushLive();
@@ -377,7 +382,7 @@ export function useObservabilityStream(
       traceId: traceId,
     };
     setHistory("loading");
-    if (cursorRef.current) cursorRef.current.historyLoaded = false;
+    traceFetchRef.current = true;
     setError(null);
     socket.send(JSON.stringify(message));
 
