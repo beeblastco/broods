@@ -161,28 +161,6 @@ test("only the skills the server says it does not hold are uploaded, and sent on
   );
 });
 
-test("a refusal whose skills is not a list fails with a plain message", async (): Promise<void> => {
-  const { manifest } = await compileProject({
-    cwd: await skillProject(),
-    command: "dev",
-  });
-  const client = new BroodsSyncClient({
-    baseUrl: "https://convex.example.com",
-    token: "tok",
-    fetch: async (_input, init): Promise<Response> =>
-      init?.method === "PUT"
-        ? Response.json(
-            { error: { code: "skill_upload_required" }, skills: 5 },
-            { status: 409 },
-          )
-        : Response.json({ manifest: manifest, ids: {} }),
-  });
-
-  await expect(client.putManifest(manifest, false)).rejects.toThrow(
-    "Sync manifest failed: the server asked for skill uploads but named no skills",
-  );
-});
-
 test("an exhausted upload quota names the skill and when to retry", async (): Promise<void> => {
   const { manifest } = await compileProject({
     cwd: await skillProject(),

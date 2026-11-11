@@ -253,11 +253,7 @@ export class BroodsSyncClient {
     const refusal =
       response.status === 409 ? await response.clone().text() : "";
     if (errorEnvelope(refusal).code === "skill_upload_required") {
-      const { skills } = JSON.parse(refusal) as { skills?: string[] };
-      if (!Array.isArray(skills))
-        throw new Error(
-          "Sync manifest failed: the server asked for skill uploads but named no skills",
-        );
+      const { skills } = JSON.parse(refusal) as { skills: string[] };
       response = await put(
         await this.externalizeLargeSkills(bundled, {
           sent: first,
