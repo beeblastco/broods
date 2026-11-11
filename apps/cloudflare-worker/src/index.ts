@@ -137,8 +137,7 @@ async function readState(
 ): Promise<StoredState | null> {
   const object = await bucket.get(key);
   if (object === null) return null;
-  if (object.customMetadata?.released)
-    throw new SandboxReleased();
+  if (object.customMetadata?.released) throw new SandboxReleased();
   const bytes = new Uint8Array(await object.arrayBuffer());
 
   return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };
