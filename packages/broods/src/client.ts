@@ -19,7 +19,7 @@ type AgentRunInputBase = {
   mode?: "reject" | "followup" | "collect" | "steer";
   /** Defaults to `eventId`. */
   idempotencyKey?: string;
-  /** Ends the request and the stream read; a run core already accepted keeps going. */
+  /** Aborting acts like closing the stream: core stops the run. A queued `runAsync` run stays. */
   signal?: AbortSignal;
 } & AgentRunOverrides;
 
