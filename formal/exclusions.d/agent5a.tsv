@@ -1,0 +1,8 @@
+pattern	category	reason
+apps/core/src/shared/otel.ts#AnonymousSpanProcessor.forceFlush	vendor-passthrough	Delegates to the wrapped OpenTelemetry processor; no decision.
+apps/core/src/shared/otel.ts#AnonymousSpanProcessor.onStart	vendor-passthrough	Delegates to the wrapped OpenTelemetry processor; no decision.
+apps/core/src/shared/otel.ts#AnonymousSpanProcessor.shutdown	vendor-passthrough	Delegates to the wrapped OpenTelemetry processor; no decision.
+apps/core/src/harness/ai-sdk-harness/adapters/claude-code.ts#createClaudeCodeAdapter	vendor-passthrough	Passes settings straight to the vendor SDK constructor; no decision.
+apps/core/src/harness/ai-sdk-harness/adapters/pi.ts#createPiAdapter	vendor-passthrough	Passes settings straight to the vendor SDK constructor; no decision.
+apps/core/src/shared/otel.ts#mintSpanId	vendor-passthrough	Returns the OpenTelemetry id generator result; no decision.
+apps/core/src/shared/otel.ts#mintTraceId	vendor-passthrough	Returns the OpenTelemetry id generator result; no decision.

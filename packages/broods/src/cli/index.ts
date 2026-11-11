@@ -16,12 +16,18 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest, DeploymentRegion } from "../contracts.ts";
+import type {
+  CliManifest,
+  CliPruneTarget,
+  DeploymentRegion,
+} from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
+  readStoredLogin,
+  removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
@@ -44,6 +50,8 @@ import {
   type CliProject,
   type CliStage,
   type CliStageSession,
+  cliFetch,
+  type DiffEntry,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -155,7 +163,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage  github
   Inspect   agent  runs  trace  audit  usage  whoami
-  Account   login  connect  disconnect  org  project
+  Account   login  logout  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help inside an error goes to stderr, so it stays plain rather than guess that stream's TTY.
@@ -268,6 +276,13 @@ Authenticates through the dashboard and stores the token in
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logout: `Usage: broods logout [options]
+
+Revokes the stored login on the server and removes it from
+~/.broods/config.json. Other servers' logins stay. A BROODS_TOKEN
+in the environment is not touched: unset it yourself.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -501,6 +516,10 @@ async function main(): Promise<void> {
       await login(args);
 
       return;
+    case "logout":
+      await logout(args);
+
+      return;
     case "connect":
       await connectCommand(args);
 
@@ -730,6 +749,30 @@ async function login(args: string[]): Promise<void> {
     optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
+}
+
+// Revokes the saved login it removes; a 401 means the server already refuses that token.
+async function logout(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const envTokenNote = process.env.BROODS_TOKEN
+    ? "BROODS_TOKEN is set, so commands keep using it. The CLI cannot remove it: unset it where it is set."
+    : "";
+  const auth = readStoredLogin(optionValue(args, "--base-url"));
+  if (!auth) {
+    throw new Error(`No saved login to remove. ${envTokenNote}`.trim());
+  }
+  const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(
+      `Logout failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  await removeStoredAuth(auth.baseUrl);
+  printSuccess(`Logged out of ${auth.baseUrl}`);
+  if (envTokenNote) printWarning(envTokenNote);
 }
 
 function apiErrorMessage(error: unknown): string {
@@ -2219,46 +2262,49 @@ async function syncDevOnce(
   const undecided = deletes.filter(
     (entry): boolean => !declined.has(`${entry.kind}:${entry.name}`),
   );
-  let pruned = false;
+  const chosen: DiffEntry[] = [];
   if (undecided.length > 0) {
-    // The server prunes every undeclared resource at once, earlier-declined ones too.
     printWarning("These remote resources are no longer declared locally:");
-    printDiffEntries(deletes);
-    if (
-      await promptConfirm(
-        `Delete all ${deletes.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
+    printDiffEntries(undecided);
+    for (const entry of undecided) {
+      const key = `${entry.kind}:${entry.name}`;
+      if (
+        await promptConfirm(
+          `Delete ${key} from ${manifest.project}/${manifest.stage}?`,
+        )
       )
-    ) {
-      result = await client.putManifest(
-        manifest,
-        true,
-        false,
-        result.revision,
-        source,
-      );
-      await writeGeneratedFiles(
-        manifest,
-        result.ids,
-        process.cwd(),
-        resourceAliases,
-        result.deployment,
-        channels,
-      );
-      await clearDeclinedDeletes();
-      pruned = true;
-    } else {
-      await rememberDeclinedDeletes(
-        undecided.map((entry): string => `${entry.kind}:${entry.name}`),
-      );
+        chosen.push(entry);
+      else await rememberDeclinedDeletes([key]);
     }
   }
+  if (chosen.length > 0) {
+    result = await client.putManifest(
+      manifest,
+      chosen.map(({ kind, name }): CliPruneTarget => ({
+        kind: kind,
+        name: name,
+      })),
+      false,
+      result.revision,
+      source,
+    );
+    await writeGeneratedFiles(
+      manifest,
+      result.ids,
+      process.cwd(),
+      resourceAliases,
+      result.deployment,
+      channels,
+    );
+  }
 
-  if (!pruned && deletes.length > 0) {
-    const names = deletes
+  const kept = deletes.filter((entry): boolean => !chosen.includes(entry));
+  if (kept.length > 0) {
+    const names = kept
       .map((entry): string => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
-      `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+      `${kept.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
     );
   }
 
@@ -2450,12 +2496,6 @@ async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
   const path = process.env.BROODS_DECLINED_FILE;
   if (!path || keys.length === 0) return;
   await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
-}
-
-async function clearDeclinedDeletes(): Promise<void> {
-  const path = process.env.BROODS_DECLINED_FILE;
-  if (!path) return;
-  await writeFile(path, "", "utf8");
 }
 
 async function envCommand(args: string[]): Promise<void> {

@@ -17,6 +17,9 @@ export type CliManifestResource = {
   config: unknown;
 };
 
+/** One undeclared resource a `broods dev` prune removes; `prune: true` removes them all. */
+export type CliPruneTarget = Pick<CliManifestResource, "kind" | "name">;
+
 export type GeneratedIds = {
   agents: Record<string, string>;
   workspaces: Record<string, string>;

@@ -116,6 +116,16 @@ export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods login --dashboard-url https://your-dashboard.example.com
 ```
 
+## logout
+
+Revokes the stored login on its server and removes it from `~/.broods/config.json`. Logins for other servers stay.
+
+```bash
+broods logout [--base-url <url>]
+```
+
+A revoked token stops working at once, so run it on a machine you no longer trust with the login, or after a token leaked. A token the server already refuses is removed locally all the same. A `BROODS_TOKEN` in the environment is left alone, and logout says so: the CLI cannot unset it, so remove it from your shell or CI settings.
+
 ## connect
 
 Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).
@@ -176,7 +186,7 @@ The first run in an empty folder does the setup. It opens the browser like `logi
 On every sync `dev`:
 
 - pushes each `env("NAME")` value from `.env.local` that the stage does not already hold, like `env sync`
-- asks before deleting remote resources you removed from code
+- asks about each remote resource you removed from code and deletes only the ones you confirm
 - sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and tries again, three attempts in all, and asks again before any delete
 - regenerates `broods/_generated/`
 - writes a new user token signing secret to `.env.local` as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and warns when the stage has one this checkout does not hold (see [Signing secret](#signing-secret))
@@ -222,7 +232,7 @@ The first deploy to `production` that syncs its manifest pins its region, so dat
 
 Like `dev`, it writes the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and never rotates an existing one. See [Signing secret](#signing-secret). With `CI` set, as in GitHub Actions, it writes neither the runtime key nor the signing secret, since the checkout is thrown away; the next local `dev` or `deploy` mints the secret where you can read it.
 
-`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. A cron job is removed only when code declared it: one an agent scheduled at runtime, or you made on the dashboard, survives every prune. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes.
+`deploy` ignores `BROODS_STAGE`. Unlike `dev`, it never pushes secrets from `.env.local`. Set production values with `broods env set` or `broods env sync --stage production`, so a stale local value cannot ride a deploy. It warns when an agent lists a policy the deploy does not declare. `--prune` fails when an agent or channel record still references a policy it would remove, and names them. It removes skills, hooks and MCP servers only when this stage created them, never ones another stage manages or you made on the dashboard, and only after the rest of the deploy is accepted, so a manifest rejected before synchronization removes nothing. A later failure can leave committed changes; the deploy is not rolled back. A removed agent takes its cron jobs with it. A cron job is removed only when code declared it: one an agent scheduled at runtime, or you made on the dashboard, survives every prune. `deploy` sends no stage revision, so it can replace the last completed sync. An overlapping manifest PUT receives 409 `manifest_conflict`; retry after the active sync finishes. SDK callers pass `prune: true` to `BroodsSyncClient.putManifest` to remove every undeclared resource, or a list of `{ kind, name }` to remove only those, as `broods dev` does after asking.
 
 ### Signing secret
 

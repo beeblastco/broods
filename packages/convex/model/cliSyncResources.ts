@@ -29,6 +29,7 @@ import {
   authIdForAccount,
   decryptSandboxConfig,
   placeholderIds,
+  prunes,
   renameComparableAgent,
   renameComparableResource,
   resourceName,
@@ -128,6 +129,7 @@ export async function pruneAgents(
   projectId: Id<"projects">,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   const declared = new Set(
     resources
@@ -141,7 +143,12 @@ export async function pruneAgents(
     )
     .collect();
   for (const config of existing) {
-    if (config.managedBy !== "cli" || declared.has(config.name)) continue;
+    if (
+      config.managedBy !== "cli" ||
+      declared.has(config.name) ||
+      !prunes(pruneOnly, "agent", config.name)
+    )
+      continue;
     if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
     await deleteAgentConfig(ctx, config._id);
   }
@@ -151,6 +158,7 @@ export async function prunePolicyResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   const declared = new Set(
     resources
@@ -165,7 +173,11 @@ export async function prunePolicyResources(
     .collect();
   const rowsByAccount = new Map<Id<"accounts">, PolicyReferenceRows>();
   for (const policy of existing) {
-    if (policy.managedBy === "cli" && !declared.has(policy.name)) {
+    if (
+      policy.managedBy === "cli" &&
+      !declared.has(policy.name) &&
+      prunes(pruneOnly, "policy", policy.name)
+    ) {
       const rows =
         rowsByAccount.get(policy.accountId) ??
         (await loadPolicyReferenceRows(ctx, policy.accountId));
@@ -184,12 +196,14 @@ export async function pruneSandboxResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<string[]> {
   const kept: string[] = [];
   for (const sandbox of await undeclaredSandboxConfigs(
     ctx,
     stageId,
     resources,
+    pruneOnly,
   )) {
     if (await hasReservation(ctx, sandbox._id)) {
       kept.push(sandbox.name);
@@ -205,11 +219,13 @@ export async function pruneWorkspaceResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   for (const workspace of await undeclaredWorkspaceConfigs(
     ctx,
     stageId,
     resources,
+    pruneOnly,
   )) {
     await ctx.db.delete(workspace._id);
   }
@@ -775,6 +791,7 @@ export async function undeclaredSandboxConfigs(
   ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<Doc<"sandboxConfigs">[]> {
   const declared = new Set(
     resources
@@ -787,7 +804,10 @@ export async function undeclaredSandboxConfigs(
     .collect();
 
   return existing.filter(
-    (sandbox) => sandbox.managedBy === "cli" && !declared.has(sandbox.name),
+    (sandbox) =>
+      sandbox.managedBy === "cli" &&
+      !declared.has(sandbox.name) &&
+      prunes(pruneOnly, "sandbox", sandbox.name),
   );
 }
 
@@ -795,6 +815,7 @@ export async function undeclaredWorkspaceConfigs(
   ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<Doc<"workspaceConfigs">[]> {
   const declared = new Set(
     resources
@@ -808,7 +829,9 @@ export async function undeclaredWorkspaceConfigs(
 
   return existing.filter(
     (workspace) =>
-      workspace.managedBy === "cli" && !declared.has(workspace.name),
+      workspace.managedBy === "cli" &&
+      !declared.has(workspace.name) &&
+      prunes(pruneOnly, "workspace", workspace.name),
   );
 }
 

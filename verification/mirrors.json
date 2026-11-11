@@ -19,14 +19,14 @@
   },
   "Cron": {
     "packages/convex/agent/crons.ts": {
-      "createRun": "b8e04d84a539c7fa",
+      "createRun": "9e11b384d4af60ca",
       "completeRun": "f79dd7eff7929367",
       "failRun": "50aa145f59830fd3",
-      "settleRun": "f74673d414fc78dc",
+      "settleRun": "6a3ead204350733e",
       "recordFailedFire": "36bb2309504c6e4c",
       "isLatestFire": "da7aadfec5f179bf",
       "sweepDeadRuns": "d07ee26f75422da3",
-      "settleAnsweredRun": "f4acad039f77253c"
+      "settleAnsweredRun": "ff82d504abd43830"
     },
     "apps/core/src/harness/handler.ts": {
       "settleCronRun": "e42d96ab0ca4c897",
@@ -67,9 +67,9 @@
       "maintain": "6cb7d9d14532f480",
       "releaseOwner": "cbeeee46756c0551",
       "renewOwner": "74c1cd8a0d2e122a",
-      "settle": "81e250da49c11ceb",
+      "settle": "01b09025e8de6f67",
       "stepBoundary": "01c1feafc46ac761",
-      "takeNext": "0b3dda9f757d4ed2"
+      "takeNext": "d4235cfb69453ce3"
     }
   },
   "ProviderTools": {
@@ -94,7 +94,7 @@
   },
   "Sync": {
     "packages/broods/src/sync.ts": {
-      "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
+      "BroodsSyncClient.putManifest": "60bad401d9f1e015",
       "diffManifests": "e0ebfd1eed42c281",
       "renameSnapshot": "2f385a52543abc07",
       "isRenamableKind": "382365924c44b5aa"
@@ -111,17 +111,17 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "03c45a1b9f5b0c3b"
+      "handleManifestSync": "599a4eded3c58971"
     },
     "packages/convex/cli/sync.ts": {
-      "recordExternalResourcesBySecretHash": "217070cdd14c4f09",
-      "syncManifestBySecretHash": "514be99dd14c5189"
+      "recordExternalResourcesBySecretHash": "76a45716a84d6dda",
+      "syncManifestBySecretHash": "b6df26ea7919bd9b"
     }
   },
   "SyncCron": {
     "packages/convex/cli/httpRoutes.ts": {
       "desiredCrons": "5b59145810b21d5d",
-      "syncCrons": "57a9ca7617aeb379"
+      "syncCrons": "32b0a470a535d780"
     },
     "packages/convex/model/agentSync.ts": {
       "deleteAgentRow": "6067f5e49d72d132"
@@ -137,7 +137,7 @@
   },
   "SyncExternal": {
     "packages/convex/cli/httpRoutes.ts": {
-      "pruneExternalResources": "22b7d9e1d8ada2e8",
+      "pruneExternalResources": "ef4ef3f4bf524bc7",
       "syncExternalResources": "38672e2bb5106f66"
     }
   },

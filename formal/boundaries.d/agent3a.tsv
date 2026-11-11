@@ -1,0 +1,6 @@
+kind	name	reason
+external	^Date\.now$	The clock is an input; the twin compares it against the cached expiry itself.
+external	^getStorage\(\)\.budgets\.get$	Storage supplies the budget row; the twin checks the account id and returns the row or fails open.
+external	^path\.extname$	Node path helper; the twin applies the allow list and the zero-byte check itself.
+external	^asSchema$	AI SDK schema wrapper; the twin checks the schema passed and branches on whether a validator exists.
+external	^validate$	The tool schema validator; the twin checks the args passed and handles both results.

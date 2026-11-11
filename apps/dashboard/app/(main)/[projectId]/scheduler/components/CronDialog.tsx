@@ -113,7 +113,13 @@ export function CronDialog({
       if (mode === "create") {
         await create({ ...payload, input: prompt.trim() });
       } else if (cron) {
-        await update({ cronId: cron._id, input: input, ...payload });
+        await update({
+          cronId: cron._id,
+          input: input,
+          ...payload,
+          conversationKey: conversationKey.trim() || null,
+          description: description.trim() || null,
+        });
       }
       void analytics.then((posthog): void => {
         posthog.capture(
@@ -135,7 +141,7 @@ export function CronDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>

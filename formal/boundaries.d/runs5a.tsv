@@ -1,0 +1,2 @@
+kind	name	reason
+external	^crons\.(getById|markFailed)$	The stored cron row and its failure write in Convex; the twin reads only status, account, id and schedule, and checks the arguments of the write.

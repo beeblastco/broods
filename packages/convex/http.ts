@@ -4,7 +4,10 @@ import Stripe from "stripe";
 import { components } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { exchange as cliAuthExchange } from "./cli/auth";
+import {
+  exchange as cliAuthExchange,
+  revoke as cliAuthRevoke,
+} from "./cli/auth";
 import { handle as cliHttp } from "./cli/http";
 import {
   httpHandle as cliProjectsHttp,
@@ -59,6 +62,12 @@ http.route({
   path: "/v1/account/auth/exchange",
   method: "POST",
   handler: cliAuthExchange,
+});
+
+http.route({
+  path: "/v1/account/auth/token",
+  method: "DELETE",
+  handler: cliAuthRevoke,
 });
 
 http.route({

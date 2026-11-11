@@ -885,7 +885,7 @@ export const settle = internalMutation({
     if (args.events && args.events.length > 0) {
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
-    const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
+    const answered = await promptsOwnerAnswers(ctx, args.ownerEventId);
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     // Only with the owner's own envelope, so polling rows never disagree with it.
     if (args.asyncResult && settled.ownerFinished) {
@@ -893,8 +893,8 @@ export const settle = internalMutation({
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
       }
     }
-    if (answersPrompt && settled.ownerFinished) {
-      await settleAnsweredCronRun(ctx, args.conversationKey, args);
+    if (settled.ownerFinished) {
+      await settleAnsweredCronRun(ctx, args, answered, args);
     }
 
     return settled.count;
@@ -944,6 +944,7 @@ export const stopOwner = internalMutation({
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
+    expectedOwnerEventId: v.optional(v.string()),
     expectedOwnerTaskId: v.optional(v.string()),
   },
   returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
@@ -958,6 +959,8 @@ export const stopOwner = internalMutation({
     if (
       !coordinator ||
       !hasActiveOwner(coordinator, now) ||
+      (args.expectedOwnerEventId !== undefined &&
+        coordinator.ownerEventId !== args.expectedOwnerEventId) ||
       (args.expectedOwnerTaskId !== undefined &&
         coordinator.ownerTaskId !== args.expectedOwnerTaskId)
     ) {
@@ -1000,13 +1003,13 @@ export const takeNext = internalMutation({
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
-      const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
+      const answered = await promptsOwnerAnswers(ctx, args.ownerEventId);
       const settled = await settleAppliedEnvelopes(ctx, coordinator, {
         ...args,
         ...args.settle,
       });
-      if (answersPrompt && settled.ownerFinished) {
-        await settleAnsweredCronRun(ctx, args.conversationKey, args.settle);
+      if (settled.ownerFinished) {
+        await settleAnsweredCronRun(ctx, args, answered, args.settle);
       }
     }
     const rows = await queuedPage(ctx, coordinator);
@@ -1041,50 +1044,79 @@ export const takeNext = internalMutation({
   },
 });
 
-// A retried entry id is skipped, as Pi's session storage contract allows.
-// A paused cron run waits on a person: an approval, or a question its answering turn then asked.
-async function ownerAnswersPrompt(
+// The approval ids or ask_questions status ids the owner's turn answers, which name the paused run.
+async function promptsOwnerAnswers(
   ctx: QueryCtx,
   ownerEventId: string,
-): Promise<boolean> {
+): Promise<string[]> {
   const owner = await ctx.db
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", ownerEventId))
     .first();
   const toolResult = await asyncToolResultRow(ctx, owner?.toolResultId);
-  if (toolResult) return toolResult.toolName === "ask_questions";
+  if (toolResult) {
+    return toolResult.toolName === "ask_questions" ? [toolResult.resultId] : [];
+  }
   const events = (owner?.events ?? []) as {
     role: string;
-    content: { type: string }[];
+    content: { type: string; approvalId?: string }[];
   }[];
 
-  return events.some(
-    (event) =>
-      event.role === "tool" &&
-      event.content.some((part) => part.type === "tool-approval-response"),
+  return events.flatMap((event) =>
+    event.role === "tool"
+      ? event.content.flatMap((part) =>
+          part.type === "tool-approval-response" && part.approvalId
+            ? [part.approvalId]
+            : [],
+        )
+      : [],
   );
 }
 
 // Scheduled: importing `agent/crons` here would load auth into everything that reads this.
 async function settleAnsweredCronRun(
   ctx: MutationCtx,
-  conversationKey: string,
+  owner: { conversationKey: string; ownerEventId: string },
+  answered: string[],
   settlement: {
     status: "completed" | "failed";
     result?: unknown;
     error?: string;
   },
 ): Promise<void> {
-  const paused = (settlement.result as { status?: string } | undefined)?.status;
-  if (paused === "awaiting_approval" || paused === "awaiting_input") return;
+  const waitingOn = pausedPromptIds(settlement.result);
+  if (answered.length === 0 && waitingOn === undefined) return;
   await ctx.scheduler.runAfter(0, internal.agent.crons.settleAnsweredRun, {
-    conversationKey: conversationKey,
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    answered: answered,
+    waitingOn: waitingOn,
     status: settlement.status,
     result: settlement.result,
     error: settlement.error,
   });
 }
 
+// A paused turn settles with its `AsyncAgentOutcome` as the result.
+function pausedPromptIds(result: unknown): string[] | undefined {
+  const paused = result as
+    | {
+        status?: string;
+        approvals?: { approvalId: string }[];
+        questions?: { statusId: string }[];
+      }
+    | undefined;
+  if (paused?.status === "awaiting_approval") {
+    return (paused.approvals ?? []).map((approval) => approval.approvalId);
+  }
+  if (paused?.status === "awaiting_input") {
+    return (paused.questions ?? []).map((question) => question.statusId);
+  }
+
+  return undefined;
+}
+
+// A retried entry id is skipped, as Pi's session storage contract allows.
 async function appendHarnessEntries(
   ctx: MutationCtx,
   options: {

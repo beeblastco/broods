@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
+import { clientErrorResponse } from "@broods/convex/model/clientError";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
@@ -82,16 +83,18 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  await expect(
-    deleteAccountRuntimeData({
-      accountId: "acct_test",
-      username: "test",
-      secretHash: "hash",
-      status: "disabled",
-      createdAt: "2026-07-13T00:00:00.000Z",
-      updatedAt: "2026-07-13T00:00:00.000Z",
-    }),
-  ).rejects.toThrow("Account runtime cleanup exceeded 100 Convex batches");
+  const error = await deleteAccountRuntimeData({
+    accountId: "acct_test",
+    username: "test",
+    secretHash: "hash",
+    status: "disabled",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+  }).catch((err: unknown) => err);
+  expect(clientErrorResponse(error)?.status).toBe(409);
+  expect(error).toMatchObject({
+    message: expect.stringContaining("retry deletion to continue"),
+  });
   expect(attempts).toBe(100);
 });
 

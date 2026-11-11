@@ -134,6 +134,51 @@ describe("CLI login code exchange with PKCE", () => {
   });
 });
 
+describe("broods logout", () => {
+  test("revoking a login stops it resolving, and a second revoke is refused", async () => {
+    const t = loginTest();
+    const codeId = await seedCode(t, await pkceChallenge(VERIFIER));
+    await t.run(async (ctx) => {
+      const code = (await ctx.db.get(codeId))!;
+      const userId = await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "admin@example.com",
+        name: "Admin",
+        plan: "free",
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: code.orgId,
+        userId: userId,
+        role: "owner",
+        createdAt: Date.now(),
+      });
+    });
+    const { token } = await t.mutation(internal.cli.auth.exchangeLoginCode, {
+      code: CODE,
+      codeVerifier: VERIFIER,
+    });
+    const tokenHash = await sha256Hex(token);
+    expect(
+      await t.mutation(internal.cli.auth.resolveAccountLogin, {
+        tokenHash: tokenHash,
+      }),
+    ).not.toBe(null);
+
+    const revoke = async (): Promise<Response> =>
+      await t.fetch("/v1/account/auth/token", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    expect((await revoke()).status).toBe(204);
+    expect(
+      await t.mutation(internal.cli.auth.resolveAccountLogin, {
+        tokenHash: tokenHash,
+      }),
+    ).toBe(null);
+    expect((await revoke()).status).toBe(401);
+  });
+});
+
 describe("CLI login code minting", () => {
   test("an org with no API account fails with a reason the CLI can show", async () => {
     const t = loginTest();

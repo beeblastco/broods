@@ -27,12 +27,10 @@ export async function handleCronRoute(
     return await handleCronCollectionRoute(ctx, req, accountId, actor);
 
   if (req.method === "GET") {
-    const record = await ctx
-      .runQuery(internal.agent.crons.getById, {
-        accountId: accountId,
-        cronId: cronId as Id<"crons">,
-      })
-      .catch(() => null);
+    const record = await ctx.runQuery(internal.agent.crons.getById, {
+      accountId: accountId,
+      cronId: cronId,
+    });
 
     return record
       ? json(toCronResponse(record))
@@ -42,12 +40,10 @@ export async function handleCronRoute(
     return await patchCronRoute(ctx, req, accountId, actor, cronId, role);
   }
   if (req.method === "DELETE") {
-    const existing = await ctx
-      .runQuery(internal.agent.crons.getById, {
-        accountId: accountId,
-        cronId: cronId as Id<"crons">,
-      })
-      .catch(() => null);
+    const existing = await ctx.runQuery(internal.agent.crons.getById, {
+      accountId: accountId,
+      cronId: cronId,
+    });
     const deleted = await ctx.runMutation(internal.agent.crons.remove, {
       accountId: accountId,
       cronId: cronId,
