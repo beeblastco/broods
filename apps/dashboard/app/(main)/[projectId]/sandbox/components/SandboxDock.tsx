@@ -75,7 +75,7 @@ export function SandboxDock({
 
   return (
     <div data-sandbox-dock className="@container/dock h-full min-h-0">
-      <div className="flex h-full min-h-0 flex-col-reverse bg-terminal-background @xl/dock:flex-row">
+      <div className="scheme-dark flex h-full min-h-0 flex-col-reverse bg-terminal-background @xl/dock:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {state.sessions.map((session) => {
             const instance = byId.get(session.instanceId);

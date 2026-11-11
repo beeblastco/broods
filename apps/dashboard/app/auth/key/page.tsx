@@ -16,7 +16,7 @@ export default async function KeyPage({
   if (!selfHosted) notFound();
 
   return (
-    <main className="flex h-screen w-screen items-center justify-center bg-background p-4">
+    <main className="flex h-dvh w-full items-center justify-center bg-background p-4">
       <KeyForm
         rejected={error !== undefined}
         returnTo={

@@ -30,8 +30,8 @@ export function ConvexClientProvider({
   return (
     <ThemeProvider
       attribute="class"
-      defaultTheme="dark"
-      enableSystem={false}
+      defaultTheme="system"
+      enableSystem
       nonce={nonce}
     >
       <SessionProvider initial={initialSession}>

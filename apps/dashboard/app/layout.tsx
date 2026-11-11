@@ -3,7 +3,7 @@ import { NONCE_HEADER } from "@/app/lib/contentSecurityPolicy";
 import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
 import type { InitialSession } from "@/app/lib/session";
 import { withAuth } from "@workos-inc/authkit-nextjs";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { headers } from "next/headers";
 import { prefetchDNS } from "react-dom";
@@ -13,6 +13,11 @@ export const metadata: Metadata = {
   title: "Broods Dashboard",
   description: "",
   robots: { index: false, follow: false },
+};
+
+// Before CSS and the theme script run, the canvas follows the OS, as the System theme does.
+export const viewport: Viewport = {
+  colorScheme: "dark light",
 };
 
 export default async function RootLayout({

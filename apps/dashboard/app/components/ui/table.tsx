@@ -3,11 +3,19 @@
 import * as React from "react";
 import { cn } from "@/app/lib/utils";
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+// `regionLabel` names the scroll container and makes it keyboard-scrollable.
+function Table({
+  className,
+  regionLabel,
+  ...props
+}: React.ComponentProps<"table"> & { regionLabel?: string }) {
   return (
     <div
       data-slot="table-container"
       className="relative w-full overflow-x-auto"
+      {...(regionLabel !== undefined
+        ? { role: "region", "aria-label": regionLabel, tabIndex: 0 }
+        : {})}
     >
       <table
         data-slot="table"
@@ -67,6 +75,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
 function TableHead({ className, ...props }: React.ComponentProps<"th">) {
   return (
     <th
+      scope="col"
       data-slot="table-head"
       className={cn(
         "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",

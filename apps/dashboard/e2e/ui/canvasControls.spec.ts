@@ -25,7 +25,9 @@ test("the save pill shows a save, clears after it lands, and keeps a failure", a
 }) => {
   await openGallery(page);
   const controls = page.locator('[data-fixture="canvas-controls"]');
-  const pill = controls.locator("[aria-live]");
+  const pill = controls.locator(
+    '[data-slot="canvas-save-pill"], [data-slot="canvas-notice"]',
+  );
 
   await expect(pill).toHaveCount(0);
   await controls.locator('[data-save-state="saving"]').click();

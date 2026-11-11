@@ -257,7 +257,7 @@ function ConnectSnippet({
   return (
     <div className="grid gap-2">
       <div className="relative">
-        <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
+        <pre className="scheme-dark overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
           <code>{highlight(lines(showKey ? apiKey : maskedKey))}</code>
         </pre>
         <div className="absolute top-2 right-2 flex items-center gap-1">
@@ -441,7 +441,11 @@ function RotateButton({
       >
         Rotate
       </Button>
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+      {error ? (
+        <span role="alert" className="text-xs text-destructive">
+          {error}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -498,7 +502,11 @@ function SigningSecretRow({
           )}
         </ValueRow>
       )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <p className="text-2xs text-muted-foreground">
         Keep it on your server. Rotating it voids every token it signed.{" "}
         <a
