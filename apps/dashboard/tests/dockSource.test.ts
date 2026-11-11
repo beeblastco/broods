@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { DockSession } from "../app/lib/agentDock";
-import { folderQueue } from "../app/lib/copilotActions";
 import {
   draftChanges,
+  onFolder,
   rebaseDraft,
   revertPaths,
   type DockFile,
@@ -84,7 +84,6 @@ describe("dock source", () => {
       { path: "broods/b.ts", content: "b2" },
       { path: "broods/new.ts", content: "n" },
     ]);
-    const onFolder = folderQueue();
     await Promise.all([
       onFolder(() => revertPaths(SESSION, "c", SEED, ["broods/a.ts"])),
       onFolder(() => revertPaths(SESSION, "c", SEED, ["broods/new.ts"])),
@@ -100,7 +99,6 @@ describe("dock source", () => {
       { path: "broods/a.ts", content: "a2" },
       SEED[1],
     ]);
-    const onFolder = folderQueue();
     const answer = onFolder(async (): Promise<void> => {
       await Bun.sleep(5);
       folder.write({ path: "broods/b.ts", content: "b3" });

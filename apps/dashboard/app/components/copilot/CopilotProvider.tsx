@@ -11,7 +11,6 @@ import {
   actionTier,
   changeKey,
   dockProposals,
-  folderQueue,
   openProposal,
   proposedNodes,
   settleApplies,
@@ -43,9 +42,6 @@ import {
   useRef,
   useState,
 } from "react";
-
-const NO_MODEL_REPLY =
-  "I can only run what I can resolve from this project right now. Try a name, `go to <section>`, `pause <cron>`, `add an agent`, or `set KEY to value`.";
 
 // A session minted this close to expiry is renewed before the next ask.
 const SESSION_RENEW_MS = 60 * 1000;
@@ -262,8 +258,6 @@ export function CopilotProvider({
   );
   // The conversation has one folder, so only the last stage written to it is trusted.
   const folder = useRef<SeededFolder | null>(null);
-  // An answer and every drop take turns on that folder.
-  const [onFolder] = useState(folderQueue);
 
   // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
   const settled = settleApplies(applies, deploys);
@@ -435,7 +429,7 @@ export function CopilotProvider({
         } = await import("@/app/lib/agentDock");
         const { answerStep, ASK_TOOL, NAVIGATE_TOOL, navigatePath } =
           await import("@/app/lib/dockTrace");
-        const { readDraft, readSource, rebaseDraft, seedConversation } =
+        const { readDraft, reseedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
         // An ask right after the dock opens beats the subscription: read it instead of skipping.
@@ -453,23 +447,17 @@ export function CopilotProvider({
           stored?.url &&
           (!held || stored.revision > (held.seed.revision ?? 0))
         ) {
-          folder.current = await readSource(stored.url)
-            .then(async (files): Promise<SeededFolder> => {
-              const rebased = held
-                ? rebaseDraft(
-                    held.seed.files,
-                    await readDraft(
-                      session,
-                      conversationKey,
-                      controller.signal,
-                    ),
-                    files,
-                  )
-                : { files: files, lost: [] };
-              await seedConversation(session, conversationKey, rebased.files);
-              if (rebased.lost.length > 0)
+          folder.current = await reseedConversation(
+            session,
+            conversationKey,
+            stored.url,
+            held?.seed.files,
+            controller.signal,
+          )
+            .then(({ files, lost }): SeededFolder => {
+              if (lost.length > 0)
                 note(
-                  `The stage's source moved to revision ${stored.revision} and changed ${rebased.lost.join(", ")}, so the agent's edits there were dropped.`,
+                  `The stage's source moved to revision ${stored.revision} and changed ${lost.join(", ")}, so the agent's edits there were dropped.`,
                 );
 
               return {
@@ -638,7 +626,7 @@ export function CopilotProvider({
         import("@/app/lib/copilotIntent"),
         import("@/app/components/canvas/edgeOwnership"),
       ])
-        .then(async ([session, { planFromQuery }, { isCodeManagedOwner }]) => {
+        .then(async ([session, intent, { isCodeManagedOwner }]) => {
           const codeNodes = (canvas?.nodes ?? [])
             .filter((node) => isCodeManagedOwner(node.data.managedBy))
             .map((node) =>
@@ -656,6 +644,7 @@ export function CopilotProvider({
             lockedNodes: new Set(codeNodes),
           };
           if (session) {
+            const { onFolder } = await import("@/app/lib/dockSource");
             return await onFolder(() =>
               askAgent(
                 replyId,
@@ -671,7 +660,7 @@ export function CopilotProvider({
           streamRef.current = null;
           const plan = controller.signal.aborted
             ? null
-            : planFromQuery(trimmed, context);
+            : intent.planFromQuery(trimmed, context);
           setMessages((prev) =>
             prev.map((message) =>
               message.id === replyId
@@ -681,7 +670,7 @@ export function CopilotProvider({
                     plan: plan ?? undefined,
                     text: controller.signal.aborted
                       ? "Stopped."
-                      : (plan?.summary ?? NO_MODEL_REPLY),
+                      : (plan?.summary ?? intent.NO_MODEL_REPLY),
                   }
                 : message,
             ),
@@ -709,7 +698,6 @@ export function CopilotProvider({
       facts,
       items,
       note,
-      onFolder,
       runSafeSteps,
       registry.activeIds,
       scope,
@@ -746,6 +734,7 @@ export function CopilotProvider({
       }
       const { via } = action;
       if (via.kind === "source") {
+        const { draftFiles } = await import("@/app/lib/dockSource");
         const files = draftFiles(via.seed, action.files);
         const applied = await applySource({
           baseRevision: via.baseRevision,
@@ -940,17 +929,22 @@ export function CopilotProvider({
       )
         return;
       // The agent's folder keeps the edit, so the next ask would propose the file again.
-      void onFolder(async (): Promise<void> => {
-        const session = await dockSession();
-        const seeded = folder.current;
-        if (!session || seeded?.stageId !== currentStageId) return;
-        const { revertPaths } = await import("@/app/lib/dockSource");
-        await revertPaths(session, conversationKey, seeded.seed.files, [path]);
-      }).catch((error: unknown): void =>
-        note(`Could not drop ${path}: ${toErrorMessage(error)}`),
-      );
+      void import("@/app/lib/dockSource")
+        .then(({ onFolder, revertPaths }) =>
+          onFolder(async (): Promise<void> => {
+            const session = await dockSession();
+            const seeded = folder.current;
+            if (!session || seeded?.stageId !== currentStageId) return;
+            await revertPaths(session, conversationKey, seeded.seed.files, [
+              path,
+            ]);
+          }),
+        )
+        .catch((error: unknown): void =>
+          note(`Could not drop ${path}: ${toErrorMessage(error)}`),
+        );
     },
-    [conversationKey, currentStageId, dockSession, note, onFolder, proposals],
+    [conversationKey, currentStageId, dockSession, note, proposals],
   );
 
   const runAction = useCallback(
@@ -1048,21 +1042,4 @@ export function useCopilot(): CopilotState {
   if (!state) throw new Error("useCopilot must be used inside CopilotProvider");
 
   return state;
-}
-
-// The seed with the kept changes laid over it: what Apply deploys, every file in full.
-function draftFiles(
-  seed: readonly DockFile[],
-  changes: readonly { content: string | null; path: string }[],
-): DockFile[] {
-  const files = new Map(seed.map((file) => [file.path, file.content]));
-  for (const change of changes) {
-    if (change.content === null) files.delete(change.path);
-    else files.set(change.path, change.content);
-  }
-
-  return [...files].map(([path, content]) => ({
-    content: content,
-    path: path,
-  }));
 }

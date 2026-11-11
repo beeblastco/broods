@@ -11,6 +11,8 @@ const filesSchema = z.object({
 const sourceSchema = z.object({
   files: z.array(z.object({ path: z.string(), content: z.string() })),
 });
+// The tab has one dock conversation, so one queue covers every write to its folder.
+let folderTail: Promise<unknown> = Promise.resolve();
 
 export interface DockFile {
   path: string;
@@ -48,6 +50,31 @@ export function draftChanges(
       },
     ];
   });
+}
+
+/** The seed with the kept changes laid over it: what Apply deploys, every file in full. */
+export function draftFiles(
+  seed: readonly DockFile[],
+  changes: readonly { content: string | null; path: string }[],
+): DockFile[] {
+  const files = new Map(seed.map((file) => [file.path, file.content]));
+  for (const change of changes) {
+    if (change.content === null) files.delete(change.path);
+    else files.set(change.path, change.content);
+  }
+
+  return [...files].map(([path, content]) => ({
+    content: content,
+    path: path,
+  }));
+}
+
+/** Runs the agent folder's reads and writes one at a time, so none writes from a stale read. */
+export function onFolder<T>(task: () => Promise<T>): Promise<T> {
+  const run = folderTail.then(task);
+  folderTail = run.catch((): void => undefined);
+
+  return run;
 }
 
 /** The draft the agent left in this user's conversation folder. */
@@ -107,6 +134,27 @@ export function rebaseDraft(
     })),
     lost: lost,
   };
+}
+
+/** Seeds the folder with the source at `url`, the draft's edits on top when there is one. */
+export async function reseedConversation(
+  session: DockSession,
+  conversationKey: string,
+  url: string,
+  seed: readonly DockFile[] | undefined,
+  signal: AbortSignal,
+): Promise<{ files: DockFile[]; lost: string[] }> {
+  const files = await readSource(url);
+  const rebased = seed
+    ? rebaseDraft(
+        seed,
+        await readDraft(session, conversationKey, signal),
+        files,
+      )
+    : { files: files, lost: [] };
+  await seedConversation(session, conversationKey, rebased.files);
+
+  return { files: files, lost: rebased.lost };
 }
 
 /** Puts `paths` back as the seed has them, so a dropped file is not proposed again. */
