@@ -9,7 +9,7 @@ import {
   API_POLICY_ACTIONS,
   type ApiPolicyAction,
   type PolicyDocument,
-} from "./model/policyRules";
+} from "./model/policyDocument";
 import {
   hasDashboardPermission,
   memberAccess,

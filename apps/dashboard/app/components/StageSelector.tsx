@@ -83,7 +83,7 @@ export function StageSelector(): React.JSX.Element | null {
   const { stageId, setStageId } = useStage();
 
   const stages = useQuery(
-    api.stage.list,
+    api.dashboardReads.stages,
     projectId ? { projectId: projectId } : "skip",
   ) as Doc<"stages">[] | undefined;
   const ensureDefault = useMutation(api.stage.ensureDefault);

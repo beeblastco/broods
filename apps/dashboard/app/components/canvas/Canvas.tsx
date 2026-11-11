@@ -583,7 +583,7 @@ function CanvasInner({
       { projectId: args.projectId, stageId: args.stageId },
       layout,
     );
-    const stages = localStore.getQuery(api.stage.list, {
+    const stages = localStore.getQuery(api.dashboardReads.stages, {
       projectId: args.projectId,
     });
     if (stages && defaultStage(stages)?._id === args.stageId) {

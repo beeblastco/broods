@@ -9,14 +9,23 @@ import {
   wholeValue,
 } from "./inputSchema";
 import {
+  AGENT_POLICY_ACTIONS,
   POLICY_CONDITION_OPERATORS,
   type PolicyDocument,
   type PolicyRule,
 } from "./policyDocument";
 
 export {
+  AGENT_POLICY_ACTIONS,
+  API_POLICY_ACTIONS,
+  DASHBOARD_DESCRIPTIONS,
+  DASHBOARD_POLICY_ACTIONS,
   POLICY_CONDITION_OPERATORS,
   policyDocumentValidator,
+  type AgentPolicyAction,
+  type ApiPolicyAction,
+  type DashboardPolicyAction,
+  type PolicyAction,
   type PolicyCondition,
   type PolicyConditionOperator,
   type PolicyDocument,
@@ -24,58 +33,6 @@ export {
   type PolicyResourceSelector,
   type PolicyRule,
 } from "./policyDocument";
-
-export const AGENT_POLICY_ACTIONS = [
-  // Gates admitting the turn; the rest gate one action inside an admitted turn.
-  "agent.invoke",
-  "tool.call",
-  "workspace.read",
-  "workspace.write",
-  "workspace.exec",
-  "subagent.run",
-  "skill.load",
-] as const;
-
-export const API_POLICY_ACTIONS = [
-  "account:read",
-  "account:write",
-  "agents:read",
-  "agents:write",
-  "audit:read",
-  "audit:write",
-  "channels:read",
-  "channels:write",
-  "crons:read",
-  "crons:write",
-  "env:read",
-  "env:write",
-  "hooks:read",
-  "hooks:write",
-  "mcp:read",
-  "mcp:write",
-  "policies:read",
-  "policies:write",
-  "sandboxes:read",
-  "sandboxes:write",
-  "skills:read",
-  "skills:write",
-  "workspaces:read",
-  "workspaces:write",
-] as const;
-
-export const DASHBOARD_POLICY_ACTIONS = [
-  "keys:read",
-  "keys:write",
-  "members:write",
-  "access:write",
-] as const;
-
-export const DASHBOARD_DESCRIPTIONS: Record<DashboardPolicyAction, string> = {
-  "keys:read": "See keys",
-  "keys:write": "Make, rotate and revoke keys",
-  "members:write": "Change members and their roles",
-  "access:write": "Change permissions, policies and roles",
-};
 
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
@@ -169,19 +126,6 @@ const POLICY_RULE = z.looseObject({
   ),
   conditions: z.optional(z.array(POLICY_CONDITION)),
 });
-
-export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
-
-export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
-
-export type DashboardPolicyAction = (typeof DASHBOARD_POLICY_ACTIONS)[number];
-
-// `string & {}` admits a custom permission (`tool.stripe.refund`) yet keeps built-ins suggested.
-export type PolicyAction =
-  | AgentPolicyAction
-  | ApiPolicyAction
-  | DashboardPolicyAction
-  | (string & {});
 
 export function normalizeCreatePolicyInput(value: unknown): {
   name: string;
