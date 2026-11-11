@@ -44,6 +44,7 @@ test("the comment compares each path with its base", (): void => {
       ["a path the run lost", { bytes: 34, ceiling: 100 }],
     ]),
     BASE_SHA,
+    true,
   );
 
   expect(comment.startsWith(MARKER)).toBe(true);
@@ -67,11 +68,40 @@ test("a missing base and a path over its ceiling are both named", (): void => {
     new Map([["one trace by id", { bytes: 18_400, ceiling: 18_000 }]]),
     new Map(),
     "",
+    true,
   );
 
   expect(comment).toContain("No numbers were found for the base branch");
   expect(comment).toContain("| one trace by id | n/a | 18,400 | n/a |");
   expect(comment).toContain(
     "Over its ceiling: one trace by id (18,400 of 18,000 bytes).",
+  );
+});
+
+test("a failed run says so and never claims every path is under its ceiling", (): void => {
+  const comment = renderComment(
+    new Map(),
+    new Map([["one trace by id", { bytes: 15_092, ceiling: 18_000 }]]),
+    BASE_SHA,
+    false,
+  );
+
+  expect(comment).toContain("The measuring run failed");
+  expect(comment).toContain(
+    "| one trace by id | 15,092 | not measured | n/a |",
+  );
+  expect(comment).not.toContain("No path is over its ceiling.");
+});
+
+test("a change that rounds to nothing shows no sign", (): void => {
+  const comment = renderComment(
+    new Map([["one trace by id", { bytes: 1_579_999, ceiling: 1_800_000 }]]),
+    new Map([["one trace by id", { bytes: 1_580_000, ceiling: 1_800_000 }]]),
+    BASE_SHA,
+    true,
+  );
+
+  expect(comment).toContain(
+    "| one trace by id | 1,580,000 | 1,579,999 | 0.0% |",
   );
 });

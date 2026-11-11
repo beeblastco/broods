@@ -1,5 +1,5 @@
 // Renders the "Socket transfer impact" pull request comment from the byte counts
-// apps/gateway/tests/socket-transfer.test.ts writes. Prints nothing without PR numbers.
+// apps/gateway/tests/socket-transfer.test.ts writes.
 import { existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
@@ -36,10 +36,12 @@ export function parseMeasurements(text: string): Measurements {
   return measurements;
 }
 
+// `complete` is false when the measuring run did not succeed: paths may be missing.
 export function renderComment(
   pr: Measurements,
   base: Measurements,
   baseSha: string,
+  complete: boolean,
 ): string {
   const rows = [...pr].map(([path, measurement]): string => {
     const before = base.get(path)?.bytes;
@@ -76,9 +78,14 @@ export function renderComment(
     ...rows,
     ...missing,
     "",
-    over.length === 0
-      ? "No path is over its ceiling."
-      : `Over its ceiling: ${over.join("; ")}.`,
+    ...(complete
+      ? []
+      : ["The measuring run failed, so paths may be missing or over.", ""]),
+    over.length > 0
+      ? `Over its ceiling: ${over.join("; ")}.`
+      : complete
+        ? "No path is over its ceiling."
+        : "",
     "",
   ].join("\n");
 }
@@ -89,26 +96,26 @@ if (import.meta.main) {
       pr: { type: "string" },
       base: { type: "string" },
       "base-sha": { type: "string" },
+      conclusion: { type: "string" },
     },
   });
-  const pr = readMeasurements(values.pr);
-  if (pr.size > 0) {
-    process.stdout.write(
-      renderComment(
-        pr,
-        readMeasurements(values.base),
-        values["base-sha"] ?? "",
-      ),
-    );
-  }
+  process.stdout.write(
+    renderComment(
+      readMeasurements(values.pr),
+      readMeasurements(values.base),
+      values["base-sha"] ?? "",
+      values.conclusion === "success",
+    ),
+  );
 }
 
 function change(before: number | undefined, after: number): string {
   if (before === after) return "0.0%";
   if (before === undefined || before === 0) return "n/a";
-  const percent = ((after - before) / before) * 100;
+  const percent = (((after - before) / before) * 100).toFixed(1);
+  if (percent === "-0.0") return "0.0%";
 
-  return `${percent > 0 ? "+" : ""}${percent.toFixed(1)}%`;
+  return `${percent.startsWith("-") || percent === "0.0" ? "" : "+"}${percent}%`;
 }
 
 function count(bytes: number): string {

@@ -11,6 +11,8 @@ on:
       - apps/dashboard/**
       - packages/broods/**
       - apps/core/src/shared/**
+      - apps/edge/src/**
+      - packages/convex/model/**
       - bun.lock
       - .github/workflows/socket-transfer.yaml
   push:

@@ -125,7 +125,6 @@ test("the trace list backfill stays under its byte ceiling", async (): Promise<v
       rows,
       LIST_WIRE_BYTES_MAX,
     );
-    expect(client.wireBytes()).toBeLessThan(LIST_WIRE_BYTES_MAX);
   } finally {
     client.close();
   }
@@ -139,7 +138,6 @@ test("opening one trace stays under its byte ceiling", async (): Promise<void> =
 
     expect(rows.length).toBe(traces[0].length);
     report("one trace by id", client.wireBytes(), rows, TRACE_WIRE_BYTES_MAX);
-    expect(client.wireBytes()).toBeLessThan(TRACE_WIRE_BYTES_MAX);
   } finally {
     client.close();
   }
@@ -163,7 +161,6 @@ test("a logs backfill stays under its byte ceiling", async (): Promise<void> => 
       rows,
       LOGS_WIRE_BYTES_MAX,
     );
-    expect(client.wireBytes()).toBeLessThan(LOGS_WIRE_BYTES_MAX);
   } finally {
     client.close();
   }
@@ -198,7 +195,6 @@ test("a streamed chat answer stays under its byte ceiling", async (): Promise<vo
       frames,
       CHAT_WIRE_BYTES_MAX,
     );
-    expect(client.wireBytes()).toBeLessThan(CHAT_WIRE_BYTES_MAX);
   } finally {
     client.close();
   }
@@ -236,7 +232,6 @@ test("a reconnect resumes from the last cursor instead of replaying", async (): 
       [],
       RECONNECT_WIRE_BYTES_MAX,
     );
-    expect(second.wireBytes()).toBeLessThan(RECONNECT_WIRE_BYTES_MAX);
   } finally {
     second.close();
   }
@@ -264,6 +259,7 @@ function report(
   ceiling: number,
 ): void {
   measured[path] = { bytes: wireBytes, ceiling: ceiling };
+  expect(wireBytes).toBeLessThan(ceiling);
   const jsonBytes = Buffer.byteLength(JSON.stringify(rows));
   console.log(
     `socket-transfer | ${path} | wire ${wireBytes} B | rows as JSON ${jsonBytes} B`,

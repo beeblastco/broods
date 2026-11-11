@@ -36,6 +36,7 @@ jobs:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
       HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
       RUNS: repos/${{ github.repository }}/actions/workflows/socket-transfer.yaml/runs
     steps:
       - name: Checkout the default branch
@@ -101,13 +102,10 @@ jobs:
           MEASURED_SHA: ${{ steps.base.outputs.sha }}
         run: |
           bun scripts/socket-transfer-comment.ts --pr "$RUNNER_TEMP/pr/socket-transfer.json" \
-            --base "$RUNNER_TEMP/base/socket-transfer.json" --base-sha "$MEASURED_SHA" > "$RUNNER_TEMP/comment.md"
-          if [ ! -s "$RUNNER_TEMP/comment.md" ]; then
-            echo "The run uploaded no numbers."
-            exit 0
-          fi
+            --base "$RUNNER_TEMP/base/socket-transfer.json" --base-sha "$MEASURED_SHA" \
+            --conclusion "$CONCLUSION" > "$RUNNER_TEMP/comment.md"
           id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
-            --jq '.[] | select(.body | startswith("<!-- socket-transfer -->")) | .id' | tail -n 1)
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- socket-transfer -->"))) | .id' | tail -n 1)
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
           else
