@@ -1,4 +1,5 @@
 import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
+import { BroodsAccountClient } from "../src/account.ts";
 import {
   fetchObservabilityLogs,
   fetchObservabilitySpans,
@@ -352,4 +353,53 @@ test("a zero-line log read returns at once, as the gateway sends no backfill for
 
   expect(rows).toEqual([]);
   expect(FakeObservabilitySocket.instances).toHaveLength(0);
+});
+
+test("listRuns filtered by agent scans the whole backfill window, not only the newest page", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const account = new BroodsAccountClient({
+    baseUrl: "https://app.example",
+    accountSecret: "secret-1",
+    fetch: async (): Promise<Response> =>
+      Response.json({
+        token: "ticket",
+        projectSlug: "demo",
+        stageSlug: "development",
+      }),
+  });
+  const run = (agentId: string, startTimeMs: number): ObservabilitySpanRow => ({
+    traceId: `${TRACE_ID.slice(0, -2)}${startTimeMs}`.padEnd(32, "0"),
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    agentId: agentId,
+    startTimeMs: startTimeMs,
+    endTimeMs: startTimeMs + 1,
+    durationMs: 1,
+    status: "ok",
+  });
+  const pending = account.listRuns(
+    { project: "demo", stage: "development" },
+    { agentId: "ag_A", limit: 2 },
+  );
+  for (
+    let tick = 0;
+    tick < 10 && !FakeObservabilitySocket.instances[0]?.sent[0];
+    tick++
+  )
+    await Bun.sleep(1);
+  const socket = FakeObservabilitySocket.instances[0]!;
+  const backfill = (JSON.parse(socket.sent[0]!) as { backfill: number })
+    .backfill;
+  const rows = [run("ag_B", 30), run("ag_B", 20), run("ag_A", 10)];
+  socket.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: rows.slice(0, backfill),
+  });
+
+  const { runs } = await pending;
+  expect(runs.map((summary): string | undefined => summary.agentId)).toEqual([
+    "ag_A",
+  ]);
 });

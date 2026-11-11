@@ -405,8 +405,8 @@ takes. Authenticates with your \`broods login\`.
 
 Options:
   --limit <n>           How many to print. Default 20
-  --agent <id>          Only this agent's runs
-  --status <status>     waiting, needs_input, ok or error
+  --agent <id>          Only this agent's runs, among the newest 500
+  --status <status>     waiting, needs_input, ok or error, among the newest 500
   --json                Print them as JSON
 
 ${GLOBAL_OPTIONS}`,

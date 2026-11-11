@@ -503,10 +503,13 @@ export class BroodsAccountClient {
     options: { agentId?: string; limit?: number; status?: string } = {},
   ): Promise<{ runs: RunSummary[]; incomplete?: string }> {
     const limit = options.limit ?? 20;
+    const filtered = Boolean(options.agentId || options.status);
     const { fetchObservabilitySpans } = await observabilityClient();
     const { error, rows } = await fetchObservabilitySpans(
       await this.openObservabilitySession(scope.project, scope.stage),
-      Math.min(MAX_OBSERVABILITY_BACKFILL, limit),
+      filtered
+        ? MAX_OBSERVABILITY_BACKFILL
+        : Math.min(MAX_OBSERVABILITY_BACKFILL, limit),
     );
 
     return {
