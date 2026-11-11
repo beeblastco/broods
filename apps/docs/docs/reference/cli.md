@@ -124,7 +124,7 @@ Revokes the stored login on its server and removes it from `~/.broods/config.jso
 broods logout [--base-url <url>]
 ```
 
-A revoked token stops working at once, so run it on a machine you no longer trust with the login, or after a token leaked. A token the server already refuses is removed locally all the same. A `BROODS_TOKEN` in the environment is left alone, and logout says so: the CLI cannot unset it, so remove it from your shell or CI settings.
+A revoked token stops working at once, so run it on a machine you no longer trust with the login, or after a token leaked. A token the server does not revoke (already invalid, or lent to an agent) is removed locally all the same, with a warning instead of `Logged out`. A `BROODS_TOKEN` in the environment is left alone, and logout says so: the CLI cannot unset it, so remove it from your shell or CI settings.
 
 ## connect
 

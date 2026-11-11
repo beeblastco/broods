@@ -783,6 +783,7 @@ async function resumeConversation(options: {
       admission: admission.outcome,
       invoked: false,
       publicEventId: continuationEvent.publicEventId,
+      ...(admission.runId ? { runId: admission.runId } : {}),
     };
   }
   try {
@@ -804,6 +805,7 @@ async function resumeConversation(options: {
     admission: admission.outcome,
     invoked: true,
     publicEventId: continuationEvent.publicEventId,
+    ...(admission.runId ? { runId: admission.runId } : {}),
   };
 }
 
@@ -844,9 +846,12 @@ async function handleDirectAnswers(
   for (const row of settled) {
     if (!row) continue;
     last = row;
-    outcome = await continueAfterAsyncToolSettlement(row);
-    resumed ||=
-      outcome.kind === "ready" && !NO_RUN_OUTCOMES.has(outcome.admission);
+    const next = await continueAfterAsyncToolSettlement(row);
+    const started =
+      next.kind === "ready" && !NO_RUN_OUTCOMES.has(next.admission);
+    // A later answer that starts nothing must not hide the turn an earlier one started.
+    if (started || !resumed) outcome = next;
+    resumed ||= started;
   }
   if (!resumed) refundRun(plan, event.accountId);
   const alreadyAnswered = open

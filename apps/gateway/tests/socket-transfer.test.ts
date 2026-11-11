@@ -67,6 +67,7 @@ let upstream: ReturnType<typeof Bun.serve>;
 let server: ReturnType<typeof Bun.serve<GatewayData>>;
 let gateway: ReturnType<typeof createGateway>;
 const savedEnv = {
+  DEPLOYMENT_ENVIRONMENT: process.env.DEPLOYMENT_ENVIRONMENT,
   LOKI_URL: process.env.LOKI_URL,
   TEMPO_URL: process.env.TEMPO_URL,
 };
@@ -79,6 +80,7 @@ beforeAll((): void => {
     fetch: upstreamFetch,
   });
   const upstreamUrl = `http://127.0.0.1:${upstream.port}`;
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
   process.env.TEMPO_URL = upstreamUrl;
   process.env.LOKI_URL = upstreamUrl;
   gateway = createGateway(gatewayConfig(upstreamUrl));
