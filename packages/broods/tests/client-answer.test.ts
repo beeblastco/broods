@@ -29,6 +29,8 @@ test("answer posts the answers to the agent's run route and returns the acceptan
           status: "accepted",
           resultId: "res_1",
           eventId: "evt_resumed",
+          runId: "run_resumed",
+          statusUrl: "https://gateway.example.com/v1/runs/run_resumed",
           invoked: true,
         },
         { status: 202 },
@@ -55,6 +57,59 @@ test("answer posts the answers to the agent's run route and returns the acceptan
     status: "accepted",
     resultId: "res_1",
     eventId: "evt_resumed",
+    runId: "run_resumed",
+    statusUrl: "https://gateway.example.com/v1/runs/run_resumed",
     invoked: true,
+  });
+});
+
+test("answer passes its signal to fetch and rethrows the abort unwrapped", async (): Promise<void> => {
+  const client = new BroodsClient({
+    baseUrl: "https://gateway.example.com",
+    apiKey: "key-1",
+    fetch: async (_input, init): Promise<Response> => {
+      init?.signal?.throwIfAborted();
+
+      return Response.json({ status: "accepted" }, { status: 202 });
+    },
+  });
+
+  await expect(
+    client.answer(ref, {
+      conversationKey: "chat-1",
+      answers: [{ statusId: "res_1", answers: { color: ["Blue"] } }],
+      signal: AbortSignal.abort(),
+    }),
+  ).rejects.toMatchObject({ name: "AbortError" });
+});
+
+test("a refused answer throws BroodsApiError with the code in its message", async (): Promise<void> => {
+  const client = new BroodsClient({
+    baseUrl: "https://gateway.example.com",
+    apiKey: "key-1",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        {
+          error: {
+            message: "No open question res_1 on this conversation",
+            type: "invalid_request_error",
+            code: "question_not_found",
+          },
+        },
+        { status: 404 },
+      ),
+  });
+
+  await expect(
+    client.answer(ref, {
+      conversationKey: "chat-1",
+      answers: [{ statusId: "res_1", answers: { color: ["Blue"] } }],
+    }),
+  ).rejects.toMatchObject({
+    name: "BroodsApiError",
+    message:
+      "Answer failed: 404 No open question res_1 on this conversation (question_not_found)",
+    status: 404,
+    code: "question_not_found",
   });
 });

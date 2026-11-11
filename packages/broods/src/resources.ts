@@ -695,7 +695,13 @@ export type AgentToolInput =
 export type AgentDefinitionConfig = EnvRefString<
   Pick<
     AgentConfig,
-    "agent" | "model" | "scheduler" | "browser" | "session" | "mcp"
+    | "agent"
+    | "model"
+    | "transcription"
+    | "scheduler"
+    | "browser"
+    | "session"
+    | "mcp"
   >
 > & { provider?: ProviderConfigInput } & {
   tools?: Record<string, AgentToolInput>;

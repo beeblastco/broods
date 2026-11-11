@@ -468,7 +468,9 @@ describe("streamed runs", (): void => {
 
     expect(response.status).toBe(503);
     expect(response.headers.get("retry-after")).toBe("5");
-    expect(await response.text()).toContain("In-process worker queue is full");
+    expect(await response.text()).toBe(
+      `data: {"type":"error","error":"In-process worker queue is full","code":"service_unavailable","errorType":"overloaded_error"}\n\n`,
+    );
     const recordedBy503 = recorded.size;
     const settledBy503 = settles().length;
 
@@ -797,41 +799,193 @@ describe("streamed runs", (): void => {
     spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
       null,
     );
-    // A was still open; someone answered B a moment earlier.
+    // A was still open; someone answered B a moment earlier, until `bOpen`.
+    let bOpen = false;
     spyOn(
       asyncToolResult,
       "settleAsyncToolResultFromCallback",
     ).mockImplementation(
       async ({ resultId }): Promise<AsyncToolResultRecord | null> =>
-        resultId === "async_tool_a"
+        resultId === "async_tool_a" || bOpen
           ? { ...question(resultId), status: "completed" }
           : null,
     );
 
-    const response = await handler(
-      coreRequest(
-        "POST",
-        "/v1/runs",
-        { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
-        {
-          agentId: "agent_1",
-          eventId: "answer-1",
-          conversationKey: "conversation-1",
-          answers: [
-            { statusId: "async_tool_a", answers: { q: ["yes"] } },
-            { statusId: "async_tool_b", answers: { q: ["no"] } },
-          ],
-        },
-      ),
-    );
+    const answer = async (): Promise<Response> =>
+      handler(
+        coreRequest(
+          "POST",
+          "/v1/runs",
+          { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
+          {
+            agentId: "agent_1",
+            eventId: "answer-1",
+            conversationKey: "conversation-1",
+            answers: [
+              { statusId: "async_tool_a", answers: { q: ["yes"] } },
+              { statusId: "async_tool_b", answers: { q: ["no"] } },
+            ],
+          },
+        ),
+      );
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      const admit = spyOn(ingress, "acceptIngress").mockResolvedValue({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const admitted = await answer();
+      // A full queue admits nothing, so there is no run to name.
+      admit.mockResolvedValue({ outcome: "capacity" });
+      const refused = await answer();
 
-    expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({
-      status: "accepted",
-      resultId: "async_tool_a",
-      alreadyAnswered: ["async_tool_b"],
+      expect(admit).toHaveBeenCalledTimes(2);
+      expect(admitted.status).toBe(202);
+      expect(await admitted.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_a",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+        alreadyAnswered: ["async_tool_b"],
+      });
+      expect(refused.status).toBe(202);
+      const refusedBody = (await refused.json()) as Record<string, unknown>;
+      expect(refusedBody).toMatchObject({ status: "accepted", invoked: false });
+      expect(refusedBody).not.toHaveProperty("runId");
+      expect(refusedBody).not.toHaveProperty("statusUrl");
+
+      // Both open: A starts a turn, then B's resume finds the queue full.
+      bOpen = true;
+      admit.mockResolvedValueOnce({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const mixed = await answer();
+
+      expect(await mixed.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_b",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+      });
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("gives back the per-minute run count of an answer request that resumed nothing", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
     });
+    spyOn(asyncToolResult, "getAsyncToolResult").mockImplementation(
+      async (resultId): Promise<AsyncToolResultRecord | null> =>
+        resultId === "async_tool_gone"
+          ? null
+          : {
+              resultId: resultId,
+              parentEventId: `acct:acct_1:agent:agent_1:api:conversation-1:async-question:${resultId}`,
+              conversationKey: "acct:acct_1:agent:agent_1:api:conversation-1",
+              toolName: "ask_questions",
+              toolCallId: "call_1",
+              input: {
+                questions: [
+                  { id: "q", header: "Q", question: "Which?", options: [] },
+                ],
+                blocking: false,
+                answerBy: new Date(Date.now() + 60_000).toISOString(),
+              },
+              status: "processing",
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              expiresAt: Date.now() + 60_000,
+            },
+    );
+    // Someone else answered the open one first.
+    spyOn(
+      asyncToolResult,
+      "settleAsyncToolResultFromCallback",
+    ).mockResolvedValue(null);
+    const answer = async (statusId: string): Promise<number> =>
+      (
+        await handler(
+          coreRequest(
+            "POST",
+            "/v1/runs",
+            {
+              authorization: "Bearer service-secret",
+              "x-account-id": "acct_1",
+            },
+            {
+              agentId: "agent_1",
+              eventId: `answer-${statusId}`,
+              conversationKey: "conversation-1",
+              answers: [{ statusId: statusId, answers: { q: ["yes"] } }],
+            },
+          ),
+        )
+      ).status;
+
+    const statuses = [
+      await answer("async_tool_a"),
+      await answer("async_tool_gone"),
+      await answer("async_tool_a"),
+    ];
+
+    expect(statuses).toEqual([409, 404, 409]);
+  });
+
+  it("gives back the per-minute run count of a continue or an event list that starts nothing", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "duplicate",
+      eventId: "event-1",
+      runId: "run-1",
+      status: "processing",
+    });
+    spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
+      null,
+    );
+    const send = async (body: Record<string, unknown>): Promise<number> =>
+      (
+        await handler(
+          coreRequest(
+            "POST",
+            "/v1/runs",
+            {
+              authorization: "Bearer service-secret",
+              "x-account-id": "acct_1",
+            },
+            { agentId: "agent_1", conversationKey: "conversation-1", ...body },
+          ),
+        )
+      ).status;
+    const assistantOnly = [{ role: "assistant", content: "noted" }];
+
+    const statuses = [
+      await send({ eventId: "continue-1", continue: true }),
+      await send({ eventId: "continue-2", continue: true }),
+      await send({ eventId: "sse-1", events: assistantOnly }),
+      await send({ eventId: "bg-1", events: assistantOnly, background: true }),
+      await send({ eventId: "continue-3", continue: true }),
+    ];
+
+    expect(statuses).not.toContain(429);
   });
 
   describe("channel messages", (): void => {
@@ -988,6 +1142,62 @@ describe("streamed runs", (): void => {
       expect(mutate).not.toHaveBeenCalledWith(
         "updateAsyncToolResult",
         expect.anything(),
+      );
+    });
+
+    it("gives back the per-minute run count of a channel answer that resumed nothing", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 0,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 1,
+        warned: false,
+      });
+      const message = channelMessage(1);
+      const pending: PendingQuestionInput = {
+        questions: [
+          { id: "q", header: "Stage", question: "Which stage?", options: [] },
+        ],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      };
+      const record: AsyncToolResultRecord = {
+        resultId: "async_tool_1",
+        parentEventId: `${message.conversationKey}:async-question:async_tool_1`,
+        conversationKey: message.conversationKey,
+        toolName: "ask_questions",
+        toolCallId: "call_1",
+        input: pending,
+        status: "processing",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        expiresAt: Date.now() + 60_000,
+      };
+      spyOn(questions, "listOpenQuestions").mockResolvedValue([
+        { pending: pending, record: record },
+      ]);
+      // The live run already read the answer, so there is nothing to resume.
+      spyOn(
+        asyncToolResult,
+        "settleAsyncToolResultFromCallback",
+      ).mockResolvedValue({
+        ...record,
+        status: "completed",
+        handback: "stored",
+      });
+
+      await handleChannelRequest(message);
+      await handleChannelRequest({ ...message, eventId: "channel-event-2" });
+
+      expect(sent).not.toContainEqual(
+        expect.stringContaining("Rate limit reached"),
       );
     });
 

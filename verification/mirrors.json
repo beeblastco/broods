@@ -22,15 +22,16 @@
       "createRun": "9e11b384d4af60ca",
       "completeRun": "f79dd7eff7929367",
       "failRun": "50aa145f59830fd3",
-      "settleRun": "6a3ead204350733e",
+      "settleRun": "d649dcc82f858f14",
       "recordFailedFire": "36bb2309504c6e4c",
       "isLatestFire": "da7aadfec5f179bf",
-      "sweepDeadRuns": "d07ee26f75422da3",
-      "settleAnsweredRun": "ff82d504abd43830"
+      "sweepDeadRuns": "ace5cb53563ac3b6",
+      "settleAnsweredRun": "9e40ddc12fcc86b6",
+      "isSpentOneShot": "6a2db5682fc99cd4"
     },
     "apps/core/src/harness/handler.ts": {
-      "settleCronRun": "e42d96ab0ca4c897",
-      "startScheduledAgentRun": "69f1c238a35c553b"
+      "settleCronRun": "9d2aa6ab4d5d1abc",
+      "startScheduledAgentRun": "fecc3990cd3995ba"
     }
   },
   "DevWatch": {
@@ -59,17 +60,19 @@
     "packages/convex/runtimeIngress.ts": {
       "TERMINAL_STATUSES": "38500a684bf76c53",
       "applySteering": "b0549cb62b9991b8",
-      "claimSteering": "78b0e590af76895b",
-      "promoteQueuedGroup": "27622d1d2a56fd44",
+      "claimSteering": "7117241d181d0045",
+      "promoteQueuedGroup": "a4e9fe7786577337",
       "settleAppliedEnvelopes": "499a3b42677771bf",
-      "expireQueuedEnvelopes": "69ea0530bd77d261",
+      "expireQueuedEnvelopes": "9fcfa7acaa0bf0b5",
       "expireStaleOwner": "7fbf1f799a9db5f2",
-      "maintain": "6cb7d9d14532f480",
-      "releaseOwner": "cbeeee46756c0551",
+      "maintain": "b273e97771f85c09",
+      "releaseOwner": "f47c40cf0b67b272",
       "renewOwner": "74c1cd8a0d2e122a",
       "settle": "01b09025e8de6f67",
       "stepBoundary": "01c1feafc46ac761",
-      "takeNext": "d4235cfb69453ce3"
+      "takeNext": "3650e3dc52bf5244",
+      "queuedDeadline": "4d943baaf1d010b2",
+      "QUEUED_GRACE_AFTER_LEASE_MS": "06972e413d7281af"
     }
   },
   "ProviderTools": {
@@ -111,7 +114,7 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "599a4eded3c58971"
+      "handleManifestSync": "f8064afcdfa76e64"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "76a45716a84d6dda",
@@ -121,7 +124,7 @@
   "SyncCron": {
     "packages/convex/cli/httpRoutes.ts": {
       "desiredCrons": "5b59145810b21d5d",
-      "syncCrons": "32b0a470a535d780"
+      "syncCrons": "83d83c13459fa0af"
     },
     "packages/convex/model/agentSync.ts": {
       "deleteAgentRow": "6067f5e49d72d132"

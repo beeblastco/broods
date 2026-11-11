@@ -1,6 +1,7 @@
 // Edge-safe (`broods/account`): fetch only, no Node built-ins or .env loading, so it runs in
 // Convex actions and Cloudflare Workers as well as Node and Bun.
 
+import { BroodsApiError } from "./api-error.ts";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -35,6 +36,8 @@ import type {
   ConnectionStartResult,
   ConnectionType,
 } from "../../convex/model/connections.ts";
+
+export { BroodsApiError };
 
 // Copy of `DEFAULT_CORE_BASE_URL`: importing client.ts would pull in Node-only code.
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
@@ -370,15 +373,10 @@ export interface SandboxTerminalTicket {
   websocketPath: string;
 }
 
-export class BroodsAccountApiError extends Error {
-  readonly status: number;
-  readonly body: string;
-
+export class BroodsAccountApiError extends BroodsApiError {
   constructor(method: string, path: string, status: number, body: string) {
-    super(`${method} ${path} failed with ${status}: ${body}`);
+    super(`${method} ${path} failed with ${status}:`, status, body);
     this.name = "BroodsAccountApiError";
-    this.status = status;
-    this.body = body;
   }
 }
 

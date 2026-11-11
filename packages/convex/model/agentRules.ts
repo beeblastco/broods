@@ -99,7 +99,6 @@ const RETIRED_REACH_KEYS = [
 export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
-  "transcriptionModelId",
   "providerOptions",
   "output",
   "maxOutputTokens",
@@ -348,7 +347,6 @@ const MODEL = z
   .looseObject({
     provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
     modelId: optionalString,
-    transcriptionModelId: optionalString,
     reasoning: z.optional(
       z.enum([
         "provider-default",
@@ -366,7 +364,14 @@ const MODEL = z
   })
   .check(
     z.superRefine((model, ctx): void => {
+      if (model.transcriptionModelId !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["transcriptionModelId"],
+          message: "was renamed to config.transcription.modelId",
+        });
       for (const key of Object.keys(model)) {
+        if (key === "transcriptionModelId") continue;
         if (!(MODEL_CONFIG_SETTING_KEYS as readonly string[]).includes(key))
           ctx.addIssue({
             code: "custom",
@@ -377,6 +382,11 @@ const MODEL = z
       }
     }),
   );
+
+const TRANSCRIPTION = z.strictObject({
+  provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
+  modelId: optionalString,
+});
 
 const PROVIDER_SETTINGS = z.pipe(
   z
@@ -800,6 +810,7 @@ export const AGENT_CONFIG = z.looseObject({
   agent: z.nullish(AGENT_BEHAVIOR),
   harness: z.nullish(HARNESS),
   model: z.nullish(MODEL),
+  transcription: z.nullish(TRANSCRIPTION),
   provider: z.nullish(PROVIDERS),
   workspaces: z.nullish(WORKSPACE_REFS),
   sandboxes: z.optional(nonEmptyStrings),

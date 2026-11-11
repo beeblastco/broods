@@ -79,19 +79,19 @@ Never call `signUserToken` in a browser: the signing secret speaks for every use
 
 ### Methods
 
-| Method                                         | Returns                          | What it does                                                                 |
-| ---------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| `run(agent, input)`                            | `{ text, events }`               | Streams a run and collects the text and parts                                |
-| `stream(agent, input)`                         | `AsyncGenerator<TextStreamPart>` | Yields AI SDK stream parts as they arrive                                    |
-| `runAsync(agent, input)`                       | `AsyncAgentRun`                  | Starts a background run, returns `runId` and `statusUrl`                     |
-| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                  | Re-enters a run that stopped on the step cap or a provider fault             |
-| `answer(agent, { conversationKey, answers })`  | `AnswersAccepted`                | Answers an `awaiting_input` run's prompts; the run resumes in the background |
-| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                    | One status snapshot. `{ status: "not_found" }` on 404                        |
-| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                    | Polls until a settled status or timeout                                      |
-| `agent(ref)`                                   | `AgentHandle`                    | Binds `run`, `stream`, `runAsync`, `continue`, `answer` to one agent         |
-| `channelWebhookUrl(ref)`                       | `string`                         | Webhook URL for a generated channel reference                                |
-| `accountWebhookUrl(accountId, type)`           | `string`                         | Production webhook URL for a channel type                                    |
-| `stageWebhookUrl(accountId, endpointId, type)` | `string`                         | Webhook URL pinned to one non-production stage                               |
+| Method                                         | Returns                           | What it does                                                                 |
+| ---------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `run(agent, input)`                            | `{ text, events, output }`        | Streams a run and collects the text, parts and structured output             |
+| `stream(agent, input)`                         | `AsyncGenerator<AgentStreamPart>` | Yields AI SDK stream parts, plus `structured-output`, as they arrive         |
+| `runAsync(agent, input)`                       | `AsyncAgentRun`                   | Starts a background run, returns `runId` and `statusUrl`                     |
+| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                   | Re-enters a run that stopped on the step cap or a provider fault             |
+| `answer(agent, { conversationKey, answers })`  | `AnswersAccepted`                 | Answers an `awaiting_input` run's prompts; the run resumes in the background |
+| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                     | One status snapshot. `{ status: "not_found" }` on 404                        |
+| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                     | Polls until a settled status or timeout                                      |
+| `agent(ref)`                                   | `AgentHandle`                     | Binds `run`, `stream`, `runAsync`, `continue`, `answer` to one agent         |
+| `channelWebhookUrl(ref)`                       | `string`                          | Webhook URL for a generated channel reference                                |
+| `accountWebhookUrl(accountId, type)`           | `string`                          | Production webhook URL for a channel type                                    |
+| `stageWebhookUrl(accountId, endpointId, type)` | `string`                          | Webhook URL pinned to one non-production stage                               |
 
 `AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs`, default 2000, `timeoutMs`, default 180000, and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
 
@@ -114,16 +114,17 @@ const status = await job.wait({ timeoutMs: 300_000 });
 
 Pass exactly one of `input` or `events`.
 
-| Field             | Description                                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `input`           | One user text message                                                                                  |
-| `events`          | AI SDK model messages, for images, files, tool approval responses                                      |
-| `conversationKey` | Conversation to continue. Omit for a new one                                                           |
-| `eventId`         | Correlation id. Generated when omitted                                                                 |
-| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                        |
-| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject` |
-| `system`          | One-turn system message or messages, not persisted                                                     |
-| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`         |
+| Field             | Description                                                                                                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `input`           | One user text message                                                                                                                                                                                                                                                                            |
+| `events`          | AI SDK model messages, for images, files, tool approval responses                                                                                                                                                                                                                                |
+| `conversationKey` | Conversation to continue. Omit for a new one                                                                                                                                                                                                                                                     |
+| `eventId`         | Correlation id. Generated when omitted                                                                                                                                                                                                                                                           |
+| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                                                                                                                                                                                                                  |
+| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject`                                                                                                                                                                                           |
+| `system`          | One-turn system message or messages, not persisted                                                                                                                                                                                                                                               |
+| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`                                                                                                                                                                                                   |
+| `signal`          | `AbortSignal`. On `run` and `stream`, aborting closes the stream and core fails the run when it next writes a frame, so a running tool call finishes first. On `runAsync` it cancels only the request: a run core already accepted keeps going, so pass an `eventId` and retry with the same one |
 
 `model` rejects `provider`, `modelId`, `output` and `apiKey`, so a request cannot swap the model or credentials. With a runtime key, `system` and `model` need `allowRunOverrides: true` on the agent, or the run fails with `403 run_overrides_disabled`.
 
@@ -144,7 +145,16 @@ await client.run(api.agents.myAgent, {
 
 ### Stream parts
 
-`stream` yields AI SDK `TextStreamPart` values such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+`stream` yields `AgentStreamPart` values: the AI SDK `TextStreamPart` types such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest, plus `{ type: "structured-output", output }` at the end of a run whose agent sets `model.output`. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+
+Upgrading from a release where `stream` and `run().events` were typed `TextStreamPart<ToolSet>`: code that assigns parts to that type, or switches over `part.type` exhaustively, no longer compiles. Type it `AgentStreamPart` (exported from `broods`), or skip `structured-output` first:
+
+```ts
+for await (const part of client.stream(api.agents.myAgent, input)) {
+  if (part.type === "structured-output") continue;
+  handle(part); // TextStreamPart<ToolSet>
+}
+```
 
 ### Async status
 
@@ -157,16 +167,17 @@ await client.run(api.agents.myAgent, {
 | `failed`                                      | `error` explains. `stoppedByUser: true` means a deliberate stop     |
 | `expired`                                     | Queued work was never run                                           |
 
-Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` in the result. Approve an `awaiting_approval` run by sending the responses as `events`:
+Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` and `runId` in the result; pass `runId` to `waitForAsyncStatus` to follow it. `runId` is present only when a turn was started or queued, and names the last turn an answer started or queued when one call answers several prompts. `answer` and `continue` take `signal` like `runAsync`: it cancels only the request, and answers core already accepted still resume the run. Pass your own `eventId` and reuse it when you retry after an abort, so the retry cannot start a second run. Approve an `awaiting_approval` run by sending the responses as `events`:
 
 ```ts
 const status = await job.wait();
 const prompt = status.questions?.[0];
 if (status.status === "awaiting_input" && prompt) {
-  await client.answer(api.agents.myAgent, {
+  const answered = await client.answer(api.agents.myAgent, {
     conversationKey: job.conversationKey,
     answers: [{ statusId: prompt.statusId, answers: { color: ["Blue"] } }],
   });
+  if (answered.runId) await client.waitForAsyncStatus(answered.runId);
 }
 if (status.status === "awaiting_approval") {
   await client.runAsync(api.agents.myAgent, {
@@ -186,6 +197,30 @@ if (status.status === "awaiting_approval") {
 ```
 
 Every status core returns also carries the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
+
+### Errors
+
+A refused request throws `BroodsApiError` with the server's error as fields, from a JSON body, the SSE `error` frame a streamed run is refused with, or a WebSocket `error` frame that carries a `status`. Branch on `code`, which stays stable across releases. A core older than the SDK sends no `code` on a streamed refusal, so `code` is then undefined. The message reads `Run failed: 403 This agent needs a user token. (user_token_required)`, so code that matched the code in the message text keeps working. `broods/account` exports the class too.
+
+| Field           | Description                                                    |
+| --------------- | -------------------------------------------------------------- |
+| `status`        | HTTP status                                                    |
+| `code`          | Stable error code, such as `user_token_required`               |
+| `type`          | Error class, such as `permission_error`                        |
+| `serverMessage` | The server's message, or the raw body when it sent no envelope |
+| `body`          | The raw response body                                          |
+
+```ts
+import { BroodsApiError } from "broods";
+
+try {
+  await client.run(api.agents.myAgent, { input: "Hello" });
+} catch (error) {
+  if (error instanceof BroodsApiError && error.code === "user_token_required") {
+    // sign a user token and retry
+  }
+}
+```
 
 ### Busy conversations
 
@@ -310,7 +345,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 Behavior shared by every method:
 
 - `get*` returns `null` on 404 and `delete*` returns `false`, so upserts need no try/catch.
-- Other failures throw `BroodsAccountApiError` with the HTTP `status` and response body.
+- Other failures throw `BroodsAccountApiError`, a `BroodsApiError` (see [Errors](#errors)).
 - Updates deep-merge `config` into the stored config. A `null` value deletes a key.
 - Secrets inside configs are encrypted at rest and come back as `********`. Sending `********` back keeps the stored value.
 
