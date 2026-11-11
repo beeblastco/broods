@@ -1276,6 +1276,8 @@ describe("read-only S3-direct workspace", () => {
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem-bucket",
       `${NS}/notes/a.txt`,
+      undefined,
+      25 * 1024 * 1024,
     );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });

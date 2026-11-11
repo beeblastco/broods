@@ -137,6 +137,36 @@ describe("google chat channel adapter", () => {
     );
   });
 
+  it("splits a long reply at the provider's limit", async (): Promise<void> => {
+    const post = spyOn(
+      GoogleChatAdapter.prototype,
+      "postMessage",
+    ).mockResolvedValue({
+      id: "spaces/AAA/messages/R1",
+      threadId: "",
+      raw: {},
+    });
+    restorers.push((): void => post.mockRestore());
+    const adapter = channel();
+    const parsed = await adapter.parse(
+      delivery(JSON.stringify(spaceEvent("@Agent hi", "hi")), ""),
+    );
+    if (parsed.kind !== "message") throw new Error("expected a message");
+    const text = `${"é".repeat(20_000)} tail`;
+
+    await adapter.actions(parsed.message).sendText(text);
+
+    const sent = post.mock.calls.map(([, message]) =>
+      String((message as { markdown: string }).markdown),
+    );
+    expect(sent.length).toBeGreaterThan(1);
+    // Google Chat caps a whole message at 32,000 bytes.
+    expect(sent.every((chunk) => Buffer.byteLength(chunk) <= 28_000)).toBe(
+      true,
+    );
+    expect(sent.join("")).toBe(text);
+  });
+
   it("reads the service-account key JSON and refuses anything else", (): void => {
     expect(parseServiceAccountKey(serviceAccountJson())).toMatchObject({
       client_email: "agent@project.iam.gserviceaccount.com",

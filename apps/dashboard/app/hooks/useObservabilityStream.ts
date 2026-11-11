@@ -65,6 +65,9 @@ interface UseObservabilityStreamResult<T> {
 // Tempo's `tempo.retention` in the infra repo's tempo chart; older traces cannot be fetched.
 export const TRACE_RETENTION_DAYS = 30;
 const RECONNECT_DELAY_MS = 3_000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+// The gateway revoked the stage session: redialling with it only counts auth failures.
+const REVOKED_CLOSE_CODE = 4401;
 const MAX_ENTRIES = 2_000;
 
 const STREAM_CACHE = new Map<
@@ -132,6 +135,7 @@ export function useObservabilityStream(
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attemptRef = useRef(0);
   const destroyedRef = useRef(false);
   const connectRef = useRef<() => void>(() => {});
 
@@ -232,6 +236,7 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "ready") {
+        attemptRef.current = 0;
         setStatus("live");
 
         return;
@@ -285,9 +290,12 @@ export function useObservabilityStream(
           (current ?? event.reason) || `WebSocket closed (${event.code}).`,
       );
       setHistory((current) => (current === "loading" ? "failed" : current));
+      const delay = reconnectDelay(event.code, attemptRef.current);
+      if (delay === null) return;
+      attemptRef.current += 1;
       reconnectTimerRef.current = setTimeout(() => {
         if (!destroyedRef.current) connectRef.current();
-      }, RECONNECT_DELAY_MS);
+      }, delay);
     };
   }, [
     wsBaseUrl,
@@ -309,6 +317,7 @@ export function useObservabilityStream(
   useEffect(() => {
     connectRef.current = connect;
     destroyedRef.current = false;
+    attemptRef.current = 0;
     // oxlint-disable-next-line react/set-state-in-effect -- connect marks the socket connecting
     if (projectSlug && stageSlug && apiKey) connect();
 
@@ -354,7 +363,9 @@ export function entryKey(
     return `span:${entry.traceId}:${entry.spanId}`;
   }
 
-  return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+  return entry.logId
+    ? `log:${entry.logId}`
+    : `log:${entry.ts}:${entry.eventType}:${entry.message}`;
 }
 
 export function mergeBackfill<
@@ -399,6 +410,13 @@ export function mergeLive<
     .sort((a, b) => entryTime(b) - entryTime(a));
 
   return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
+}
+
+/** Doubles from 3 s to a minute; null when the close means a new credential is needed. */
+export function reconnectDelay(code: number, attempt: number): number | null {
+  if (code === REVOKED_CLOSE_CODE) return null;
+
+  return Math.min(RECONNECT_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
 }
 
 function cacheEntries(

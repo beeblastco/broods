@@ -17,6 +17,7 @@ import {
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./model/envRefs";
 import { requireActiveAccount } from "./model/activeAccount";
+import type { ApiError } from "./model/apiError";
 import { REDACTED_SECRET_VALUE } from "./model/configValues";
 import { normalizeMcpInput, type McpInput } from "./model/mcp";
 import { stripUndefined } from "./model/objects";
@@ -412,17 +413,18 @@ async function coreMcpRpc(
     body: JSON.stringify(body),
   });
   const text = await response.text();
-  let parsed: Record<string, unknown> = {};
+  let parsed: Record<string, unknown> & { error?: string | Partial<ApiError> } =
+    {};
   try {
     parsed = JSON.parse(text) as Record<string, unknown>;
   } catch {
     // Non-JSON errors fall through to the status check below.
   }
   if (!response.ok) {
+    const error = parsed.error;
     throw new Error(
-      typeof parsed.error === "string"
-        ? parsed.error
-        : `MCP request failed with status ${response.status}`,
+      (typeof error === "string" ? error : error?.message) ??
+        `MCP request failed with status ${response.status}`,
     );
   }
 

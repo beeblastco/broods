@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "check": "tsc --noEmit && tsc --noEmit -p scripts",
+    "check": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p tests",
+    "test": "bun test",
     "deploy": "bun scripts/deploy.ts"
   },
   "dependencies": {

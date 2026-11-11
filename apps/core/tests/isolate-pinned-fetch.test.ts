@@ -85,6 +85,18 @@ describe("guardedFetch", () => {
     expect(output.requests[2]).not.toContain("cookie");
   });
 
+  it("follows a POST redirect as a GET without the body, like fetch", async () => {
+    const output = runNodeScenario("redirect-post");
+    const sent = output.requests.join("");
+
+    expect(output.result?.bodyText).toBe("done");
+    expect(sent).toContain("POST /form");
+    expect(sent).toContain("POST /keep");
+    expect(sent).toContain("GET /landing");
+    expect(sent.split("token=secret")).toHaveLength(3);
+    expect(sent.split("application/json")).toHaveLength(3);
+  });
+
   it("rejects response bodies over 5MB", async () => {
     const output = runNodeScenario("large-body");
 
@@ -195,6 +207,21 @@ function runNodeScenario(scenario: string): ScenarioOutput {
               httpResponse(307, { location: "/media/2" }, ""),
               httpResponse(307, { location: "http://cdn.test/object" }, ""),
               httpResponse(200, { "content-type": "text/plain" }, "media"),
+            ]),
+          },
+        );
+        return { result, connections, requests };
+      }
+      if (scenario === "redirect-post") {
+        const result = await guardedFetch(
+          "http://public.test/form",
+          { method: "POST", headers: { "content-type": "application/json" }, body: '{"token=secret":1}' },
+          {
+            lookup: publicLookup("93.184.216.34"),
+            createConnection: scriptedConnection([
+              httpResponse(307, { location: "/keep" }, ""),
+              httpResponse(303, { location: "http://other.test/landing" }, ""),
+              httpResponse(200, { "content-type": "text/plain" }, "done"),
             ]),
           },
         );

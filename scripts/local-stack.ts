@@ -10,7 +10,6 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -28,6 +27,7 @@ import {
 } from "../packages/convex/model/selfHostAuth.ts";
 import { BroodsAccountClient } from "../packages/broods/src/account.ts";
 import { BroodsClient } from "../packages/broods/src/client.ts";
+import { reservePortBase } from "./local-stack-ports.ts";
 import { verifyCases } from "./local-verify/cases/index.ts";
 import {
   CRASH_CASES,
@@ -54,8 +54,6 @@ const CONVEX_IMAGE =
 // Keep equal to the cluster's Traefik.
 const TRAEFIK_IMAGE = "traefik:v3.7.12";
 const HEALTH_TIMEOUT_MS = 60_000;
-const PORT_BLOCK_BASE = 4300;
-const PORT_BLOCK_SIZE = 10;
 const STATE_ROOT = join(homedir(), ".broods-local");
 interface InstancePorts {
   convexApi: number;
@@ -1282,21 +1280,6 @@ function recordPerf(
   );
 }
 
-function allocatePortBase(): number {
-  const used = new Set<number>();
-  if (existsSync(STATE_ROOT)) {
-    for (const entry of readdirSync(STATE_ROOT)) {
-      const other = loadState(entry);
-      if (other) used.add(other.portBase);
-    }
-  }
-  for (let index = 0; index < 50; index += 1) {
-    const base = PORT_BLOCK_BASE + index * PORT_BLOCK_SIZE;
-    if (!used.has(base)) return base;
-  }
-  throw new Error("no free port block under ~/.broods-local");
-}
-
 function currentInstanceId(): string {
   const digest = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
   const basename = repoRoot.split("/").findLast(Boolean) ?? "broods";
@@ -1337,26 +1320,28 @@ function loadOrCreateState(): InstanceState {
   }
   if (existing) return existing;
 
-  const state: InstanceState = {
-    instanceId: instanceId,
-    instanceSecret: randomBytes(32).toString("hex"),
-    pids: {},
-    portBase: allocatePortBase(),
-    secrets: {
-      accountConfigEncryption: randomBytes(24).toString("hex"),
-      adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
-      githubAppKey: newGitHubAppKey(),
-      githubWebhook: randomBytes(24).toString("hex"),
-      mediaTicket: randomBytes(24).toString("hex"),
-      serviceAuth: randomBytes(24).toString("hex"),
-      sessionSigningKey: newSessionSigningKey(),
-      stageTicket: randomBytes(24).toString("hex"),
-      terminalTicket: randomBytes(24).toString("hex"),
-    },
-  };
-  saveState(state);
+  return reservePortBase(STATE_ROOT, (portBase): InstanceState => {
+    const state: InstanceState = {
+      instanceId: instanceId,
+      instanceSecret: randomBytes(32).toString("hex"),
+      pids: {},
+      portBase: portBase,
+      secrets: {
+        accountConfigEncryption: randomBytes(24).toString("hex"),
+        adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
+        githubAppKey: newGitHubAppKey(),
+        githubWebhook: randomBytes(24).toString("hex"),
+        mediaTicket: randomBytes(24).toString("hex"),
+        serviceAuth: randomBytes(24).toString("hex"),
+        sessionSigningKey: newSessionSigningKey(),
+        stageTicket: randomBytes(24).toString("hex"),
+        terminalTicket: randomBytes(24).toString("hex"),
+      },
+    };
+    saveState(state);
 
-  return state;
+    return state;
+  });
 }
 
 function loadState(instanceId: string): InstanceState | null {
