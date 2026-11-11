@@ -20,11 +20,6 @@ import { StageSessionRefusedError } from "./observability-client.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-// The 409 `skill_upload_required` body: the skills whose files the server does not hold.
-interface SkillUploadRequired {
-  skills: string[];
-}
-
 export interface SyncClientOptions {
   baseUrl: string;
   token: string;
@@ -258,20 +253,17 @@ export class BroodsSyncClient {
     const refusal =
       response.status === 409 ? await response.clone().text() : "";
     if (errorEnvelope(refusal).code === "skill_upload_required") {
-      const stale = new Set(
-        (JSON.parse(refusal) as SkillUploadRequired).skills,
+      const { skills } = JSON.parse(refusal) as { skills?: string[] };
+      if (!Array.isArray(skills))
+        throw new Error(
+          "Sync manifest failed: the server asked for skill uploads but named no skills",
+        );
+      response = await put(
+        await this.externalizeLargeSkills(bundled, {
+          sent: first,
+          stale: new Set(skills),
+        }),
       );
-      response = await put({
-        ...first,
-        resources: await Promise.all(
-          bundled.resources.map(
-            async (resource, index): Promise<CliManifestResource> =>
-              resource.kind === "skill" && stale.has(resource.name)
-                ? await this.uploadSkill(manifest, resource)
-                : (first.resources[index] ?? resource),
-          ),
-        ),
-      });
     }
     await assertOk(response, "Sync manifest failed");
 
@@ -322,29 +314,38 @@ export class BroodsSyncClient {
   }
 
   // One upload per skill that does not fit inline, but for one this stage last synced unchanged.
+  // After a refusal: upload the `stale` skills, send the rest as `sent` did.
   private async externalizeLargeSkills(
     manifest: CliManifest,
+    retry?: { sent: CliManifest; stale: ReadonlySet<string> },
   ): Promise<CliManifest> {
     const large = skillsToUpload(manifest.resources);
     if (large.size === 0) return manifest;
-    const remote = await this.getManifest(manifest.project, manifest.stage);
+    const remote = retry
+      ? null
+      : await this.getManifest(manifest.project, manifest.stage);
 
     const resources = await Promise.all(
-      manifest.resources.map(async (resource): Promise<CliManifestResource> => {
-        if (resource.kind !== "skill" || !large.has(resource.name)) {
-          return resource;
-        }
-        const held = remote?.manifest.resources.find(
-          (entry): boolean =>
-            entry.kind === "skill" && entry.name === resource.name,
-        );
+      manifest.resources.map(
+        async (resource, index): Promise<CliManifestResource> => {
+          if (resource.kind !== "skill" || !large.has(resource.name)) {
+            return resource;
+          }
+          if (retry && !retry.stale.has(resource.name)) {
+            return retry.sent.resources[index] ?? resource;
+          }
+          const held = remote?.manifest.resources.find(
+            (entry): boolean =>
+              entry.kind === "skill" && entry.name === resource.name,
+          );
 
-        return held &&
-          stableJson(snapshotResource(held)) ===
-            stableJson(snapshotResource(resource))
-          ? withoutSkillContent(resource)
-          : await this.uploadSkill(manifest, resource);
-      }),
+          return held &&
+            stableJson(snapshotResource(held)) ===
+              stableJson(snapshotResource(resource))
+            ? withoutSkillContent(resource)
+            : await this.uploadSkill(manifest, resource);
+        },
+      ),
     );
 
     return { ...manifest, resources: resources };

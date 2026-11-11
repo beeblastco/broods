@@ -14,13 +14,14 @@ import {
 import schema from "../schema";
 
 // The skills bucket, in memory: key -> body and user metadata.
-const { bucket, writes, failPrefixDelete } = vi.hoisted(() => ({
+const { bucket, writes, failPrefixDelete, afterHead } = vi.hoisted(() => ({
   bucket: new Map<
     string,
     { body: Uint8Array; metadata: Record<string, string> | undefined }
   >(),
   writes: { count: 0 },
   failPrefixDelete: { on: false },
+  afterHead: { run: undefined as (() => void) | undefined },
 }));
 
 vi.mock("../model/s3", async (importOriginal) => ({
@@ -44,6 +45,9 @@ vi.mock("../model/s3", async (importOriginal) => ({
     key: string,
   ): Promise<{ Metadata: Record<string, string> | undefined } | null> => {
     const object = bucket.get(key);
+    const run = afterHead.run;
+    afterHead.run = undefined;
+    run?.();
 
     return object ? { Metadata: object.metadata } : null;
   },
@@ -112,6 +116,7 @@ afterEach((): void => {
   bucket.clear();
   writes.count = 0;
   failPrefixDelete.on = false;
+  afterHead.run = undefined;
 });
 
 test("a filesStorageId another row owns is refused before any read, and kept", async (): Promise<void> => {
@@ -205,6 +210,113 @@ test("broods dev sends its revision again after the server refused a held skill"
   expect(notes()).toBe(DEV_NOTES);
   await devSync();
   expect(uploads.count).toBe(3);
+});
+
+test("a stage-scoped key gets the fence for a wrong and an exact guess of a foreign held skill", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const prod = skillFiles(PROD_NOTES);
+  const blob = await store(tt, prod);
+  expect(
+    await putSkill(tt, "production", prod, { filesStorageId: blob }),
+  ).toHaveProperty("status", 200);
+  const key = await seedDevelopmentKey(tt);
+  const syncs = async (): Promise<unknown> =>
+    await tt.run(async (ctx) => await ctx.db.query("stageSyncs").collect());
+  const before = await syncs();
+  const written = writes.count;
+
+  const wrong = await putSkill(
+    tt,
+    "development",
+    skillFiles(DEV_NOTES),
+    {},
+    key,
+  );
+  const exact = await putSkill(tt, "development", prod, {}, key);
+
+  expect([wrong.status, exact.status]).toEqual([409, 409]);
+  const answers = [await wrong.text(), await exact.text()];
+  expect(answers[0]).toContain("managed by another stage");
+  expect(answers[1]).toBe(answers[0]);
+  expect(writes.count).toBe(written);
+  expect(await syncs()).toEqual(before);
+});
+
+test("a held skill another sync of the stage replaced after the first check is refused under the claim", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const prod = skillFiles(PROD_NOTES);
+  const blob = await store(tt, prod);
+  expect(
+    await putSkill(tt, "development", prod, { filesStorageId: blob }),
+  ).toHaveProperty("status", 200);
+  const written = writes.count;
+  afterHead.run = (): void => {
+    for (const [key, object] of bucket)
+      if (key.endsWith("/docs/SKILL.md"))
+        bucket.set(key, { ...object, metadata: {} });
+  };
+
+  const replaced = await putSkill(tt, "development", prod, {});
+
+  expect(replaced.status).toBe(409);
+  expect(await replaced.text()).toContain("skill_upload_required");
+  expect(writes.count).toBe(written);
+  const sync = await tt.run(
+    async (ctx) => await ctx.db.query("stageSyncs").first(),
+  );
+  expect(sync?.activeUntil).toBeUndefined();
+});
+
+test("held skills are checked one query each, so many files stay under the read limit", async (): Promise<void> => {
+  const tt = convexTest({
+    schema: schema,
+    modules: modules,
+    transactionLimits: { documentsRead: 60 },
+  });
+  await seedAccount(tt);
+  const files = Array.from({ length: 20 }, (_, index) => ({
+    path: `file-${index}.md`,
+    text: SKILL_MD,
+  }));
+  const blob = await store(tt, [files[0]!]);
+  const accountId = await tt.run(async (ctx): Promise<Id<"accounts">> => {
+    const project = (await ctx.db.query("projects").first())!;
+    for (const name of ["docs", "notes"]) {
+      for (const file of files) {
+        await ctx.db.insert("workspaceFiles", {
+          authId: "auth_owner",
+          projectId: project._id,
+          nodeId: `cli-skill-${name}`,
+          path: file.path,
+          name: file.path,
+          isFolder: false,
+          storageId: blob,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
+    return (await ctx.db.query("accounts").first())!._id;
+  });
+
+  const stale = await tt.action(internal.aws.skills.unheld, {
+    accountId: accountId,
+    project: PROJECT,
+    stage: "development",
+    skills: ["docs", "notes"].map((name) => ({
+      name: name,
+      files: files.map((file) => ({
+        path: file.path,
+        size: Buffer.byteLength(file.text),
+        sha256: sha(Buffer.from(file.text)),
+      })),
+    })),
+  });
+
+  expect(stale).toEqual(["docs", "notes"]);
 });
 
 test("a delete that failed part way leaves the skill unheld", async (): Promise<void> => {
@@ -435,13 +547,14 @@ async function putDeclared(
   stage: string,
   files: Array<{ path: string; size: number; sha256: string }>,
   extra: { filesStorageId?: Id<"_storage"> },
+  token = SECRET,
 ): Promise<Response> {
   return await tt.fetch(
     `/v1/account/projects/${PROJECT}/stages/${stage}/manifest`,
     {
       method: "PUT",
       headers: {
-        Authorization: `Bearer ${SECRET}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -476,6 +589,7 @@ async function putSkill(
   stage: string,
   files: File[],
   extra: { filesStorageId?: Id<"_storage"> },
+  token = SECRET,
 ): Promise<Response> {
   return await putDeclared(
     tt,
@@ -486,7 +600,31 @@ async function putSkill(
       sha256: sha(Buffer.from(file.text)),
     })),
     extra,
+    token,
   );
+}
+
+// A project key scoped to the seeded development stage.
+async function seedDevelopmentKey(tt: T): Promise<string> {
+  const token = "bpdk_development_only";
+  const keyHash = await sha256Hex(token);
+  await tt.run(async (ctx): Promise<void> => {
+    const stage = (await ctx.db.query("stages").first())!;
+    const account = (await ctx.db.query("accounts").first())!;
+    await ctx.db.insert("deployKeys", {
+      accountId: account._id,
+      projectId: stage.projectId,
+      stageId: stage._id,
+      name: "ci",
+      keyHash: keyHash,
+      keyHint: "hint",
+      status: "active",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+
+  return token;
 }
 
 async function seedAccount(tt: T): Promise<void> {

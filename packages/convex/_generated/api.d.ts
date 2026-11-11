@@ -5328,7 +5328,6 @@ export declare const internal: {
         {
           accountId: Id<"accounts">;
           project: string;
-          secretHash: string;
           skills: Array<{
             files: Array<{
               contentType?: string;
@@ -6096,12 +6095,12 @@ export declare const internal: {
       listExternalResourcesForAccount: FunctionReference<
         "query",
         "internal",
-        { accountId: Id<"accounts"> },
+        { accountId: Id<"accounts">; project: string; stage: string },
         Array<{
           externalId: string;
           kind: "skill" | "hook" | "mcp";
           name: string;
-          stageId: Id<"stages">;
+          own: boolean;
         }>
       >;
       pruneSandboxesBySecretHash: FunctionReference<
@@ -6260,19 +6259,17 @@ export declare const internal: {
         },
         null
       >;
-      staleSkillNodes: FunctionReference<
+      staleSkillNode: FunctionReference<
         "query",
         "internal",
         {
+          accountId: Id<"accounts">;
+          files: Array<{ path: string; sha256: string }>;
+          name: string;
           project: string;
-          secretHash: string;
-          skills: Array<{
-            files: Array<{ path: string; sha256: string }>;
-            name: string;
-          }>;
           stage: string;
         },
-        Array<string>
+        boolean
       >;
       syncManifestBySecretHash: FunctionReference<
         "mutation",

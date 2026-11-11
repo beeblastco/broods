@@ -518,16 +518,14 @@ function desiredCrons(
 async function externalOwnership(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  stageId: Id<"stages">,
+  route: Extract<RouteParts, { kind: "manifest" }>,
 ): Promise<ExternalOwnership> {
   const rows = await ctx.runQuery(
     internal.cli.sync.listExternalResourcesForAccount,
-    { accountId: accountId },
+    { accountId: accountId, project: route.project, stage: route.stage },
   );
   const foreign = new Set(
-    rows
-      .filter((row) => row.stageId !== stageId)
-      .map((row) => `${row.kind}:${row.name}`),
+    rows.filter((row) => !row.own).map((row) => `${row.kind}:${row.name}`),
   );
   const owned: Record<ExternalResourceKind, Map<string, string>> = {
     skill: new Map(),
@@ -536,7 +534,7 @@ async function externalOwnership(
   };
   for (const row of rows) {
     if (
-      row.stageId === stageId &&
+      row.own &&
       (row.kind === "mcp" || !foreign.has(`${row.kind}:${row.name}`))
     )
       owned[row.kind].set(row.name, row.externalId);
@@ -604,34 +602,50 @@ async function handleManifestSync(
   const prune = body.prune === true || pruneOnly !== undefined;
   const originalManifest = manifest as CliManifest;
   const skills = parseSkills(originalManifest);
+  // The account key and a login token may move an account-wide name between stages
+  // (dev, then deploy); only a stage-scoped project key is fenced.
+  const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
+  const foreign =
+    fenced &&
+    originalManifest.resources.some((entry) =>
+      isExternalResourceKind(entry.kind),
+    )
+      ? (await externalOwnership(ctx, accountId, route)).foreign
+      : new Set<string>();
+  // Before the held check, so a fenced key learns nothing of another stage's skill files.
+  for (const skill of skills) assertNotForeign(foreign, "skill", skill.name);
   const held = skills.filter((skill) => "held" in skill);
-  // Before the revision is claimed, so the CLI uploads these and sends the same revision again.
-  const stale =
-    held.length > 0
-      ? await ctx.runAction(internal.aws.skills.unheld, {
-          accountId: accountId,
-          secretHash: secretHash,
-          project: route.project,
-          stage: route.stage,
-          skills: held.map((skill) => ({
-            name: skill.name,
-            files: skill.files,
-          })),
-        })
-      : [];
-  if (stale.length > 0) {
-    return json(
-      {
-        ...apiErrorBody(
+  const refuseUnheld = async (): Promise<Response | null> => {
+    const stale =
+      held.length > 0
+        ? await ctx.runAction(internal.aws.skills.unheld, {
+            accountId: accountId,
+            project: route.project,
+            stage: route.stage,
+            skills: held.map((skill) => ({
+              name: skill.name,
+              files: skill.files,
+            })),
+          })
+        : [];
+
+    return stale.length > 0
+      ? json(
+          {
+            ...apiErrorBody(
+              409,
+              `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
+              { code: "skill_upload_required" },
+            ),
+            skills: stale,
+          },
           409,
-          `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
-          { code: "skill_upload_required" },
-        ),
-        skills: stale,
-      },
-      409,
-    );
-  }
+        )
+      : null;
+  };
+  // Before the revision is claimed, so the CLI uploads these and sends the same revision again.
+  const refused = await refuseUnheld();
+  if (refused) return refused;
   const scope = await ctx.runMutation(
     internal.cli.sync.ensureScopeBySecretHash,
     {
@@ -644,16 +658,9 @@ async function handleManifestSync(
   );
   const claimed: Array<Id<"_storage">> = [];
   try {
-    // The account key and a login token may move an account-wide name between stages
-    // (dev, then deploy); only a stage-scoped project key is fenced.
-    const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
-    const foreign =
-      fenced &&
-      originalManifest.resources.some((entry) =>
-        isExternalResourceKind(entry.kind),
-      )
-        ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
-        : new Set<string>();
+    // Again under the stage lock: another sync of this stage may have replaced one meanwhile.
+    const replaced = await refuseUnheld();
+    if (replaced) return replaced;
     // Every rule runs before the first write, so a refused manifest changes nothing.
     const external = await prepareExternalResources(
       ctx,
@@ -696,7 +703,7 @@ async function handleManifestSync(
     let reservedResources: string[] = [];
     if (prune) {
       // Ownership re-read now: a name another stage recorded meanwhile is not ours to remove.
-      const { owned } = await externalOwnership(ctx, accountId, scope.stageId);
+      const { owned } = await externalOwnership(ctx, accountId, route);
       await pruneExternalResources(ctx, {
         accountId: accountId,
         stageId: scope.stageId,
@@ -1149,9 +1156,6 @@ async function prepareExternalResources(
   skills: PreparedExternal["skills"],
   claimed: Array<Id<"_storage">>,
 ): Promise<PreparedExternal> {
-  for (const skill of skills) {
-    assertNotForeign(foreign, "skill", skill.name);
-  }
   for (const skill of skills) {
     if (!("filesStorageId" in skill)) continue;
     await ctx.runMutation(internal.account.uploads.claim, {
