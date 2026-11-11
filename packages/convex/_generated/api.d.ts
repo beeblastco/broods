@@ -759,6 +759,7 @@ export declare const api: {
           oneShot?: boolean;
           startedAt: number;
           status: "started" | "completed" | "failed";
+          waitingOn?: Array<string>;
         }>
       >;
     };
@@ -4364,6 +4365,7 @@ export declare const internal: {
           result?: any;
           startedAt: number;
           status: "started" | "completed" | "failed";
+          waitingOn?: Array<string>;
         }>
       >;
       listRunsPage: FunctionReference<
@@ -4399,6 +4401,7 @@ export declare const internal: {
             result?: any;
             startedAt: number;
             status: "started" | "completed" | "failed";
+            waitingOn?: Array<string>;
           }>;
           pageStatus?: "SplitRecommended" | "SplitRequired" | null;
           splitCursor?: string | null;
@@ -4432,10 +4435,13 @@ export declare const internal: {
         "mutation",
         "internal",
         {
+          answered: Array<string>;
           conversationKey: string;
           error?: string;
+          ownerEventId: string;
           result?: any;
           status: "completed" | "failed";
+          waitingOn?: Array<string>;
         },
         null
       >;
