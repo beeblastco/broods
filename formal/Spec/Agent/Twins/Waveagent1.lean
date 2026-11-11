@@ -265,7 +265,7 @@ private def formatLoadedSkillPrompt (args : Json) : Json :=
     " It is also mirrored at " ++ String.intercalate ", " (mirrors.map fun p => s!"`{str p}`") ++ " for tools that expect those locations."
   let path := str (field staged "stagedPath")
   let sandbox := if truth staged then
-    s!"\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at `{path}`. Run scripts from that path, for example `bash {path}/script.sh`, `python3 {path}/script.py`, or direct executable paths when the file has a shebang.{mirrorText}"
+    s!"\n\n## Sandbox files\n\nThis skill's helper files are staged in the workspace at `{path}`, relative to the directory `bash` starts in. Run scripts from that path, for example `bash {path}/script.sh`, `python3 {path}/script.py`, or `./{path}/script.sh` when the file has a shebang.{mirrorText}"
     else "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute."
   toJson s!"<loaded-skill path=\"{str (field loaded "path")}\" name=\"{str (field (field loaded "skill") "name")}\">\n{parts}{sandbox}\n</loaded-skill>"
 
@@ -516,8 +516,8 @@ private def extraTwins : List Twin :=
      (["reasoning", "text", "tool-call", "tool-approval-request", "tool-result"].contains (str (field (Twin.arg args 0) "type")))),
    plain "apps/core/src/harness/session.ts#isPersistedToolContentPart" (fun args => toJson
      (["tool-approval-response", "tool-result"].contains (str (field (Twin.arg args 0) "type")))),
-   plain "apps/core/src/harness/skills.ts#canonicalStagedPath" (fun args => toJson s!"/.claude/skills/{str (Twin.arg args 0)}"),
-   plain "apps/core/src/harness/skills.ts#mirrorStagedPaths" (fun args => toJson [s!"/.agents/skills/{str (Twin.arg args 0)}"]),
+   plain "apps/core/src/harness/skills.ts#canonicalStagedPath" (fun args => toJson s!".claude/skills/{str (Twin.arg args 0)}"),
+   plain "apps/core/src/harness/skills.ts#mirrorStagedPaths" (fun args => toJson [s!".agents/skills/{str (Twin.arg args 0)}"]),
    plain "apps/core/src/shared/domain/agent-config.ts#configuredMaxTurn" (fun args =>
      let value := field (field (Twin.arg args 0) "agent") "maxTurn"
      if value == toJson (0 : Nat) then toJson (9007199254740991 : Nat) else if undef value then Json.null else value),
@@ -771,10 +771,6 @@ private def callerTwins : List Twin :=
    Twin.traced "apps/core/src/shared/skills.ts#formatSkillPath" (fun c => do
      let _ ← Prog.effect "validateSkillName" [Twin.callArg c 1]
      pure (toJson s!"{str (Twin.callArg c 0)}/{str (Twin.callArg c 1)}")),
-   Twin.traced "apps/core/src/harness/skills.ts#canonicalStagePrefix" (fun c => do
-     pure (toJson s!"{str (Twin.callArg c 0)}/.claude/skills/{str (Twin.callArg c 1)}/")),
-   Twin.traced "apps/core/src/harness/skills.ts#mirrorStagePrefixes" (fun c => do
-     pure (toJson [s!"{str (Twin.callArg c 0)}/.agents/skills/{str (Twin.callArg c 1)}/"])),
    Twin.traced "apps/core/src/shared/skills.ts#readSkillText" (fun c => do
      let bucket ← Prog.effect "skillsBucketName"
      let path ← Prog.effect "normalizeBundlePath" [Twin.callArg c 1]
@@ -1219,13 +1215,13 @@ private def appendConversationEvents (call : Json) : Prog Json := do
 
 /-- Normalizes each staged object in turn. The first stale one is deleted without waiting, so the
 callbacks after it, and their deletes, overlap that delete and start in one group. -/
-private def deleteStaleFrom (bucket : Json) (prefixText : String) (keep : List Json) :
+private def deleteStaleFrom (bucket access : Json) (prefixText : String) (keep : List Json) :
     List Json → Prog Unit
   | [] => pure ()
   | object :: rest => do
     let key := str (field object "key")
     let relative ← Prog.effect "normalizeBundlePath" [toJson (dropChars key prefixText.length)]
-    if keep.contains relative then deleteStaleFrom bucket prefixText keep rest
+    if keep.contains relative then deleteStaleFrom bucket access prefixText keep rest
     else
       let later := rest.map fun next =>
         let nextKey := str (field next "key")
@@ -1235,10 +1231,10 @@ private def deleteStaleFrom (bucket : Json) (prefixText : String) (keep : List J
         Prog.unsupported "a staged path that fails to normalize inside concurrent callbacks"
       else
         let calls : List (String × List Json) :=
-          [("deleteS3Object", [bucket, toJson key])] ++ later.flatMap fun (nextKey, nextRelative) =>
+          [("deleteS3Object", [bucket, toJson key, access])] ++ later.flatMap fun (nextKey, nextRelative) =>
             [("normalizeBundlePath", [toJson (dropChars nextKey prefixText.length)])] ++
               (if keep.contains nextRelative then []
-               else [("deleteS3Object", [bucket, toJson nextKey])])
+               else [("deleteS3Object", [bucket, toJson nextKey, access])])
         let outcomes ← Prog.all calls
         for outcome in outcomes do
           match outcome with
@@ -1246,11 +1242,13 @@ private def deleteStaleFrom (bucket : Json) (prefixText : String) (keep : List J
           | _ => pure ()
 
 private def deleteStaleStagedSkillFiles (call : Json) : Prog Json := do
-  let bucket := Twin.callArg call 0
+  let target := Twin.callArg call 0
+  let bucket := field target "bucket"
+  let access := field target "access"
   let prefixText := str (Twin.callArg call 1)
   let keep := arr (field (Twin.callArg call 2) "$set")
-  let objects ← Prog.effect "listS3Prefix" [bucket, toJson prefixText]
-  deleteStaleFrom bucket prefixText keep ((arr objects).filter fun o => !(str (field o "key")).endsWith "/")
+  let objects ← Prog.effect "listS3Prefix" [bucket, toJson prefixText, access]
+  deleteStaleFrom bucket access prefixText keep ((arr objects).filter fun o => !(str (field o "key")).endsWith "/")
   pure Twin.undefinedJson
 
 /-- Whether `a` sorts before `b`: the sort's comparator, which only its sign matters to. -/

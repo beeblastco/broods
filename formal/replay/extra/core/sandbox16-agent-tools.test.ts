@@ -143,7 +143,7 @@ describe("schedule tools", (): void => {
     setStorageForTests({ crons: parts } as never);
   }
 
-  test("a lookup that fails is a task that is not this agent's", async (): Promise<void> => {
+  test("a lookup that fails is reported, not taken for a missing task", async (): Promise<void> => {
     crons({
       getById: failing("bad id"),
     });
@@ -155,7 +155,7 @@ describe("schedule tools", (): void => {
           OPTIONS,
         ),
       ),
-    ).rejects.toThrow("No scheduled task cron_1 belongs to this agent");
+    ).rejects.toThrow("bad id");
     await expect(
       Promise.resolve(
         updateScheduleTool(context).update_schedule?.execute?.(
@@ -163,7 +163,7 @@ describe("schedule tools", (): void => {
           OPTIONS,
         ),
       ),
-    ).rejects.toThrow("No scheduled task cron_1 belongs to this agent");
+    ).rejects.toThrow("bad id");
   });
 
   test("a task that vanishes during the update is reported", async (): Promise<void> => {

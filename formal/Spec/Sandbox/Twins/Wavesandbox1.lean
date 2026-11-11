@@ -1384,30 +1384,43 @@ private def upsertSandboxInstance (call : Json) : Prog Json := do
   | .threw _ _ => return toJson false
   | .pending => Prog.unsupported "the mutation never settled"
 
-/-- The optional methods each executor class declares, in the order the wrapper binds them. -/
+/-- The optional methods each executor class declares, then the harness methods the wrapper budgets
+on Microvm and Workdir executors, in the order the wrapper binds them. -/
 private def executorMethods (className : String) : Option (List String) :=
   match className with
   | "E2BSandboxExecutor" | "DaytonaSandboxExecutor" => some ["runBackground"]
   | "VercelSandboxExecutor" => some ["runBackground"]
-  | "MicrovmSandboxExecutor" => some ["runBackground", "resume", "postReserved"]
+  | "MicrovmSandboxExecutor" => some ["runBackground", "resume", "postReserved",
+      "acquireHarnessReservation", "resumeHarnessReservation", "runHarnessCommand"]
   | "CloudflareSandboxExecutor" => some []
-  | "WorkdirSandboxExecutor" => some ["runBackground", "resume"]
+  | "WorkdirSandboxExecutor" => some ["runBackground", "resume",
+      "acquireHarnessReservation", "resumeHarnessReservation"]
   | "HttpSandboxExecutor" | "MachineSandboxExecutor" | "WorkerSandboxExecutor" => some []
   | _ => none
 
+/-- `createSandboxExecutor`: on platform credentials every compute method goes through `budgeted`. -/
 private def createSandboxExecutor (call : Json) : Prog Json := do
   let config := Twin.callArg call 0
   let executor ← Prog.effect "providerExecutor" [config]
   let plane := get config "controlPlane"
-  if !truthy (get plane "accountId") || truthy (get plane "ownCredentials") then return executor
+  let accountId := get plane "accountId"
+  if !truthy accountId || truthy (get plane "ownCredentials") then return executor
   match executorMethods (text (get executor "$opaque")) with
   | none => Prog.unsupported "an executor class outside the model"
   | some methods =>
-    let _ ← Prog.effect "executor.run.bind" [executor]
-    for method in methods do
-      let _ ← Prog.effect s!"executor.{method}?.bind" [executor]
+    for method in "run" :: methods do
+      let bound ← Prog.effect s!"executor.{method}.bind" [executor]
+      let _ ← Prog.effect "budgeted" [accountId, bound]
     return executor
 
+/-- `budgeted`: hands back the wrapper; what it does is `budgeted/return`. -/
+private def budgeted (_call : Json) : Prog Json :=
+  pure (Json.mkObj [("$fn", toJson "")])
+
+/-- The wrapper `budgeted` returns: checks the account's budget, then makes the call. -/
+private def budgetedCall (call : Json) : Prog Json := do
+  let _ ← Prog.effect "assertSandboxBudget" [Twin.moduleValue call "accountId"]
+  Prog.effect "call" [Twin.callArg call 0]
 
 /-- `configString(key) ?? optionalEnv(env)`, asked in that order. -/
 private def configOrEnv (options : Json) (key env : String) : Prog Json := do
@@ -1623,6 +1636,8 @@ Twin.traced (sandbox "live-status" "parseSandboxUsage") parseSandboxUsage,
    Twin.traced (sandbox "daytona-executor" "mountS3Bucket") mountS3Bucket,
    Twin.traced "apps/core/src/shared/convex/sandbox-instances.ts#upsertSandboxInstance" upsertSandboxInstance,
    Twin.traced (sandbox "index" "createSandboxExecutor") createSandboxExecutor,
+   Twin.traced (sandbox "index" "budgeted") budgeted,
+   Twin.traced (sandbox "index" "budgeted/return") budgetedCall,
 Twin.traced "apps/cloudflare-worker/src/vfs-state.ts#packState" packState,
    Twin.traced (sandbox "microvm-websocket-proxy" "microvmUpstreamUrl") microvmUpstreamUrl,
    Twin.traced (sandbox "microvm-executor" "burstHeader") burstHeader,

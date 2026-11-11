@@ -169,7 +169,8 @@ def handleScheduledCron (call : Json) : Prog Json := do
   let firedAt ← Prog.effect "scheduledFireTime" [field event "scheduledTime"]
   let accountId := field job "accountId"
   let cronId := field job "cronId"
-  let refusal := field (← Prog.effect "admitRun" [accountId]) "refusal"
+  let plan ← Prog.effect "admitRun" [accountId]
+  let refusal := field plan "refusal"
   let removeIfOneShot : Prog Unit := do
     if truthy (← Prog.effect "isOneTimeSchedule" [field job "scheduleExpression"]) then
       let _ ← Prog.effect "removeOneShotCron" [accountId, cronId]
@@ -180,6 +181,7 @@ def handleScheduledCron (call : Json) : Prog Json := do
   match ← Prog.attempt "startScheduledAgentRun" [job, firedAt] with
   | .ok _ => return Json.null
   | .threw error _ =>
+    let _ ← Prog.effect "refundRun" [plan, accountId]
     removeIfOneShot
     Prog.fail error
   | .pending => Prog.unsupported "scheduled run never finished"
@@ -320,7 +322,7 @@ def admitChannelMessage (call : Json) : Prog Json := do
   let channelTarget := field event "channelTarget"
   let command ← Prog.effect "queuedCommand" [field event "events", channelName]
   if !truthy command then
-    if truthy (← Prog.effect "settleChannelQuestion" [event]) then
+    if truthy (← Prog.effect "settleChannelQuestion" [event, accountId]) then
       return Twin.undefinedJson
   let requestedMode := if rewrite then field outcome "requestedMode" else .str "steer"
   let attachments := field event "attachments"

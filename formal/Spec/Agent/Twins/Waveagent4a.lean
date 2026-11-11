@@ -477,9 +477,9 @@ def loadConfiguredSkillPrompt (call : Json) : Prog Json := do
     throwClass "Error" "Skills require an account-scoped run"
   let _ ← Prog.effect "parseOwnedSkillPath" [accountId, skillPath]
   let loaded ← Prog.effect "loadSkillContent" [skillPath, Twin.param call 3]
-  let namespace_ := Twin.param call 4
+  let workspace := Twin.param call 4
   let staged ←
-    if truthy namespace_ then Prog.effect "stageSkillBundleForSandbox" [skillPath, namespace_]
+    if truthy workspace then Prog.effect "stageSkillBundleForSandbox" [skillPath, workspace]
     else pure Json.null
   let content ← Prog.effect "formatLoadedSkillPrompt" [loaded, staged]
   let stagedFields : List (String × Json) :=
@@ -500,24 +500,30 @@ private def bundleOrder (paths : List String) : List String :=
 /-- `stageSkillBundleForSandbox` -/
 def stageSkillBundleForSandbox (call : Json) : Prog Json := do
   let skillPath := Twin.callArg call 0
-  let namespace_ := Twin.callArg call 1
-  let bucket ← Prog.effect "optionalEnv" [str "FILESYSTEM_BUCKET_NAME"]
-  if !truthy bucket then
+  let workspace := Twin.callArg call 1
+  let config := field workspace "config"
+  if isUndef config || config == Json.null then
+    let shown := if config == Json.null then "null" else "undefined"
+    return ← .fail (classError "TypeError"
+      s!"{shown} is not an object (evaluating 'workspace.config.storage')" "TypeError")
+  let storage := field config "storage"
+  if field storage "provider" == str "disk" then
     return Json.null
   let parsed ← Prog.effect "parseSkillPath" [skillPath]
   if !truthy parsed then
     throwClass "Error" s!"Invalid skill path: {text skillPath}"
-  let skillName := field parsed "skillName"
+  let skillName := text (field parsed "skillName")
+  let context ← Prog.effect "workspaceReadContext" [storage, field workspace "namespace"]
+  let target ← Prog.effect "resolveS3ReadTarget" [context]
   let sources ← Prog.effect "listSkillSourceFiles" [skillPath]
   let paths := (items sources).map (field · "path")
   let pathSet := Json.mkObj [("$set", arr (dedupe (paths.map text) |>.map str))]
-  let canonical ← Prog.effect "canonicalStagePrefix" [namespace_, skillName]
-  let mirrors ← Prog.effect "mirrorStagePrefixes" [namespace_, skillName]
-  let prefixes := canonical :: items mirrors
+  let dirs := ".claude/skills" :: (items (Twin.moduleValue call "SKILL_MIRROR_DIRS")).map text
+  let prefixes := dirs.map fun dir => str s!"{text (field target "prefix")}{dir}/{skillName}/"
   let _ ← Prog.all (prefixes.map fun prefix_ =>
-    ("stageSkillFiles", [bucket, prefix_, sources, pathSet]))
-  let stagedPath ← Prog.effect "canonicalStagedPath" [skillName]
-  let mirrorPaths ← Prog.effect "mirrorStagedPaths" [skillName]
+    ("stageSkillFiles", [target, prefix_, sources, pathSet]))
+  let stagedPath ← Prog.effect "canonicalStagedPath" [str skillName]
+  let mirrorPaths ← Prog.effect "mirrorStagedPaths" [str skillName]
   return Json.mkObj
     [("stagedPath", stagedPath), ("mirrorPaths", mirrorPaths),
      ("files", toJson (bundleOrder (paths.map text)))]

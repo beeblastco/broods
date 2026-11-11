@@ -626,10 +626,19 @@ Spec.Sandbox.check_guard_reads_running
   (Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.check).running < cap ∨
     Spec.Sandbox.jobStep cap s Spec.Sandbox.JobInput.check = s
 
+Spec.Sandbox.cleanup_clears_mirror
+  Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
+  (fun x schedule =>
+    ∃ r k r' k',
+      schedule =
+        [Spec.Sandbox.CleanupInput.sweep true true true true true r k,
+          Spec.Sandbox.CleanupInput.sweep true true true true true r' k'])
+  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false ∧ s.mirror = false
+
 Spec.Sandbox.cleanup_progress
   Spec.Progress Spec.Sandbox.cleanupSystem (fun x => True)
   (fun x schedule => ∃ r k, schedule = [Spec.Sandbox.CleanupInput.sweep true true true true true r k])
-  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false ∧ s.mirror = false
+  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false
 
 Spec.Sandbox.cleanup_view_is_declared_leak
   Spec.Private Spec.Sandbox.cleanupSystem Unit (List Bool) Bool (fun x => True) (fun x x_1 => []) Spec.Sandbox.cleanupLeak
@@ -650,7 +659,7 @@ Spec.Sandbox.failed_teardown_retried
         schedule =
           [Spec.Sandbox.CleanupInput.sweep true true true p cr r k,
             Spec.Sandbox.CleanupInput.sweep true true true true true r' k'])
-  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false ∧ s.mirror = false
+  (fun s => (s.row || s.mirror) = true) fun s => s.physical = false
 
 Spec.Sandbox.failed_teardown_stays_reachable
   ∀ (trace : List Spec.Sandbox.CleanupInput),

@@ -35,7 +35,7 @@ theorem hello (p i : Option String) (force : Bool)
   simpa [acceptsHello, Bool.and_eq_true, Bool.or_eq_true, and_assoc] using h
 
 theorem cleanup_effects (s : Cleanup) (trace : List CleanupInput) :
-    (cleanupSystem.runFrom s trace).2 = cleanupLeakFrom s.row s.mirror trace := by
+    (cleanupSystem.runFrom s trace).2 = cleanupLeakFrom s.row s.mirror s.teardown trace := by
   induction trace generalizing s with
   | nil => rfl
   | cons i rest ih =>
@@ -43,18 +43,29 @@ theorem cleanup_effects (s : Cleanup) (trace : List CleanupInput) :
     rw [ih]
     cases i with
     | sweep a l c p cr r k =>
-      obtain ⟨row, physical, mirror⟩ := s
+      obtain ⟨row, physical, mirror, td⟩ := s
       cases a <;> cases l <;> cases c <;> cases row <;> cases mirror <;> cases p <;> cases cr <;>
         simp [cleanupStep, cleanupLeakFrom]
     | takeKey => simp [cleanupStep, cleanupLeakFrom]
 
 theorem progress : Spec.Progress cleanupSystem (fun _ => True)
     (fun _ schedule => ∃ r k, schedule = [.sweep true true true true true r k])
-    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false) := by
   intro trace _ pending schedule fair
   obtain ⟨r, k, rfl⟩ := fair
   generalize cleanupSystem.final trace = s at pending ⊢
   simp [Spec.System.runFrom, cleanupSystem, cleanupStep, pending]
+
+theorem clears_mirror : Spec.Progress cleanupSystem (fun _ => True)
+    (fun _ schedule => ∃ r k r' k', schedule =
+      [.sweep true true true true true r k, .sweep true true true true true r' k'])
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+  intro trace _ pending schedule fair
+  obtain ⟨r, k, r', k', rfl⟩ := fair
+  generalize cleanupSystem.final trace = s at pending ⊢
+  obtain ⟨row, physical, mirror, td⟩ := s
+  cases row <;> cases mirror <;> cases td <;>
+    simp_all [Spec.System.runFrom, cleanupSystem, cleanupStep]
 
 theorem privacy : Spec.Private cleanupSystem Unit (List Bool) Bool (fun _ => True)
     (fun _ _ => []) cleanupLeak (fun _ effects => effects) := by
@@ -118,12 +129,12 @@ theorem kept_reachable (trace : List CleanupInput)
 theorem retry : Spec.Progress cleanupSystem (fun _ => True)
     (fun s schedule => ∃ p cr r k r' k', (r || k || s.mirror) = true ∧
       schedule = [.sweep true true true p cr r k, .sweep true true true true true r' k'])
-    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false) := by
   intro trace _ pending schedule fair
   obtain ⟨p, cr, r, k, r', k', hk, rfl⟩ := fair
   generalize cleanupSystem.final trace = s at pending hk ⊢
-  obtain ⟨row, physical, mirror⟩ := s
-  cases p <;> cases cr <;> cases r <;> cases k <;> cases row <;> cases mirror <;>
+  obtain ⟨row, physical, mirror, td⟩ := s
+  cases p <;> cases cr <;> cases r <;> cases k <;> cases row <;> cases mirror <;> cases td <;>
     simp_all [Spec.System.runFrom, cleanupSystem, cleanupStep]
 
 theorem stranded (s : Cleanup) (h : s.row = false) (hm : s.mirror = false)
@@ -134,7 +145,7 @@ theorem stranded (s : Cleanup) (h : s.row = false) (hm : s.mirror = false)
     have hs : (cleanupStep s i).1 = s := by
       cases i with
       | sweep a l c p cr r k => simp [cleanupStep, h, hm]
-      | takeKey => obtain ⟨row, physical, mirror⟩ := s; simp_all [cleanupStep]
+      | takeKey => obtain ⟨row, physical, mirror, td⟩ := s; simp_all [cleanupStep]
     change (cleanupSystem.runFrom (cleanupStep s i).1 rest).1 = s
     rw [hs]; exact ih
 

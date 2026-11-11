@@ -268,7 +268,7 @@ private def parsePancakeWebhook (call : Json) : Prog Json := do
   if !jsTruthy userAllowed then return ignored
   let fromName := orElse (get sender "name") (get owner "name")
   let tagIds ← Prog.effect "normalizePancakeTagIds" [get conversation "tags"]
-  let hash ← Prog.effect "hashEventContent" [textValue, attachments]
+  let hash ← Prog.effect "hashEventContent" [attachments]
   return pancakeMessage pageId conversation message payload fromId fromName textValue attachments
     tagIds hash
 

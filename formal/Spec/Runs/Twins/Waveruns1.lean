@@ -577,12 +577,15 @@ private def errorSseResponse (call : Json) : Prog Json := do
 private def continuationResponse (call : Json) : Prog Json :=
   let settled := Twin.callArg call 0
   let outcome := Twin.callArg call 1
+  let answered := Twin.callArg call 2
+  let skipped := if (items answered).isEmpty then [] else [("alreadyAnswered", answered)]
   Prog.effect "jsonResponse" [toJson (202 : Nat),
     if field outcome "kind" == .str "skip" then
-      obj [("status", .str "accepted"), ("resultId", field settled "resultId"), ("invoked", .bool false)]
+      obj ([("status", .str "accepted"), ("resultId", field settled "resultId"),
+        ("invoked", .bool false)] ++ skipped)
     else
-      obj [("status", .str "accepted"), ("resultId", field settled "resultId"),
-        ("eventId", field outcome "publicEventId"), ("invoked", field outcome "invoked")]]
+      obj ([("status", .str "accepted"), ("resultId", field settled "resultId"),
+        ("eventId", field outcome "publicEventId"), ("invoked", field outcome "invoked")] ++ skipped)]
 
 private def acceptedAsyncResponse (call : Json) : Prog Json :=
   let event := Twin.callArg call 2
@@ -898,9 +901,18 @@ private def settleChannelQuestion (call : Json) : Prog Json := do
       let typed ← Prog.effect "extractText" [field event "content"]
       Prog.effect "answersFromText" [field opened "pending", typed]
   if !truthy answer then return .bool false
+  let accountId := Twin.callArg call 1
+  let plan ← Prog.effect "admitRun" [accountId]
+  let refusal := field plan "refusal"
+  if truthy refusal then
+    let reply ← Prog.effect "planRefusalText" [refusal]
+    let _ ← Prog.effect "event.channel.sendText" [reply]
+    return .bool true
   let settled ← Prog.effect "settleQuestion" [field opened "record", spread answer
     (if truthy (field event "identity") then [("answeredBy", field event "identity")] else [])]
-  if !truthy settled then return .bool false
+  if !truthy settled then
+    let _ ← Prog.effect "refundRun" [plan, accountId]
+    return .bool false
   let _ ← Prog.effect "continueAfterAsyncToolSettlement" [settled]
   return .bool true
 

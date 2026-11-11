@@ -18,6 +18,8 @@ import type {
 
 type Spy = { mockRestore: () => void };
 
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const WORKSPACE: ResolvedWorkspace = {
   name: "notes",
   workspaceId: "ws_1",
@@ -227,13 +229,28 @@ describe("computerTool execute", (): void => {
   });
 
   test("a zoom returns the region as an image", async (): Promise<void> => {
+    reply({ image: { data: ONE_PIXEL_PNG, mediaType: "image/png" } });
+
+    expect(await act([machine("mac")], { action: "zoom" })).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Zoomed region" },
+        { type: "image-data", data: ONE_PIXEL_PNG, mediaType: "image/png" },
+      ],
+    });
+  });
+
+  test("a zoom that is not an image is described instead", async (): Promise<void> => {
     reply({ image: { data: "AAAA", mediaType: "image/png" } });
 
     expect(await act([machine("mac")], { action: "zoom" })).toEqual({
       type: "content",
       value: [
         { type: "text", text: "Zoomed region" },
-        { type: "image-data", data: "AAAA", mediaType: "image/png" },
+        {
+          type: "text",
+          text: "[An image (image/png, 4 base64 characters) was not shown to you: it is not a PNG, JPEG, GIF or WebP image.]",
+        },
       ],
     });
   });

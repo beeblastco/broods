@@ -106,16 +106,23 @@ def prepareDirectTurn (call : Json) : Prog Json := do
     | .threw settleError _ => throw settleError
     | _ => throw error
 
-/-- The checks `handleDirectRequest` and `handleAsyncRequest` share. `none` means keep going. -/
-private def admissionGate (event : Json) : Prog (Option Json) := do
+/-- The checks `handleDirectRequest` and `handleAsyncRequest` share: a response, or the plan
+admission to keep going with. -/
+private def admissionGate (event : Json) : Prog (Except Json Json) := do
   let admitted ← Prog.effect "admitRun" [field event "accountId"]
   if truthy (field admitted "refusal") then
-    return some (← Prog.effect "planRefusalResponse" [field admitted "refusal"])
+    return .error (← Prog.effect "planRefusalResponse" [field admitted "refusal"])
   if !(items (field event "answers")).isEmpty then
-    return some (← Prog.effect "handleDirectAnswers" [event])
+    return .error (← Prog.effect "handleDirectAnswers" [event])
   if truthy (field event "continuation") then
-    return some (← Prog.effect "handleContinueRequest" [event])
-  return none
+    return .error (← Prog.effect "handleContinueRequest" [event])
+  return .ok admitted
+
+/-- `NO_RUN_OUTCOMES` in `handler.ts`: an admission that starts no run gives its count back. -/
+private def refundIfNoRun (event plan admission : Json) : Prog Unit := do
+  if [Json.str "duplicate", .str "rejected", .str "capacity", .str "conflict"].contains
+      (field admission "outcome") then
+    let _ ← Prog.effect "refundRun" [plan, field event "accountId"]
 
 /-- The `acceptIngress` argument both request kinds build. -/
 private def ingressRequest (event delivery : Json) : Json :=
@@ -138,8 +145,11 @@ private def publicIds (event : Json) : List (String × Json) :=
 /-- `handleDirectRequest`. `directStatusUrl` runs once to test and again to read when set. -/
 def handleDirectRequest (call : Json) : Prog Json := do
   let event := Twin.callArg call 0
-  if let some response ← admissionGate event then
-    return response
+  let gate ← admissionGate event
+  if let .error response := gate then return response
+  let plan := match gate with
+    | .ok plan => plan
+    | .error _ => Json.null
   if !truthy (← Prog.effect "hasRunnableDirectEvents" [event]) then
     return ← Prog.effect "emptySseResponse"
   let connectionId := field event "connectionId"
@@ -157,6 +167,7 @@ def handleDirectRequest (call : Json) : Prog Json := do
     whenTruthy "publicDeploymentIngress" (field event "publicDeploymentIngress"))
   let admission ← Prog.effect "acceptIngress" [ingressRequest event delivery]
   let _ ← Prog.effect "dispatchRecoveredIngress" [event, admission]
+  refundIfNoRun event plan admission
   if text (field admission "outcome") != "owner" then
     return ← Prog.effect "directAdmissionResponse" [event, admission, .bool (truthy connectionId)]
   let owned := spread event [("ownerGeneration", field admission "ownerGeneration")]
@@ -175,8 +186,11 @@ def handleDirectRequest (call : Json) : Prog Json := do
 /-- `handleAsyncRequest`. -/
 def handleAsyncRequest (call : Json) : Prog Json := do
   let event := Twin.callArg call 0
-  if let some response ← admissionGate event then
-    return response
+  let gate ← admissionGate event
+  if let .error response := gate then return response
+  let plan := match gate with
+    | .ok plan => plan
+    | .error _ => Json.null
   if !truthy (← Prog.effect "hasRunnableDirectEvents" [event]) then
     return ← Prog.effect "errorResponse"
       [toJson (400 : Nat), .str "Request must include at least one user event or tool approval response"]
@@ -185,6 +199,7 @@ def handleAsyncRequest (call : Json) : Prog Json := do
     whenTruthy "publicDeploymentIngress" (field event "publicDeploymentIngress"))
   let admission ← Prog.effect "acceptIngress" [ingressRequest event delivery]
   let _ ← Prog.effect "dispatchRecoveredIngress" [event, admission]
+  refundIfNoRun event plan admission
   if text (field admission "outcome") != "owner" then
     return ← Prog.effect "directAdmissionResponse" [event, admission, .bool true]
   let _ ← Prog.effect "startOwnedAsyncRun"
@@ -531,6 +546,8 @@ private structure ChannelTurn where
   incoming : Json
   ephemeral : Json
   config : Json
+  /-- `approvalRetries`: re-runs after an approval denial, reset when the next turn is taken. -/
+  retries : Nat := 0
 
 /-- What the reply callbacks of one turn leave behind: `terminal`, `finalResult`, `approvalRequired`. -/
 private structure TurnReply where
@@ -574,6 +591,13 @@ private def drainReply (event hooks : Json) (turn : ChannelTurn) : Nat → TurnR
           if (error.getObjVal? "$unsupported").isOk then throw error else pure state).bind
           (drainReply event hooks turn limit)
 
+/-- `MAX_CHANNEL_APPROVAL_RETRIES` in `handler.ts`. -/
+private def maxChannelApprovalRetries : Nat := 2
+
+/-- `CHANNEL_APPROVAL_LIMIT_ERROR` in `handler.ts`. -/
+private def channelApprovalLimitError : String :=
+  "Stopped: the agent kept choosing tools that need approval, which a channel cannot give."
+
 /-- The `try` around one turn: gives the settlement (`undefined` when there is none) and whether the
 turn was cut short by pending approvals, which restarts it with no new input. -/
 private def channelSettlement (event hooks context dependencies : Json) (turn : ChannelTurn) :
@@ -610,7 +634,15 @@ private def channelSettlement (event hooks context dependencies : Json) (turn : 
       | .threw error _ => throw error
       | .pending => Prog.unsupported "the agent loop never finished"
       | .ok result =>
-        if state.approvalRequired then return (Twin.undefinedJson, true)
+        if state.approvalRequired && turn.retries < maxChannelApprovalRetries then
+          return (Twin.undefinedJson, true)
+        if state.approvalRequired then
+          let _ ← Prog.effect "session.assertCurrentOwner"
+          let sending ← Prog.effect "applyMessageSendingHook"
+            [hooks, field event "channelName", .str channelApprovalLimitError]
+          if sending != Json.null then
+            let _ ← Prog.effect "event.channel.sendText" [sending]
+          return (failed channelApprovalLimitError, false)
         let terminal := if truthy (field result "didFail") then "failed" else state.terminal
         if terminal == "failed" then
           let failure := field result "failureText"
@@ -679,7 +711,8 @@ private def channelTurns (event scope hooks context dependencies : Json) :
     let step : Prog (Option ChannelTurn) := do
       let (settlement, again) ← channelSettlement event hooks context dependencies turn
       if again then
-        return some { turn with incoming := .arr #[], ephemeral := .arr #[] }
+        return some
+          { turn with incoming := .arr #[], ephemeral := .arr #[], retries := turn.retries + 1 }
       let first ← Prog.effect "session.takeNextIngress" [settlement]
       let (next, config) ← nextLoadable event scope 16 first
       if !truthy next then

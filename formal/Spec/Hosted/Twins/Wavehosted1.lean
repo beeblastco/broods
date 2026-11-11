@@ -482,6 +482,9 @@ private def assertNoUnsupportedKeys (call : Json) : Prog Json := do
 
 private def killWorker (call : Json) : Prog Json := do
   let self := Twin.self call
+  let reason := Twin.callArg call 0
+  if truthy reason && !nil (Twin.field self "#sink") then
+    let _ ← Prog.effect "this.#sink?.fail" [reason]
   if Twin.field self "alive" != toJson false then
     Prog.setState "self.alive" (toJson false)
   let sent ← Prog.attempt "this.child.kill" [toJson "SIGKILL"]
@@ -802,12 +805,29 @@ private def emitIsolateLog (call : Json) : Prog Json := do
   let _ ← Prog.effect "emit" [field record "message", field record "data"]
   return Twin.undefinedJson
 
-private def withoutCredentials (call : Json) : Prog Json := do
+/-- `withoutHeaders`: the init with every header whose lower-cased name is in the set dropped. -/
+private def withoutHeaders (call : Json) : Prog Json := do
   let init := Twin.callArg call 0
+  let names := items (field (Twin.callArg call 1) "$set")
   let headers ← Prog.effect "normalizeRequestHeaders" [field init "headers"]
-  let kept := (Js.entries headers).filter fun (key, _) =>
-    !["authorization", "cookie", "proxy-authorization"].contains key.toLower
+  let kept := (Js.entries headers).filter fun (key, _) => !names.contains (toJson key.toLower)
   return Js.set init "headers" (obj kept)
+
+/-- `redirectInit`: fetch's redirect rules. A cross-origin hop drops credentials; a 303 (but a
+HEAD), or a 301/302 after a POST, becomes a GET with no body and no body headers. -/
+private def redirectInit (call : Json) : Prog Json := do
+  let status := (Js.nat? (Twin.callArg call 0)).getD 0
+  let init := Twin.callArg call 1
+  let next ← if truthy (Twin.callArg call 2) then
+      Prog.effect "withoutHeaders" [init, Twin.moduleValue call "CREDENTIAL_HEADERS"]
+    else pure init
+  let method := if nil (field next "method") then "GET" else (text (field next "method")).toUpper
+  let asGet := if status == 303 then method != "HEAD"
+    else (status == 301 || status == 302) && method == "POST"
+  if !asGet then return next
+  let stripped ← Prog.effect "withoutHeaders" [next, Twin.moduleValue call "BODY_HEADERS"]
+  let kept := (Js.entries stripped).filter fun (key, _) => key != "method" && key != "body"
+  return obj (kept ++ [("method", toJson "GET")])
 
 private def denyCidrs : List String :=
   ["0.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "127.0.0.0/8",
@@ -1301,8 +1321,12 @@ private def cancelTask (call : Json) : Prog Json := do
   let accountId := field (field auth "account") "accountId"
   let root := field runs "root"
   let key ← Prog.effect "scopedDirectConversationKey" [accountId, field root "agentId", field root "conversationKey"]
+  let current := field runs "current"
+  let owner ← Prog.effect "scopedDirectEventId"
+    [accountId, field current "agentId", field current "eventId"]
   let _ ← Prog.effect "runtime.mutate" [toJson "stopIngressOwner", obj
-    [("accountId", accountId), ("agentId", field root "agentId"), ("conversationKey", key)]]
+    [("accountId", accountId), ("agentId", field root "agentId"), ("conversationKey", key),
+     ("expectedOwnerEventId", owner)]]
   return Twin.undefinedJson
 
 private def updateTask (call : Json) : Prog Json := do
@@ -1337,8 +1361,8 @@ private def guardedFetchWithDeadline (call : Json) : Prog Json := do
     match Url.parse (text location) with
     | .ok next =>
       if !Url.plainHref next then return ← Prog.unsupported "URL path encoding"
-      let nextInit ← if Url.origin next == Url.origin parsed then pure init
-        else Prog.effect "withoutCredentials" [init]
+      let nextInit ← Prog.effect "redirectInit"
+        [field response "status", init, toJson (Url.origin next != Url.origin parsed)]
       Prog.effect "guardedFetchWithDeadline"
         [toJson (Url.href next), nextInit, Js.set state "redirects" (toJson (redirects + 1))]
     | _ => Prog.unsupported "a relative redirect needs URL base resolution"
@@ -1637,7 +1661,8 @@ def twins : List Spec.Twin :=
    Twin.traced "packages/convex/model/envelope.ts#AccountCipher.hasKey" hasKey,
    Twin.traced "apps/core/src/harness/mcp/oauth.ts#mcpOauthTokenCacheKey" mcpOauthTokenCacheKey,
    Twin.traced "apps/core/src/harness/isolate/executor.ts#emitIsolateLog" emitIsolateLog,
-   Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#withoutCredentials" withoutCredentials,
+   Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#withoutHeaders" withoutHeaders,
+   Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#redirectInit" redirectInit,
    Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#isDeniedAddress" isDeniedAddress,
    Twin.traced "apps/core/src/harness/mcp/mcp.tool.ts#mcpTools" mcpTools,
    Twin.traced "apps/core/src/harness/isolate/runner/pinned-fetch.mjs#resolveAllowedAddress" resolveAllowedAddress,

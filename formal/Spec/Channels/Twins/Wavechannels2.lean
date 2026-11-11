@@ -21,13 +21,94 @@ private def utake (s : String) (n : Nat) : String :=
     let width := if c.toNat > 0xffff then 2 else 1
     if acc.2 + width ≤ n then (c :: acc.1, acc.2 + width) else (acc.1, n + 1)) ([], 0)).1.reverse)
 
-private def chunkLoop : Nat → String → Nat → List String
-  | 0, _, _ => []
-  | fuel + 1, s, limit =>
-    if s.isEmpty then [] else
-    let piece := utake s limit
-    let piece := if piece.isEmpty then String.ofList (s.toList.take 1) else piece
-    piece :: chunkLoop fuel (dropChars s piece.length) limit
+/-- A string as the UTF-16 code units `charCodeAt` reads. -/
+private def units (s : String) : Array Nat :=
+  (s.toList.flatMap fun c =>
+    let code := c.toNat
+    if code ≥ 0x10000 then [0xd800 + (code - 0x10000) / 1024, 0xdc00 + (code - 0x10000) % 1024]
+    else [code]).toArray
+
+/-- Code units back to text; `chunkEnd` never cuts a pair, so pairs arrive whole. -/
+private def fromUnits : List Nat → List Char
+  | hi :: lo :: rest =>
+    if 0xd800 ≤ hi && hi ≤ 0xdbff && 0xdc00 ≤ lo && lo ≤ 0xdfff then
+      Char.ofNat (0x10000 + (hi - 0xd800) * 1024 + (lo - 0xdc00)) :: fromUnits rest
+    else Char.ofNat hi :: fromUnits (lo :: rest)
+  | [c] => [Char.ofNat c]
+  | [] => []
+
+private def fence : List Nat := units "```" |>.toList
+
+private def lastIndex (window : Array Nat) (unit : Nat) : Int :=
+  window.toList.zipIdx.foldl (fun best (c, i) => if c == unit then (i : Int) else best) (-1)
+
+/-- `chunkEnd`, `apps/core/src/shared/channels.ts`: a newline, then a space, in the window's last
+half; otherwise the window's end, moved off the middle of a surrogate pair. -/
+private def chunkEnd (text : Array Nat) (offset : Nat) (room : Int) : Nat :=
+  let width := (max room 1).toNat
+  let stop := min (offset + width) text.size
+  if stop == text.size then stop else
+  let window := text.extract offset stop
+  let newline := lastIndex window 10
+  let space := lastIndex window 32
+  let boundary := if 2 * newline ≥ width then newline else if 2 * space ≥ width then space else -1
+  if boundary ≥ 0 then offset + boundary.toNat + 1 else
+  let previous := text.getD (stop - 1) 0
+  let next := text.getD stop 0
+  if 0xd800 ≤ previous && previous ≤ 0xdbff && 0xdc00 ≤ next && next ≤ 0xdfff then
+    if stop - 1 > offset then stop - 1 else stop + 1
+  else stop
+
+private def lineBreak (c : Nat) : Bool := c == 10 || c == 13 || c == 0x2028 || c == 0x2029
+
+/-- `openCodeFence`: each line that starts with a fence toggles the open one (`/^```.*$/gm`). -/
+private def openFence (piece : List Nat) : Option (List Nat) :=
+  let rec go : Nat → List Nat → Option (List Nat) → Option (List Nat)
+    | 0, _, current => current
+    | fuel + 1, rest, current =>
+      let line := rest.takeWhile (!lineBreak ·)
+      let current :=
+        if fence.isPrefixOf rest then (if current.isSome then none else some line) else current
+      match rest.drop line.length with
+      | [] => current
+      | _ :: after => go fuel after current
+  go (piece.length + 1) piece none
+
+private def unitsText (units : List Nat) : String := String.ofList (fromUnits units)
+
+/-- `chunkChannelText`'s loop, from `offset` with `reopen` (a fence line and its newline) carried
+over from the last cut. `chunkEnd` and `openCodeFence` are module functions, so effects here. -/
+private def chunkLoop (whole : Json) (text : Array Nat) (limit : Int) (fenced : Bool) :
+    Nat → Nat → List Nat → Prog (List String)
+  | 0, _, _ => pure []
+  | fuel + 1, offset, reopen => do
+    if offset ≥ text.size then return []
+    let closeRoom : Int := if fenced then 4 else 0
+    let stop ← Prog.effect "chunkEnd" [whole, toJson offset, toJson (limit - reopen.length - closeRoom)]
+    let stop := stop.getNat?.toOption.getD text.size
+    let piece := reopen ++ (text.extract offset stop).toList
+    let found ←
+      if fenced && stop < text.size then Prog.effect "openCodeFence" [.str (unitsText piece)]
+      else pure Twin.undefinedJson
+    match found with
+    | .str line =>
+      let closed := piece ++ (if piece.getLast? == some 10 then [] else [10]) ++ fence
+      let rest ← chunkLoop whole text limit fenced fuel stop ((units line).toList ++ [10])
+      return unitsText closed :: rest
+    | _ =>
+      let rest ← chunkLoop whole text limit fenced fuel stop []
+      return unitsText piece :: rest
+
+/-- `chunkChannelText`: cuts at `chunkEnd`; with markdown, a fence open at a cut is closed there
+and reopened in the next piece. -/
+private def chunkChannelText (c : Json) : Prog Json := do
+  let some limit := (a c 1).getInt?.toOption
+    | Prog.unsupported "fractional chunk limit"
+  let s := text (a c 0)
+  let text := units s
+  if (text.size : Int) ≤ limit then return jstrs [s]
+  let fenced := get (a c 2) "markdown" == .bool true && (s.splitOn "```").length > 1
+  return jstrs (← chunkLoop (a c 0) text limit fenced (text.size + 1) 0 [])
 
 private def splitLoop : Nat → String → List String
   | 0, _ => []
@@ -313,8 +394,6 @@ private def moreTwins : List Twin := [
     nullish (get m (if get m "text" != Twin.undefinedJson then "entities" else "caption_entities")) (jarr [])),
   pureTwin (core "telegram-channel" "telegramMessageText") (fun c =>
     nullish (get (a c 0) "text") (nullish (get (a c 0) "caption") (.str ""))),
-  pureTwin (core "telegram-channel" "extractInboundMessage") (fun c =>
-    nullish (get (a c 0) "message") (nullish (get (a c 0) "edited_message") .null)),
   pureTwin (core "telegram-channel" "stickerText") (fun c =>
     .str (jsTrim s!"{text (get (a c 0) "emoji")} [sticker file_id: {text (get (a c 0) "file_id")}]")),
   pureTwin (core "whatsapp-channel" "replyText") (fun c =>
@@ -1181,7 +1260,8 @@ private def eventCallback (c : Json) : Prog Json := do
   return Json.mkObj [("kind", .str (if runAgent then "message" else "context")),
     ("redelivers", .bool true), ("ack", Json.mkObj [("statusCode", toJson (200 : Nat))]),
     ("message", Json.mkObj ([
-      ("eventId", .str s!"slack:{text team}:{text channelId}:{text ts}"),
+      ("eventId", .str (s!"slack:{text team}:{text channelId}:{text ts}" ++
+        if runAgent then "" else ":context")),
       ("conversationKey", key), ("channelName", .str "slack"),
       ("content", jarr [Json.mkObj [("type", .str "text"), ("text", body)]])] ++
       (if (items attachments).isEmpty then [] else [("attachments", attachments)]) ++ [
@@ -1599,10 +1679,15 @@ def twins : List Spec.Twin := fifthTwins ++ fourthTwins ++ moreTwins ++ thirdTwi
   pureTwin (core "telegram-channel" "splitTelegramRawText") (fun c =>
     let s := jsTrim (text (a c 0))
     jstrs (if s.isEmpty then ["..."] else splitLoop (s.length + 1) s)),
-  pureTwin (core "channels" "chunkChannelText") (fun c =>
-    let s := text (a c 0)
-    if nat (a c 1) == 0 then Json.mkObj [("$unsupported", .str "nonpositive chunk limit")]
-    else jstrs (if s.isEmpty then [""] else chunkLoop (s.length + 1) s (nat (a c 1)))),
+  Twin.traced (core "channels" "chunkChannelText") chunkChannelText,
+  pureTwin (core "channels" "chunkEnd") (fun c =>
+    match (a c 2).getInt? with
+    | .ok room => toJson (chunkEnd (units (text (a c 0))) (nat (a c 1)) room)
+    | .error _ => Json.mkObj [("$unsupported", .str "fractional room")]),
+  pureTwin (core "channels" "openCodeFence") (fun c =>
+    match openFence (units (text (a c 0))).toList with
+    | some line => .str (unitsText line)
+    | none => Twin.undefinedJson),
   Twin.traced (core "channels" "parseChannelWebhookBody") parseWebhook,
   Twin.traced (core "telegram-channel" "telegramBotApiUrl") botApi,
   pureTwin (media "whereItLanded") (fun c =>

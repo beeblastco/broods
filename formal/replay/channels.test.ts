@@ -810,6 +810,9 @@ test("cron entry skips missing and paused, deletes refused and start-failed one-
         refusal: refused ? { message: "limit" } : null,
       }),
       isOneTimeSchedule: cron.isOneTimeSchedule,
+      refundRun: (): void => {
+        effects.push("refund");
+      },
       removeOneShotCron: async (): Promise<void> => {
         effects.push("removed");
       },
@@ -841,7 +844,7 @@ test("cron entry skips missing and paused, deletes refused and start-failed one-
   await expect(
     entry.handleScheduledCron({ accountId: "a", cronId: "c" }),
   ).rejects.toThrow("start failed");
-  expect(effects).toEqual(["start", "removed"]);
+  expect(effects).toEqual(["start", "refund", "removed"]);
 });
 
 test.failing(

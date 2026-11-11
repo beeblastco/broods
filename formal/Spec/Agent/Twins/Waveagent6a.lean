@@ -451,6 +451,26 @@ private def failStart (r : Run) (occupied : Bool) (error : Json) (dispose : Bool
     [toJson "failed", toJson (0 : Nat), elapsed now r.startedAt, terminal]
   .fail terminal
 
+/-- `failSetup`: a tool or policy setup that threw finalizes the run as failed, then rethrows. -/
+private def failSetup (c : Ctx) (startedAt : Json) (error : Json) : Prog Json := do
+  let failure ←
+    if isError error then pure error
+    else do
+      let message ← Prog.effect "errorMessage" [error]
+      pure (Prog.errorJson "Error" (message.getStr?.toOption.getD ""))
+  let now ← Prog.effect "Date.now"
+  let _ ← drainCallbacks c maxCallbacks false
+  let _ ← Prog.effect "finalizer.finalize"
+    [toJson "failed", toJson (0 : Nat), elapsed now startedAt, failure]
+  .fail failure
+
+/-- An awaited setup step, with `.catch(failSetup)`. -/
+private def setupStep (c : Ctx) (startedAt : Json) (label : String) (args : List Json) :
+    Prog Json := do
+  match ← Prog.attempt label args with
+  | .threw error _ => failSetup c startedAt error
+  | other => outcomeValue other
+
 /-- `runAgentLoop`, from entry to its second `publishSpan`. -/
 def runAgentLoop (call : Json) : Prog Json := do
   let session := Twin.param call 0
@@ -556,6 +576,26 @@ def runAgentLoop (call : Json) : Prog Json := do
   Prog.spawn "publishSpan" [runningRow running]
   if truthy (get turnContext "timings") then
     Prog.unsupported "prepared context timings"
+  let stepTiming ← Prog.effect "createStepTimingTracker" [fn "traceAttribute"]
+  let abortSignal := get options "abortSignal"
+  if truthy abortSignal then
+    if (get abortSignal "$signal").compress == (toJson true).compress then
+      Prog.unsupported "a signal already aborted at entry"
+    let _ ← Prog.effect "options.abortSignal?.addEventListener"
+      [toJson "abort", fn "abortRun",
+       obj [("once", toJson true), ("signal", runSignal)]]
+  let _ ← Prog.effect "createRunFinalizer"
+    [obj
+      [("session", session),
+       ("root", obj
+         [("span", get root "span"), ("traceId", traceId), ("spanId", rootSpanId),
+          ("name", rootName), ("kind", rootKind), ("startTimeMs", startedAt)]),
+       ("rootAttributes", fn "rootAttributes"), ("modelProvider", providerName),
+       ("modelId", modelId), ("taskInput", taskInput), ("serialize", fn "traceAttribute"),
+       ("spans", spans), ("stepTiming", stepTiming), ("taskTotals", taskTotals),
+       ("sandboxCpu", sandboxCpu), ("openWork", fn "openWork"), ("publish", fn "publishSpan"),
+       ("recordUsage", fn "recordTaskUsage"), ("release", fn "release"),
+       ("restoreObservabilityContext", fn "restoreObservabilityContext")]]
   let deliveryValue := sessionField session "delivery"
   let channelDelivery := (get deliveryValue "kind").compress == (toJson "channel").compress
   let channelActions := sessionField session "channelActions"
@@ -583,7 +623,7 @@ def runAgentLoop (call : Json) : Prog Json := do
         [("messageChild", get options "messageChild")] else []) ++
      (if truthy (get options "dispatchSubagents") then
         [("dispatchSubagents", fn "dispatchSubagents")] else []))
-  let built ← Prog.effect "createTools" [toolArgs, agentConfig]
+  let built ← setupStep c startedAt "createTools" [toolArgs, agentConfig]
   let hooked ← Prog.effect "wrapToolsWithHooks" [obj (entries built), hooks, emptyMap]
   let fenced ← Prog.effect "wrapToolsWithOwnerFence" [hooked, session]
   let serialized ← Prog.effect "serializeToolCalls" [fenced, toJson computerToolName]
@@ -602,7 +642,7 @@ def runAgentLoop (call : Json) : Prog Json := do
       ("delivery", if nullish policyKind then toJson "direct" else policyKind),
       ("channel", if policyChannel then get policyDelivery "channelName" else undef)] ++
      entries identity)
-  let policyApproval ← Prog.effect "createPolicyToolApproval"
+  let policyApproval ← setupStep c startedAt "createPolicyToolApproval"
     [agentConfig, policyTarget, workspaces,
      obj [("mcpIdsByName", emptyMap), ("sandboxes", sandboxes)]]
   let runtimeApproval ← Prog.effect "createRuntimeToolApproval"
@@ -615,27 +655,7 @@ def runAgentLoop (call : Json) : Prog Json := do
   let providerOptions ← Prog.effect "providerOptionsFromModelConfig" [agentConfig, conversationKey]
   let cacheBreakpoint ← Prog.effect "cacheBreakpointFromProviderOptions"
     [agentConfig, providerOptions]
-  let stepTiming ← Prog.effect "createStepTimingTracker" [fn "traceAttribute"]
   let responseRunKey ← Prog.effect "crypto.randomUUID"
-  let abortSignal := get options "abortSignal"
-  if truthy abortSignal then
-    if (get abortSignal "$signal").compress == (toJson true).compress then
-      Prog.unsupported "a signal already aborted at entry"
-    let _ ← Prog.effect "options.abortSignal?.addEventListener"
-      [toJson "abort", fn "abortRun",
-       obj [("once", toJson true), ("signal", runSignal)]]
-  let _ ← Prog.effect "createRunFinalizer"
-    [obj
-      [("session", session),
-       ("root", obj
-         [("span", get root "span"), ("traceId", traceId), ("spanId", rootSpanId),
-          ("name", rootName), ("kind", rootKind), ("startTimeMs", startedAt)]),
-       ("rootAttributes", fn "rootAttributes"), ("modelProvider", providerName),
-       ("modelId", modelId), ("taskInput", taskInput), ("serialize", fn "traceAttribute"),
-       ("spans", spans), ("stepTiming", stepTiming), ("taskTotals", taskTotals),
-       ("sandboxCpu", sandboxCpu), ("openWork", fn "openWork"), ("publish", fn "publishSpan"),
-       ("recordUsage", fn "recordTaskUsage"), ("release", fn "release"),
-       ("restoreObservabilityContext", fn "restoreObservabilityContext")]]
   let _ ← Prog.effect "lifecycle.emit"
     [toJson "agent.started",
      obj [("modelProvider", providerName), ("modelId", modelId),

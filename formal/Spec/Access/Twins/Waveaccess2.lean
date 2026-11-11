@@ -309,9 +309,15 @@ private def auditedSandboxCall (call : Json) : Prog Json :=
       return ← Prog.fail error
     Prog.fail err
 
+/-- `sandboxAuditActor`: only an account on the service token may name the user it acts for. -/
 private def sandboxAuditActor (call : Json) : Prog Json := do
+  let auth := Twin.callArg call 0
+  if field auth "kind" == .str "role" then
+    return obj [("source", .str "service"), ("id", field (field auth "role") "roleId")]
+  if field auth "kind" != .str "account" || !truth (field auth "viaServiceToken") then
+    return obj [("source", .str "service")]
   let schema := obj [("$opaque", .str "ZodMiniRecord"), ("$fields", obj [("type", .str "record")])]
-  let v ← Prog.effect "parseOr" [schema, Twin.callArg call 0]
+  let v ← Prog.effect "parseOr" [schema, Twin.callArg call 1]
   if !truth v then return obj [("source", .str "unknown")]
   let source := field v "source"
   let extra := ["id", "email", "name"].filterMap fun key =>
@@ -889,7 +895,7 @@ private def handleSandboxLifecycleRoute (call : Json) : Prog Json := do
       ([("type", .str "sandboxes"), ("id", sandboxId)] ++ optional record ["projectId", "stageId"])]
   if truth denial then return ← Prog.effect "errorResponse" [toJson (403 : Nat), denial]
   if !truth record then return ← Prog.effect "errorResponse" [toJson (404 : Nat), .str "Sandbox not found"]
-  Prog.effect "handleSandboxLifecycle" [accountId, record, Twin.callArg call 3, Twin.callArg call 4]
+  Prog.effect "handleSandboxLifecycle" [auth, accountId, record, Twin.callArg call 3, Twin.callArg call 4]
 
 private def lifecycleActions : List String :=
   ["suspend", "resume", "terminate", "snapshot", "refresh", "exec", "terminal"]

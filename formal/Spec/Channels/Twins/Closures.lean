@@ -257,7 +257,8 @@ private def telegramParse (call : Json) : Prog Json := do
   let update := get body "payload"
   if isTruthy (get update "callback_query") then
     return ← telegramQuestionClick call (get update "callback_query") (get update "update_id")
-  let message ← Prog.effect "extractInboundMessage" [update]
+  -- An `edited_message` is left unread: edits never start a run.
+  let message := get update "message"
   if !isTruthy message then return ignoreResult none
   let text ← Prog.effect "telegramMessageText" [message]
   if !isTruthy text then
@@ -620,26 +621,42 @@ private def discordSendSticker (call : Json) : Prog Json := do
      Json.mkObj [("sticker_ids", jarr [.str value])]]
   return undef
 
-/-- `sendText`: inside the slash-command context when there is one, else straight to the thread. -/
-private def discordSendText (call : Json) : Prog Json := do
+/-- `DISCORD_TEXT_LIMIT` in `discord-channel.ts`. -/
+private def discordTextLimit : Nat := 1900
+
+/-- `createDiscordActions`' `sendChunk`: inside the shared slash-command context when there is
+one, else straight to the thread. The SDK marks the context's initial response sent once a post
+through it succeeds, so later chunks become follow-ups. Returns the flag after this chunk. -/
+private def discordSendChunk (call : Json) (sent : Bool) (chunk : Json) : Prog Bool := do
   let source := mod call "source"
   let threadId := mod call "threadId"
   let post := fun (_ : Unit) =>
-    Prog.effect "discord.postMessage" [threadId, Json.mkObj [("markdown", arg call 0)]]
+    Prog.effect "discord.postMessage" [threadId, Json.mkObj [("markdown", chunk)]]
   if !isTruthy (get source "interactionToken") then
     let _ ← post ()
-    return undef
+    return sent
   let outcome ← Prog.attempt "discord.runWithSlashCommandContext"
     [Json.mkObj [("channelId", threadId), ("interactionToken", get source "interactionToken"),
-       ("initialResponseSent", .bool false)], fnMarker ""]
+       ("initialResponseSent", .bool sent)], fnMarker ""]
   match outcome with
-  | .ok _ => return undef
+  | .ok _ => return true
   | .threw error _ =>
     if isTruthy (get source "channelId") then
       let _ ← post ()
-      return undef
+      return sent
     Prog.fail error
   | .pending => Prog.fail (Json.mkObj [("pending", .bool true)])
+
+/-- `sendText`: the text in markdown-aware chunks, each sent by `sendChunk` in order. -/
+private def discordSendText (call : Json) : Prog Json := do
+  let chunks ← Prog.effect "chunkChannelText"
+    [arg call 0, toJson discordTextLimit, Json.mkObj [("markdown", .bool true)]]
+  if mod call "source" == undef then
+    Prog.unsupported "sendChunk's source and thread are not in sendText's recorded scope"
+  let mut sent := false
+  for chunk in (chunks.getArr?.toOption.getD #[]).toList do
+    sent ← discordSendChunk call sent chunk
+  return undef
 
 /-- `sendTyping`. -/
 private def discordSendTyping (call : Json) : Prog Json := do
@@ -1308,18 +1325,24 @@ private def slackApplyReplyIn (call : Json) : Prog Json := do
 
 private def slackApi (call : Json) : Json := mod call "api"
 
-/-- `createSlackActions`' `sendText`: the slash command's response URL, else a channel post. -/
+/-- `SLACK_TEXT_LIMIT` in `slack-channel.ts`. -/
+private def slackTextLimit : Nat := 12000
+
+/-- `createSlackActions`' `sendText`: each chunk to the slash command's response URL, else as a
+channel post. -/
 private def slackSendText (call : Json) : Prog Json := do
   let source := mod call "source"
-  if isTruthy (get source "responseUrl") then
-    let text ← Prog.effect "formatter.toResponseUrlText" [Json.mkObj [("markdown", arg call 0)]]
-    let _ ← Prog.effect "sendSlackWebhookResponse" [get source "responseUrl", text]
-    return undef
-  let _ ← Prog.effect "postSlackMessage"
-    [spread (slackApi call) (object
-      [("channel", get source "channelId"), ("markdownText", arg call 0),
-       ("threadTs", get source "threadTs"), ("unfurlLinks", .bool false),
-       ("unfurlMedia", .bool false)])]
+  let chunks ← Prog.effect "chunkChannelText" [arg call 0, toJson slackTextLimit]
+  for chunk in (chunks.getArr?.toOption.getD #[]).toList do
+    if isTruthy (get source "responseUrl") then
+      let text ← Prog.effect "formatter.toResponseUrlText" [Json.mkObj [("markdown", chunk)]]
+      let _ ← Prog.effect "sendSlackWebhookResponse" [get source "responseUrl", text]
+    else
+      let _ ← Prog.effect "postSlackMessage"
+        [spread (slackApi call) (object
+          [("channel", get source "channelId"), ("markdownText", chunk),
+           ("threadTs", get source "threadTs"), ("unfurlLinks", .bool false),
+           ("unfurlMedia", .bool false)])]
   return undef
 
 /-- `/^[a-z0-9_+-]+$/i`. -/

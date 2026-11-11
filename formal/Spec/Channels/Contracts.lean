@@ -9,7 +9,7 @@ Actions close over the authenticated provider application's source; external SDK
 is a contract, not a theorem. rehydrateAttachment restores a provider-authenticated reader.
 
 Provider | Verification | Fields read for decisions and routing
-Telegram | secret header constant-time equality | update_id, message/edited_message,
+Telegram | secret header constant-time equality | update_id, message (edits never run),
 callback_query, chat.id, message_id, message_thread_id, from, text/caption, media; ignore bots,
 unsupported updates and allow-list failures; question callbacks carry status/question/option.
 Slack | SDK signingSecret, timestamp/body signature | type, event.type/subtype, bot_id,

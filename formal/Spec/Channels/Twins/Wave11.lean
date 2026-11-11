@@ -99,9 +99,21 @@ private def sendTo (effect : String) (call : Json) : Prog Json := do
   let _ ← Prog.effect effect [member source "threadId", Json.mkObj [("markdown", Twin.callArg call 0)]]
   return Twin.undefinedJson
 
-/-- `createWhatsAppChannel`'s `sendText`, `createTeamsChannel`'s and `createGoogleChatChannel`'s:
-the text goes to the source's thread. -/
+/-- `createWhatsAppChannel`'s `sendText`: the text goes to the source's thread. -/
 private def transportSendText (call : Json) : Prog Json := sendTo "transport.postMessage" call
+
+/-- `TEAMS_TEXT_LIMIT` in `teams-channel.ts` and `GCHAT_TEXT_LIMIT` in `gchat-channel.ts`. -/
+private def teamsTextLimit : Nat := 7000
+private def gchatTextLimit : Nat := 8000
+
+/-- `createTeamsChannel`'s and `createGoogleChatChannel`'s `sendText`: each chunk of the text goes
+to the source's thread, in order. -/
+private def chunkedTransportSendText (limit : Nat) (call : Json) : Prog Json := do
+  let chunks ← Prog.effect "chunkChannelText" [Twin.callArg call 0, toJson limit]
+  for chunk in items chunks do
+    let _ ← Prog.effect "transport.postMessage"
+      [member (mod call "source") "threadId", Json.mkObj [("markdown", chunk)]]
+  return Twin.undefinedJson
 
 /-- `createGitHubActions`'s `sendText`. -/
 private def githubSendText (call : Json) : Prog Json := sendTo "github.postMessage" call
@@ -165,10 +177,16 @@ private def pancakeAuthenticate (call : Json) : Prog Json := do
     | none => return toJson false
   | _ => Prog.unsupported "query string is not a string"
 
-/-- `createPancakeActions`'s `sendText`: the page token, source, text and sender go to the Pancake API. -/
-private def pancakeSendText (call : Json) : Prog Json :=
-  Prog.effect "sendPancakeMessage"
-    [mod call "pageAccessToken", mod call "source", Twin.callArg call 0, mod call "senderId"]
+/-- `PANCAKE_TEXT_LIMIT` in `pancake-channel.ts`. -/
+private def pancakeTextLimit : Nat := 1900
+
+/-- `createPancakeActions`'s `sendText`: each chunk goes to the Pancake API in order. -/
+private def pancakeSendText (call : Json) : Prog Json := do
+  let chunks ← Prog.effect "chunkChannelText" [Twin.callArg call 0, toJson pancakeTextLimit]
+  for chunk in items chunks do
+    let _ ← Prog.effect "sendPancakeMessage"
+      [mod call "pageAccessToken", mod call "source", chunk, mod call "senderId"]
+  return Twin.undefinedJson
 
 /-- `createPancakeActions`'s `sendAttachments`, shared by `sendFiles` and `sendImages`. -/
 private def pancakeSendAttachments (call : Json) : Prog Json :=
@@ -295,8 +313,10 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/shared/discord-channel.ts#fetchDiscordFile" fetchDiscordFile,
    Twin.traced "apps/core/src/shared/whatsapp-channel.ts#BroodsWhatsAppAdapter.graphApiUpload" graphApiUpload,
    Twin.traced (closure "whatsapp-channel" "createWhatsAppChannel" "sendText") transportSendText,
-   Twin.traced (closure "teams-channel" "createTeamsChannel" "sendText") transportSendText,
-   Twin.traced (closure "gchat-channel" "createGoogleChatChannel" "sendText") transportSendText,
+   Twin.traced (closure "teams-channel" "createTeamsChannel" "sendText")
+     (chunkedTransportSendText teamsTextLimit),
+   Twin.traced (closure "gchat-channel" "createGoogleChatChannel" "sendText")
+     (chunkedTransportSendText gchatTextLimit),
    Twin.traced (closure "github-channel" "createGitHubActions" "sendText") githubSendText,
    Twin.traced (closure "discord-channel" "createDiscordActions" "sendAttachments") discordSendAttachments,
    Twin.traced (closure "slack-channel" "createSlackChannel" "canHandle") slackCanHandle,

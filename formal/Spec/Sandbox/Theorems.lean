@@ -41,11 +41,20 @@ theorem daemon_exclusion (p i : Option String) (force : Bool)
 
 /-- From a state where a reservation or an orphaned mirror row names the machine, a sweep
 completing lease, CAS and teardown, with the credentials the machine was started with, removes the
-machine and its mirror. The teardown's success is an input (L402). -/
+machine. Its mirror row may stay (G405). The teardown's success is an input (L402). -/
 theorem cleanup_progress : Spec.Progress cleanupSystem (fun _ => True)
     (fun _ schedule => ∃ r k, schedule = [.sweep true true true true true r k])
-    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) :=
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false) :=
   Proofs.progress
+
+/-- Two successful sweeps remove the machine and its mirror row: a retry through
+`teardown:<externalId>` leaves the row under the own key, and the orphan sweep that follows clears
+it once the provider answers that the machine is gone (G405). -/
+theorem cleanup_clears_mirror : Spec.Progress cleanupSystem (fun _ => True)
+    (fun _ schedule => ∃ r k r' k', schedule =
+      [.sweep true true true true true r k, .sweep true true true true true r' k'])
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) :=
+  Proofs.clears_mirror
 
 /-- A running machine stays reachable by a later sweep, through a reservation or its orphaned
 mirror row, unless some failed teardown was neither handed back nor kept and another run took the
@@ -57,13 +66,12 @@ theorem failed_teardown_stays_reachable (trace : List CleanupInput)
   Proofs.kept_reachable trace h
 
 /-- A failed teardown that is handed back or kept, or whose mirror row is still orphan-listable,
-followed by a sweep whose teardown succeeds with the machine's credentials, removes the machine and
-its mirror. The retry's success is an input (L402, G403). -/
+followed by a sweep whose teardown succeeds with the machine's credentials, removes the machine.
+The retry's success is an input (L402, G403). -/
 theorem failed_teardown_retried : Spec.Progress cleanupSystem (fun _ => True)
     (fun s schedule => ∃ p cr r k r' k', (r || k || s.mirror) = true ∧
       schedule = [.sweep true true true p cr r k, .sweep true true true true true r' k'])
-    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) :=
-  Proofs.retry
+    (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false) := Proofs.retry
 
 /-- The cleanup view equals the declared leak of attempted teardown outcomes. Tautological (L22). -/
 theorem cleanup_view_is_declared_leak : Spec.Private cleanupSystem Unit (List Bool) Bool (fun _ => True)

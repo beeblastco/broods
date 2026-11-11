@@ -211,14 +211,14 @@ private def urlAttachments (args : Json) : Json :=
     else none)
 
 private def hashEventContent (call : Json) : Prog Json := do
-  let input := Twin.callArg call 0
-  let identity := String.intercalate "\n" ((if nullish input then "" else text input) ::
-    ((items (Twin.callArg call 1)).map fun attachment =>
+  let identity := String.intercalate "\n" ((items (Twin.callArg call 0)).map fun attachment =>
       let url := get attachment "url"
-      if nullish url then "" else text url))
+      if nullish url then "" else text url)
   let _ ← Prog.effect "createHash" [.str "sha256"]
-  let _ ← Prog.effect "createHash(\"sha256\").update" [.str identity]
-  let digest ← Prog.effect "createHash(\"sha256\").update(identity).digest" [.str "hex"]
+  let _ ← Prog.effect "createHash(\"sha256\") .update" [.str identity]
+  let digest ← Prog.effect
+    "createHash(\"sha256\") .update(attachments.map((attachment) => attachment.url ?? \"\").join(\"\\n\")) .digest"
+    [.str "hex"]
   return .str (String.ofList ((text digest).toList.take 12))
 
 private def buildStatusUrl (call : Json) : Prog Json := do
@@ -620,7 +620,7 @@ def twins : List Twin :=
    pureTwin "shared/github-channel" "isGitHubTarget" (fun args =>
      inStrings (Twin.arg args 0) ["issue", "issue_comment", "pull_request", "pull_request_review_comment"]),
    pureTwin "shared/github-channel" "isRelevantAction" (fun args =>
-     inStrings (Twin.arg args 0) ["opened", "edited", "reopened", "created"]),
+     inStrings (Twin.arg args 0) ["opened", "reopened", "created"]),
    pureTwin "shared/pancake-channel" "formatPancakeError" (fun args =>
      let message := get (Twin.arg args 0) "message"
      if !nullish message then message else

@@ -230,13 +230,10 @@ private def memoryExecute (call : Json) : Prog Json := do
 
 /-! ## schedule.tool.ts -/
 
-/-- `getStorage().crons.getById(...).catch(() => null)`, after the account and agent fence. -/
+/-- `getStorage().crons.getById(...)` behind the agent fence; a failed lookup throws. -/
 private def ownedCron (context cronId : Json) : Prog Json := do
   let _ ← Prog.effect "getStorage" []
-  let found ← Prog.attempt "getStorage() .crons.getById" [get context "accountId", cronId]
-  let existing := match found with
-    | .ok value => value
-    | _ => Json.null
+  let existing ← Prog.effect "getStorage().crons.getById" [get context "accountId", cronId]
   if !truthy existing || get existing "agentId" != get context "agentId" then
     return ← toolError s!"No scheduled task {render cronId} belongs to this agent"
   return existing

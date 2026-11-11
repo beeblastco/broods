@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+import type { WorkspaceStorageConfig } from "../../../../apps/core/src/shared/domain/workspace-config.ts";
 import type { S3ObjectInfo } from "../../../../apps/core/src/shared/s3.ts";
+import type { ResolvedWorkspace } from "../../../../apps/core/src/shared/workspaces.ts";
 
 const S3_PATH = import.meta.resolve("../../../../apps/core/src/shared/s3.ts");
 const realS3 = await import(S3_PATH);
@@ -44,6 +46,15 @@ function object(key: string): S3ObjectInfo {
   return { key: key, size: 10, etag: "etag" } as S3ObjectInfo;
 }
 
+function workspace(storage: WorkspaceStorageConfig): ResolvedWorkspace {
+  return {
+    name: "default",
+    workspaceId: "ws_agent15",
+    namespace: NAMESPACE,
+    config: { storage: storage },
+  };
+}
+
 beforeEach((): void => {
   process.env.SKILLS_BUCKET_NAME = "agent15-skills";
   delete process.env.FILESYSTEM_BUCKET_NAME;
@@ -67,7 +78,7 @@ describe("loadConfiguredSkillPrompt", (): void => {
     ).rejects.toThrow("Skills require an account-scoped run");
   });
 
-  test("says nothing is staged when the workspace bucket is unset", async (): Promise<void> => {
+  test("says nothing is staged for a workspace on disk", async (): Promise<void> => {
     listings["acct_one/report-skill/"] = [
       object("acct_one/report-skill/SKILL.md"),
     ];
@@ -76,7 +87,7 @@ describe("loadConfiguredSkillPrompt", (): void => {
       ["acct_one/report-skill"],
       "acct_one/report-skill",
       [],
-      NAMESPACE,
+      workspace({ provider: "disk" }),
     );
 
     expect(result.stagedPath).toBeUndefined();
@@ -104,9 +115,10 @@ describe("loadConfiguredSkillPrompt", (): void => {
       ["acct_one/report-skill"],
       "acct_one/report-skill",
       [],
-      NAMESPACE,
+      workspace({ provider: "s3" }),
     );
 
+    expect(result.stagedPath).toBe(".claude/skills/report-skill");
     expect(result.stagedFiles).toEqual([
       "SKILL.md",
       "scripts/a.py",

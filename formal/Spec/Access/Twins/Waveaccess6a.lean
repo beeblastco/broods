@@ -211,15 +211,16 @@ private def budgetRefusal (config accountId : Json) : Prog (Option Json) := do
   | .pending => Prog.unsupported "budget check never settled"
 
 private def handleSandboxLifecycle (call : Json) : Prog Json := do
-  let accountId := Twin.callArg call 0
-  let record := Twin.callArg call 1
-  let action := Twin.callArg call 2
+  let auth := Twin.callArg call 0
+  let accountId := Twin.callArg call 1
+  let record := Twin.callArg call 2
+  let action := Twin.callArg call 3
   let config := field record "config"
   let sandboxId := field record "sandboxId"
   if action != str "terminate" then
     let refusal ← Prog.effect "retiredImageOptionsRefusal" [accountId, sandboxId, config]
     if truth refusal then return refusal
-  let parsed ← Prog.effect "parseJsonBody" [Twin.callArg call 3]
+  let parsed ← Prog.effect "parseJsonBody" [Twin.callArg call 4]
   let body ← Prog.effect "parseOr"
     [Json.mkObj [("$opaque", str "ZodMiniRecord")], parsed, Json.mkObj []]
   let reservationKey := match field body "reservationKey" with
@@ -234,7 +235,7 @@ private def handleSandboxLifecycle (call : Json) : Prog Json := do
       [toJson (403 : Nat), str "reservationKey does not belong to this account or sandbox config"]
   if isComputeAction call action then
     if let some refusal ← budgetRefusal config accountId then return refusal
-  let actor ← Prog.effect "sandboxAuditActor" [field body "actor"]
+  let actor ← Prog.effect "sandboxAuditActor" [auth, field body "actor"]
   let plane ← Prog.effect "sandboxControlPlane" [accountId, record]
   let executor ← Prog.effect "createSandboxExecutor" [withControlPlane config plane]
   let scope ← Prog.effect "sandboxScope" [record]

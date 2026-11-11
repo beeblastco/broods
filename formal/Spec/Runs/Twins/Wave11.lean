@@ -297,7 +297,8 @@ def handleDirectAnswers (call : Json) : Prog Json := do
       return ← Prog.effect "jsonResponse"
         [toJson (202 : Nat),
          Json.mkObj [("eventId", field settled "resultId"), ("status", toJson "completed")]]
-    Prog.effect "continuationResponse" [settled, outcome]
+    -- One answer that settled leaves `alreadyAnswered` empty.
+    Prog.effect "continuationResponse" [settled, outcome, toJson ([] : List Json)]
   | _ => Prog.unsupported "several answers read and settle together"
 
 /-- `formatUnknown`: a string as it is, anything else as `JSON.stringify` writes it, keys in the

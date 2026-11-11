@@ -167,30 +167,28 @@ private def reconcile (call : Json) : Prog Json := do
     Prog.setState "self.managed" (mapValue [])
   return Twin.undefinedJson
 
-/-- `BroodsDiscordAdapter.discordFetch`. The stock Discord host goes to the SDK, which is not
-recorded. -/
+/-- `BroodsDiscordAdapter.discordFetch`. A tenant host sends through `fetchRateLimited`, whose
+callback pins the bot token to a checked public address. The stock Discord host goes to the SDK,
+whose own request is not recorded. -/
 private def discordFetch (call : Json) : Prog Json := do
   let apiBase := jsonText (Twin.field (Twin.self call) "apiBaseUrl")
   if urlHost apiBase == "discord.com" then
     Prog.unsupported "the SDK's own request is not recorded"
   let token ← Prog.effect "this.resolveBotToken"
-  let signal ← Prog.effect "AbortSignal.timeout" [toJson (30000 : Nat)]
   let payload := Twin.callArg call 2
   let hasBody := !isMissing payload && payload != .bool false
-  let headers := Json.mkObj
-    ([("Authorization", .str s!"Bot {jsonText token}")] ++
-      (if hasBody then [("Content-Type", .str "application/json")] else []))
-  let init := Json.mkObj
-    ([("method", Twin.callArg call 1), ("headers", headers)] ++
-      (if hasBody then [("body", .str (Twin.jsonStringify 64 payload))] else []) ++
-      [("signal", signal)])
-  let response ← Prog.effect "publicHostFetch"
-    [.str s!"{apiBase}{jsonText (Twin.callArg call 0)}", init]
-  let status := responseStatus response
-  if 200 ≤ status && status < 300 then
-    return response
-  let body ← Prog.effect "response.text"
-  Prog.throwError "Error" s!"Discord API error: {status} {jsonText body}"
+  let send : Prog Unit := do
+    let signal ← Prog.effect "AbortSignal.timeout" [toJson (30000 : Nat)]
+    let headers := Json.mkObj
+      ([("Authorization", .str s!"Bot {jsonText token}")] ++
+        (if hasBody then [("Content-Type", .str "application/json")] else []))
+    let init := Json.mkObj
+      ([("method", Twin.callArg call 1), ("headers", headers)] ++
+        (if hasBody then [("body", .str (Twin.jsonStringify 64 payload))] else []) ++
+        [("signal", signal)])
+    let _ ← Prog.attempt "publicHostFetch" [.str s!"{apiBase}{jsonText (Twin.callArg call 0)}", init]
+  Prog.drain (fun _ _ => send) 8
+  Prog.effect "this.fetchRateLimited" [.str "Discord API error", Json.mkObj [("$fn", .str "")]]
 
 /-- This file's twins. -/
 def twins : List Spec.Twin :=

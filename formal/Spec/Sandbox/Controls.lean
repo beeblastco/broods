@@ -33,10 +33,10 @@ run takes the machine's own key, leaves a running machine no later sweep reaches
 theorem unkept_taken_key_strands (cr : Bool) (rest : List CleanupInput) :
     let s := (cleanupSystem.runFrom {} (.sweep true true true false cr false false :: .takeKey :: rest)).1
     s.physical = true ∧ s.row = false ∧ s.mirror = false := by
-  have h := Proofs.stranded ⟨false, true, false⟩ rfl rfl rest
-  change (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.physical = true ∧
-    (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.row = false ∧
-    (cleanupSystem.runFrom ⟨false, true, false⟩ rest).1.mirror = false
+  have h := Proofs.stranded ⟨false, true, false, false⟩ rfl rfl rest
+  change (cleanupSystem.runFrom ⟨false, true, false, false⟩ rest).1.physical = true ∧
+    (cleanupSystem.runFrom ⟨false, true, false, false⟩ rest).1.row = false ∧
+    (cleanupSystem.runFrom ⟨false, true, false, false⟩ rest).1.mirror = false
   rw [h]; exact ⟨rfl, rfl, rfl⟩
 
 /-- With the key untaken, the orphaned mirror row lets the next sweep tear an unkept machine down. -/
@@ -44,6 +44,14 @@ theorem unkept_orphan_retried (r k : Bool) :
     (cleanupSystem.final [.sweep true true true false true false false,
       .sweep true true true true true r k]).physical = false := by
   cases r <;> cases k <;> rfl
+
+/-- G405: a retry through the kept `teardown:<externalId>` reservation removes the machine and
+leaves its mirror row under the own key. -/
+theorem kept_retry_leaves_mirror (r k : Bool) :
+    let s := cleanupSystem.final [.sweep true true true false true false true,
+      .sweep true true true true true r k]
+    s.physical = false ∧ s.mirror = true := by
+  cases r <;> cases k <;> exact ⟨rfl, rfl⟩
 
 /-- G403: once the account no longer holds the credentials the machine was started with, no sweep
 tears it down, though its rows stay intact when every hand-back lands. -/
@@ -95,10 +103,10 @@ theorem hidden_outcomes_break_privacy :
 theorem disabled_sweep_breaks_progress :
     ¬ Spec.Progress { cleanupSystem with step := fun s _ => (s, []) }
       (fun _ => True) (fun _ schedule => ∃ r k, schedule = [.sweep true true true true true r k])
-      (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false ∧ s.mirror = false) := by
+      (fun s => (s.row || s.mirror) = true) (fun s => s.physical = false) := by
   intro h
   have bad := h [] trivial rfl [.sweep true true true true true false false] ⟨false, false, rfl⟩
-  exact Bool.noConfusion bad.1
+  exact Bool.noConfusion bad
 
 /-- A broken sweep that drops the reservation and the mirror row on every failed teardown. -/
 def droppedRowStep (s : Cleanup) : CleanupInput → Cleanup × List Bool
