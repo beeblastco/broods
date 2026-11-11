@@ -29,7 +29,7 @@ import { nextFireAt } from "@/app/lib/cronSchedule";
 import { useId, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
-const SCHEDULE_PATTERN = "(cron|rate|at)\\(.+\\)";
+const SCHEDULE_PATTERN = "\\s*(cron|rate|at)\\(.+\\)\\s*";
 const SCHEDULE_REGEX = new RegExp(`^${SCHEDULE_PATTERN}$`);
 const TIME_ZONES = Intl.supportedValuesOf("timeZone");
 const NEXT_RUN: Intl.DateTimeFormatOptions = {
