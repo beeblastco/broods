@@ -578,11 +578,11 @@ sequenceDiagram
   W-->>E: SandboxExecResponse, duration measured here
 ```
 
-| Route                         | Does                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse` |
-| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                       |
-| `DELETE /v1/sandboxes/:id`    | Drops the stored disk                                                     |
+| Route                         | Does                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------- |
+| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse`          |
+| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                                |
+| `DELETE /v1/sandboxes/:id`    | Drops the stored disk, leaving an empty `released` marker that refuses later calls |
 
 - Nothing runs between commands. A persistent sandbox is its stored disk: one gzip of a JSON header and the files' raw bytes, one R2 object per id, restored into a fresh shell on every call. The runtime packs the disk again after the command and answers "unchanged" when nothing differs, so a read-only command stores nothing. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
 - Billing follows: each command is metered as it ends (its time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
