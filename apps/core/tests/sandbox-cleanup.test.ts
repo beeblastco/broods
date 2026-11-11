@@ -380,15 +380,29 @@ it("hands the reservation back when the executor cannot be built", async () => {
   ]);
 });
 
-it("still drops the rows when the reservation lookup fails", async () => {
+it("keeps the reservation and the row when the reservation lookup fails", async () => {
   lookupError = new Error("convex unavailable");
   const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
 
   expect(released).toBe(0);
   expect(e2bKillMock).not.toHaveBeenCalled();
-  expect(removeSandboxInstanceMock.mock.calls).toEqual([
-    ["acct-1", "key-live", undefined],
-  ]);
+  expect(deleteSandboxInstanceMock.mock.calls.map((c) => c[0])).not.toContain(
+    "e2b",
+  );
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("keeps the row of a released key whose teardown failed and could not be re-reserved", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 });
 
 function record(

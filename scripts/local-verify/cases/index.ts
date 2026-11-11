@@ -38,6 +38,7 @@ import { snapshotStage } from "./snapshot-stage.ts";
 import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
 import { streamedBurst } from "./streamed-burst.ts";
+import { streamedRefusal } from "./streamed-refusal.ts";
 import {
   subagentMessageAgents,
   subagentNoReplyWake,
@@ -66,6 +67,7 @@ export const verifyCases: readonly VerifyCase[] = [
   queuedCompact,
   steerAtBoundary,
   streamedBurst,
+  streamedRefusal,
   subagentStop,
   subagentModel,
   subagentResume,

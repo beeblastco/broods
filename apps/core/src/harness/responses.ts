@@ -1,3 +1,4 @@
+import { apiErrorBody, type ApiErrorInit } from "@broods/convex/model/apiError";
 import { getHarnessPublicUrl } from "../shared/env.ts";
 import { errorResponse, jsonResponse } from "../shared/http.ts";
 import { publicEventIdForScope } from "../shared/runtime-keys.ts";
@@ -107,24 +108,32 @@ export function emptySseResponse(): Response {
   );
 }
 
+// Takes errorResponse's arguments so a streamed refusal carries the JSON envelope's code and type.
 export function errorSseResponse(
-  error: string,
-  statusCode = 200,
+  status: number,
+  message: string,
+  init: ApiErrorInit = {},
   headers: Record<string, string> = {},
 ): Response {
+  const { error } = apiErrorBody(status, message, init);
+  const frame = {
+    type: "error",
+    error: error.message,
+    code: error.code,
+    errorType: error.type,
+  };
+
   return new Response(
     new ReadableStream({
       start: function (controller) {
         controller.enqueue(
-          textEncoder.encode(
-            `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
-          ),
+          textEncoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
         );
         controller.close();
       },
     }),
     {
-      status: statusCode,
+      status: status,
       headers: { ...headers, "content-type": "text/event-stream" },
     },
   );
@@ -175,30 +184,24 @@ export function directAdmissionResponse(
   admission: IngressAdmission,
   jsonOnly: boolean,
 ): Response {
+  const refuse = jsonOnly ? errorResponse : errorSseResponse;
   if (admission.outcome === "rejected") {
-    return jsonOnly
-      ? errorResponse(409, CONVERSATION_BUSY, { code: "conversation_busy" })
-      : errorSseResponse(CONVERSATION_BUSY, 409);
+    return refuse(409, CONVERSATION_BUSY, { code: "conversation_busy" });
   }
   if (admission.outcome === "capacity") {
-    const message = "Conversation ingress queue is at capacity";
-
-    return jsonOnly
-      ? errorResponse(
-          429,
-          message,
-          { code: "ingress_capacity" },
-          INGRESS_RETRY_HEADERS,
-        )
-      : errorSseResponse(message, 429);
+    return refuse(
+      429,
+      "Conversation ingress queue is at capacity",
+      { code: "ingress_capacity" },
+      INGRESS_RETRY_HEADERS,
+    );
   }
   if (admission.outcome === "conflict") {
-    const message =
-      "Idempotency key is already bound to a different ingress payload";
-
-    return jsonOnly
-      ? errorResponse(409, message, { code: "idempotency_conflict" })
-      : errorSseResponse(message, 409);
+    return refuse(
+      409,
+      "Idempotency key is already bound to a different ingress payload",
+      { code: "idempotency_conflict" },
+    );
   }
   const publicEventId = publicEventIdFromScoped(admission.eventId, event);
   // A duplicate gets the first admission's run id, so an idempotent POST names one run.

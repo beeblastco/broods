@@ -193,13 +193,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the only SSE `error` frame (`StreamRefusal`), with the same `code`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation is already processing another turn. Try again when the current turn finishes.","code":"conversation_busy","errorType":"conflict_error"}
         "429":
-          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
+          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After`; on a streamed run it arrives as the only SSE `error` frame (`StreamRefusal`), with the same `code`. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
@@ -207,16 +212,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation ingress queue is at capacity","code":"ingress_capacity","errorType":"rate_limit_error"}
         "503":
-          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile. This POST checks the queue before ingress records anything and before the plan counts the run, and only a full queue answers 503, so a retry after `Retry-After` with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` even while the queue is full, never a 503 it would only retry into. A streamed run gets one SSE `error` frame; a background POST (or `answers`, `continue`) a JSON envelope. A run that passed the check and owns its conversation is never failed for capacity later; it queues. One queued behind another turn of its conversation (status `queued`) can still fail for capacity if the queue is full when that turn ends.
+          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile. This POST checks the queue before ingress records anything and before the plan counts the run, and only a full queue answers 503, so a retry after `Retry-After` with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` even while the queue is full, never a 503 it would only retry into. A streamed run gets one SSE `error` frame (`StreamRefusal`) with the same `code`; a background POST (or `answers`, `continue`) a JSON envelope. A run that passed the check and owns its conversation is never failed for capacity later; it queues. One queued behind another turn of its conversation (status `queued`) can still fail for capacity if the queue is full when that turn ends.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -579,6 +588,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
         "503":
           description: The deployment's run queue is full, as for `POST /v1/runs`
           headers:
@@ -587,8 +599,7 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -1960,6 +1971,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
         "503":
           description: The deployment's run queue is full, as for `POST /v1/runs`
           headers:
@@ -1968,8 +1982,7 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -4901,6 +4914,28 @@ components:
               type: string
               description: The request field the error is about, when it is about one.
               example: limit
+
+    StreamRefusal:
+      type: object
+      description: The only SSE frame of a streamed run refused before it starts, sent as one `data:` line with a non-2xx status. `error`, `code` and `errorType` match the JSON envelope's `message`, `code` and `type` for the same refusal. A core before this field set sends only `type` and `error`.
+      required:
+        - type
+        - error
+      properties:
+        type:
+          type: string
+          const: error
+        error:
+          type: string
+          description: Human-readable prose. Do not branch on it.
+        code:
+          type: string
+          description: The envelope's `code`. Branch on this.
+          example: conversation_busy
+        errorType:
+          type: string
+          description: The envelope's `type`, renamed because `type` names the frame.
+          example: conflict_error
 
     Account:
       type: object

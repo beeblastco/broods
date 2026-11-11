@@ -115,6 +115,7 @@ export async function releaseReservedSandboxes(
   const removals: Promise<void>[] = [];
   for (const namespace of namespaces) {
     const machines: string[] = [];
+    let unreleased = false;
     for (const provider of RELEASABLE_PROVIDERS) {
       const outcome = await releaseOnProvider(
         accountId,
@@ -122,7 +123,13 @@ export async function releaseReservedSandboxes(
         configs,
         namespace,
       );
+      // Unknown machine: its reservation stays for the expiry sweep.
+      if (outcome === null) {
+        unreleased = true;
+        continue;
+      }
       if (outcome?.released) machines.push(outcome.externalId);
+      else if (outcome) unreleased = true;
       // Refused for an account being deleted: its row then still names the machine.
       const dropped = await deleteSandboxInstance(
         provider,
@@ -134,9 +141,9 @@ export async function releaseReservedSandboxes(
       }
     }
     released += machines.length;
-    // The machines it released, so a run that reserved the key since keeps its row; with none
-    // released, whatever row the key still has.
-    const fences = machines.length > 0 ? machines : [undefined];
+    // The machines it released, so a run that reserved the key since keeps its row and an
+    // unreleased machine stays listed for the orphan sweep; with no machine, whatever row is left.
+    const fences = machines.length > 0 || unreleased ? machines : [undefined];
     for (const machine of fences) {
       removals.push(queueMirrorRemove(accountId, namespace, machine));
     }
@@ -208,14 +215,14 @@ function releaseCandidates(
 }
 
 // Via the reservation's provider, which may differ from every config's now. Undefined when no
-// machine was found.
+// machine was found, null when the lookup failed.
 async function releaseOnProvider(
   accountId: string,
   provider: SandboxProvider,
   records: SandboxConfigRecord[],
   namespace: string,
   expectedExternalId?: string,
-): Promise<ReleaseOutcome | undefined> {
+): Promise<ReleaseOutcome | undefined | null> {
   const target = await getSandboxReleaseTarget(
     accountId,
     provider,
@@ -230,7 +237,8 @@ async function releaseOnProvider(
 
     return null;
   });
-  if (!target?.externalId) {
+  if (!target) return null;
+  if (!target.externalId) {
     return undefined;
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {

@@ -36,6 +36,7 @@ import {
 const LABEL = "cloudflare v8 worker";
 const WORKER_OVERHEAD_MS = 15_000;
 // Worker answers after its isolate ran: a store conflict, a disk too large, a runtime failure.
+// A released sandbox answers 410 before anything runs, so it is not here.
 const RAN_STATUSES: ReadonlySet<number> = new Set([409, 413, 500]);
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();

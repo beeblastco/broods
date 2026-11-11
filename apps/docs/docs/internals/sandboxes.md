@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for an ephemeral row goes through its row lane (see [Instance row](#instance-row)), so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A call the Worker refused before its isolate ran (a 400, 401 or 404, or Cloudflare's own error) is not metered.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A call the Worker refused before its isolate ran (a 400, 401 or 404, a 410 for a released sandbox, or Cloudflare's own error) is not metered; a 409 means the command ran and lost the store race, so it is.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -578,11 +578,11 @@ sequenceDiagram
   W-->>E: SandboxExecResponse, duration measured here
 ```
 
-| Route                         | Does                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------- |
-| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse`          |
-| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                                |
-| `DELETE /v1/sandboxes/:id`    | Drops the stored disk, leaving an empty `released` marker that refuses later calls |
+| Route                         | Does                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse`              |
+| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                                    |
+| `DELETE /v1/sandboxes/:id`    | Drops the stored disk, leaving an empty `released` marker that later calls get 410 for |
 
 - Nothing runs between commands. A persistent sandbox is its stored disk: one gzip of a JSON header and the files' raw bytes, one R2 object per id, restored into a fresh shell on every call. The runtime packs the disk again after the command and answers "unchanged" when nothing differs, so a read-only command stores nothing. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
 - Billing follows: each command is metered as it ends (its time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
