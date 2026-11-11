@@ -38,6 +38,8 @@ interface StoredState {
   etag: string;
 }
 
+class SandboxReleased extends Error {}
+
 class StateConflict extends Error {}
 
 class StateTooLarge extends Error {}
@@ -114,6 +116,8 @@ async function exec(
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof SandboxReleased)
+      return new Response(message, { status: 410 });
     if (error instanceof StateConflict)
       return new Response(message, { status: 409 });
     if (error instanceof StateTooLarge)
@@ -132,7 +136,7 @@ async function readState(
   const object = await bucket.get(key);
   if (object === null) return null;
   if (object.customMetadata?.released)
-    throw new StateConflict("the sandbox was released; it runs nothing more");
+    throw new SandboxReleased("the sandbox was released; it runs nothing more");
   const bytes = new Uint8Array(await object.arrayBuffer());
 
   return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };
