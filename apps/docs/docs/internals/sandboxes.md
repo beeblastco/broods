@@ -260,7 +260,7 @@ sequenceDiagram
   Core->>Core: resume if suspended, seal ticket, 2 min TTL
   Core-->>D: sealed ticket
   D->>G: WS /v1/sandboxes/terminal/ws, broods.token.:ticket
-  G->>G: open ticket, spend it once in TERMINAL_TICKETS_SPENT KV
+  G->>G: open ticket, spend it once in TERMINAL_TICKETS_SPENT_<env> KV
   G->>P: upstream WS with the provider credential
   P-->>D: TTY bytes both ways
 ```
