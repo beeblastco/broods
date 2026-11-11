@@ -67,7 +67,7 @@ sequenceDiagram
 
 - Also `POST /v1/projects/:p/stages/:s/agents/:endpointId`. `ENABLE_DIRECT_API` gates both, default `true`.
 - A duplicate idempotency key answers with the first admission's run id. The same key with a different payload is `409 idempotency_conflict`.
-- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue turns a new streamed or background run away with `503` and `Retry-After` before the plan counts it or ingress records it, so a retry with the same `eventId` starts it; an account out of budget gets its `402` or `429` first, read without counting (`admitRun` with `count: false`). A request that got past that check holds one queue place while it is admitted (`withQueuePlace`), so concurrent requests never admit more runs than the queue takes and its run is never shed once recorded. A channel message holds one the same way; [channels](channels.md#runtime-flow) has what a full queue answers each provider. Queue modes: [queue and steer](queue-and-steer.md).
+- In-process workers are capped by `MAX_INPROCESS_WORKERS`, default 8, streamed and background runs alike. A full worker queue turns a new streamed or background run away with `503` and `Retry-After` before the plan counts it or ingress records it, so a retry with the same `eventId` starts it; an account out of budget gets its `402` or `429` first, read without counting (`admitRun` with `count: false`). A request ingress answers without a run (a duplicate, a busy conversation, a full conversation queue, an idempotency conflict) gives its count back (`refundRun`), on the direct, background, cron and channel paths alike. A request that got past that check holds one queue place while it is admitted (`withQueuePlace`), so concurrent requests never admit more runs than the queue takes and its run is never shed once recorded. A channel message holds one the same way; [channels](channels.md#runtime-flow) has what a full queue answers each provider. Queue modes: [queue and steer](queue-and-steer.md).
 
 ### WebSocket run
 
@@ -216,7 +216,7 @@ sequenceDiagram
 - `broods dev` sends the revision it read; `broods deploy` sends none and replaces the last completed sync.
 - The claim is released in `finally`; an abandoned claim expires after 45 minutes.
 - `verification/Broods/Sync*.lean` proves the next diff after a sync is deletes only and that overlapping PUTs are refused.
-- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. `GET /manifest` answers the live hash.
+- The body's optional `source` (`{ files: [{ path, content }], commitSha? }`, `model/stageSource.ts`) is checked before any write. `recordStageSync` hashes the read-back manifest (`manifestHash` in `model/manifestSnapshot.ts`, the same snapshot `diffManifests` compares, so an empty diff means an equal hash) onto `stageSyncs`, and stores the source as a new `stageSources` revision only when its content hash moved. A sync whose content matches a newest revision whose stored file is gone stores the file again on that revision. `GET /manifest` answers the live hash.
 
 ### Dock Apply and drift
 

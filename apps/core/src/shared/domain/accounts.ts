@@ -1,4 +1,5 @@
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
+import { ClientError } from "@broods/convex/model/clientError";
 import { createHash, randomBytes } from "node:crypto";
 import { configObject, parseOr } from "@broods/convex/model/storedJson";
 
@@ -35,9 +36,9 @@ export function normalizeCreateAccountInput(
   value: unknown,
 ): CreateAccountInput {
   const input = parseOr(configObject, value);
-  if (!input) throw new Error("Request body must include username");
+  if (!input) throw new ClientError("Request body must include username");
   if ("config" in input)
-    throw new Error("Agent config is created through /v1/agents");
+    throw new ClientError("Agent config is created through /v1/agents");
   const username = requireString(input.username, "username");
   const description = optionalString(input.description, "description");
 
@@ -49,7 +50,8 @@ export function normalizeCreateAccountInput(
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -57,7 +59,7 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

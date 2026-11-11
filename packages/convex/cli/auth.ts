@@ -10,7 +10,6 @@ import {
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
-import { uniqueOrgSlug } from "../lib/slug";
 import { bearerToken } from "../config/routes/shared";
 import {
   CLI_TOKEN_PREFIX,
@@ -25,8 +24,9 @@ import {
   userByAuthId,
 } from "../model/ownership/org";
 import { accountDoc } from "../model/accountDoc";
+import { insertAccount } from "../account/accounts";
+import { insertOwnedOrg } from "../org/orgs";
 import { ClientError, clientErrorResponse } from "../model/clientError";
-import { assertCanCreateOrg } from "../model/orgBilling";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { planValidator } from "../schema";
 
@@ -151,39 +151,22 @@ export const createOnboardingOrg = internalMutation({
     const name = args.name.trim();
     if (!name) throw new Error("Organization name is required");
 
-    const plan = await assertCanCreateOrg(ctx, token.authId);
-    const now = Date.now();
-    const slug = await uniqueOrgSlug(ctx, name);
-    const orgId = await ctx.db.insert("orgs", {
-      name: name,
-      slug: slug,
-      ownerAuthId: token.authId,
-      plan: plan,
-      createdAt: now,
-    });
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: user._id,
-      role: "owner",
-      createdAt: now,
-    });
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: orgId,
-      username: slug,
-      description: `Broods org ${name}`,
+    const org = await ctx.db.get(await insertOwnedOrg(ctx, user, name));
+    if (!org) throw new Error("Failed to read created org");
+    const account = await insertAccount(ctx, {
+      orgId: org._id,
+      username: org.slug,
+      description: `Broods org ${org.name}`,
       secretHash: await sha256Hex(createAccountSecret()),
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
+      secretRotatedBy: user._id,
     });
-    await ctx.db.patch(user._id, { activeOrgId: orgId });
     await ctx.db.patch(token._id, {
-      orgId: orgId,
-      accountId: accountId,
-      lastUsedAt: now,
+      orgId: org._id,
+      accountId: account._id,
+      lastUsedAt: Date.now(),
     });
 
-    return await onboardingContext(ctx, token.authId, orgId);
+    return await onboardingContext(ctx, token.authId, org._id);
   },
 });
 
@@ -494,6 +477,38 @@ export const resolveCliToken = internalMutation({
       authId: token.authId,
       orgId: token.orgId,
     };
+  },
+});
+
+// `broods logout`: a login revokes itself, so a leaked one stops before its 90 days run out.
+export const revoke = httpAction(async (ctx, req): Promise<Response> => {
+  const tokenHash = await cliLoginTokenHash(req);
+  const revoked =
+    tokenHash !== null &&
+    (await ctx.runMutation(internal.cli.auth.revokeToken, {
+      tokenHash: tokenHash,
+    }));
+
+  return revoked
+    ? new Response(null, { status: 204 })
+    : jsonError(401, "Login is invalid or already revoked");
+});
+
+export const revokeToken = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const token = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    // No role or account check: a demoted owner or a disabled account can come back.
+    if (!token || token.status !== "active" || token.lentToAgent === true) {
+      return false;
+    }
+    await ctx.db.patch(token._id, { status: "revoked" });
+
+    return true;
   },
 });
 

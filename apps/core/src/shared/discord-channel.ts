@@ -11,7 +11,11 @@ import {
   type ChannelImage,
   type ChannelParseResult,
 } from "./channels.ts";
-import { isAllowedId, parseChannelWebhookBody } from "./channels.ts";
+import {
+  chunkChannelText,
+  isAllowedId,
+  parseChannelWebhookBody,
+} from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import {
   DISCORD_GATEWAY_TOKEN_HEADER,
@@ -25,6 +29,18 @@ import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
 const DISCORD_FETCH_TIMEOUT_MS = 30_000;
+// Discord caps content at 2000; the margin covers markdown the SDK rewrites on the way out.
+const DISCORD_TEXT_LIMIT = 1900;
+
+const DISCORD_API_BASE = "https://discord.com/api/v10";
+
+const DISCORD_RATE_LIMIT_TRIES = 4;
+
+// A longer retry_after is a ban, not a burst, so the send fails at once.
+const DISCORD_RATE_LIMIT_MAX_WAIT_MS = 10_000;
+
+// Total rate limit wait for everything one inbound message's replies send.
+const DISCORD_RATE_LIMIT_BUDGET_MS = 20_000;
 
 // Format 3 is Lottie, a JSON animation with no raster form, so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
@@ -111,6 +127,10 @@ interface DiscordInteractionPayload {
   user?: { id?: string };
 }
 
+interface DiscordRateLimitBody {
+  retry_after?: number;
+}
+
 interface DiscordSlashCommandContext {
   channelId: string;
   initialResponseSent: boolean;
@@ -130,33 +150,59 @@ export interface DiscordSource {
 }
 
 // `integrations.ts` must scope the tenant before the SDK's `handleWebhook` could run, so this
-// subclass only exposes the protected hooks it needs and guards a tenant `apiUrl`.
+// subclass only exposes the protected hooks it needs, guards a tenant `apiUrl` and waits out 429s.
 class BroodsDiscordAdapter extends DiscordAdapter {
-  // A tenant `apiUrl` gets the bot token only pinned to a checked public address.
+  private rateLimitBudgetMs = DISCORD_RATE_LIMIT_BUDGET_MS;
+
   protected override async discordFetch(
     path: string,
     method: string,
     body?: unknown,
   ): Promise<Response> {
-    if (new URL(this.apiBaseUrl).host === "discord.com") {
-      return super.discordFetch(path, method, body);
-    }
-    const response = await publicHostFetch(`${this.apiBaseUrl}${path}`, {
-      method: method,
-      headers: {
-        Authorization: `Bot ${await this.resolveBotToken()}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Discord API error: ${response.status} ${await response.text()}`,
+    if (new URL(this.apiBaseUrl).host !== "discord.com") {
+      const token = await this.resolveBotToken();
+
+      // A tenant `apiUrl` gets the bot token only pinned to a checked public address.
+      return this.fetchRateLimited("Discord API error", () =>
+        publicHostFetch(`${this.apiBaseUrl}${path}`, {
+          method: method,
+          headers: {
+            Authorization: `Bot ${token}`,
+            ...(body ? { "Content-Type": "application/json" } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+          signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+        }),
       );
     }
+    // The SDK's own fetch keeps the typed error its thread and message fallbacks check.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await super.discordFetch(path, method, body);
+      } catch (err) {
+        if (!(await this.waitOutRateLimit(sdkRateLimitWaitMs(err), attempt))) {
+          throw err;
+        }
+      }
+    }
+  }
 
-    return response;
+  protected override discordInteractionFetch(
+    path: string,
+    method: string,
+    body?: unknown,
+  ): Promise<Response> {
+    return this.fetchRateLimited("Discord interaction API error", () =>
+      fetch(`${DISCORD_API_BASE}${path}`, {
+        method: method,
+        ...(body
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            }
+          : {}),
+      }),
+    );
   }
 
   verifyRequestSignature(
@@ -186,6 +232,45 @@ class BroodsDiscordAdapter extends DiscordAdapter {
     callback: () => Promise<T>,
   ): Promise<T> {
     return this.requestContext.run({ slashCommand: context }, callback);
+  }
+
+  private async fetchRateLimited(
+    label: string,
+    send: () => Promise<Response>,
+  ): Promise<Response> {
+    for (let attempt = 1; ; attempt++) {
+      const response = await send();
+      if (response.ok) {
+        return response;
+      }
+      const text = await response.text();
+      const waitMs =
+        response.status === 429
+          ? rateLimitWaitMs(response.headers.get("retry-after"), text)
+          : undefined;
+      if (!(await this.waitOutRateLimit(waitMs, attempt))) {
+        throw new Error(`${label}: ${response.status} ${text}`);
+      }
+    }
+  }
+
+  // False means fail now: no wait given, out of tries, or over the cap or this reply's budget.
+  private async waitOutRateLimit(
+    waitMs: number | undefined,
+    attempt: number,
+  ): Promise<boolean> {
+    if (
+      waitMs === undefined ||
+      attempt >= DISCORD_RATE_LIMIT_TRIES ||
+      waitMs > DISCORD_RATE_LIMIT_MAX_WAIT_MS ||
+      waitMs > this.rateLimitBudgetMs
+    ) {
+      return false;
+    }
+    this.rateLimitBudgetMs -= waitMs;
+    await Bun.sleep(waitMs);
+
+    return true;
   }
 }
 
@@ -431,6 +516,15 @@ function createDiscordActions(
       channelId:
         source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
     });
+  // Shared so the first reply fills the deferred response and later ones post follow-ups.
+  const slashCommand: DiscordSlashCommandContext | undefined =
+    source.interactionToken
+      ? {
+          channelId: threadId,
+          interactionToken: source.interactionToken,
+          initialResponseSent: false,
+        }
+      : undefined;
 
   const sendAttachments = async function (
     attachments: ChannelFile[] | ChannelImage[],
@@ -440,6 +534,27 @@ function createDiscordActions(
       markdown: caption ?? "",
       files: await discordUploads(attachments),
     });
+  };
+
+  const sendChunk = async function (text: string): Promise<void> {
+    if (!slashCommand) {
+      await discord.postMessage(threadId, { markdown: text });
+
+      return;
+    }
+
+    try {
+      await discord.runWithSlashCommandContext(slashCommand, () =>
+        discord.postMessage(threadId, { markdown: text }),
+      );
+    } catch (err) {
+      if (source.channelId) {
+        await discord.postMessage(threadId, { markdown: text });
+
+        return;
+      }
+      throw err;
+    }
   };
 
   return {
@@ -465,28 +580,10 @@ function createDiscordActions(
     },
 
     sendText: async function (text) {
-      if (!source.interactionToken) {
-        await discord.postMessage(threadId, { markdown: text });
-
-        return;
-      }
-
-      try {
-        await discord.runWithSlashCommandContext(
-          {
-            channelId: threadId,
-            interactionToken: source.interactionToken,
-            initialResponseSent: false,
-          },
-          () => discord.postMessage(threadId, { markdown: text }),
-        );
-      } catch (err) {
-        if (source.channelId) {
-          await discord.postMessage(threadId, { markdown: text });
-
-          return;
-        }
-        throw err;
+      for (const chunk of chunkChannelText(text, DISCORD_TEXT_LIMIT, {
+        markdown: true,
+      })) {
+        await sendChunk(chunk);
       }
     },
 
@@ -844,6 +941,40 @@ function parseForwardedGatewayEvent(
       source: { ...source },
     },
   };
+}
+
+// Discord's body carries retry_after in fractional seconds; a proxy's 429 may give only the header.
+function rateLimitWaitMs(
+  retryAfterHeader: string | null,
+  body: string,
+): number | undefined {
+  const seconds =
+    retryAfterSeconds(body) ??
+    (retryAfterHeader === null ? undefined : Number(retryAfterHeader));
+
+  return seconds !== undefined && Number.isFinite(seconds)
+    ? seconds * 1000
+    : undefined;
+}
+
+function retryAfterSeconds(body: string): number | undefined {
+  try {
+    return (JSON.parse(body) as DiscordRateLimitBody).retry_after;
+  } catch {
+    return undefined;
+  }
+}
+
+// The SDK wraps an unexported DiscordApiError holding the typed status and the raw body.
+function sdkRateLimitWaitMs(err: unknown): number | undefined {
+  const cause =
+    err instanceof Error && "originalError" in err
+      ? err.originalError
+      : undefined;
+
+  return cause instanceof Error && "status" in cause && cause.status === 429
+    ? rateLimitWaitMs(null, cause.message)
+    : undefined;
 }
 
 function toDiscordGatewayThread(

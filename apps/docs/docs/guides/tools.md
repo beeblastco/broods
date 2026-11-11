@@ -272,6 +272,8 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
+A posted `answers` body gets 202 when any answer landed, with the resumed turn's `runId` and `statusUrl` to poll when a turn was started or queued (for several answers, the last turn one of them started or queued); prompts someone already answered are skipped and listed in `alreadyAnswered`. It gets 409 `question_already_answered` only when every prompt was already answered.
+
 ## Web browsing
 
 `browser: { enabled: true }` gives the agent `browse`, which reads a page as markdown, text or links, runs JavaScript in it, or screenshots it, on a sandbox with the Obscura image. See [Web browsing](sandboxes/browsing.md), which also covers Chromium images and Cloudflare Browser Run.

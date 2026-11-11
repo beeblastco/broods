@@ -20,6 +20,7 @@ import {
   syncAgentRowFields,
 } from "../model/agentSync";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import {
   accountIdForProject,
   auditDetailsJson,
@@ -31,6 +32,7 @@ import { getOwnedStage, getProjectStage } from "../model/ownership/stage";
 import {
   getProjectForRole,
   getProjectForWrite,
+  requireProjectForWrite,
 } from "../model/ownership/project";
 import {
   deleteAgentConfig,
@@ -63,6 +65,8 @@ const workspaceRefValidator = v.object({
   workspaceId: v.string(),
   sandbox: v.optional(v.union(v.string(), v.null())),
 });
+
+const AGENT_CONFIG_NOT_FOUND = "Agent config not found.";
 
 const AGENT_ADMIN_REQUIRED =
   "Agent configuration can only be changed by an org admin.";
@@ -102,7 +106,7 @@ export const create = mutation({
       projectId,
       "admin",
     );
-    if (!project) throw new Error(AGENT_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(AGENT_ADMIN_REQUIRED, "forbidden");
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
@@ -255,14 +259,7 @@ export const remove = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const existing = await ctx.db.get(configId);
-    if (
-      !existing ||
-      !(await canAccessAgentConfig(ctx, authUser.id, existing))
-    ) {
-      throw new Error("Agent config not found.");
-    }
-    await assertAgentConfigAdmin(ctx, authUser.id, existing);
+    const existing = await getAgentConfigForAdmin(ctx, authUser.id, configId);
 
     // Dashboard edits to code-managed agents are overwritten on sync; deletes are refused.
     if (existing.managedBy === "cli") {
@@ -331,11 +328,7 @@ export const update = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const existing = await ctx.db.get(configId);
-    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-      throw new Error("Agent config not found.");
-    }
-    await assertAgentConfigAdmin(ctx, user.id, existing);
+    const existing = await getAgentConfigForAdmin(ctx, user.id, configId);
 
     const patch = Object.fromEntries(
       Object.entries(updates)
@@ -404,11 +397,7 @@ export const updateRuntimeRefs = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const existing = await ctx.db.get(configId);
-    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-      throw new Error("Agent config not found.");
-    }
-    await assertAgentConfigAdmin(ctx, user.id, existing);
+    const existing = await getAgentConfigForAdmin(ctx, user.id, configId);
 
     // Code-managed agents get their wiring from their owner, never from the canvas.
     if (existing.managedBy === "cli" || existing.managedBy === "api") {
@@ -492,11 +481,7 @@ export const updateSubagentRefs = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const existing = await ctx.db.get(configId);
-    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-      throw new Error("Agent config not found.");
-    }
-    await assertAgentConfigAdmin(ctx, user.id, existing);
+    const existing = await getAgentConfigForAdmin(ctx, user.id, configId);
 
     if (existing.managedBy === "cli" || existing.managedBy === "api") {
       return configId;
@@ -581,11 +566,7 @@ export const setRequireUserToken = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const config = await ctx.db.get(configId);
-    if (!config || !(await canAccessAgentConfig(ctx, user.id, config))) {
-      throw new Error("Agent config not found.");
-    }
-    await assertAgentConfigAdmin(ctx, user.id, config);
+    const config = await getAgentConfigForAdmin(ctx, user.id, configId);
     const agent = await linkedAgentRow(ctx, config);
     if (!agent) throw new Error("Deploy the agent first.");
     if (agent.requireUserToken === required) return null;
@@ -625,16 +606,6 @@ async function linkedAgentRow(
     : null;
 }
 
-async function assertAgentConfigAdmin(
-  ctx: Parameters<typeof getProjectForRole>[0],
-  authId: string,
-  config: { projectId: Id<"projects"> },
-): Promise<void> {
-  if (!(await getProjectForWrite(ctx, authId, config.projectId, "admin"))) {
-    throw new Error(AGENT_ADMIN_REQUIRED);
-  }
-}
-
 // As a CLI sync does, so setting the stage variable later re-resolves the agent. A name
 // the stage lacks keeps the agent's earlier value, else empty.
 async function bindStageEnvRefs(
@@ -669,6 +640,21 @@ async function canAccessAgentConfig(
   config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
   return Boolean(await getProjectForRole(ctx, authId, config.projectId));
+}
+
+async function getAgentConfigForAdmin(
+  ctx: MutationCtx,
+  authId: string,
+  configId: Id<"agentConfigs">,
+): Promise<Doc<"agentConfigs">> {
+  const config = await ctx.db.get(configId);
+  if (!config) throw new ClientError(AGENT_CONFIG_NOT_FOUND, "not_found");
+  await requireProjectForWrite(ctx, authId, config.projectId, "admin", {
+    forbidden: AGENT_ADMIN_REQUIRED,
+    notFound: AGENT_CONFIG_NOT_FOUND,
+  });
+
+  return config;
 }
 
 // A sandbox deleted on the canvas already lost its row, so it must not linger here.

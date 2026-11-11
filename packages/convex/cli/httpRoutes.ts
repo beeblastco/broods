@@ -1,4 +1,5 @@
 import type { FunctionArgs } from "convex/server";
+import { z } from "zod/mini";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -11,6 +12,7 @@ import { terminateReservedInstances } from "../config/routes/shared";
 import {
   isExternalResourceKind,
   placeholderIds,
+  prunes,
   resourceName,
   rewriteEnvRefs,
   type ExternalResourceKind,
@@ -34,11 +36,8 @@ import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
 import { manifestHash } from "../model/manifestSnapshot";
-import {
-  stageSourceProblem,
-  stageSourceSchema,
-  type StageSource,
-} from "../model/stageSource";
+import { stageSourceProblem, type StageSource } from "../model/stageSource";
+import { stageSourceSchema } from "../model/stageSourceSchema";
 import { storeStageSync } from "../model/stageSourceStore";
 
 export type CliAuth =
@@ -77,6 +76,10 @@ export type RouteParts =
       resourceKind: "agent" | "workspace" | "sandbox" | "cron";
       name: string;
     };
+
+const pruneTargetsSchema = z.array(
+  z.object({ kind: z.string(), name: z.string() }),
+);
 
 type CronResponse = {
   cronId: string;
@@ -178,6 +181,7 @@ export async function handleEnvRoute(
         project: route.project,
         stage: route.stage,
         name: route.name,
+        ...cliAuditActor(auth),
       },
     );
 
@@ -195,6 +199,7 @@ export async function handleEnvRoute(
       stage: route.stage,
       name: route.name,
       value: body.value,
+      ...cliAuditActor(auth),
     });
 
     return json({ ok: true });
@@ -399,6 +404,23 @@ function base64ArrayBuffer(value: string): ArrayBuffer {
   return bytes.buffer as ArrayBuffer;
 }
 
+function cliAuditActor(auth: CliAuth): {
+  actorKind: "cli" | "deployKey";
+  actorId: string;
+} {
+  if ("deployKeyId" in auth && auth.deployKeyId) {
+    return { actorKind: "deployKey", actorId: auth.deployKeyId };
+  }
+  const actorId =
+    "cliAuthId" in auth
+      ? auth.cliAuthId
+      : "applyAuthId" in auth
+        ? auth.applyAuthId
+        : auth.accountId;
+
+  return { actorKind: "cli", actorId: actorId };
+}
+
 function cronEvents(config: Record<string, unknown>, label: string): unknown[] {
   if (Array.isArray(config.events) && config.events.length > 0)
     return config.events;
@@ -515,7 +537,7 @@ async function handleManifestSync(
   const accountId = auth.accountId;
   const body = (await req.json()) as {
     manifest?: unknown;
-    prune?: boolean;
+    prune?: unknown;
     rotateRuntimeKey?: boolean;
     revision?: unknown;
     source?: unknown;
@@ -552,7 +574,16 @@ async function handleManifestSync(
   ) {
     return jsonError(400, "revision must be an integer");
   }
-  const prune = body.prune === true;
+  const pruneTargets = Array.isArray(body.prune)
+    ? pruneTargetsSchema.safeParse(body.prune)
+    : undefined;
+  if (pruneTargets && !pruneTargets.success) {
+    return jsonError(400, "prune must be true or a list of { kind, name }");
+  }
+  const pruneOnly = pruneTargets?.data.map(
+    (target): string => `${target.kind}:${target.name.trim()}`,
+  );
+  const prune = body.prune === true || pruneOnly !== undefined;
   const originalManifest = manifest as CliManifest;
   const scope = await ctx.runMutation(
     internal.cli.sync.ensureScopeBySecretHash,
@@ -596,6 +627,7 @@ async function handleManifestSync(
         resources: originalManifest.resources as never,
         ids: externalIds,
         prune: pruneRecords,
+        pruneOnly: pruneOnly,
       });
     await recordExternal(false);
     const syncManifest = rewriteExternalResourceRefs(
@@ -608,6 +640,7 @@ async function handleManifestSync(
         secretHash: secretHash,
         manifest: syncManifest as never,
         prune: prune,
+        pruneOnly: pruneOnly,
       },
     );
     let reservedResources: string[] = [];
@@ -619,17 +652,20 @@ async function handleManifestSync(
         stageId: scope.stageId,
         manifest: originalManifest,
         owned: owned,
+        pruneOnly: pruneOnly,
         secretHash: secretHash,
       });
       await recordExternal(true);
       await terminateDoomedInstances(ctx, auth, route, {
         resources: syncManifest.resources,
+        pruneOnly: pruneOnly,
       });
       reservedResources = await ctx.runMutation(
         internal.cli.sync.pruneSandboxesBySecretHash,
         {
           secretHash: secretHash,
           manifest: syncManifest,
+          pruneOnly: pruneOnly,
         },
       );
     }
@@ -646,6 +682,8 @@ async function handleManifestSync(
       syncManifest,
       result.ids,
       prune,
+      pruneOnly,
+      { secretHash: secretHash, project: route.project, stage: route.stage },
     );
     const refreshed = await ctx.runQuery(
       internal.cli.sync.getManifestBySecretHash,
@@ -674,15 +712,7 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: "deployKeyId" in auth ? "deployKey" : "cli",
-          actorId:
-            "deployKeyId" in auth
-              ? auth.deployKeyId
-              : "cliAuthId" in auth
-                ? auth.cliAuthId
-                : "applyAuthId" in auth
-                  ? auth.applyAuthId
-                  : accountId,
+          ...cliAuditActor(auth),
         },
       },
     );
@@ -731,10 +761,12 @@ async function pruneExternalResources(
     stageId: Id<"stages">;
     manifest: CliManifest;
     owned: ExternalOwnership["owned"];
+    pruneOnly: string[] | undefined;
     secretHash: string;
   },
 ): Promise<void> {
-  const { accountId, manifest, owned, secretHash, stageId } = options;
+  const { accountId, manifest, owned, pruneOnly, secretHash, stageId } =
+    options;
   const declared = new Set(
     manifest.resources.map(
       (entry) => `${entry.kind}:${resourceName(entry.name)}`,
@@ -742,7 +774,10 @@ async function pruneExternalResources(
   );
   const undeclared = (kind: ExternalResourceKind): Map<string, string> =>
     new Map(
-      [...owned[kind]].filter(([name]) => !declared.has(`${kind}:${name}`)),
+      [...owned[kind]].filter(
+        ([name]) =>
+          !declared.has(`${kind}:${name}`) && prunes(pruneOnly, kind, name),
+      ),
     );
   const skills = undeclared("skill");
   const hookIds = new Set(undeclared("hook").values());
@@ -883,6 +918,8 @@ async function syncCrons(
   manifest: CliManifest,
   ids: GeneratedIds,
   prune: boolean,
+  pruneOnly: string[] | undefined,
+  stage: { secretHash: string; project: string; stage: string },
 ): Promise<Record<string, string>> {
   const desired = desiredCrons(manifest, ids.agents ?? {});
   if (desired.length === 0 && prune !== true) return {};
@@ -915,9 +952,20 @@ async function syncCrons(
 
   // Only jobs code declared: an agent's own schedules survive the prune.
   if (prune === true) {
+    // Also the undeclared agents a prune list kept: their declared crons are still ours.
+    const current = await ctx.runQuery(
+      internal.cli.sync.getManifestBySecretHash,
+      stage,
+    );
+    const prunable = new Set<string>(Object.values(current?.ids.agents ?? {}));
     for (const job of existing) {
       if (job.managedBy !== "cli") continue;
-      if (!stageAgentIds.has(job.agentId) || kept.has(job._id)) continue;
+      if (
+        !prunable.has(job.agentId) ||
+        kept.has(job._id) ||
+        !prunes(pruneOnly, "cron", job.name)
+      )
+        continue;
       await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,
         cronId: job._id,

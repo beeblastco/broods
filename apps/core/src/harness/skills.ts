@@ -3,7 +3,6 @@ import { MAX_CONFIGURED_SKILLS } from "@broods/convex/model/skillLimits";
 import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { optionalEnv } from "../shared/env.ts";
 import { logWarn } from "../shared/log.ts";
 import {
   copyS3Object,
@@ -11,7 +10,9 @@ import {
   ensureS3DirectoryMarkers,
   isMissingS3Error,
   listS3Prefix,
+  readS3Bytes,
   readS3TextHead,
+  writeS3Object,
 } from "../shared/s3.ts";
 import {
   contentTypeForSkillPath,
@@ -29,6 +30,12 @@ import {
   skillsBucketName,
   type SkillMetadata,
 } from "../shared/skills.ts";
+import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+  type S3ReadTarget,
+} from "./sandbox/s3-mount.ts";
 
 // Every load_skill re-stages a clean copy from the skills bucket, the source of truth.
 const SKILL_CANONICAL_DIR = ".claude/skills";
@@ -166,7 +173,7 @@ export async function loadConfiguredSkillPrompt(
   allowedSkillPaths: string[],
   skillPath: string,
   resourcePaths: string[] = [],
-  workspaceNamespace?: string,
+  workspace?: ResolvedWorkspace,
 ): Promise<{
   path: string;
   loadedPaths: string[];
@@ -185,8 +192,8 @@ export async function loadConfiguredSkillPrompt(
   parseOwnedSkillPath(accountId, skillPath);
 
   const loaded = await loadSkillContent(skillPath, resourcePaths);
-  const staged = workspaceNamespace
-    ? await stageSkillBundleForSandbox(skillPath, workspaceNamespace)
+  const staged = workspace
+    ? await stageSkillBundleForSandbox(skillPath, workspace)
     : null;
 
   return {
@@ -248,14 +255,7 @@ export async function loadSkillContent(
 }
 
 function canonicalStagedPath(skillName: string): string {
-  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
-}
-
-function canonicalStagePrefix(
-  workspaceNamespace: string,
-  skillName: string,
-): string {
-  return `${workspaceNamespace}/${SKILL_CANONICAL_DIR}/${skillName}/`;
+  return `${SKILL_CANONICAL_DIR}/${skillName}`;
 }
 
 function compareSkillBundlePath(a: string, b: string): number {
@@ -266,11 +266,15 @@ function compareSkillBundlePath(a: string, b: string): number {
 }
 
 async function deleteStaleStagedSkillFiles(
-  workspaceBucket: string,
+  target: S3ReadTarget,
   destinationPrefix: string,
   sourcePathSet: Set<string>,
 ): Promise<void> {
-  const stagedObjects = await listS3Prefix(workspaceBucket, destinationPrefix);
+  const stagedObjects = await listS3Prefix(
+    target.bucket,
+    destinationPrefix,
+    target.access,
+  );
   await Promise.all(
     stagedObjects.map(async (object) => {
       if (object.key.endsWith("/")) {
@@ -282,7 +286,7 @@ async function deleteStaleStagedSkillFiles(
       if (sourcePathSet.has(relativePath)) {
         return;
       }
-      await deleteS3Object(workspaceBucket, object.key);
+      await deleteS3Object(target.bucket, object.key, target.access);
     }),
   );
 }
@@ -299,7 +303,7 @@ function formatLoadedSkillPrompt(
       ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
       : "";
   const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
+    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged in the workspace at \`${staged.stagedPath}\`, relative to the directory \`bash\` starts in. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or \`./${staged.stagedPath}/script.sh\` when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
 
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
@@ -331,16 +335,7 @@ async function listSkillSourceFiles(
 }
 
 function mirrorStagedPaths(skillName: string): string[] {
-  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
-}
-
-function mirrorStagePrefixes(
-  workspaceNamespace: string,
-  skillName: string,
-): string[] {
-  return SKILL_MIRROR_DIRS.map(
-    (dir) => `${workspaceNamespace}/${dir}/${skillName}/`,
-  );
+  return SKILL_MIRROR_DIRS.map((dir) => `${dir}/${skillName}`);
 }
 
 // A config saved before the config-time cap keeps running on its first MAX_CONFIGURED_SKILLS.
@@ -393,28 +388,30 @@ function skillReadLimit(): <T>(call: () => Promise<T>) => Promise<T> {
   };
 }
 
+// Staged where the workspace's own files live, so the sandbox mount sees them.
 async function stageSkillBundleForSandbox(
   skillPath: string,
-  workspaceNamespace: string,
+  workspace: ResolvedWorkspace,
 ): Promise<SkillBundleSandboxStage | null> {
-  const workspaceBucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
-  if (!workspaceBucket) return null;
+  if (workspace.config.storage.provider === "disk") return null;
 
   const parsed = parseSkillPath(skillPath);
   if (!parsed) {
     throw new Error(`Invalid skill path: ${skillPath}`);
   }
 
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(workspace.config.storage, workspace.namespace),
+  );
   const sourceFiles = await listSkillSourceFiles(skillPath);
   const sourcePathSet = new Set(sourceFiles.map((file) => file.path));
-  const prefixes = [
-    canonicalStagePrefix(workspaceNamespace, parsed.skillName),
-    ...mirrorStagePrefixes(workspaceNamespace, parsed.skillName),
-  ];
+  const prefixes = [SKILL_CANONICAL_DIR, ...SKILL_MIRROR_DIRS].map(
+    (dir) => `${target.prefix}${dir}/${parsed.skillName}/`,
+  );
 
   await Promise.all(
     prefixes.map((prefix) =>
-      stageSkillFiles(workspaceBucket, prefix, sourceFiles, sourcePathSet),
+      stageSkillFiles(target, prefix, sourceFiles, sourcePathSet),
     ),
   );
 
@@ -426,31 +423,51 @@ async function stageSkillBundleForSandbox(
 }
 
 async function stageSkillFiles(
-  workspaceBucket: string,
+  target: S3ReadTarget,
   destinationPrefix: string,
   sourceFiles: SkillSourceFile[],
   sourcePathSet: Set<string>,
 ): Promise<void> {
-  await ensureS3DirectoryMarkers(workspaceBucket, destinationPrefix);
-  await deleteStaleStagedSkillFiles(
-    workspaceBucket,
+  await ensureS3DirectoryMarkers(
+    target.bucket,
     destinationPrefix,
-    sourcePathSet,
+    target.access,
   );
+  await deleteStaleStagedSkillFiles(target, destinationPrefix, sourcePathSet);
   await Promise.all(
     sourceFiles.map(async (file) => {
       const destinationKey = `${destinationPrefix}${file.path}`;
-      await ensureS3DirectoryMarkers(workspaceBucket, destinationKey);
-      await copyS3Object(
+      const options = {
+        contentType: contentTypeForSkillPath(file.path),
+        executable: isExecutableSkillPath(file.path),
+      };
+      await ensureS3DirectoryMarkers(
+        target.bucket,
+        destinationKey,
+        target.access,
+      );
+      // A bucket reached with its own credentials cannot read the skills bucket to copy.
+      if (!target.access) {
+        await copyS3Object(
+          skillsBucketName(),
+          file.key,
+          target.bucket,
+          destinationKey,
+          options,
+        );
+
+        return;
+      }
+      const bytes = await readS3Bytes(
         skillsBucketName(),
         file.key,
-        workspaceBucket,
-        destinationKey,
-        {
-          contentType: contentTypeForSkillPath(file.path),
-          executable: isExecutableSkillPath(file.path),
-        },
+        undefined,
+        MAX_SKILL_FILE_BYTES,
       );
+      await writeS3Object(target.bucket, destinationKey, bytes, {
+        ...options,
+        access: target.access,
+      });
     }),
   );
 }

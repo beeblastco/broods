@@ -1,0 +1,12 @@
+kind	name	reason
+external	^context\.(agentLoader|deploymentLoader)$	routing context loaders injected by the server; storage reads taken as inputs
+external	^new Direct(NotFound|Forbidden)Error$	constructs the error the twin rethrows; only its name, message and init are read
+external	^conversationFilesSchema\.safeParse$	zod validation of the body; success and data are its documented result
+external	^adapter\.actions$	channel adapter's reply surface; returned unchanged or its throw propagated
+external	^new ConvexClient$	Convex SDK constructor; the client is returned unread
+external	^\(client as unknown as \{ setAdminAuth\(key: string\): void \}\)\.setAdminAuth$	Convex SDK auth setter; no answer is read
+external	^client\.onUpdate$	Convex SDK subscription; its return value is unused and its callbacks are entered as inputs
+external	^\$enter:arg[23]$	watchChannelConnections' own rows and error callbacks; entering one carries the SDK's answer
+external	^(resolve|onChange)$	caller callbacks; resolve's answer is an input, onChange's is ignored
+external	^send$	ackInbound's caller-supplied callback, started without waiting; nothing is read from it
+opaque	FakeConvexClient	test stand-in for the Convex SDK client; the twin passes it along and never reads it

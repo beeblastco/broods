@@ -137,18 +137,21 @@ describe("resumeLostAsyncToolResults", () => {
         admission: "queued",
         invoked: false,
         publicEventId: "async-tools-async_tool_resumed",
+        runId: "run_async_tool_resumed",
       },
       async_tool_queued: {
         kind: "ready",
         admission: "duplicate",
         invoked: false,
         publicEventId: "async-tools-async_tool_queued",
+        runId: "run_async_tool_queued",
       },
       async_tool_pending: {
         kind: "ready",
         admission: "owner",
         invoked: true,
         publicEventId: "async-tools-async_tool_pending",
+        runId: "run_async_tool_pending",
       },
       async_tool_full: {
         kind: "ready",

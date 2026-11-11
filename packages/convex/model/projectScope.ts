@@ -3,6 +3,8 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { slugifyName } from "../lib/slug";
+import { orgIdOf } from "./ownership/org";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -73,24 +75,27 @@ export async function cronsInProject(
   return crons.flat();
 }
 
+// As the CLI always resolved it: exact name or slug, lowest slug first, then the slugified name.
 export async function resolveProject(
   ctx: Ctx,
-  account: Doc<"accounts">,
+  orgId: Id<"orgs"> | null,
   project: string,
 ): Promise<Doc<"projects"> | null> {
-  const orgId = ctx.db.normalizeId("orgs", account.orgId);
-  if (!orgId) return null;
   const name = project.trim();
-  if (!name) return null;
+  if (!orgId || !name) return null;
 
-  const projects = await ctx.db
+  const named = await ctx.db
     .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
+    .withIndex("by_orgId_and_name_and_slug", (q) =>
+      q.eq("orgId", orgId).eq("name", name),
+    )
+    .first();
+  const exact = await projectBySlug(ctx, orgId, name);
+  if (named && (!exact || named.slug <= exact.slug)) return named;
+  if (exact) return exact;
+  const slug = slugifyName(name, "");
 
-  return (
-    projects.find((entry) => entry.name === name || entry.slug === name) ?? null
-  );
+  return slug && slug !== name ? await projectBySlug(ctx, orgId, slug) : null;
 }
 
 export async function resolveProjectStage(
@@ -102,7 +107,7 @@ export async function resolveProjectStage(
   projectDoc: Doc<"projects">;
   stageDoc: Doc<"stages">;
 } | null> {
-  const projectDoc = await resolveProject(ctx, account, project);
+  const projectDoc = await resolveProject(ctx, orgIdOf(ctx, account), project);
   if (!projectDoc) return null;
 
   const stages = await ctx.db
@@ -245,6 +250,19 @@ async function getRow<
   const normalized = ctx.db.normalizeId(table, id);
 
   return normalized ? await ctx.db.get(normalized) : null;
+}
+
+async function projectBySlug(
+  ctx: Ctx,
+  orgId: Id<"orgs">,
+  slug: string,
+): Promise<Doc<"projects"> | null> {
+  return await ctx.db
+    .query("projects")
+    .withIndex("by_orgId_and_slug", (q) =>
+      q.eq("orgId", orgId).eq("slug", slug),
+    )
+    .first();
 }
 
 function rowStageScope(

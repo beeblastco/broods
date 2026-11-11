@@ -783,6 +783,59 @@ describe("streamIsolatePayload cross-process abort", () => {
     }
   }, 10_000);
 
+  it.each([
+    [
+      "a crash names the worker's stderr",
+      "process.stderr.write('fatal: heap out of memory\\n'); process.exit(134);",
+      "isolate worker exited (134): fatal: heap out of memory",
+    ],
+    ["a hang reports a timeout", "", "isolate execution timed out"],
+  ])(
+    "pooled: %s",
+    async (_case, onCall, expected) => {
+      const dir = await mkdtemp(join(tmpdir(), "broods-pool-fail-"));
+      created.push(dir);
+      const stubPath = join(dir, "failing-runner.mjs");
+      await writeFile(
+        stubPath,
+        [
+          "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+          `process.stdin.on("data", () => { ${onCall} });`,
+          "setInterval(() => {}, 1000);",
+        ].join("\n"),
+        "utf8",
+      );
+      delete process.env.ISOLATE_POOL;
+      process.env.ISOLATE_RUNNER_PATH = stubPath;
+      process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS = "1";
+
+      const { shutdownIsolatePool, streamIsolatePayload } =
+        await import("../src/harness/isolate/executor.ts");
+      shutdownIsolatePool();
+      try {
+        const failure = await (async (): Promise<string> => {
+          for await (const output of streamIsolatePayload("acct_fail", {
+            bundleSourceB64:
+              Buffer.from("export default {};").toString("base64"),
+            expectedSha256: sha256("export default {};"),
+            toolName: "stub",
+            input: {},
+            config: {},
+          })) {
+            return String(output);
+          }
+
+          return "no output";
+        })().catch((error: Error) => error.message);
+
+        expect(failure).toBe(expected);
+      } finally {
+        shutdownIsolatePool();
+      }
+    },
+    10_000,
+  );
+
   it("gives up on a runner that never says ready after its start deadline, not the run timeout", async () => {
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-hang-"));
     created.push(dir);

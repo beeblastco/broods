@@ -1,0 +1,5 @@
+pattern	category	reason
+apps/lambda/child-runner.mjs#*	out-of-process	As for the Lambda handler: a child of the Lambda runtime.
+apps/core/src/harness/isolate/runner/runner.mjs#*	out-of-process	Runs inside the isolate child, not the runtime process; the host side is modelled and replayed.
+apps/gateway/src/main.ts#*	platform-entry	Process entry: reads env, opens sockets, starts the server.
+apps/core/src/shared/log.ts#*	telemetry	Logging only: no decision depends on it and recording treats it as not behaviour.

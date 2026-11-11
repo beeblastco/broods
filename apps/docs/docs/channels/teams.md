@@ -84,7 +84,7 @@ What does not:
 
 - No reactions.
 - No outbound files. `send-files` posts links as text.
-- No Adaptive Cards, buttons or streaming. The reply goes out once the turn ends.
+- No Adaptive Cards, buttons or streaming. The reply goes out once the turn ends, in pieces of at most 7000 characters to stay under the 28 KB message limit.
 - Only Teams. Web Chat, Direct Line and other Azure Bot channels are acknowledged and ignored.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

@@ -23,6 +23,7 @@ const claimSandboxInstanceMock = mock(
     _key: string,
     _externalId: string,
     _accountId: string | undefined,
+    _ttlSeconds?: number,
   ): Promise<boolean> => true,
 );
 const deleteSandboxInstanceMock = mock(
@@ -168,6 +169,76 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
   ]);
 });
 
+it("keeps a machine reserved for the sweeper when a run took its key during a failed teardown", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => false);
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-new");
+  const released = await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "key-a",
+      externalId: "sbx-a",
+      ttlSeconds: 3600,
+    },
+  ]);
+
+  expect(released).toEqual([]);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "sbx-a", "acct-1", 3600],
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
+  ]);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("adds no second reservation when a hand-back that threw had landed", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-a");
+  await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls.map((c) => c[1])).toEqual([
+    "key-a",
+  ]);
+});
+
+it("keeps a machine reserved for the sweeper when a released key's teardown fails", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-live", "sbx-live", "acct-1", 60],
+  ]);
+});
+
+it("re-reserves a kept machine whose retried teardown fails again with the same short lifetime", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "teardown:sbx-a",
+      externalId: "sbx-a",
+      ttlSeconds: 60,
+    },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
+  ]);
+});
+
 it("leaves a machine alone when a run refreshed its reservation since the listing", async () => {
   deleteSandboxInstanceMock.mockImplementationOnce(async () => false);
   const released = await releaseExpiredSandboxes("acct-1", [
@@ -309,15 +380,29 @@ it("hands the reservation back when the executor cannot be built", async () => {
   ]);
 });
 
-it("still drops the rows when the reservation lookup fails", async () => {
+it("keeps the reservation and the row when the reservation lookup fails", async () => {
   lookupError = new Error("convex unavailable");
   const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
 
   expect(released).toBe(0);
   expect(e2bKillMock).not.toHaveBeenCalled();
-  expect(removeSandboxInstanceMock.mock.calls).toEqual([
-    ["acct-1", "key-live", undefined],
-  ]);
+  expect(deleteSandboxInstanceMock.mock.calls.map((c) => c[0])).not.toContain(
+    "e2b",
+  );
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("keeps the row of a released key whose teardown failed and could not be re-reserved", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 });
 
 function record(

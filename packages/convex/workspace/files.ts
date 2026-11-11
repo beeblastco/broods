@@ -7,11 +7,13 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { requireActiveAccount } from "../model/activeAccount";
 import { deleteWorkspaceFile } from "../model/cascade";
 import {
   getProjectForRole,
   getProjectForWrite,
+  requireProjectForWrite,
 } from "../model/ownership/project";
 import {
   claimUploadedBlob,
@@ -76,6 +78,8 @@ export const workspaceStorageValidator = v.object({
   ),
 });
 
+const FILE_NOT_FOUND = "File not found.";
+
 const WORKSPACE_ADMIN_REQUIRED =
   "Workspace files can only be changed by an org admin.";
 
@@ -100,7 +104,7 @@ export const create = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const blob = storageId ? await claimUploadedBlob(ctx, storageId) : null;
     if (blob && blob.size > MAX_WORKSPACE_FILE_BYTES) {
@@ -109,6 +113,21 @@ export const create = mutation({
         `Workspace files are capped at ${MAX_WORKSPACE_FILE_BYTES} bytes.`,
       );
     }
+
+    // An upload to a taken path replaces what is there; old duplicate rows go with it.
+    const existing = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
+      )
+      .collect();
+    if (existing.some((row) => row.isFolder !== isFolder)) {
+      throw new Error(
+        `${path} already exists as a ${isFolder ? "file" : "folder"}.`,
+      );
+    }
+    if (isFolder && existing[0]) return existing[0]._id;
+    for (const row of existing) await deleteWorkspaceFile(ctx, row);
 
     const now = Date.now();
 
@@ -170,7 +189,7 @@ export const generateUploadUrl = mutation({
       throw new Error("User not found or not authenticated");
     }
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const grant = await grantUpload(ctx, account._id, "workspace");
     if ("retryAt" in grant) throw new Error(uploadQuotaMessage(grant.retryAt));
@@ -249,14 +268,11 @@ export const remove = mutation({
     }
 
     const file = await ctx.db.get(fileId);
-    if (!file) throw new Error("File not found.");
-    const project = await getProjectForWrite(
-      ctx,
-      user.id,
-      file.projectId,
-      "admin",
-    );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!file) throw new ClientError(FILE_NOT_FOUND, "not_found");
+    await requireProjectForWrite(ctx, user.id, file.projectId, "admin", {
+      forbidden: WORKSPACE_ADMIN_REQUIRED,
+      notFound: FILE_NOT_FOUND,
+    });
 
     await deleteWorkspaceFile(ctx, file);
 
@@ -280,7 +296,7 @@ export const removeFolder = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const descendants = await ctx.db
       .query("workspaceFiles")
@@ -318,14 +334,11 @@ export const rename = mutation({
     }
 
     const file = await ctx.db.get(fileId);
-    if (!file) throw new Error("File not found.");
-    const project = await getProjectForWrite(
-      ctx,
-      user.id,
-      file.projectId,
-      "admin",
-    );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!file) throw new ClientError(FILE_NOT_FOUND, "not_found");
+    await requireProjectForWrite(ctx, user.id, file.projectId, "admin", {
+      forbidden: WORKSPACE_ADMIN_REQUIRED,
+      notFound: FILE_NOT_FOUND,
+    });
 
     const trimmed = newName.trim();
     if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
@@ -333,6 +346,24 @@ export const rename = mutation({
     const slash = file.path.lastIndexOf("/");
     const newPath =
       slash === -1 ? trimmed : `${file.path.slice(0, slash)}/${trimmed}`;
+    const taken = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", file.projectId)
+          .eq("nodeId", file.nodeId)
+          .gte("path", newPath)
+          .lt("path", pathPrefixUpperBound(newPath)),
+      )
+      .collect();
+    if (
+      newPath !== file.path &&
+      taken.some(
+        (doc) => doc.path === newPath || doc.path.startsWith(`${newPath}/`),
+      )
+    ) {
+      throw new Error(`${trimmed} already exists.`);
+    }
     const now = Date.now();
 
     if (file.isFolder) {

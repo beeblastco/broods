@@ -337,7 +337,7 @@ async function runCoreStream(
       sendAgentTest(socket, {
         type: "error",
         status: response.status,
-        error: await responseErrorText(response),
+        ...(await responseErrorFrame(response)),
       });
 
       return;
@@ -955,14 +955,18 @@ function userScoped(
   return prefix && !value.startsWith(prefix) ? `${prefix}${value}` : value;
 }
 
-async function responseErrorText(response: Response): Promise<string> {
+// Same fields as core's SSE refusal frame, so a WebSocket client can branch on `code` too.
+async function responseErrorFrame(
+  response: Response,
+): Promise<{ error: string; code?: string; errorType?: string }> {
   const body = await response.text();
   try {
-    const parsed = JSON.parse(body) as { error?: string | ApiError };
+    const { error } = JSON.parse(body) as { error?: string | ApiError };
+    if (typeof error !== "object") return { error: error ?? body };
 
-    return errorText(parsed.error) ?? body;
+    return { error: error.message, code: error.code, errorType: error.type };
   } catch {
-    return body;
+    return { error: body };
   }
 }
 

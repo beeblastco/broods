@@ -1,0 +1,7 @@
+kind	name	reason
+external	^observabilityTicketSchema\.safeParse$	zod applies the schema declared beside the call; replay checks the decoded ticket and the twin branches only on its answer.
+external	^CardText$	Chat SDK card text element constructor; the twin compares the text it hands it and passes the element on.
+external	^uploadSlackFiles$	The Chat SDK Slack adapter performs the files.uploadV2 calls; the twin compares the uploads and options it hands over.
+external	^github\.postMessage$	The Chat SDK GitHub adapter posts the comment through the GitHub REST API; the twin compares the thread and markdown it is given.
+external	^client\.close$	The Convex SDK client closes its own subscription socket; the twin checks that every plane client is closed.
+external	^slack\.getUser$	The Chat SDK Slack adapter looks the user up through the Slack API; the twin compares the user id and picks the name from the row it returns.

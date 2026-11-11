@@ -101,11 +101,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       (pathname === "/" || pathname === "/healthz") &&
       request.method === "GET"
     ) {
-      return json({
-        status: "ok",
-        activeWebSockets: sockets.size,
-        maxWebSockets: config.limits.maxConnections,
-      });
+      return json({ status: "ok" });
     }
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {

@@ -73,6 +73,6 @@ Answer a form with `tasks/update`. A question answered with `decline` or `cancel
 
 - `tasks/get`, `tasks/update` and `tasks/cancel` need the tasks extension on each request. Without it they answer `-32021`.
 - The server speaks MCP revision 2026-07-28 only. A 2025-era client that opens with `initialize` gets `-32022`.
-- `tasks/cancel` stops the run at its next model step. A task waiting on a form has no live run, so it stays waiting; answer it or leave it to expire.
+- `tasks/cancel` stops the run at its next model step. A task waiting on a form, or queued behind another run in the same conversation, has no live run, so it stays where it is and the other run keeps going.
 
 How the translation works: [Tools and MCP internals](../internals/tools-and-mcp.md#mcp-tasks-server).

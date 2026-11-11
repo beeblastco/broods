@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import { randomUUID } from "node:crypto";
 import { Daytona, type Sandbox } from "@daytona/sdk";
 import { optionalEnv } from "../../shared/env.ts";
@@ -149,11 +150,10 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         ...(request.callback ? { callback: request.callback } : {}),
       },
     );
-    const response = await sandbox.process.executeCommand(
-      script,
-      undefined,
-      callbackEnv(request.callback),
-    );
+    const response = await sandbox.process.executeCommand(script, undefined, {
+      ...mergeSandboxEnv(this.#config.envVars),
+      ...callbackEnv(request.callback),
+    });
     if ((response.exitCode ?? 0) !== 0) {
       throw new Error(
         response.result ??
@@ -370,10 +370,13 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   ): Promise<{ sandbox: Sandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error("a persistent sandbox reservation key is required");
+      throw new ClientError("a persistent sandbox reservation key is required");
     const externalId = await getSandboxExternalId("daytona", key);
     if (!externalId)
-      throw new Error("no reserved daytona sandbox for this reservation");
+      throw new ClientError(
+        "no reserved daytona sandbox for this reservation",
+        "not_found",
+      );
     const sandbox = await this.#reconnect(
       new Daytona(daytonaClientOptions(this.#config)),
       externalId,
@@ -445,7 +448,7 @@ function daytonaClientOptions(
   }
   const customApiKey = configString(options.apiKey);
   if (customApiUrl && !customApiKey) {
-    throw new Error(
+    throw new ClientError(
       "config.options.apiKey is required when config.options.apiUrl is set",
     );
   }

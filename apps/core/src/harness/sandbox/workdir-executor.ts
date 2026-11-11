@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   Client,
   type CreateOptions,
@@ -341,8 +342,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   ): Promise<SandboxSnapshotResult> {
     const sandbox = await this.#reserved(request);
     if (!sandbox)
-      throw new Error(
+      throw new ClientError(
         "no reserved workdir sandbox to snapshot for this workspace",
+        "not_found",
       );
     const data = (await sandbox.snapshot()) as Record<string, unknown>;
     const snapshotId = configString(data.id) ?? configString(data.snapshot_id);
@@ -810,7 +812,7 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   }
   const customApiKey = configString(options.apiKey);
   if (customBaseUrl && !customApiKey) {
-    throw new Error(
+    throw new ClientError(
       "config.options.apiKey is required when config.options.workdirUrl is set",
     );
   }

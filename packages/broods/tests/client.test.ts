@@ -503,3 +503,113 @@ test("stream cancels the response body when the consumer stops early", async ():
   expect(canceled).toBe(1);
   expect(body.locked).toBe(false);
 });
+
+test("run returns the structured-output frame as output", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      new Response(
+        [
+          'data: {"type":"text-delta","id":"0","text":"done"}',
+          'data: {"type":"structured-output","output":{"answer":42}}',
+          "",
+        ].join("\n\n"),
+      ),
+  });
+
+  const result = await client.run({ agentId: "agent_1", input: "hello" });
+
+  expect(result.text).toBe("done");
+  expect(result.output).toEqual({ answer: 42 });
+  expect(result.events.map((part): string => part.type)).toEqual([
+    "text-delta",
+    "structured-output",
+  ]);
+});
+
+test("run stops reading when its signal aborts", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response =>
+      new Response(
+        new ReadableStream({
+          start: (controller): void => {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"type":"text-delta","id":"0","text":"hi"}\n\n',
+              ),
+            );
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+  });
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: `http://127.0.0.1:${server.port}`,
+  });
+  const controller = new AbortController();
+  setTimeout((): void => controller.abort(), 100);
+
+  try {
+    await expect(
+      client.run({
+        agentId: "agent_1",
+        input: "hello",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      client.run({
+        agentId: "agent_1",
+        input: "hello",
+        signal: AbortSignal.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("a refused run throws the server's status, code and message as fields", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        {
+          error: {
+            message: "This agent needs a user token.",
+            type: "permission_error",
+            code: "user_token_required",
+          },
+        },
+        { status: 403 },
+      ),
+  });
+
+  await expect(
+    client.run({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toMatchObject({
+    name: "BroodsApiError",
+    message:
+      "Run failed: 403 This agent needs a user token. (user_token_required)",
+    status: 403,
+    code: "user_token_required",
+    type: "permission_error",
+    serverMessage: "This agent needs a user token.",
+  });
+});
+
+test("a refused run keeps the error code in its message for older matchers", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        { error: { message: "No.", code: "user_token_required" } },
+        { status: 403 },
+      ),
+  });
+  await expect(
+    client.run({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toThrow(/Run failed: 403 .*user_token_required/);
+});

@@ -66,7 +66,7 @@ it("runs a script with its positionals in the requested directory", async (): Pr
   });
 });
 
-it("keeps a reserved sandbox's files between calls and drops them on delete", async (): Promise<void> => {
+it("keeps a reserved sandbox's files between calls and refuses it once released", async (): Promise<void> => {
   expect(await exists("sb-keep")).toBe(false);
   await exec("sb-keep", { script: "ls", persist: true });
   expect(await exists("sb-keep")).toBe(false);
@@ -83,8 +83,22 @@ it("keeps a reserved sandbox's files between calls and drops them on delete", as
     204,
   );
   expect(await exists("sb-keep")).toBe(false);
-  const gone = await exec("sb-keep", { script: "cat src/a.ts", persist: true });
-  expect(gone.exit_code).not.toBe(0);
+  const gone = await send("sb-keep", { script: "cat src/a.ts", persist: true });
+  expect(gone.status).toBe(410);
+});
+
+it("keeps a call that outlives its sandbox's release from storing a disk", async (): Promise<void> => {
+  const late = send("sb-released", {
+    script: "sleep 1; echo a > a.txt",
+    persist: true,
+  });
+  await Bun.sleep(200);
+  expect((await send("sb-released", undefined, API_KEY, "DELETE")).status).toBe(
+    204,
+  );
+
+  expect((await late).status).toBe(409);
+  expect(await exists("sb-released")).toBe(false);
 });
 
 it("stores only the first of two calls that raced on one disk and answers the other 409", async (): Promise<void> => {

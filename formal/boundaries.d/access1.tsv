@@ -1,0 +1,38 @@
+kind	name	reason
+external	^createHash$	Node crypto implements the SHA-256 digest contract; the twin checks algorithm and update inputs.
+external	^createHash\("sha256"\)\.update$	Node Hash update consumes the exact bytes checked by this twin.
+external	^createHash\("sha256"\)\.update\((actual|expected|value)\)\.digest$	Node SHA-256 digest is trusted after the twin checks the update input and encoding.
+external	^createHash\("sha256"\)\.update\(`workspace-media-link:\$\{secret\}`\)\.digest$	Node SHA-256 digest uses the checked context and secret.
+external	^timingSafeEqual$	Node compares the digest bytes supplied by the twin in constant time.
+external	^crypto\.subtle\.(digest|importKey|sign|verify)$	WebCrypto implements SHA-256 and HMAC; twins check algorithm, material, payload and signature arguments.
+external	^crypto\.getRandomValues$	WebCrypto supplies random bytes of the checked length; encoding is computed by the twin.
+external	^crypto\.randomUUID$	WebCrypto supplies a UUID; the twin computes its prefix and hyphen removal.
+external	^Date\.now$	The clock supplies milliseconds as an explicit effect input.
+opaque	Hash	Node Hash is used only through checked update and digest calls.
+opaque	CryptoKey	WebCrypto key handle is used only through checked signing and verification calls.
+external	^terminalState\.(get|delete)$	WeakMap provides the recorded terminal state and deletion result for the checked socket.
+external	^state\.upstream\.close$	WebSocket close is delegated to the transport with the checked code and reason.
+external	^obsState\.(get|delete)$	WeakMap supplies the observability state belonging to the checked socket.
+external	^state\.subs\[stream\]\?\.unsubscribe$	Subscription teardown is delegated after the twin selects the stream.
+external	^clearTimeout$	Timer cancellation uses the handle obtained from the socket state.
+external	^isLogLevel$	The imported log-level predicate validates the explicit level before order comparison.
+external	^optionalEnv$	Operator environment values are explicit inputs supplied by the environment adapter.
+external	^getStorage\(\)\.(roleSessions\.resolveByTokenHash|accounts\.getById)$	Storage answers are trusted persistence reads; the twin checks lookup keys and account status.
+opaque	ServerWebSocket	The socket is an identity handle; operations and required state are checked explicitly.
+opaque	WebSocket	The upstream transport is a handle; unrecorded readyState is unsupported rather than inferred.
+opaque	Timeout	Timer handles are used only for cancellation.
+opaque	Promise	A pending promise is passed through without inspecting its future value.
+external	^createDecipheriv$	Node AES-GCM receives the checked algorithm, derived key and IV.
+external	^decipher\.(setAuthTag|update|final)$	Node AES-GCM authenticates the supplied tag and ciphertext; the twin parses and checks decrypted expiry.
+external	^ticketPayload\.safeParse$	Zod validates the exact decrypted JSON against the source's strict ticket schema.
+external	^context\.(agentLoader|deploymentLoader|asyncAgentResultLoader|ingressStatusByEventIdLoader)$	Caller-provided storage readers return records for the checked tenant and identity keys.
+opaque	Decipheriv2	Node decipher handle is used only through checked AES-GCM operations.
+external	^\$enter:arg0$	A Promise executor entry carries only the resolver, which the twin passes to the checked timer.
+external	^getStorage\(\)\.accounts\.getBySecretHash$	Storage answers are trusted persistence reads for the checked secret hash; the twin checks account status.
+external	^isObservabilityClientMessage$	The imported wire-contract guard validates the parsed client message the twin passes in.
+external	^obsState\.set$	WeakMap stores the initial socket state whose full value the twin builds and checks.
+external	^request\.text$	The Fetch runtime reads the request body; the twin only places it in the core request.
+external	^socket\.close$	WebSocket close is delegated to the transport with the checked code and reason.
+external	^socket\.getBufferedAmount$	The transport reports its buffered bytes; the twin compares them against the checked limit.
+external	^\$enter:arg1$	Entering a worker carries no data; the twin only counts that each worker started.
+external	^mapper$	The caller supplies the mapper; the twin checks each item is passed once and records its outcome.

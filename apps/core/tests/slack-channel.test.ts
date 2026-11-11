@@ -164,6 +164,39 @@ describe("slack channel adapter", () => {
     expect(mention.message.source.threadTs).toBe("1713916800.000020");
   });
 
+  it("keeps a user-install mention apart from its message copy, so one run starts", async () => {
+    const adapter = createTestSlackChannel(null);
+    const copies = await Promise.all(
+      ["message", "app_mention"].map((type) =>
+        adapter.parse(
+          createEventRequest({
+            type: "event_callback",
+            authorizations: [{ user_id: "UINSTALLER", is_bot: false }],
+            event_id: `evt-user-install-${type}`,
+            team_id: "T1",
+            event: {
+              type: type,
+              text: "<@BOT> /new",
+              channel: "C1",
+              channel_type: "channel",
+              user: "U1",
+              ts: "1713916800.000040",
+            },
+          }),
+        ),
+      ),
+    );
+
+    expect(copies.map((copy) => copy.kind)).toEqual(["context", "message"]);
+    const eventIds = copies.map((copy) =>
+      copy.kind === "context" || copy.kind === "message"
+        ? copy.message.eventId
+        : "",
+    );
+    // Context and commands claim by eventId; a shared one let the copy swallow the mention.
+    expect(new Set(eventIds).size).toBe(2);
+  });
+
   it("stores generic message events with human mentions as context", async () => {
     const adapter = createTestSlackChannel(null);
 

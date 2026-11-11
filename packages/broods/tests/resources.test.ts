@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { writeGeneratedFiles } from "../src/codegen.ts";
 import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
-import { collectEnvRefNames, compileProject } from "../src/manifest.ts";
+import {
+  collectEnvRefNames,
+  compileProject,
+  type SkillManifestConfig,
+} from "../src/manifest.ts";
 import { defineSandbox, env, type ChannelType } from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
@@ -2256,6 +2260,71 @@ export const docs = defineSkill({
   ).map((file): string => file.path);
 
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
+});
+
+test("compileProject applies the server's skill limits: 5 MiB per file, no file count cap", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineSkill } from "${RESOURCES_MODULE}";
+
+export const docs = defineSkill({
+  name: "big-skill",
+  path: "skills/big-skill",
+});
+`,
+  );
+  const skillRoot = join(cwd, "broods", "skills", "big-skill");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(join(skillRoot, "SKILL.md"), "# Big\n");
+  for (let index = 0; index < 250; index++)
+    await writeFile(join(skillRoot, `note-${index}.txt`), "ok\n");
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const skill = manifest.resources.find(
+    (resource): boolean => resource.kind === "skill",
+  );
+  expect((skill?.config as SkillManifestConfig).files).toHaveLength(251);
+
+  await writeFile(join(skillRoot, "data.txt"), "x".repeat(5 * 1024 * 1024 + 1));
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "Skill bundle file data.txt is too large",
+  );
+});
+
+test("compileProject refuses skills over the 4 MiB one sync can send, before any upload", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineSkill } from "${RESOURCES_MODULE}";
+
+export const first = defineSkill({ name: "first", path: "skills/first" });
+export const second = defineSkill({ name: "second", path: "skills/second" });
+`,
+  );
+  const mib = 1024 * 1024;
+  for (const name of ["first", "second"]) {
+    const root = join(cwd, "broods", "skills", name);
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "SKILL.md"), `# ${name}\n`);
+    await writeFile(join(root, "a.txt"), "x".repeat(2 * mib));
+    await writeFile(join(root, "b.txt"), "x".repeat(mib / 2));
+  }
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    /Skills total \d+ bytes \(first \d+, second \d+\)\. `broods dev` and `broods deploy` send at most 4 MiB of skill files per sync, across all skills\. Shrink them, or import a large skill from a GitHub URL with `POST \/v1\/skills` \(up to 30 MiB\)/,
+  );
+
+  await rm(join(cwd, "broods", "skills", "second", "a.txt"));
+  await compileProject({ cwd: cwd, command: "dev" });
+
+  await writeFile(
+    join(cwd, "broods", "skills", "first", "c.txt"),
+    "x".repeat(2 * mib),
+  );
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    /Skill bundle at .*first is too large/,
+  );
 });
 
 test("diffManifests reports create, update, and delete operations", (): void => {

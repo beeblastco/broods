@@ -1,0 +1,16 @@
+kind	name	reason
+external	^identity\.tracer\.startSpan$	OpenTelemetry tracer call; the twin checks the span name, start time, attributes and parent context.
+external	^tracked\.otelSpan\.(setAttributes|setStatus|recordException|end)$	OpenTelemetry span calls; the twin checks the attributes, status code and message, error and end time.
+external	^phaseSpan\.end$	OpenTelemetry span call; the twin checks the end time.
+opaque	SpanImpl	OpenTelemetry span, only passed through.
+opaque	NonRecordingSpan	OpenTelemetry span, only passed through.
+external	^controller\.close$	Platform ReadableStream controller of the SSE body; the call can throw once the client has cancelled and the code ignores that.
+external	^obsState\.has$	Membership test on the gateway's WeakMap of observability sockets; the language builtin.
+external	^messages\.stop$	Stops the NATS consumer behind a live observability stream; the broker client is outside the runtime.
+external	^\(await connection\(\)\)\.jetstream$	NATS client call that opens JetStream on the gateway's connection.
+external	^\(await connection\(\)\)\.jetstream\(\)\.views\.kv$	NATS client call that opens the spent-ticket key-value bucket; the broker is outside the runtime.
+external	^\(await bucket\(\)\)\.(create|delete)$	NATS key-value write; create fails when the key exists, which the twin reads from the error.
+external	^controller\.abort$	Platform AbortController of one hosted batch; aborting it reports nothing back.
+external	^abortSignal\.removeEventListener$	Platform AbortSignal listener removal; nothing reads its answer.
+opaque	Event	DOM Event handed to an abort listener; the listeners here never read it.
+external	^ctx\.addIssue$	Zod validation context the schema library supplies; the twin checks the issue passed and reads no answer.

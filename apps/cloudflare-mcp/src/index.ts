@@ -160,8 +160,11 @@ export default {
     try {
       await ensureLoaded(worker);
     } catch (error) {
+      const timedOut =
+        error instanceof DeadlineError ||
+        (error instanceof DOMException && error.name === "TimeoutError");
       return new Response(boundedMessage("bundle failed to load", error), {
-        status: error instanceof DeadlineError ? 504 : 422,
+        status: timedOut ? 504 : 422,
         headers: { [NOTHING_RAN_HEADER]: "1" },
       });
     }

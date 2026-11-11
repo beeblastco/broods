@@ -202,39 +202,51 @@ describe("model provider registry", () => {
 
 // Which providers transcribe is pinned by the type of `PROVIDER_TRANSCRIPTION`, not here.
 describe("transcription model resolution", () => {
-  it("has none for a provider that ships no speech-to-text", () => {
+  it("names the provider that ships no speech-to-text", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "anthropic has no transcription model" });
   });
 
-  it("has none when the provider is configured without credentials", () => {
+  it("names the missing credentials of the agent's own provider", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "config.provider.openai is required" });
+  });
+
+  it("transcribes on config.transcription.provider with its own key", () => {
+    const resolved = resolveTranscriptionModel({
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      transcription: { provider: "openai" },
+      provider: {
+        anthropic: { apiKey: "sk-test" },
+        openai: { apiKey: "sk-test" },
+      },
+    });
+
+    expect("model" in resolved && resolved.model).toMatchObject({
+      provider: "openai.transcription",
+      modelId: "whisper-1",
+    });
+  });
+
+  it("names the missing credentials of the transcription provider", () => {
+    expect(
+      resolveTranscriptionModel({
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+        transcription: { provider: "openai" },
+        provider: { anthropic: { apiKey: "sk-test" } },
+      }),
+    ).toEqual({ reason: "config.provider.openai is required" });
   });
 });
 
-// A provider errors on an unknown call option, so the transcription id must stay out.
 describe("modelSettingsFromModelConfig", () => {
-  it("leaves the transcription model out of the language model's settings", () => {
-    expect(
-      modelSettingsFromModelConfig({
-        model: {
-          provider: "openai",
-          modelId: "gpt-5",
-          transcriptionModelId: "gpt-4o-mini-transcribe",
-          temperature: 0.2,
-        },
-      }),
-    ).toEqual({ maxRetries: 5, temperature: 0.2 });
-  });
-
   it("keeps the agent's own retry count and timeouts", () => {
     const timeout = { stepMs: 120_000, firstChunkMs: 30_000 };
     expect(

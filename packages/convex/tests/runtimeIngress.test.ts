@@ -218,6 +218,21 @@ describe("runtime ingress", () => {
     ).rejects.toThrow(/Validator error/);
   });
 
+  test("refuses a key scoped to another agent that embeds this agent's segment", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await expect(
+      t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: accountId,
+          conversationKey: `acct:${accountId}:agent:other-agent:api:x:agent:test-agent:y`,
+          eventId: "embedded-agent",
+          mode: "reject",
+        }),
+      }),
+    ).rejects.toThrow(/does not belong to agentId/);
+  });
+
   test("an idempotent retry keeps the first admission's run id", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -652,15 +667,24 @@ describe("runtime ingress", () => {
           });
         }
 
-        return await ctx.db.insert("cronRuns", {
+        const promptId = prompt === "question" ? "question-1" : "a";
+        const runId = await ctx.db.insert("cronRuns", {
           accountId: accountId,
           cronId: cronId,
           eventId: "paused",
           ingressConversationKey: conversationKey,
+          waitingOn: [promptId],
           conversationKey: "api:cron",
           status: "started",
           startedAt: 1,
         });
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: conversationKey,
+          promptId: promptId,
+          runId: runId,
+        });
+
+        return runId;
       });
       const fence = {
         conversationKey: conversationKey,
@@ -688,6 +712,122 @@ describe("runtime ingress", () => {
         status: "completed",
         result: "approved",
       });
+    });
+  });
+
+  test("an answer ends the cron run that asked, not the newest run of that cron", async () => {
+    vi.useFakeTimers();
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const cronId = await t.run(async (ctx) => {
+      const agentId = await ctx.db.insert("agents", {
+        accountId: accountId,
+        name: "agent",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      return await ctx.db.insert("crons", {
+        accountId: accountId,
+        name: "job",
+        agentId: agentId,
+        events: [],
+        scheduleExpression: "rate(1 minute)",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const turn = async (
+      eventId: string,
+      result: unknown,
+      answers?: string,
+    ): Promise<void> => {
+      const owner = await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: "reject",
+        }),
+      );
+      if (answers) {
+        await t.run(async (ctx) => {
+          const envelope = await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+            .unique();
+          await ctx.db.patch(envelope!._id, {
+            events: [
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-approval-response",
+                    approvalId: answers,
+                    approved: true,
+                  },
+                ],
+              },
+            ],
+          });
+        });
+      }
+      await t.mutation(internal.runtimeIngress.takeNext, {
+        conversationKey: conversationKey,
+        ownerEventId: eventId,
+        ownerGeneration: owner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+        settle: { status: "completed", result: result },
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    };
+    const fire = async (
+      eventId: string,
+      approvalId: string,
+    ): Promise<Id<"cronRuns">> => {
+      const runId = await t.run(
+        async (ctx) =>
+          await ctx.db.insert("cronRuns", {
+            accountId: accountId,
+            cronId: cronId,
+            eventId: eventId,
+            ingressEventId: eventId,
+            ingressConversationKey: conversationKey,
+            waitingOn: [],
+            conversationKey: "api:cron",
+            status: "started",
+            startedAt: 1,
+          }),
+      );
+      await turn(eventId, {
+        status: "awaiting_approval",
+        approvals: [
+          {
+            approvalId: approvalId,
+            toolCallId: `call-${eventId}`,
+            toolName: "bash",
+            input: {},
+          },
+        ],
+      });
+
+      return runId;
+    };
+
+    const first = await fire("fire-1", "approval-1");
+    const second = await fire("fire-2", "approval-2");
+    await turn("answer-1", "approved the first", "approval-1");
+    vi.useRealTimers();
+
+    expect(await t.run((ctx) => ctx.db.get(first))).toMatchObject({
+      status: "completed",
+      result: "approved the first",
+    });
+    expect(await t.run((ctx) => ctx.db.get(second))).toMatchObject({
+      status: "started",
     });
   });
 
@@ -1291,6 +1431,44 @@ describe("runtime ingress", () => {
         expectedOwnerTaskId: "task-b",
       }),
     ).toEqual({ stopped: true, queuedCount: 0 });
+  });
+
+  test("a stop fenced on another event leaves the owner running", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    const stop = (expectedOwnerEventId: string): Promise<unknown> =>
+      t.mutation(internal.runtimeIngress.stopOwner, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        expectedOwnerEventId: expectedOwnerEventId,
+      });
+
+    expect(await stop("queued")).toEqual({ stopped: false, queuedCount: 0 });
+    expect(await stop("owner")).toEqual({ stopped: true, queuedCount: 0 });
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "failed",
+      error: "Stopped by user at the model boundary",
+    });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        runId: "run_owner",
+      }),
+    ).toMatchObject({ status: "failed", stoppedByUser: true });
   });
 
   test("a subagent its parent stopped is not flagged stoppedByUser", async () => {
@@ -1950,7 +2128,7 @@ describe("runtime ingress", () => {
     expect(queued.map((row) => row.eventId)).toEqual(["one"]);
   });
 
-  test("maintenance terminalizes expired accepted queue work", async () => {
+  test("maintenance terminalizes queued work its conversation's owner left long ago", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -1978,6 +2156,15 @@ describe("runtime ingress", () => {
         .withIndex("by_eventId", (q) => q.eq("eventId", "queued"))
         .unique();
       await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      await ctx.db.patch(coordinator!._id, {
+        leaseExpiresAt: Date.now() - 60 * 60 * 1000,
+      });
     });
 
     expect(
@@ -1989,6 +2176,119 @@ describe("runtime ingress", () => {
         runId: "run_queued",
       }),
     ).toMatchObject({ status: "expired" });
+  });
+
+  test.each(["followup", "steer"] as const)(
+    "a %s queued behind an owner that renews past its time to live still reaches the owner",
+    async (mode): Promise<void> => {
+      vi.useFakeTimers({ now: Date.now() });
+      try {
+        const t = runtimeTest();
+        const accountId = await createActiveAccount(t);
+        const conversationKey = conversationKeyFor(accountId);
+        const owner = {
+          conversationKey: conversationKey,
+          ownerEventId: "long-owner",
+          ownerGeneration: 1,
+          leaseTtlMs: 60_000,
+        };
+        for (const [eventId, requested] of [
+          ["long-owner", "followup"],
+          ["waiting", mode],
+        ] as const) {
+          await t.mutation(
+            internal.runtimeIngress.accept,
+            admission({
+              accountId: accountId,
+              conversationKey: conversationKey,
+              eventId: eventId,
+              mode: requested,
+            }),
+          );
+        }
+        // Three renewals carry the run well past the queued message's 60-second TTL.
+        for (let renewal = 0; renewal < 3; renewal += 1) {
+          vi.setSystemTime(Date.now() + 50_000);
+          await t.mutation(internal.runtimeIngress.renewOwner, owner);
+          expect(
+            await t.mutation(internal.runtimeIngress.maintain, {}),
+          ).toMatchObject({ expired: 0 });
+        }
+        expect(
+          await t.query(internal.runtimeIngress.getStatus, {
+            accountId: accountId,
+            runId: "run_waiting",
+          }),
+        ).toMatchObject({ status: "queued" });
+
+        const applied =
+          mode === "steer"
+            ? await t.mutation(internal.runtimeIngress.applySteering, owner)
+            : await t.mutation(internal.runtimeIngress.takeNext, {
+                ...owner,
+                settle: { status: "completed" },
+              });
+
+        expect(applied).toMatchObject({ contributingEventIds: ["waiting"] });
+        expect(
+          await t.query(internal.runtimeIngress.getStatus, {
+            accountId: accountId,
+            runId: "run_waiting",
+          }),
+        ).toMatchObject({ status: "processing" });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  test("recovery promotes a message whose time to live passed behind an owner whose lease then lapsed", async (): Promise<void> => {
+    vi.useFakeTimers({ now: Date.now() });
+    try {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const eventId of ["dying-owner", "waiting"]) {
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: eventId,
+            mode: "followup",
+          }),
+        );
+      }
+      vi.setSystemTime(Date.now() + 50_000);
+      await t.mutation(internal.runtimeIngress.renewOwner, {
+        conversationKey: conversationKey,
+        ownerEventId: "dying-owner",
+        ownerGeneration: 1,
+        leaseTtlMs: 60_000,
+      });
+      // The owner stops renewing; its lease lapses after the message's TTL.
+      vi.setSystemTime(Date.now() + 90_000);
+      expect(
+        await t.mutation(internal.runtimeIngress.maintain, {}),
+      ).toMatchObject({ expired: 1 });
+
+      const { recovered } = await t.mutation(
+        internal.runtimeIngress.recoverQueued,
+        { leaseTtlMs: 60_000 },
+      );
+
+      expect(recovered.map((entry) => entry.applied.eventId)).toEqual([
+        "waiting",
+      ]);
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId: accountId,
+          runId: "run_dying-owner",
+        }),
+      ).toMatchObject({ status: "expired" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("maintenance moves a live owner's overdue row forward and expires an orphaned generation", async () => {
@@ -2275,6 +2575,160 @@ describe("runtime ingress", () => {
     ).toEqual({ recovered: [], continueAfter: null });
   });
 
+  test("a recovered group the pod shed waits in the queue for the next sweep", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    for (const role of ["owner", "first", "second"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: `shed-${role}`,
+          mode: "collect",
+        }),
+      );
+    }
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-owner",
+      ownerGeneration: 1,
+      status: "failed",
+      error: "interrupted",
+    });
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-owner",
+      ownerGeneration: 1,
+    });
+    const first = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+    expect(first.recovered[0]?.applied.contributingEventIds).toEqual([
+      "shed-first",
+      "shed-second",
+    ]);
+
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: conversationKey,
+      ownerEventId: "shed-first",
+      ownerGeneration: 2,
+      requeue: true,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      coordinator: await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique(),
+      rows: await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .collect(),
+    }));
+    expect(state.coordinator?.ownerEventId).toBeUndefined();
+    expect(state.coordinator?.queuedCount).toBe(2);
+    expect(
+      state.rows.map((row) => [row.eventId, row.status, row.ownerGeneration]),
+    ).toEqual([
+      ["shed-owner", "failed", 1],
+      ["shed-first", "queued", undefined],
+      ["shed-second", "queued", undefined],
+    ]);
+    const second = await t.mutation(internal.runtimeIngress.recoverQueued, {
+      leaseTtlMs: 60_000,
+    });
+    expect(second.recovered.map((entry) => entry.applied)).toEqual([
+      expect.objectContaining({
+        eventId: "shed-first",
+        contributingEventIds: ["shed-first", "shed-second"],
+        ownerGeneration: 3,
+      }),
+    ]);
+  });
+
+  test.each(["active", "disabled"] as const)(
+    "a drain hands the queue on only while the account is active (%s)",
+    async (status): Promise<void> => {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const conversationKey = conversationKeyFor(accountId);
+      for (const eventId of ["owner-run", "queued-run"]) {
+        await t.mutation(
+          internal.runtimeIngress.accept,
+          admission({
+            accountId: accountId,
+            conversationKey: conversationKey,
+            eventId: eventId,
+            mode: "followup",
+          }),
+        );
+      }
+      await t.run(async (ctx) => {
+        await ctx.db.patch(accountId, { status: status });
+      });
+      const owner = {
+        conversationKey: conversationKey,
+        ownerEventId: "owner-run",
+        ownerGeneration: 1,
+      };
+      await t.mutation(internal.runtimeIngress.settle, {
+        ...owner,
+        status: "completed",
+      });
+
+      const next = await t.mutation(internal.runtimeIngress.takeNext, {
+        ...owner,
+        leaseTtlMs: 60_000,
+      });
+
+      if (status === "active") {
+        expect(next?.eventId).toBe("queued-run");
+        return;
+      }
+      expect(next).toBeNull();
+      const state = await t.run(async (ctx) => ({
+        coordinator: await ctx.db
+          .query("runtimeConversationCoordinators")
+          .withIndex("by_conversationKey", (q) =>
+            q.eq("conversationKey", conversationKey),
+          )
+          .unique(),
+        queued: await ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_status_and_conversationKey", (q) =>
+            q.eq("status", "queued").eq("conversationKey", conversationKey),
+          )
+          .collect(),
+      }));
+      expect(state.coordinator?.ownerEventId).toBeUndefined();
+      expect(state.coordinator?.queuedCount).toBe(1);
+      expect(state.queued.map((row) => row.eventId)).toEqual(["queued-run"]);
+      expect(
+        await t.mutation(internal.runtimeIngress.recoverQueued, {
+          leaseTtlMs: 60_000,
+        }),
+      ).toEqual({ recovered: [], continueAfter: null });
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(accountId, { status: "active" });
+      });
+      const { recovered } = await t.mutation(
+        internal.runtimeIngress.recoverQueued,
+        { leaseTtlMs: 60_000 },
+      );
+
+      expect(recovered.map((entry) => entry.applied.eventId)).toEqual([
+        "queued-run",
+      ]);
+    },
+  );
+
   test("recovery expires a released queue's elapsed envelopes instead of running them", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2295,7 +2749,8 @@ describe("runtime ingress", () => {
       ownerEventId: "released-owner",
       ownerGeneration: 1,
     });
-    vi.useFakeTimers({ now: Date.now() + 120_000 });
+    // convex-test can pin a mutation 1 ms ahead of the wall clock: stay off the grace boundary.
+    vi.useFakeTimers({ now: Date.now() + 121_000 });
     try {
       expect(
         await t.mutation(internal.runtimeIngress.recoverQueued, {
@@ -2324,7 +2779,7 @@ describe("runtime ingress", () => {
     ).toBe(2);
   });
 
-  test("a clear refused by a live owner still writes down the queued work it expired", async (): Promise<void> => {
+  test("a clear refused by a live owner leaves the queued work behind it queued", async (): Promise<void> => {
     vi.useFakeTimers({ now: Date.now() });
     try {
       const t = runtimeTest();
@@ -2341,7 +2796,7 @@ describe("runtime ingress", () => {
           envelopeTtlMs: 1_000,
         });
       }
-      // The queued envelope expires while the owner's lease still runs.
+      // The queued envelope's TTL passes while the owner's lease still runs.
       vi.setSystemTime(Date.now() + 1_001);
 
       expect(
@@ -2363,7 +2818,13 @@ describe("runtime ingress", () => {
               )
               .unique(),
         ),
-      ).toMatchObject({ queuedCount: 0, queuedBytes: 0 });
+      ).toMatchObject({ queuedCount: 1, queuedBytes: 32 });
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId: accountId,
+          runId: "run_clear-queued",
+        }),
+      ).toMatchObject({ status: "queued" });
     } finally {
       vi.useRealTimers();
     }
@@ -3420,24 +3881,22 @@ describe.each(LATE_RESULT_KINDS)("a late $name's resume", (kind) => {
   test("leaves a queued result that expired to the sweep, whose retry is admitted again", async (): Promise<void> => {
     vi.useFakeTimers({ now: Date.now() });
     try {
-      const { t, conversationKey, ownerGeneration, resume } =
-        await busyConversation();
+      const { t, conversationKey, resume } = await busyConversation();
       const before = await kind.handback(t, "late");
       expect(await resume({ envelopeTtlMs: 1_000 })).toMatchObject({
         outcome: "queued",
       });
 
-      // The conversation stays busy past the queued envelope's TTL.
-      vi.setSystemTime(Date.now() + 1_001);
+      // The owner dies, and nothing recovers the queue before its grace ends.
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000);
       expect(
         await t.mutation(internal.runtimeIngress.maintain, {}),
-      ).toMatchObject({ expired: 1 });
+      ).toMatchObject({ expired: 2 });
       expect(await kind.handback(t, "late")).toBe(before);
       expect(await kind.listed(t, "late")).toBe(true);
 
       // The sweep's retry carries the same idempotency key, and delivers the
       // result once the conversation is free.
-      await finishBusy(t, conversationKey, ownerGeneration);
       expect(await resume()).toMatchObject({ outcome: "owner" });
       await saveOwnerStep(t, conversationKey, { dedupeKey: resultKey("late") });
       expect(await kind.handback(t, "late")).toBe("stored");
