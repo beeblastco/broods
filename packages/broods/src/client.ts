@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
   resolveRunEvents,
@@ -26,7 +27,8 @@ type AgentRunInputBase = {
   idempotencyKey?: string;
   /**
    * `run`/`stream`: aborting closes the stream, and core fails the run when it next writes a frame.
-   * `runAsync`: cancels only the request; a run core already accepted keeps going.
+   * `runAsync`: cancels only the request; a run core already accepted keeps going, so pass an
+   * `eventId` and reuse it on a retry, or the retry starts a second run.
    */
   signal?: AbortSignal;
 } & AgentRunOverrides;
@@ -44,7 +46,7 @@ export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
-  /** Cancels only the request; a continue core already accepted keeps going. */
+  /** Cancels only the request; an accepted continue keeps going, so retry with its `eventId`. */
   signal?: AbortSignal;
 }
 
@@ -54,7 +56,7 @@ export interface AgentAnswerInput {
   /** One per open prompt, from an `awaiting_input` status's `questions`. */
   answers: [QuestionAnswer, ...QuestionAnswer[]];
   eventId?: string;
-  /** Cancels only the request; answers core already accepted still resume the run. */
+  /** Cancels only the request; accepted answers still resume, so retry with their `eventId`. */
   signal?: AbortSignal;
 }
 
@@ -293,8 +295,10 @@ export class BroodsClient {
 
     const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
-      throw new Error(
-        `Run failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Run failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
     if (response.status === 202) {
       throw new IngressAcceptedError(
@@ -397,6 +401,12 @@ export class BroodsClient {
       body: JSON.stringify(body),
       signal: input.signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `Answer failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `Answer failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
@@ -417,8 +427,10 @@ export class BroodsClient {
 
     if (response.status === 404) return { status: "not_found" };
     if (!response.ok)
-      throw new Error(
-        `Status check failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Status check failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
 
     return (await response.json()) as AsyncStatus;
@@ -489,6 +501,12 @@ export class BroodsClient {
       body: JSON.stringify(body),
       signal: signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `${label} failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `${label} failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,

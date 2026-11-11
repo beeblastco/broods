@@ -78,3 +78,34 @@ test("answer passes its signal to fetch and rethrows the abort unwrapped", async
     }),
   ).rejects.toMatchObject({ name: "AbortError" });
 });
+
+test("a refused answer throws BroodsApiError with the code in its message", async (): Promise<void> => {
+  const client = new BroodsClient({
+    baseUrl: "https://gateway.example.com",
+    apiKey: "key-1",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        {
+          error: {
+            message: "No open question res_1 on this conversation",
+            type: "invalid_request_error",
+            code: "question_not_found",
+          },
+        },
+        { status: 404 },
+      ),
+  });
+
+  await expect(
+    client.answer(ref, {
+      conversationKey: "chat-1",
+      answers: [{ statusId: "res_1", answers: { color: ["Blue"] } }],
+    }),
+  ).rejects.toMatchObject({
+    name: "BroodsApiError",
+    message:
+      "Answer failed: 404 No open question res_1 on this conversation (question_not_found)",
+    status: 404,
+    code: "question_not_found",
+  });
+});
