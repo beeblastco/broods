@@ -785,9 +785,9 @@ export declare const api: {
         "public",
         {
           agentId?: Id<"agents">;
-          conversationKey?: string;
+          conversationKey?: string | null;
           cronId: string;
-          description?: string;
+          description?: string | null;
           input?: string;
           name?: string;
           scheduleExpression?: string;
@@ -5605,6 +5605,12 @@ export declare const internal: {
             };
           }
         | { refused: string }
+      >;
+      revokeToken: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        boolean
       >;
       selectOnboardingOrg: FunctionReference<
         "mutation",
