@@ -4585,7 +4585,7 @@ components:
         statusUrl:
           type: string
           format: uri
-          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
 
     AnswersAccepted:
       type: object
@@ -4605,6 +4605,13 @@ components:
         eventId:
           type: string
           description: Event id of the resumed turn. Present when it resumed.
+        runId:
+          type: string
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last answer's turn only.
+        statusUrl:
+          type: string
+          format: uri
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
