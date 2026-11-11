@@ -21,10 +21,7 @@ import {
   MICROVM_SHELL_AUTH_HEADER,
   microvmShellConnection,
 } from "../harness/sandbox/microvm-executor.ts";
-import {
-  workdirConnection,
-  workdirPtyUrl,
-} from "../harness/sandbox/workdir-executor.ts";
+import { workdirTerminalTarget } from "../harness/sandbox/workdir-executor.ts";
 import {
   queueMirrorRemove,
   queueMirrorWrite,
@@ -538,11 +535,11 @@ async function openSandboxTerminal(
       )}`,
     };
   } else {
-    const { baseUrl, apiKey } = workdirConnection(context.config);
-    target = {
-      url: workdirPtyUrl(baseUrl, externalId),
-      authorization: `Bearer ${apiKey}`,
-    };
+    const minted = await auditedSandboxCall(context, () =>
+      workdirTerminalTarget(context.config, externalId),
+    );
+    bearerExpiresAt = minted.expiresAt;
+    target = { url: minted.url, authorization: minted.authorization };
   }
   const expiresAt = bearerExpiresAt ?? Date.now() + TERMINAL_TICKET_TTL_MS;
   const token = sealTerminalTicket(
