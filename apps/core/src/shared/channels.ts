@@ -227,14 +227,12 @@ export async function channelAttachmentBytes(
   );
 }
 
-// Providers pick a preview from the name, so a nameless upload still needs an extension.
 // Telegram and Zalo bot tokens are `<botId>:<secret>`; only the id may leave the token.
 export function botIdFromToken(token: string): string | undefined {
-  const boundary = token.indexOf(":");
-
-  return boundary > 0 ? token.slice(0, boundary) : undefined;
+  return /^(\d+):/.exec(token)?.[1];
 }
 
+// Providers pick a preview from the name, so a nameless upload still needs an extension.
 export function channelAttachmentName(
   attachment: ChannelFile | ChannelImage,
 ): string {

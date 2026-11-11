@@ -66,23 +66,23 @@ A record narrows and adds. It never grants something the agent lacks, so an agen
 
 The room id field is named after the provider:
 
-| Provider    | Field            | Extra field |
-| ----------- | ---------------- | ----------- |
-| Slack       | `channelId`      | `teamId`    |
-| Discord     | `channelId`      | `guildId`   |
-| GitHub      | `repo`           |             |
-| Linear      | `team`           |             |
-| Telegram    | `chatId`         | `botId`     |
-| Zalo        | `chatId`         | `botId`     |
-| WhatsApp    | `waId`           |             |
-| Teams       | `channelId`      | `teamId`    |
-| Google Chat | `spaceName`      |             |
-| Twilio      | `from`           |             |
-| Pancake     | `conversationId` |             |
-| Instagram   | `igsid`          |             |
-| Messenger   | `psid`           |             |
+| Provider    | Field            | Extra field     |
+| ----------- | ---------------- | --------------- |
+| Slack       | `channelId`      | `teamId`        |
+| Discord     | `channelId`      | `guildId`       |
+| GitHub      | `repo`           |                 |
+| Linear      | `team`           |                 |
+| Telegram    | `chatId`         | `botId`         |
+| Zalo        | `chatId`         | `botId`         |
+| WhatsApp    | `waId`           | `phoneNumberId` |
+| Teams       | `channelId`      | `teamId`        |
+| Google Chat | `spaceName`      |                 |
+| Twilio      | `from`           | `phoneNumber`   |
+| Pancake     | `conversationId` |                 |
+| Instagram   | `igsid`          |                 |
+| Messenger   | `psid`           |                 |
 
-The extra field ties the record to one team, guild or bot: a message from another one skips the record. WhatsApp and Twilio records are tied to the connection's `phoneNumberId` or `phoneNumber` without an extra field, unless that value is an env ref. Telegram and Zalo take `botId`, the digits before `:` in the bot token. A record with no tie applies on every number or bot the account has; deploying it again with a tie scopes it.
+The extra field is optional. It ties the record to one team, guild, number or bot, so a message from another one skips the record; without it the record applies on every one the account has. `phoneNumberId` is the WhatsApp phone number id, `phoneNumber` the Twilio receiving number in E.164, and `botId` the digits before `:` in the Telegram or Zalo bot token. Write it literally: a `${NAME}` placeholder is refused, because records are matched as stored.
 
 Notes on the fields:
 

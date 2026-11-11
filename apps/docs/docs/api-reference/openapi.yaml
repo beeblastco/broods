@@ -5575,6 +5575,7 @@ components:
           type: [string, "null"]
         workspaceRef:
           type: [string, "null"]
+          description: The team, page, number or bot the record is tied to, as on create. null removes the tie, so the record applies on every one.
         config:
           $ref: "#/components/schemas/ChannelRecordConfig"
         status:

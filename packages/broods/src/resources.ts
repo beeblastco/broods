@@ -517,6 +517,8 @@ export type TwilioChannelInput = ChannelRulesInput & {
   connection: TwilioConnectionDefinition;
   /** Sender's number in E.164, e.g. "+15551234567". */
   from: string | readonly string[];
+  /** The receiving number in E.164. Omit and the record applies on every number. */
+  phoneNumber?: string;
 };
 
 export type ZaloChannelInput = ChannelRulesInput & {
@@ -540,6 +542,8 @@ export type WhatsAppChannelInput = ChannelRulesInput & {
   connection: WhatsAppConnectionDefinition;
   /** The number with country code and no "+". */
   waId: string | readonly string[];
+  /** The receiving number's phone number id. Omit and the record applies on every number. */
+  phoneNumberId?: string;
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
@@ -1105,31 +1109,17 @@ export function defineTelegramChannel<const Name extends string>(
 export function defineTwilioChannel<const Name extends string>(
   input: ResourceInput<Name, TwilioChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, from, ...rules } = input;
-  const { phoneNumber } = rules.connection.config;
+  const { name, description, from, phoneNumber, ...rules } = input;
 
-  return defineChannelResource(
-    name,
-    description,
-    from,
-    literalId(phoneNumber),
-    rules,
-  );
+  return defineChannelResource(name, description, from, phoneNumber, rules);
 }
 
 export function defineWhatsAppChannel<const Name extends string>(
   input: ResourceInput<Name, WhatsAppChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, waId, ...rules } = input;
-  const { phoneNumberId } = rules.connection.config;
+  const { name, description, waId, phoneNumberId, ...rules } = input;
 
-  return defineChannelResource(
-    name,
-    description,
-    waId,
-    literalId(phoneNumberId),
-    rules,
-  );
+  return defineChannelResource(name, description, waId, phoneNumberId, rules);
 }
 
 export function defineZaloChannel<const Name extends string>(
@@ -1175,6 +1165,13 @@ function defineChannelResource<const Name extends string>(
   workspaceRef: string | undefined,
   rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
 ): ChannelResource<Name> {
+  // Records are matched as stored; nothing resolves `${NAME}` in them.
+  if (workspaceRef && ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(workspaceRef)) {
+    throw new Error(
+      `Channel "${name}" must name its team, guild, number or bot literally, not "${workspaceRef}"`,
+    );
+  }
+
   return defineResource("channelRecord", name, description, {
     ...rules,
     externalId: externalId,
@@ -1214,12 +1211,4 @@ function defineResource<
     ...(description ? { description: description } : {}),
     config: config,
   };
-}
-
-// An env ref resolves only at run time, so it cannot tie a record to a number.
-function literalId(value: string | EnvRef | undefined): string | undefined {
-  return typeof value === "string" &&
-    !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value)
-    ? value
-    : undefined;
 }

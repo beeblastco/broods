@@ -63,6 +63,22 @@ describe("telegram channel adapter", () => {
     expect(parsed.message.identity?.workspaceRef).toBe("5550001");
   });
 
+  it("takes no tie from a token whose part before ':' is not a bot id", async (): Promise<void> => {
+    const adapter = createTelegramChannel(
+      "sk_live_SECRETPART:rest",
+      "secret",
+      null,
+      null,
+      "👀",
+    );
+    const parsed = await adapter.parse(
+      createRequest({ update_id: 1, message: createMessage({ text: "hi" }) }),
+    );
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.identity?.workspaceRef).toBeUndefined();
+  });
+
   it("ignores updates without text content", async () => {
     const adapter = createTelegramChannel(
       "bot-token",
