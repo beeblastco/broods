@@ -182,7 +182,11 @@ export function RepoPicker({
         webUrl={status.webUrl ?? "https://github.com"}
       />
       {status.canConnect && <ConnectGitHubButton label="Add GitHub account" />}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -228,7 +232,11 @@ export function ConnectGitHubButton({
           Ask an org admin to connect GitHub.
         </p>
       )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

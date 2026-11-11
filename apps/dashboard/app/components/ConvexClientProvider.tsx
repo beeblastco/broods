@@ -26,7 +26,7 @@ export function ConvexClientProvider({
   initialSession: InitialSession;
 }): React.JSX.Element {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <SessionProvider initial={initialSession}>
         <ConvexProviderWithAuth client={convex} useAuth={useSession}>
           {children}

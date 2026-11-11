@@ -101,9 +101,10 @@ import {
 import { LoadMore } from "@/app/components/LoadMore";
 import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
-import { useIsMobile } from "@/app/hooks/useIsMobile";
 import { useRemembered } from "@/app/hooks/useRemembered";
 import { toErrorMessage } from "@/app/lib/errors";
+import { observeResize } from "@/app/lib/observeResize";
+import { SCROLL_NEAREST } from "@/app/lib/scrollNearest";
 
 interface Props {
   projectSlug: string | undefined;
@@ -112,6 +113,8 @@ interface Props {
 }
 
 const PAGE_SIZE = 50;
+// `@3xl/tracing` (48rem): from here the list sits beside the waterfall and can fold to a rail.
+const WIDE_PANE_PX = 768;
 // Core answers a continue with a 202 at once; past this the request is treated as lost.
 const CONTINUE_TIMEOUT_MS = 30_000;
 
@@ -543,7 +546,14 @@ export function TracingPanel({
   const [toggled, setToggled] = useState<Set<string>>(new Set());
   const [railChosen, setRail] = useRemembered(LIST_RAIL_KEY, false);
   const [listKept, setListKept] = useState(false);
-  const isMobile = useIsMobile();
+  const [wide, setWide] = useState(false);
+  const measurePane = useCallback(
+    (el: HTMLDivElement | null) =>
+      el
+        ? observeResize(el, () => setWide(el.clientWidth >= WIDE_PANE_PX))
+        : undefined,
+    [],
+  );
   const [stackChoices, setStackChoices] = useState<
     ReadonlyMap<string, boolean>
   >(new Map());
@@ -667,8 +677,7 @@ export function TracingPanel({
   const selectedSpan =
     selectedGroup?.spans.find((span) => spanKey(span) === selectedKey) ?? null;
   if (!selectedSpan && listKept) setListKept(false);
-  const rail =
-    !isMobile && (railChosen || (selectedSpan !== null && !listKept));
+  const rail = wide && (railChosen || (selectedSpan !== null && !listKept));
   const chain = useMemo(
     () => (selectedGroup ? chainFor(selectedGroup, groupByTrace) : []),
     [selectedGroup, groupByTrace],
@@ -740,7 +749,7 @@ export function TracingPanel({
     const element = document.getElementById(`task-${target.root.traceId}`);
     if (!element) return;
     focusedRef.current = focusKey;
-    element.scrollIntoView({ block: "nearest" });
+    element.scrollIntoView(SCROLL_NEAREST);
   }, [
     focusTraceId,
     refocusNonce,
@@ -822,7 +831,7 @@ export function TracingPanel({
       requestAnimationFrame(() =>
         document
           .getElementById(`task-${next.root.traceId}`)
-          ?.scrollIntoView({ block: "nearest" }),
+          ?.scrollIntoView(SCROLL_NEAREST),
       );
     }
     window.addEventListener("keydown", onKeyDown);
@@ -899,7 +908,8 @@ export function TracingPanel({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      ref={measurePane}
+      className="@container/tracing flex h-full min-h-0 flex-col"
       data-stream-state={status}
       data-history-state={history}
     >
@@ -921,26 +931,25 @@ export function TracingPanel({
         isError={status === "error"}
       />
 
-      {missingTrace && (
-        <p
-          aria-live="polite"
-          className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-xs text-destructive"
-        >
-          <span className="truncate font-mono">
-            Trace {missingTrace} is not available
-            {error ? `: ${error}` : " in this stage's history."}
-          </span>
-          <button
-            type="button"
-            onClick={() => setMissingTrace(null)}
-            className="cursor-pointer underline underline-offset-2"
-          >
-            Dismiss
-          </button>
-        </p>
-      )}
+      <div aria-live="polite" className="shrink-0">
+        {missingTrace && (
+          <p className="flex items-start gap-2 border-b border-border px-3 py-2 text-xs text-destructive">
+            <span className="min-w-0 flex-1 font-mono wrap-anywhere">
+              Trace {missingTrace} is not available
+              {error ? `: ${error}` : " in this stage's history."}
+            </span>
+            <button
+              type="button"
+              onClick={() => setMissingTrace(null)}
+              className="shrink-0 cursor-pointer underline underline-offset-2"
+            >
+              Dismiss
+            </button>
+          </p>
+        )}
+      </div>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col @3xl/tracing:flex-row">
         <TaskListPane
           // Never a rail while empty: with no trace selected, no header holds the fold.
           rail={rail && listRows.length > 0}
@@ -972,7 +981,7 @@ export function TracingPanel({
                 selectedSpan && (
                   <div
                     key={selectedKey}
-                    className="min-h-0 flex-1 animate-in overflow-auto p-3 duration-150 fade-in slide-in-from-right-2 motion-reduce:animate-none"
+                    className="min-h-0 flex-1 overflow-auto p-3 motion-panel"
                   >
                     <SpanDetails span={selectedSpan} />
                   </div>
@@ -2637,7 +2646,7 @@ function TaskListFold({
       <button
         type="button"
         onClick={onToggle}
-        className="-m-1 hidden shrink-0 cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring md:block"
+        className="-m-1 hidden shrink-0 cursor-pointer rounded-sm p-1 text-muted-foreground transition-colors outline-hidden hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring @3xl/tracing:block"
       >
         <ChevronsLeft
           className={cn(
@@ -2668,8 +2677,8 @@ function TaskListPane({
     <div
       data-scroll-pane
       className={cn(
-        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border md:max-h-none md:border-r md:border-b-0",
-        rail ? "md:w-9" : "md:w-80",
+        "max-h-72 shrink-0 overflow-x-hidden overflow-y-auto border-b border-border @3xl/tracing:max-h-none @3xl/tracing:border-r @3xl/tracing:border-b-0",
+        rail ? "@3xl/tracing:w-9" : "@3xl/tracing:w-80",
       )}
     >
       {rows.map(({ group, parent }) =>
@@ -2884,7 +2893,7 @@ function TaskWaterfall({
     requestAnimationFrame(() =>
       document
         .querySelector(`[data-span-key="${CSS.escape(key)}"]`)
-        ?.scrollIntoView({ block: "nearest" }),
+        ?.scrollIntoView(SCROLL_NEAREST),
     );
   };
   const request = spanLabel(root);
@@ -3101,7 +3110,7 @@ function TimelineBar({
   return (
     <div className="relative h-4 w-full">
       <div
-        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm"
+        className="absolute top-1/2 left-(--bar-left) flex h-2 w-(--bar-width) -translate-y-1/2 overflow-hidden rounded-sm forced-color-adjust-none"
         style={{ "--bar-left": `${leftPct}%`, "--bar-width": `${widthPct}%` }}
         title={title}
       >

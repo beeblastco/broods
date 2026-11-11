@@ -189,7 +189,9 @@ function LinkedRepo({
         </div>
       )}
       {submit.error && (
-        <p className="text-xs text-destructive">{submit.error}</p>
+        <p role="alert" className="text-xs text-destructive">
+          {submit.error}
+        </p>
       )}
       {confirming && (
         <DeleteConfirmDialog
@@ -286,7 +288,9 @@ function LinkRepo({
           </div>
         )}
         {submit.error && (
-          <p className="text-xs text-destructive">{submit.error}</p>
+          <p role="alert" className="text-xs text-destructive">
+            {submit.error}
+          </p>
         )}
       </div>
     </Section>
@@ -444,7 +448,11 @@ function MappingProblem({
 }): React.JSX.Element | null {
   const problem = mappingProblem(mapping);
 
-  return problem ? <p className="text-xs text-destructive">{problem}</p> : null;
+  return problem ? (
+    <p role="alert" className="text-xs text-destructive">
+      {problem}
+    </p>
+  ) : null;
 }
 
 // A run in words: still deploying, deployed, or failed.

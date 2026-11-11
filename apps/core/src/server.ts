@@ -16,7 +16,7 @@ import {
   withRequestId,
 } from "@broods/convex/model/requestId";
 import { logError, logInfo } from "./shared/log.ts";
-import { flushObservabilityNats } from "./shared/nats.ts";
+import { flushObservabilityNats, natsNames } from "./shared/nats.ts";
 import { emitPostHogLog, forceFlushOtel, initOtel } from "./shared/otel.ts";
 
 const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
@@ -164,6 +164,7 @@ if (import.meta.main) {
   requireEnv("STAGE_TICKET_SECRET");
   requireSecretsEnv("MEDIA_TICKET_SECRET");
   requireSecretsEnv("TERMINAL_TICKET_SECRET");
+  if (process.env.NATS_URL?.trim()) natsNames();
 
   initOtel();
   void prewarmIsolatePool().catch(() => undefined);

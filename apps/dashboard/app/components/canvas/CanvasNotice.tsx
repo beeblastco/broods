@@ -13,7 +13,6 @@ export function CanvasNotice({
   return (
     <div className="pointer-events-auto rounded-lg bg-background shadow-sm">
       <div
-        aria-live="polite"
         data-slot="canvas-notice"
         className="flex max-w-xl items-center gap-2 rounded-lg bg-destructive px-2 py-1 text-xs text-white dark:bg-destructive/60"
       >
@@ -33,7 +32,6 @@ export function CanvasPill({
 }): React.JSX.Element {
   return (
     <div
-      aria-live="polite"
       data-slot={slot}
       className="pointer-events-auto flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1 text-xs text-muted-foreground"
     >
@@ -47,17 +45,21 @@ export function CanvasNoticeHint(): React.JSX.Element {
 }
 
 // Spans the canvas: React Flow's top-center sits at `left: 50%`, capping a box at half width.
+// The live region is mounted from load, so a notice that mounts inside it is announced.
 export function CanvasNoticeStrip({
   children,
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <Panel
-      position="top-left"
-      className="pointer-events-none right-0 flex flex-col items-center gap-1"
-    >
-      {children}
+    <Panel position="top-left" className="pointer-events-none right-0">
+      <section
+        aria-label="Notifications"
+        aria-live="polite"
+        className="flex flex-col items-center gap-1"
+      >
+        {children}
+      </section>
     </Panel>
   );
 }
