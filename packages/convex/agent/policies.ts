@@ -6,9 +6,14 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
-import { accountIdForProject } from "../model/auditEvents";
+import { authKit, type AuthUser } from "../auth";
+import {
+  accountIdForProject,
+  appendAuditEvent,
+  dashboardAuditActor,
+} from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
 import {
   getProjectForRole,
@@ -79,12 +84,14 @@ export const create = mutation({
 
     const document = normalizePolicyDocument(args.document);
     const now = Date.now();
-
-    return await ctx.db.insert("agentPolicies", {
+    const policy = {
       accountId: accountId,
       projectId: args.projectId,
       stageId: args.stageId,
       name: args.name.trim(),
+    };
+    const policyId = await ctx.db.insert("agentPolicies", {
+      ...policy,
       description: args.description?.trim() || undefined,
       document: document,
       status: "active",
@@ -92,6 +99,9 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordPolicyAudit(ctx, user, "created", { ...policy, _id: policyId });
+
+    return policyId;
   },
 });
 
@@ -217,6 +227,7 @@ export const remove = mutation({
       deletedAt: Date.now(),
       updatedAt: Date.now(),
     });
+    await recordPolicyAudit(ctx, user, "deleted", policy);
 
     return args.policyId;
   },
@@ -270,6 +281,10 @@ export const update = mutation({
         : {}),
       ...(document !== undefined ? { document: document } : {}),
       updatedAt: Date.now(),
+    });
+    await recordPolicyAudit(ctx, user, "updated", {
+      ...policy,
+      name: args.name?.trim() ?? policy.name,
     });
 
     return policy._id;
@@ -364,6 +379,27 @@ export const usageCounts = query({
     return counts;
   },
 });
+
+// Names the policy only: its document can name tools and MCP ids the ledger should not hold.
+async function recordPolicyAudit(
+  ctx: MutationCtx,
+  user: AuthUser,
+  action: "created" | "deleted" | "updated",
+  policy: Pick<
+    Doc<"agentPolicies">,
+    "_id" | "accountId" | "name" | "projectId" | "stageId"
+  >,
+): Promise<void> {
+  await appendAuditEvent(ctx.db, {
+    accountId: policy.accountId,
+    projectId: policy.projectId,
+    stageId: policy.stageId,
+    actor: dashboardAuditActor(user),
+    action: action,
+    resource: { kind: "policy", id: policy._id, name: policy.name },
+    summary: `Policy ${action}`,
+  });
+}
 
 async function requireEditablePolicy(
   ctx: Parameters<typeof getProjectForRole>[0],

@@ -49,6 +49,50 @@ test("key rotation, member, role and policy changes land in the audit ledger", a
   ]);
 });
 
+test("the project policy panel's create, update and remove land in the ledger by name", async () => {
+  const t = auditTest();
+  const { projectId, stageId } = await seed(t);
+  const document = {
+    version: 1,
+    mode: "enforce",
+    rules: [
+      {
+        id: "r1",
+        effect: "deny",
+        actions: ["tool.call"],
+        resources: { mcpIds: ["secret-mcp-id"] },
+      },
+    ],
+  };
+
+  const policyId = await t.mutation(api.agent.policies.create, {
+    projectId: projectId,
+    stageId: stageId,
+    name: "deny shell",
+    document: document,
+  });
+  await t.mutation(api.agent.policies.update, {
+    policyId: policyId,
+    name: "deny tools",
+  });
+  await t.mutation(api.agent.policies.remove, { policyId: policyId });
+
+  const rows = await t.run(async (ctx) =>
+    ctx.db.query("auditEvents").collect(),
+  );
+  expect(
+    rows.map(
+      (row) => `${row.resource.kind} ${row.action} ${row.resource.name}`,
+    ),
+  ).toEqual([
+    "policy created deny shell",
+    "policy updated deny tools",
+    "policy deleted deny tools",
+  ]);
+  expect(rows.every((row) => row.stageId === stageId)).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain("secret-mcp-id");
+});
+
 test("a CLI env write is audited by name, never by value", async () => {
   const t = auditTest();
   await seed(t);
@@ -87,9 +131,12 @@ async function ledger(t: T): Promise<string[]> {
   return rows.map((row) => `${row.resource.kind} ${row.action}`);
 }
 
-async function seed(
-  t: T,
-): Promise<{ orgId: Id<"orgs">; memberMembership: Id<"orgMembers"> }> {
+async function seed(t: T): Promise<{
+  orgId: Id<"orgs">;
+  memberMembership: Id<"orgMembers">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}> {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
@@ -133,7 +180,7 @@ async function seed(
       slug: "demo-app",
       updatedAt: now,
     });
-    await ctx.db.insert("stages", {
+    const stageId = await ctx.db.insert("stages", {
       authId: "auth_owner",
       projectId: projectId,
       name: "Development",
@@ -142,6 +189,11 @@ async function seed(
       updatedAt: now,
     });
 
-    return { orgId: orgId, memberMembership: memberMembership! };
+    return {
+      orgId: orgId,
+      memberMembership: memberMembership!,
+      projectId: projectId,
+      stageId: stageId,
+    };
   });
 }

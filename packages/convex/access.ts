@@ -364,7 +364,11 @@ export const updatePolicy = mutation({
       ctx,
       caller,
       "updated",
-      { kind: "policy", id: policy._id, name: policy.name },
+      {
+        kind: "policy",
+        id: policy._id,
+        name: args.name === undefined ? policy.name : policyName(args.name),
+      },
       "Policy updated",
       { mode: args.mode },
     );
@@ -669,7 +673,11 @@ export const updateRole = mutation({
       ctx,
       caller,
       "updated",
-      { kind: "role", id: role._id, name: role.name },
+      {
+        kind: "role",
+        id: role._id,
+        name: args.name === undefined ? role.name : roleName(args.name),
+      },
       "Role updated",
       { policyIds: args.policyIds },
     );
