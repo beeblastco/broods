@@ -503,3 +503,26 @@ test("stream cancels the response body when the consumer stops early", async ():
   expect(canceled).toBe(1);
   expect(body.locked).toBe(false);
 });
+
+test("run returns the structured-output frame as output", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      new Response(
+        [
+          'data: {"type":"text-delta","id":"0","text":"done"}',
+          'data: {"type":"structured-output","output":{"answer":42}}',
+          "",
+        ].join("\n\n"),
+      ),
+  });
+
+  const result = await client.run({ agentId: "agent_1", input: "hello" });
+
+  expect(result.text).toBe("done");
+  expect(result.output).toEqual({ answer: 42 });
+  expect(result.events.map((part): string => part.type)).toEqual([
+    "text-delta",
+    "structured-output",
+  ]);
+});
