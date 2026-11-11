@@ -51,7 +51,7 @@ def modelOutputFromModelConfig (call : Json) : Prog Json := do
   Prog.effect "createModelOutput" [output]
 
 /-- The transcription model each provider uses unless `transcription.modelId` says otherwise
-(`PROVIDER_TRANSCRIPTION`). -/
+(`TRANSCRIPTION_MODELS`). -/
 private def defaultTranscriptionModel (provider : String) : Option String :=
   match provider with
   | "fishaudio" => some "transcribe-1"
@@ -71,14 +71,15 @@ def resolveTranscriptionModel (call : Json) : Prog Json := do
   let name := if nullish provider then "this provider" else text provider
   let noModel := Json.mkObj [("reason", toJson s!"{name} has no transcription model")]
   if nullish provider then return noModel
-  match defaultTranscriptionModel (text provider) with
+  let transcribes ← Prog.effect "isTranscriptionProviderName" [provider]
+  match (if transcribes == toJson true then defaultTranscriptionModel (text provider) else none) with
   | none => return noModel
   | some fallback =>
     Prog.catchFail
       (do
         let settings ← Prog.effect "requireProviderSettings" [config, provider]
         let withFetch ← Prog.effect "withModelFetch" [settings]
-        let _ ← Prog.effect "source.factory" [withFetch]
+        let _ ← Prog.effect "TRANSCRIPTION_FACTORIES[providerName]" [withFetch]
         let configured := field transcription "modelId"
         let model ← Prog.effect "provider.transcription"
           [if nullish configured then toJson fallback else configured]
