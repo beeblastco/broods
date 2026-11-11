@@ -8,7 +8,11 @@ import { TLS_CERT, TLS_KEY } from "./helpers/tls.ts";
 import { flushUsage } from "../src/harness/plan-limits.ts";
 import type { PinnedFetchTransport } from "../src/shared/http.ts";
 import { requestUrl, stubPublicDns } from "./helpers/http.ts";
-import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  NATIVE_AUDIO_PROVIDER_NAMES,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
 import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { TranscriptOutcome } from "../src/harness/transcribe.ts";
@@ -492,6 +496,14 @@ describe("acceptsNativeMedia", () => {
   it("refuses a subtype the provider does not read", () => {
     expect(acceptsNativeMedia("openai", "audio/ogg")).toBe(false);
     expect(acceptsNativeMedia("openai", "application/pdf")).toBe(true);
+  });
+
+  it("hears audio on exactly the providers the shared list names", () => {
+    for (const name of ACCOUNT_MODEL_PROVIDER_NAMES) {
+      expect(acceptsNativeMedia(name, "audio/ogg")).toBe(
+        NATIVE_AUDIO_PROVIDER_NAMES.includes(name),
+      );
+    }
   });
 
   it("reads pictures on every provider, listed or not", () => {

@@ -200,7 +200,7 @@ describe("model provider registry", () => {
   });
 });
 
-// Which providers transcribe is pinned by the type of `PROVIDER_TRANSCRIPTION`, not here.
+// Which providers transcribe is pinned by the type of `TRANSCRIPTION_FACTORIES`, not here.
 describe("transcription model resolution", () => {
   it("names the provider that ships no speech-to-text", () => {
     expect(

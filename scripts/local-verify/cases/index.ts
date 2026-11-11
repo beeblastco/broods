@@ -15,6 +15,7 @@ import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
 import { githubRepo } from "./github-repo.ts";
 import { workerSandbox } from "./worker-sandbox.ts";
+import { largeSkillSync } from "./large-skill-sync.ts";
 import { manifestSync } from "./manifest-sync.ts";
 import { stageSource } from "./stage-source.ts";
 import { applyTicket } from "./apply-ticket.ts";
@@ -93,6 +94,7 @@ export const verifyCases: readonly VerifyCase[] = [
   credentialPrefixes,
   scopedAccountKey,
   manifestSync,
+  largeSkillSync,
   stageSource,
   applyTicket,
   observabilityTicket,

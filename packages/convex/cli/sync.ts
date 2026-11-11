@@ -15,7 +15,7 @@ import {
 import { hasDashboardPermission } from "../model/access";
 import { userByAuthId } from "../model/ownership/org";
 import { accountCipher } from "../model/accountKeys";
-import { sha256Hex } from "../model/accountSecrets";
+import { hexFromBytes, sha256Hex } from "../model/accountSecrets";
 import { deploymentRegionValidator } from "../schema";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
@@ -83,6 +83,7 @@ import {
 } from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
+import { base64UrlToBytes } from "../model/stageSessionTicket";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -620,13 +621,14 @@ export const listEnvBySecretHash = internalQuery({
   },
 });
 
+// `own`: recorded by this stage. Writes nothing, so it can run before the stage exists.
 export const listExternalResourcesForAccount = internalQuery({
-  args: { accountId: v.id("accounts") },
+  args: { accountId: v.id("accounts"), project: v.string(), stage: v.string() },
   returns: v.array(
     v.object({
       kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
       name: v.string(),
-      stageId: v.id("stages"),
+      own: v.boolean(),
       externalId: v.string(),
     }),
   ),
@@ -637,10 +639,14 @@ export const listExternalResourcesForAccount = internalQuery({
     Array<{
       kind: "skill" | "hook" | "mcp";
       name: string;
-      stageId: Id<"stages">;
+      own: boolean;
       externalId: string;
     }>
   > => {
+    const account = await ctx.db.get(args.accountId);
+    const resolved =
+      account &&
+      (await resolveProjectStage(ctx, account, args.project, args.stage));
     const rows = await ctx.db
       .query("cliExternalResources")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -649,7 +655,7 @@ export const listExternalResourcesForAccount = internalQuery({
     return rows.map((row) => ({
       kind: row.kind,
       name: row.name,
-      stageId: row.stageId,
+      own: row.stageId === resolved?.stageDoc._id,
       externalId: row.externalId,
     }));
   },
@@ -897,6 +903,45 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
     }
 
     return null;
+  },
+});
+
+// Whether the skill's canvas copy in the project does not hold exactly these files (hex sha256).
+export const staleSkillNode = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    stage: v.string(),
+    name: v.string(),
+    files: v.array(v.object({ path: v.string(), sha256: v.string() })),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const account = await ctx.db.get(args.accountId);
+    const resolved =
+      account &&
+      (await resolveProjectStage(ctx, account, args.project, args.stage));
+    const rows = resolved
+      ? await ctx.db
+          .query("workspaceFiles")
+          .withIndex("by_projectId_nodeId_and_path", (q) =>
+            q
+              .eq("projectId", resolved.projectDoc._id)
+              .eq("nodeId", canvasNodeId("skill", resourceName(args.name))),
+          )
+          .collect()
+      : [];
+    const held = new Map<string, string>();
+    for (const row of rows) {
+      const blob = row.storageId && (await ctx.db.system.get(row.storageId));
+      // `_storage` keeps sha256 as base64.
+      if (blob) held.set(row.path, hexFromBytes(base64UrlToBytes(blob.sha256)));
+    }
+
+    return (
+      rows.length !== args.files.length ||
+      args.files.some((file) => held.get(file.path) !== file.sha256)
+    );
   },
 });
 

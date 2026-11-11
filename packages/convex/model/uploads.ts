@@ -19,9 +19,13 @@ export type UploadGrant = { uploadUrl: string } | { retryAt: number };
 export async function claimUploadedBlob(
   ctx: MutationCtx,
   storageId: Id<"_storage">,
+  maxBytes = Infinity,
 ): Promise<StoredBlob> {
   const blob = await ctx.db.system.get(storageId);
   if (!blob) throw new ClientError("Uploaded file was not found in storage.");
+  if (blob.size > maxBytes) {
+    throw new ClientError(`Uploaded file exceeds ${maxBytes} bytes.`);
+  }
   if (await isStorageOwned(ctx, storageId)) {
     throw new ClientError("Uploaded file is already registered.");
   }

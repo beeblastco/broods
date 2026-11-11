@@ -775,7 +775,7 @@ private def redact (call : Json) : Prog Json :=
 
 /-! ### Agent config helpers -/
 
-private def agentCanvasBadge (call : Json) : Prog Json :=
+private def agentCanvasBadge (call : Json) : Prog Json := do
   let config := Twin.callArg call 0
   let extra := field config "extraConfig"
   let skills := field extra "skills"
@@ -785,10 +785,14 @@ private def agentCanvasBadge (call : Json) : Prog Json :=
   let structured := !undef outputFormat &&
     ((Js.arr? (field (Twin.moduleValue call "STRUCTURED_OUTPUT_TYPES") "$set")).getD []).contains
       (field outputFormat "type")
+  let chosen := field (field extra "transcription") "provider"
+  let voice ← Prog.effect "agentVoice"
+    [field config "provider", if Js.isStr chosen then chosen else Twin.undefinedJson]
   pure (Json.mkObj
     [("publicAccess", toJson (field extra "publicAccess" == toJson true)),
      ("skills", .arr names.toArray),
-     ("structuredOutput", toJson structured)])
+     ("structuredOutput", toJson structured),
+     ("voice", voice)])
 
 private def assertEnvVarName (call : Json) : Prog Json := do
   let name := text (Twin.callArg call 0)

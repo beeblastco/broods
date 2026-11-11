@@ -46,6 +46,29 @@ export const AGENT_PROVIDER_NAMES = [
 
 export type AgentProviderName = (typeof AGENT_PROVIDER_NAMES)[number];
 
+// Chat providers whose models hear audio themselves, so nothing is transcribed for them.
+export const NATIVE_AUDIO_PROVIDER_NAMES: readonly AgentProviderName[] = [
+  "google",
+  "vertex",
+];
+
+// Each provider's default speech-to-text model.
+// `whisper-1`, not `gpt-4o-mini-transcribe`: only it reads the ogg/opus of voice notes.
+export const TRANSCRIPTION_MODELS = {
+  fishaudio: "transcribe-1",
+  groq: "whisper-large-v3-turbo",
+  mistral: "voxtral-mini-latest",
+  openai: "whisper-1",
+} as const;
+
+export type TranscriptionProviderName = keyof typeof TRANSCRIPTION_MODELS;
+
+/** Who reads an agent's inbound audio. `native` is the chat model itself. */
+export interface AgentVoice {
+  provider: AgentProviderName;
+  native: boolean;
+}
+
 export interface ModelProviderMeta {
   label: string;
   modelPlaceholder: string;
@@ -124,8 +147,39 @@ export function isAccountModelProviderName(
   return Object.hasOwn(MODEL_PROVIDERS, value);
 }
 
+/** The provider that reads an agent's voice notes, or null when no one does. */
+export function agentVoice(
+  modelProvider: string | undefined,
+  transcriptionProvider: string | undefined,
+): AgentVoice | null {
+  if (
+    modelProvider !== undefined &&
+    isAgentProviderName(modelProvider) &&
+    NATIVE_AUDIO_PROVIDER_NAMES.includes(modelProvider)
+  ) {
+    return { provider: modelProvider, native: true };
+  }
+  const provider = transcriptionProvider ?? modelProvider;
+
+  return provider !== undefined && isTranscriptionProviderName(provider)
+    ? { provider: provider, native: false }
+    : null;
+}
+
+export function agentProviderLabel(provider: AgentProviderName): string {
+  return provider === "fishaudio"
+    ? "Fish Audio"
+    : MODEL_PROVIDERS[provider].label;
+}
+
 export function isAgentProviderName(value: string): value is AgentProviderName {
   return (AGENT_PROVIDER_NAMES as readonly string[]).includes(value);
+}
+
+export function isTranscriptionProviderName(
+  value: string,
+): value is TranscriptionProviderName {
+  return Object.hasOwn(TRANSCRIPTION_MODELS, value);
 }
 
 export function providerApiKeyEnvName(

@@ -52,8 +52,11 @@ import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
+  TRANSCRIPTION_MODELS,
+  isTranscriptionProviderName,
   type AccountModelProviderName,
   type AgentProviderName,
+  type TranscriptionProviderName,
 } from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
@@ -92,14 +95,14 @@ const MAX_RETRY_HEADER_MS = 59_999;
 const RATE_LIMIT_WAIT_PATTERN =
   /(?:try again in |"retryDelay":\s*")(\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
-// `whisper-1`, not `gpt-4o-mini-transcribe`: only it reads the ogg/opus of voice notes.
-const PROVIDER_TRANSCRIPTION: Partial<
-  Record<AgentProviderName, TranscriptionSource>
+const TRANSCRIPTION_FACTORIES: Record<
+  TranscriptionProviderName,
+  TranscriptionFactory
 > = {
-  fishaudio: { factory: createFishAudio, modelId: "transcribe-1" },
-  groq: { factory: createGroq, modelId: "whisper-large-v3-turbo" },
-  mistral: { factory: createMistral, modelId: "voxtral-mini-latest" },
-  openai: { factory: createOpenAI, modelId: "whisper-1" },
+  fishaudio: createFishAudio,
+  groq: createGroq,
+  mistral: createMistral,
+  openai: createOpenAI,
 };
 
 // A stored item past its 30-day window, without its reasoning, or encrypted for another model.
@@ -127,12 +130,9 @@ interface ModelProviderInstance {
   (modelId: string): Exclude<LanguageModel, string>;
 }
 
-interface TranscriptionSource {
-  factory: (settings: never) => {
-    transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
-  };
-  modelId: string;
-}
+type TranscriptionFactory = (settings: never) => {
+  transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
+};
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
@@ -229,16 +229,13 @@ export function resolveTranscriptionModel(
 ): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
   const providerName =
     agentConfig.transcription?.provider ?? agentConfig.model?.provider;
-  const source = providerName
-    ? PROVIDER_TRANSCRIPTION[providerName]
-    : undefined;
-  if (!providerName || !source) {
+  if (!providerName || !isTranscriptionProviderName(providerName)) {
     return {
       reason: `${providerName ?? "this provider"} has no transcription model`,
     };
   }
   try {
-    const provider = source.factory(
+    const provider = TRANSCRIPTION_FACTORIES[providerName](
       withModelFetch(
         requireProviderSettings(agentConfig, providerName),
       ) as never,
@@ -246,7 +243,8 @@ export function resolveTranscriptionModel(
 
     return {
       model: provider.transcription(
-        agentConfig.transcription?.modelId ?? source.modelId,
+        agentConfig.transcription?.modelId ??
+          TRANSCRIPTION_MODELS[providerName],
       ),
     };
   } catch (error) {

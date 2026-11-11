@@ -15,6 +15,7 @@ const BUCKET = "disabled-account-fixture-bucket";
 const NOT_ACTIVE = /Account is not active/;
 const modules = import.meta.glob("../**/*.ts");
 const storageCalls = vi.hoisted(() => ({
+  deleteObject: vi.fn().mockResolvedValue(undefined),
   deletePrefix: vi.fn().mockResolvedValue(0),
   listPrefix: vi.fn(async (_bucket: string, prefix: string) => [
     { key: `${prefix}notes.md`, size: 2 },
@@ -28,6 +29,7 @@ vi.mock("../model/s3", async (importOriginal) => {
 
   return {
     ...original,
+    deleteS3Object: storageCalls.deleteObject,
     deleteS3Prefix: storageCalls.deletePrefix,
     listS3Prefix: storageCalls.listPrefix,
     writeS3Object: storageCalls.writeObject,
@@ -58,6 +60,7 @@ test("a disabled account cannot write skills or mint upload URLs", async (): Pro
     (await caller.action(api.skillsPublic.createFromJson, skill)).path,
   ).toBe(`${accountId}/fixture-skill`);
   expect(storageCalls.writeObject).toHaveBeenCalledTimes(1);
+  storageCalls.deleteObject.mockClear();
   storageCalls.deletePrefix.mockClear();
   storageCalls.writeObject.mockClear();
 
@@ -105,6 +108,7 @@ test("a disabled account cannot write skills or mint upload URLs", async (): Pro
       bearerToken: "bask_unknown_fixture_key",
     }),
   ).rejects.toThrow("Invalid Bearer token");
+  expect(storageCalls.deleteObject).not.toHaveBeenCalled();
   expect(storageCalls.deletePrefix).not.toHaveBeenCalled();
   expect(storageCalls.writeObject).not.toHaveBeenCalled();
 });
@@ -178,6 +182,7 @@ test("a disabled account cannot reach workspace storage or MCP servers", async (
     NOT_ACTIVE,
   );
   expect(storageCalls.writeObject).not.toHaveBeenCalled();
+  expect(storageCalls.deleteObject).not.toHaveBeenCalled();
   expect(storageCalls.deletePrefix).not.toHaveBeenCalled();
 });
 

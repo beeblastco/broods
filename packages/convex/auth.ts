@@ -1,6 +1,9 @@
 import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
-import type { DataModel } from "./_generated/dataModel";
+import type { DataModel, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
+import { releaseSeat } from "./model/orgBilling";
+import { syncInvited } from "./model/ownership/org";
 import { isManagedService } from "./model/planLimits";
 import { authProvider } from "./model/selfHostAuth";
 
@@ -43,23 +46,25 @@ export const { authKitEvent } = authKit.events({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        email: event.data.email,
+        email: event.data.email.toLowerCase(),
         name: existing.nameEdited ? existing.name : deriveName(event.data),
         avatarUrl: avatarUrl,
       });
+      await claimInvitations(ctx, existing._id, event.data);
 
       return;
     }
 
-    await ctx.db.insert("users", {
+    const userId = await ctx.db.insert("users", {
       authId: event.data.id,
-      email: event.data.email,
+      email: event.data.email.toLowerCase(),
       name: deriveName(event.data),
       avatarUrl: avatarUrl,
       accountHandle: undefined,
       plan: "free",
       deletionScheduledFor: undefined,
     });
+    await claimInvitations(ctx, userId, event.data);
   },
   "user.updated": async (ctx, event): Promise<void> => {
     const user = await ctx.db
@@ -76,10 +81,11 @@ export const { authKitEvent } = authKit.events({
       picture === null ? undefined : (picture ?? user.avatarUrl);
 
     await ctx.db.patch(user._id, {
-      email: event.data.email,
+      email: event.data.email.toLowerCase(),
       name: user.nameEdited ? user.name : deriveName(event.data),
       avatarUrl: avatarUrl,
     });
+    await claimInvitations(ctx, user._id, event.data);
   },
   "user.deleted": async (ctx, event): Promise<void> => {
     const user = await ctx.db
@@ -126,4 +132,26 @@ export function deriveName(data: {
   const last = data.lastName ?? "";
 
   return `${first} ${last}`.trim() || data.email;
+}
+
+// An invitation sent before its email had an account becomes the user's once WorkOS has
+// verified that they own the address.
+async function claimInvitations(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  data: { email: string; emailVerified?: boolean },
+): Promise<void> {
+  if (!data.emailVerified) return;
+  const waiting = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_email_and_userId", (q) =>
+      q.eq("email", data.email.toLowerCase()).eq("userId", undefined),
+    )
+    .collect();
+  if (waiting.length === 0) return;
+  for (const invitation of waiting) {
+    await ctx.db.patch(invitation._id, { userId: userId });
+  }
+  await syncInvited(ctx, userId);
+  await releaseSeat(ctx, ...waiting.map((invitation) => invitation.orgId));
 }

@@ -409,6 +409,7 @@ export declare const api: {
             publicAccess: boolean;
             skills: Array<string>;
             structuredOutput: boolean;
+            voice: null | { native: boolean; provider: string };
           }
         >
       >;
@@ -1704,6 +1705,64 @@ export declare const api: {
     >;
   };
   org: {
+    invitations: {
+      accept: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null | string
+      >;
+      create: FunctionReference<
+        "mutation",
+        "public",
+        {
+          email: string;
+          orgId: Id<"orgs">;
+          role?: "owner" | "admin" | "member";
+          roleId?: Id<"orgRoles">;
+        },
+        Id<"orgInvitations">
+      >;
+      decline: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null
+      >;
+      list: FunctionReference<
+        "query",
+        "public",
+        { orgId: Id<"orgs"> },
+        Array<{
+          createdAt: number;
+          email: string;
+          hasAccount: boolean;
+          invitationId: Id<"orgInvitations">;
+          invitedBy?: { avatarUrl?: string; name: string };
+          role: "owner" | "admin" | "member";
+          roleName?: string;
+        }>
+      >;
+      listMine: FunctionReference<
+        "query",
+        "public",
+        {},
+        Array<{
+          invitationId: Id<"orgInvitations">;
+          invitedBy?: { avatarUrl?: string; name: string };
+          orgId: Id<"orgs">;
+          orgName: string;
+          role: "owner" | "admin" | "member";
+          roleName?: string;
+        }>
+      >;
+      revoke: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null
+      >;
+    };
     lifecycle: {
       provision: FunctionReference<
         "action",
@@ -1719,16 +1778,11 @@ export declare const api: {
       >;
     };
     members: {
-      add: FunctionReference<
+      leave: FunctionReference<
         "mutation",
         "public",
-        {
-          email: string;
-          orgId: Id<"orgs">;
-          role?: "owner" | "admin" | "member";
-          roleId?: Id<"orgRoles">;
-        },
-        Id<"orgMembers">
+        { orgId: Id<"orgs"> },
+        null
       >;
       list: FunctionReference<
         "query",
@@ -2297,7 +2351,7 @@ export declare const api: {
       "query",
       "public",
       {},
-      Array<{ name: string; orgs: Array<string>; userId: Id<"users"> }>
+      Array<{ id: string; name: string; orgs: Array<string> }>
     >;
   };
   user: {
@@ -2316,6 +2370,7 @@ export declare const api: {
         avatarUrl?: string;
         deletionScheduledFor?: number;
         email: string;
+        invited?: boolean;
         name: string;
         nameEdited?: boolean;
         plan: "free" | "pro";
@@ -4034,13 +4089,13 @@ export declare const internal: {
       claim: FunctionReference<
         "mutation",
         "internal",
-        { storageId: Id<"_storage"> },
+        { maxBytes?: number; storageId: Id<"_storage"> },
         null
       >;
       grant: FunctionReference<
         "mutation",
         "internal",
-        { accountId: Id<"accounts">; kind: "mcp" | "workspace" },
+        { accountId: Id<"accounts">; kind: "mcp" | "skill" | "workspace" },
         { uploadUrl: string } | { retryAt: number }
       >;
       pruneOrphans: FunctionReference<
@@ -5212,7 +5267,12 @@ export declare const internal: {
       createSkill: FunctionReference<
         "action",
         "internal",
-        { accountId: Id<"accounts">; expectedName?: string; input: any },
+        {
+          accountId: Id<"accounts">;
+          expectedName?: string;
+          filesStorageId?: Id<"_storage">;
+          input: any;
+        },
         {
           description: string;
           files: Array<{ path: string; size?: number }>;
@@ -5243,10 +5303,54 @@ export declare const internal: {
         { accountId: Id<"accounts">; skillName: string },
         boolean
       >;
+      storeUploadedFiles: FunctionReference<
+        "action",
+        "internal",
+        {
+          files: Array<{
+            contentType?: string;
+            path: string;
+            sha256: string;
+            size: number;
+          }>;
+          filesStorageId: Id<"_storage">;
+        },
+        Array<{
+          mimeType: string;
+          path: string;
+          sizeBytes: number;
+          storageId: Id<"_storage">;
+        }>
+      >;
+      unheld: FunctionReference<
+        "action",
+        "internal",
+        {
+          accountId: Id<"accounts">;
+          project: string;
+          skills: Array<{
+            files: Array<{
+              contentType?: string;
+              path: string;
+              sha256: string;
+              size: number;
+            }>;
+            name: string;
+          }>;
+          stage: string;
+        },
+        Array<string>
+      >;
       validateSkills: FunctionReference<
         "action",
         "internal",
-        { skills: Array<{ files: any; name: string }> },
+        {
+          skills: Array<{
+            files: any;
+            filesStorageId?: Id<"_storage">;
+            name: string;
+          }>;
+        },
         null
       >;
     };
@@ -5991,12 +6095,12 @@ export declare const internal: {
       listExternalResourcesForAccount: FunctionReference<
         "query",
         "internal",
-        { accountId: Id<"accounts"> },
+        { accountId: Id<"accounts">; project: string; stage: string },
         Array<{
           externalId: string;
           kind: "skill" | "hook" | "mcp";
           name: string;
-          stageId: Id<"stages">;
+          own: boolean;
         }>
       >;
       pruneSandboxesBySecretHash: FunctionReference<
@@ -6154,6 +6258,18 @@ export declare const internal: {
           value: string;
         },
         null
+      >;
+      staleSkillNode: FunctionReference<
+        "query",
+        "internal",
+        {
+          accountId: Id<"accounts">;
+          files: Array<{ path: string; sha256: string }>;
+          name: string;
+          project: string;
+          stage: string;
+        },
+        boolean
       >;
       syncManifestBySecretHash: FunctionReference<
         "mutation",

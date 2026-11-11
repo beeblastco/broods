@@ -225,6 +225,9 @@ function gatewayConfig(coreBaseUrl: string): GatewayConfig {
       idleTimeoutSeconds: 255,
       runStartTimeoutMs: 5_000,
     },
+    natsConnection: async function (): Promise<never> {
+      throw new Error("NATS unavailable");
+    },
     spentTickets: {
       spend: async function (): Promise<boolean> {
         return false;

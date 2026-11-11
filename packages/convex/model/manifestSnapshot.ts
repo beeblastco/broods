@@ -9,6 +9,7 @@ const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
   "bundle",
   "bundleStorageId",
   "contentBase64",
+  "filesStorageId",
 ]);
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
 

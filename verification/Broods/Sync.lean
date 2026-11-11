@@ -29,7 +29,8 @@ inductive Kind where
 
 /-- What equality sees of a resource config: its settings (every plain key,
 including an artifact's `sha256`), the inline bytes (`bundle`, `contentBase64`),
-and the `bundleStorageId` handle a large MCP bundle is uploaded as. -/
+and the `bundleStorageId` or `filesStorageId` handle a large MCP bundle or skill
+is uploaded as. -/
 structure Config where
   settings : Nat
   bundle : Option Nat
@@ -154,23 +155,58 @@ def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind
   (sync store m false s).filter
     (fun row => !row.cli || m.any (·.key == row.res.key) || !chosen.contains row.res.key)
 
-/-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
-replaced by its storage handle; its `sha256` stays. -/
-def upload (large : Nat → Bool) (r : Resource) : Resource :=
+/-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
+large MCP bundle or skill is uploaded and replaced by its storage handle; its
+`sha256` stays. A large skill the stage already `held` with the same snapshot is
+sent with neither bytes nor handle; `refused` and `putManifest` model the server's
+check of that claim and the CLI's one retry. -/
+def upload (large : Nat → Bool) (held : Resource → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
   | .mcp, some b =>
     if large b then { r with config := { r.config with bundle := none, storage := some b } } else r
+  | .skill, some b =>
+    if !large b then r
+    else if held r then { r with config := { r.config with bundle := none } }
+    else { r with config := { r.config with bundle := none, storage := some b } }
   | _, _ => r
 
 /-- `snapshotExternalConfig`: the recorded snapshot of an external resource drops
-its bytes and keeps everything else. -/
+its bytes, and a skill's upload handle, and keeps everything else. -/
 def storeExternal (r : Resource) : Resource :=
-  if r.kind.external then { r with config := { r.config with bundle := none } } else r
+  if r.kind.external then
+    { r with config := { r.config with
+        bundle := none, storage := if r.kind == .skill then none else r.config.storage } }
+  else r
 
 /-- What the server keeps for a resource: external kinds as their recorded
 snapshot of the uploaded config, every other kind through `normalize`. -/
-def storeReal (large : Nat → Bool) (normalize : Resource → Resource) (r : Resource) : Resource :=
-  if r.kind.external then storeExternal (upload large r) else normalize r
+def storeReal (large : Nat → Bool) (held : Resource → Bool) (normalize : Resource → Resource)
+    (r : Resource) : Resource :=
+  if r.kind.external then storeExternal (upload large held r) else normalize r
+
+/-- The held check before `handleManifestSync` claims a revision: the keys of large
+skills sent held whose files the account does not hold (`holds`), which the 409
+`skill_upload_required` names in `skills`. -/
+def refused (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    List (Kind × Nat) :=
+  (m.filter fun r => r.kind == .skill && r.config.bundle.any large && held r && !holds r).map
+    (·.key)
+
+/-- The retry's `held`: every skill the refusal named is uploaded, the rest unchanged. -/
+def retryHeld (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    Resource → Bool :=
+  fun r => held r && !(refused large held holds m).contains r.key
+
+/-- `BroodsSyncClient.putManifest`: send; on a refusal, send once more with the named
+skills uploaded. A refusal writes nothing, so the retry meets the same state and the
+same `holds`; a second refusal fails the sync (`none`). -/
+def putManifest (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) :
+    Option State :=
+  let send := fun (held : Resource → Bool) =>
+    if refused large held holds m = [] then some (sync (storeReal large held normalize) m prune s)
+    else none
+  (send held).orElse fun _ => send (retryHeld large held holds m)
 
 /-! ## Lemmas -/
 
@@ -331,45 +367,71 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
 
 end
 
-/-- Skills, hooks and MCP servers, small or large bundle, read back equal to what
-the diff compares. -/
-theorem storeExternal_snapshot (large : Nat → Bool) (r : Resource) (h : r.kind.external = true) :
-    diff.snapshot (storeExternal (upload large r)) = diff.snapshot r := by
+/-- Skills, hooks and MCP servers, small or large bundle, uploaded or already held,
+read back equal to what the diff compares. -/
+theorem storeExternal_snapshot (large : Nat → Bool) (held : Resource → Bool) (r : Resource)
+    (h : r.kind.external = true) :
+    diff.snapshot (storeExternal (upload large held r)) = diff.snapshot r := by
   obtain ⟨kind, name, ⟨settings, bundle, storage⟩⟩ := r
   cases bundle with
   | none => cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
   | some b =>
-    by_cases hl : large b <;> cases kind <;>
-      simp_all [upload, storeExternal, diff.snapshot, Kind.external]
+    by_cases hl : large b <;> by_cases hh : held ⟨kind, name, ⟨settings, some b, storage⟩⟩ <;>
+      cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
 
 /-- Upload and the recorded snapshot keep a resource's key. -/
-theorem storeExternal_key (large : Nat → Bool) (r : Resource) :
-    (storeExternal (upload large r)).key = r.key := by
-  have hu : (upload large r).key = r.key := by
+theorem storeExternal_key (large : Nat → Bool) (held : Resource → Bool) (r : Resource) :
+    (storeExternal (upload large held r)).key = r.key := by
+  have hu : (upload large held r).key = r.key := by
     unfold upload
-    split <;> (try split) <;> rfl
+    split <;> (repeat' split) <;> rfl
   rw [← hu]
   unfold storeExternal
   split <;> rfl
 
 /-- The fixed sync converges for every kind: external kinds with the server's real
 snapshot and upload, every other kind given its normalization round trip. -/
-theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Resource)
+theorem sync_converges_real (large : Nat → Bool) (held : Resource → Bool)
+    (normalize : Resource → Resource)
     (hkey : ∀ r, (normalize r).key = r.key)
     (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
-    (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
+    (∀ e ∈ diff m (read (sync (storeReal large held normalize) m prune s)), e.op = .delete) ∧
       (prune = true →
-        diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
+        diff m (read (sync (storeReal large held normalize) m prune s)) = []) := by
   refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
   · unfold storeReal
     split
-    · exact storeExternal_key large r
+    · exact storeExternal_key large held r
     · exact hkey r
   · unfold storeReal
     split
-    · exact storeExternal_snapshot large r (by assumption)
+    · exact storeExternal_snapshot large held r (by assumption)
     · exact hround r (by simpa using ‹¬r.kind.external = true›)
+
+/-- The retry is never refused: it holds back only skills the account holds. -/
+theorem refused_retry (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    refused large (retryHeld large held holds m) holds m = [] := by
+  simp only [refused, retryHeld, List.map_eq_nil_iff, List.filter_eq_nil_iff]
+  intro r hr
+  by_cases hc : (r.kind == .skill && r.config.bundle.any large && held r && !holds r) = true
+  · have : r.key ∈ (m.filter fun r => r.kind == .skill && r.config.bundle.any large &&
+        held r && !holds r).map (·.key) := List.mem_map_of_mem (List.mem_filter.mpr ⟨hr, hc⟩)
+    simp_all
+  · simp_all
+
+/-- So the sync with its one retry always lands, and converges as one sync does. -/
+theorem putManifest_converges (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource)
+    (hkey : ∀ r, (normalize r).key = r.key)
+    (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
+    {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
+    ∃ s', putManifest large held holds normalize m prune s = some s' ∧
+      (∀ e ∈ diff m (read s'), e.op = .delete) ∧ (prune = true → diff m (read s') = []) := by
+  by_cases h : refused large held holds m = []
+  · exact ⟨_, by simp [putManifest, h], sync_converges_real large held normalize hkey hround hu prune s⟩
+  · exact ⟨_, by simp [putManifest, h, refused_retry],
+      sync_converges_real large (retryHeld large held holds m) normalize hkey hround hu prune s⟩
 
 /-- A prune list deletes nothing it does not name: a row the sync without prune
 keeps survives unless the list names its key. -/
@@ -396,8 +458,30 @@ theorem syncOnly_all {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
 large ones as a storage handle, and the diff compares neither. -/
 example :
     let m : Manifest := [⟨.mcp, 1, ⟨0, some 42, none⟩⟩]
-    diff m (read (sync (storeReal (· > 10) id) m true [])) = [] ∧
-      diff m (read (sync (storeReal (· > 100) id) m true [])) = [] := by
+    diff m (read (sync (storeReal (· > 10) (fun _ => false) id) m true [])) = [] ∧
+      diff m (read (sync (storeReal (· > 100) (fun _ => false) id) m true [])) = [] := by
+  decide
+
+/-- A large skill is uploaded once: a second sync of the same skill, which the stage
+already holds, carries neither its bytes nor an upload handle, and both converge. -/
+example :
+    let r : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    upload (· > 10) (fun _ => false) r = ⟨.skill, 1, ⟨0, none, some 42⟩⟩ ∧
+      upload (· > 10) (fun _ => true) r = ⟨.skill, 1, ⟨0, none, none⟩⟩ ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => false) id) [r] true [])) = [] ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => true) id) [r] true [])) = [] := by
+  decide
+
+/-- Another stage replaced held skill `a`: the first send is refused naming only `a`,
+the retry uploads `a`, still sends `b` held, and lands. -/
+example :
+    let a : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    let b : Resource := ⟨.skill, 2, ⟨0, some 43, none⟩⟩
+    let holds := fun (r : Resource) => r.key == b.key
+    refused (· > 10) (fun _ => true) holds [a, b] = [a.key] ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] a = false ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] b = true ∧
+      (putManifest (· > 10) (fun _ => true) holds id [a, b] true []).isSome := by
   decide
 
 /-- An edited hosted MCP or hook bundle carries a new `sha256`, so the diff shows it. -/

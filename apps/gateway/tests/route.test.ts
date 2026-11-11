@@ -504,6 +504,9 @@ function gatewayConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     authFailureLimiter: new RateLimiter(20, 60_000),
     coreBaseUrl: "https://core.example",
     limits: limits(),
+    natsConnection: async function (): Promise<never> {
+      throw new Error("NATS unavailable");
+    },
     spentTickets: memorySpentTickets(),
     terminalTicketSecrets: ["terminal-secret"],
     ...overrides,

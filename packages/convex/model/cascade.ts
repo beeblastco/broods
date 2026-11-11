@@ -6,7 +6,7 @@ import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { deleteRunWaits, unregisterSchedule } from "./cronSchedules";
 import { takeHarnessEntryBatch } from "./harnessSessionEntries";
-import { releaseSeat } from "./orgBilling";
+import { dropInvitations } from "./orgBilling";
 import { isManagedService } from "./planLimits";
 import { lockImage } from "./snapshotLocks";
 
@@ -361,6 +361,14 @@ export async function purgeOrg(
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
+  const invitations = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_orgId_and_email", (q) => q.eq("orgId", orgId))
+    .collect();
+  // Its developers' seats go back to the owner's pool; the owner's Pro stays
+  // for their other orgs (model/orgBilling.ts).
+  await dropInvitations(ctx, invitations, orgId);
+
   const installations = await ctx.db
     .query("githubInstallations")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
@@ -369,9 +377,6 @@ export async function purgeOrg(
     await ctx.db.delete(installation._id);
   }
 
-  // Its developers' seats go back to the owner's pool; the owner's Pro stays
-  // for their other orgs (model/orgBilling.ts).
-  await releaseSeat(ctx, orgId);
   await ctx.db.delete(orgId);
 }
 
@@ -409,11 +414,24 @@ export async function purgeUser(
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
     .collect();
-  for (const membership of memberships) {
-    if (purgedOrgIds.has(membership.orgId)) continue;
-    await ctx.db.delete(membership._id);
-    await releaseSeat(ctx, membership.orgId);
-  }
+  const invitations = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .collect();
+  const sent = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_invitedBy_and_orgId", (q) => q.eq("invitedBy", user._id))
+    .collect();
+  const held = [...memberships, ...invitations].filter(
+    (row) => !purgedOrgIds.has(row.orgId),
+  );
+  for (const row of held) await ctx.db.delete(row._id);
+  // An invitation claimed by its own sender is in both lists.
+  await dropInvitations(
+    ctx,
+    sent.filter((row) => row.userId !== user._id),
+    ...held.map((row) => row.orgId),
+  );
 
   const cliAuthCodes = await ctx.db
     .query("cliAuthCodes")

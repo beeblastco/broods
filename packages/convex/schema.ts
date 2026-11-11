@@ -33,6 +33,8 @@ export const usersFields = {
   workosDeletionRequestedAt: v.optional(v.number()),
   workosDeletionAttempts: v.optional(v.number()),
   activeOrgId: v.optional(v.id("orgs")),
+  // True while an org invitation waits on this user; the shell reads it from this row.
+  invited: v.optional(v.boolean()),
 };
 
 /** A project's linked GitHub repo; see `github.ts`. */
@@ -436,6 +438,17 @@ export const orgMembersFields = {
   role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
   roleId: v.optional(v.id("orgRoles")),
   invitedBy: v.optional(v.id("users")),
+  createdAt: v.number(),
+};
+
+// `userId` is set once the email has an account; until then the invitation waits on `email`.
+export const orgInvitationsFields = {
+  orgId: v.id("orgs"),
+  email: v.string(),
+  userId: v.optional(v.id("users")),
+  role: orgMembersFields.role,
+  roleId: v.optional(v.id("orgRoles")),
+  invitedBy: v.id("users"),
   createdAt: v.number(),
 };
 
@@ -915,7 +928,7 @@ export const workspaceFilesFields = {
 
 export const uploadGrantsFields = {
   accountId: v.id("accounts"),
-  kind: v.union(v.literal("mcp"), v.literal("workspace")),
+  kind: v.union(v.literal("mcp"), v.literal("skill"), v.literal("workspace")),
   createdAt: v.number(),
   expiresAt: v.number(),
 };
@@ -1527,6 +1540,11 @@ export default defineSchema({
   orgMembers: defineTable(orgMembersFields)
     .index("by_userId", ["userId"])
     .index("by_orgId_and_userId", ["orgId", "userId"]),
+  orgInvitations: defineTable(orgInvitationsFields)
+    .index("by_orgId_and_email", ["orgId", "email"])
+    .index("by_email_and_userId", ["email", "userId"])
+    .index("by_invitedBy_and_orgId", ["invitedBy", "orgId"])
+    .index("by_userId", ["userId"]),
   permissions: defineTable(permissionsFields).index("by_accountId_and_name", [
     "accountId",
     "name",

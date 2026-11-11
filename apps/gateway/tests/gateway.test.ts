@@ -8,6 +8,11 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import {
+  cursorKey,
+  openCursor,
+  sealCursor,
+} from "../src/observability-cursor.ts";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -1804,6 +1809,44 @@ test("bounds observability backfill requests", () => {
       backfill: Number.POSITIVE_INFINITY,
     }),
   ).toBe(false);
+});
+
+test("a resume cursor is one sealed block, and never a sandbox tail's", () => {
+  const resume = { type: "subscribe", stream: "logs" };
+  const cursor = "AAAAAAAAAAAAAAAAAAAAAA";
+
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: cursor })).toBe(
+    true,
+  );
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 41 })).toBe(false);
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: "41" })).toBe(
+    false,
+  );
+  expect(
+    isObservabilityClientMessage({ ...resume, afterSeq: `${cursor}=` }),
+  ).toBe(false);
+  expect(
+    isObservabilityClientMessage({
+      ...resume,
+      afterSeq: cursor,
+      sandboxId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+    }),
+  ).toBe(false);
+});
+
+test("a cursor opens only under the key that sealed it", () => {
+  const scope = { accountId: "acct_1", projectSlug: "p", stageSlug: "dev" };
+  const key = cursorKey("secret", scope);
+  const other = cursorKey("secret", { ...scope, accountId: "acct_2" });
+
+  expect(openCursor(key, sealCursor(key, 41))).toBe(41);
+  expect(openCursor(key, sealCursor(key, 0))).toBe(0);
+  expect(openCursor(other, sealCursor(key, 41))).toBeUndefined();
+  expect(openCursor(key, "AAAAAAAAAAAAAAAAAAAAAA")).toBeUndefined();
+  expect(openCursor(key, "short")).toBeUndefined();
+  // Neighbouring sequences share nothing a reader could order or subtract.
+  expect(sealCursor(key, 41)).toMatch(/^[A-Za-z0-9_-]{22}$/);
+  expect(sealCursor(key, 41)).not.toBe(sealCursor(key, 42));
 });
 
 test("observability relay skips malformed and below-threshold log messages", async () => {
@@ -3903,7 +3946,12 @@ function zeroBufferConnection(
         ) => {
           onConsumerOptions?.(options);
 
-          return { consume: consume };
+          return {
+            consume: consume,
+            info: async (): Promise<{ delivered: { stream_seq: number } }> => ({
+              delivered: { stream_seq: (options.opt_start_seq ?? 1) - 1 },
+            }),
+          };
         },
       },
     }),

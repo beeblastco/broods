@@ -260,7 +260,7 @@ describe("CLI tokens follow the current org membership", () => {
 describe("stage-scoped sync of account-wide resources", () => {
   test("lists which stage manages each external resource", async () => {
     const t = roleTest();
-    const { accountId, projectId, stageId, otherStageId } = await seed(t);
+    const { accountId, projectId, otherStageId } = await seed(t);
     await t.run(async (ctx) => {
       await ctx.db.insert("cliExternalResources", {
         accountId: accountId,
@@ -276,19 +276,17 @@ describe("stage-scoped sync of account-wide resources", () => {
 
     const rows = await t.query(
       internal.cli.sync.listExternalResourcesForAccount,
-      { accountId: accountId },
+      { accountId: accountId, project: "demo-app", stage: "development" },
     );
     const foreign = new Set(
-      rows
-        .filter((row) => row.stageId !== stageId)
-        .map((row) => `${row.kind}:${row.name}`),
+      rows.filter((row) => !row.own).map((row) => `${row.kind}:${row.name}`),
     );
 
     expect(rows).toEqual([
       {
         kind: "skill",
         name: "release-notes",
-        stageId: otherStageId,
+        own: false,
         externalId: `${accountId}/release-notes`,
       },
     ]);

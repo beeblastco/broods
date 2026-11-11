@@ -8,6 +8,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  type HeadObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3Client, type S3Access } from "./aws";
@@ -153,6 +154,24 @@ export async function getS3ObjectUrl(
   );
 }
 
+export async function headS3Object(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<HeadObjectCommandOutput | null> {
+  const client = await s3Client(access);
+  try {
+    return await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
+  } catch (err) {
+    if (isMissingS3Error(err)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export function isMissingS3Error(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
@@ -250,26 +269,20 @@ export async function s3ObjectSize(
   key: string,
   access?: S3Access,
 ): Promise<number | null> {
-  const client = await s3Client(access);
-  try {
-    const head = await client.send(
-      new HeadObjectCommand({ Bucket: bucket, Key: key }),
-    );
+  const head = await headS3Object(bucket, key, access);
 
-    return head.ContentLength ?? 0;
-  } catch (err) {
-    if (isMissingS3Error(err)) {
-      return null;
-    }
-    throw err;
-  }
+  return head ? (head.ContentLength ?? 0) : null;
 }
 
 export async function writeS3Object(
   bucket: string,
   key: string,
   body: string | Uint8Array,
-  options: { contentType?: string; executable?: boolean } = {},
+  options: {
+    contentType?: string;
+    executable?: boolean;
+    metadata?: Record<string, string>;
+  } = {},
   access?: S3Access,
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
@@ -280,10 +293,13 @@ export async function writeS3Object(
       Key: key,
       Body: body,
       ...(options.contentType ? { ContentType: options.contentType } : {}),
-      Metadata: posixMetadata(
-        key.endsWith("/") ? "directory" : "file",
-        options.executable === true,
-      ),
+      Metadata: {
+        ...posixMetadata(
+          key.endsWith("/") ? "directory" : "file",
+          options.executable === true,
+        ),
+        ...options.metadata,
+      },
     }),
   );
 
