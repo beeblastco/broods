@@ -113,6 +113,7 @@ export type CronDoc = Doc<"crons">;
 export type {
   CliManifest,
   CliManifestResource,
+  CliPruneTarget,
   DeploymentRegion,
   GeneratedIds,
 } from "../../convex/cli/types.ts";

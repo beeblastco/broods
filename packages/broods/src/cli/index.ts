@@ -16,7 +16,11 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest, DeploymentRegion } from "../contracts.ts";
+import type {
+  CliManifest,
+  CliPruneTarget,
+  DeploymentRegion,
+} from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
@@ -47,6 +51,7 @@ import {
   type CliStage,
   type CliStageSession,
   cliFetch,
+  type DiffEntry,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -2257,46 +2262,49 @@ async function syncDevOnce(
   const undecided = deletes.filter(
     (entry): boolean => !declined.has(`${entry.kind}:${entry.name}`),
   );
-  let pruned = false;
+  const chosen: DiffEntry[] = [];
   if (undecided.length > 0) {
-    // The server prunes every undeclared resource at once, earlier-declined ones too.
     printWarning("These remote resources are no longer declared locally:");
-    printDiffEntries(deletes);
-    if (
-      await promptConfirm(
-        `Delete all ${deletes.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
+    printDiffEntries(undecided);
+    for (const entry of undecided) {
+      const key = `${entry.kind}:${entry.name}`;
+      if (
+        await promptConfirm(
+          `Delete ${key} from ${manifest.project}/${manifest.stage}?`,
+        )
       )
-    ) {
-      result = await client.putManifest(
-        manifest,
-        true,
-        false,
-        result.revision,
-        source,
-      );
-      await writeGeneratedFiles(
-        manifest,
-        result.ids,
-        process.cwd(),
-        resourceAliases,
-        result.deployment,
-        channels,
-      );
-      await clearDeclinedDeletes();
-      pruned = true;
-    } else {
-      await rememberDeclinedDeletes(
-        undecided.map((entry): string => `${entry.kind}:${entry.name}`),
-      );
+        chosen.push(entry);
+      else await rememberDeclinedDeletes([key]);
     }
   }
+  if (chosen.length > 0) {
+    result = await client.putManifest(
+      manifest,
+      chosen.map(({ kind, name }): CliPruneTarget => ({
+        kind: kind,
+        name: name,
+      })),
+      false,
+      result.revision,
+      source,
+    );
+    await writeGeneratedFiles(
+      manifest,
+      result.ids,
+      process.cwd(),
+      resourceAliases,
+      result.deployment,
+      channels,
+    );
+  }
 
-  if (!pruned && deletes.length > 0) {
-    const names = deletes
+  const kept = deletes.filter((entry): boolean => !chosen.includes(entry));
+  if (kept.length > 0) {
+    const names = kept
       .map((entry): string => `${entry.kind}:${entry.name}`)
       .join(", ");
     printWarning(
-      `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+      `${kept.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
     );
   }
 
@@ -2488,12 +2496,6 @@ async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
   const path = process.env.BROODS_DECLINED_FILE;
   if (!path || keys.length === 0) return;
   await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
-}
-
-async function clearDeclinedDeletes(): Promise<void> {
-  const path = process.env.BROODS_DECLINED_FILE;
-  if (!path) return;
-  await writeFile(path, "", "utf8");
 }
 
 async function envCommand(args: string[]): Promise<void> {

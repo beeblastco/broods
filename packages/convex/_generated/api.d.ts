@@ -5758,6 +5758,7 @@ export declare const internal: {
           stage: string;
           target:
             | {
+                pruneOnly?: Array<string>;
                 resources: Array<{
                   config: any;
                   description?: string;
@@ -5899,6 +5900,7 @@ export declare const internal: {
             stage: string;
             version: 1;
           };
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         Array<string>
@@ -5914,6 +5916,7 @@ export declare const internal: {
           };
           project: string;
           prune?: boolean;
+          pruneOnly?: Array<string>;
           resources: Array<{
             config: any;
             description?: string;
@@ -6044,6 +6047,7 @@ export declare const internal: {
             version: 1;
           };
           prune?: boolean;
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         {
