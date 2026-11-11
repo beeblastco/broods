@@ -16,7 +16,7 @@ import {
   sandboxIdleMs,
   sandboxLaunchUsage,
 } from "../model/usageMeter";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import {
   SANDBOX_RESERVATION_TTL_SECONDS,
   sandboxStillReserved,

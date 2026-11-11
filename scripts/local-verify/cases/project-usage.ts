@@ -36,7 +36,10 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
   };
 
   asAdmin("user:ensureSynced", {});
-  const previous = asAdmin("org/orgs:getActive", {}) as Doc<"orgs"> | null;
+  const previous = asAdmin(
+    "dashboardReads:activeOrg",
+    {},
+  ) as Doc<"orgs"> | null;
   // An org of its own, so the totals move only by what this case writes.
   const orgId = String(
     asAdmin("org/orgs:create", { name: `usage-${context.runId}` }),
@@ -52,7 +55,7 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
         "run",
         "--identity",
         identity,
-        "org/orgs:getActive",
+        "dashboardReads:activeOrg",
         "{}",
       ],
       {
@@ -87,7 +90,7 @@ export async function projectUsage(context: VerifyContext): Promise<void> {
       "org/lifecycle:provision",
       JSON.stringify({ orgId: orgId }),
     ]);
-    const active = asAdmin("org/orgs:getActiveAccount", {}) as {
+    const active = asAdmin("dashboardReads:activeAccount", {}) as {
       accountId: string;
     } | null;
     assertStep("the case's org has an account", active !== null, "none");

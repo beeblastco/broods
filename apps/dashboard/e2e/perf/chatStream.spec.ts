@@ -153,9 +153,9 @@ test("a long streamed answer on the agent Test tab reaches the screen without a 
       !probeAccount.adminKey,
       "The probe's project has no agent on its canvas; add one with a runtime key, or run against a self-hosted stack (E2E_ADMIN_KEY), which seeds one",
     );
-    const stages = run(STACK_ADMIN, "stage:list", {
+    const stages = run(STACK_ADMIN, "dashboardReads:stages", {
       projectId: projectId,
-    }) as FunctionReturnType<typeof api.stage.list>;
+    }) as FunctionReturnType<typeof api.dashboardReads.stages>;
     const stage = stages.find((candidate) => candidate.isDefault);
     if (!stage) throw new Error("The probe's project has no default stage");
     const scope: FunctionArgs<typeof api.agent.deployments.ensureForStage> = {

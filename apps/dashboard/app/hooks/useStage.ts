@@ -21,7 +21,7 @@ export function useStage(): {
   const params = useParams<{ projectId?: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const stages = useQuery(
-    api.stage.list,
+    api.dashboardReads.stages,
     projectId ? { projectId: projectId } : "skip",
   ) as Doc<"stages">[] | undefined;
 

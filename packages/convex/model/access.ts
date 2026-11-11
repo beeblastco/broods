@@ -11,7 +11,7 @@ import {
   type PolicyDocument,
   type PolicyEffect,
   type PolicyRule,
-} from "./policyRules";
+} from "./policyDocument";
 
 type Ctx = QueryCtx | MutationCtx;
 

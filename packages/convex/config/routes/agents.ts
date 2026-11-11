@@ -440,7 +440,7 @@ async function validateAgentPolicyIds(
 ): Promise<void> {
   for (const policyId of config.policies ?? []) {
     const policy: Doc<"agentPolicies"> | null = await ctx.runQuery(
-      internal.agent.policies.getById,
+      internal.runtimeLookups.policyById,
       {
         accountId: accountId,
         policyId: policyId,
