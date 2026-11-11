@@ -6319,7 +6319,8 @@ components:
             Storage id returned by POSTing the module source to an upload URL
             from `POST /v1/mcp/uploads`; the large-bundle alternative to
             `bundle`. Requires `sha256`. Exactly one of url, bundle or
-            bundleStorageId connects the server.
+            bundleStorageId connects the server. An id another resource
+            already holds answers 400 and is left untouched.
         sha256:
           type: string
           description: >-
