@@ -49,6 +49,21 @@ describe("agent row ownership", () => {
     expect((await docOf(t, configId))?.agentId).toBeUndefined();
   });
 
+  test("update refuses a config the run would refuse, and stores nothing", async () => {
+    const t = refsTest();
+    const { configId } = await seedForeignLink(t, "unlinked");
+    const before = await docOf(t, configId);
+
+    await expect(
+      t.mutation(api.agent.config.update, {
+        configId: configId,
+        name: "renamed",
+        extraConfig: { agent: { maxTurn: -1 } },
+      }),
+    ).rejects.toThrow("config.agent.maxTurn");
+    expect(await docOf(t, configId)).toEqual(before);
+  });
+
   test("update syncs the account's own row", async () => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
     const t = refsTest();

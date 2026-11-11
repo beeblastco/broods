@@ -5,6 +5,7 @@ import type { CanvasNode } from "../model/canvasShapes";
 import {
   agentCanvasBadge,
   collectEnvPlaceholderNames,
+  substituteEnvPlaceholders,
   toNestedAgentConfig,
   type AgentCanvasBadge,
   agentCanvasBadgeValidator,
@@ -12,6 +13,7 @@ import {
 import {
   assertAgentRuntimeRefs,
   mergeCanvasSandboxes,
+  normalizeAgentConfig,
 } from "../model/agentRules";
 import {
   deleteAgentRow,
@@ -36,6 +38,7 @@ import {
 } from "../model/ownership/project";
 import {
   deleteAgentConfig,
+  loadAgentRuntimeSecrets,
   saveAgentRuntimeSecrets,
 } from "../model/agentRuntimeSecrets";
 import { redactConfigSecrets } from "../model/configValues";
@@ -350,6 +353,16 @@ export const update = mutation({
     if (updates.runtimeVariables === undefined) {
       await bindStageEnvRefs(ctx, configId);
     }
+    const saved = await ctx.db.get(configId);
+    // patch: the canvas wires sandboxes and channels in their own saves.
+    if (saved)
+      normalizeAgentConfig(
+        substituteEnvPlaceholders(
+          toNestedAgentConfig(saved),
+          await loadAgentRuntimeSecrets(ctx, configId),
+        ),
+        { patch: true },
+      );
 
     const accountId = await accountIdForProject(ctx, existing.projectId);
     if (accountId) {
