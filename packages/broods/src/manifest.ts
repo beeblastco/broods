@@ -111,6 +111,8 @@ export type SkillManifestConfig = {
   source: "files";
   path: string;
   files: SkillBundleFile[];
+  // Set by the sync client when it uploads the files instead of sending them inline.
+  filesStorageId?: string;
 };
 
 type SkillBundleFile = {

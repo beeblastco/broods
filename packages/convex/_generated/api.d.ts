@@ -4089,7 +4089,7 @@ export declare const internal: {
       claim: FunctionReference<
         "mutation",
         "internal",
-        { storageId: Id<"_storage"> },
+        { maxBytes?: number; storageId: Id<"_storage"> },
         null
       >;
       grant: FunctionReference<
@@ -5306,13 +5306,39 @@ export declare const internal: {
       storeUploadedFiles: FunctionReference<
         "action",
         "internal",
-        { files: any; filesStorageId: Id<"_storage"> },
+        {
+          files: Array<{
+            contentType?: string;
+            path: string;
+            sha256: string;
+            size: number;
+          }>;
+          filesStorageId: Id<"_storage">;
+        },
         Array<{
           mimeType: string;
           path: string;
           sizeBytes: number;
           storageId: Id<"_storage">;
         }>
+      >;
+      unheld: FunctionReference<
+        "action",
+        "internal",
+        {
+          accountId: Id<"accounts">;
+          projectId: Id<"projects">;
+          skills: Array<{
+            files: Array<{
+              contentType?: string;
+              path: string;
+              sha256: string;
+              size: number;
+            }>;
+            name: string;
+          }>;
+        },
+        Array<string>
       >;
       validateSkills: FunctionReference<
         "action",
@@ -6231,6 +6257,16 @@ export declare const internal: {
           value: string;
         },
         null
+      >;
+      skillNodeFilesMatch: FunctionReference<
+        "query",
+        "internal",
+        {
+          files: Array<{ path: string; sha256: string }>;
+          projectId: Id<"projects">;
+          skillName: string;
+        },
+        boolean
       >;
       syncManifestBySecretHash: FunctionReference<
         "mutation",

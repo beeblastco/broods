@@ -15,7 +15,7 @@ import {
 import { hasDashboardPermission } from "../model/access";
 import { userByAuthId } from "../model/ownership/org";
 import { accountCipher } from "../model/accountKeys";
-import { sha256Hex } from "../model/accountSecrets";
+import { hexFromBytes, sha256Hex } from "../model/accountSecrets";
 import { deploymentRegionValidator } from "../schema";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
@@ -897,6 +897,39 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
     }
 
     return null;
+  },
+});
+
+// True when the project's canvas copy of a skill holds exactly these files (hex sha256).
+export const skillNodeFilesMatch = internalQuery({
+  args: {
+    projectId: v.id("projects"),
+    skillName: v.string(),
+    files: v.array(v.object({ path: v.string(), sha256: v.string() })),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const rows = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", args.projectId)
+          .eq("nodeId", canvasNodeId("skill", resourceName(args.skillName))),
+      )
+      .collect();
+    const held = new Map<string, string>();
+    for (const row of rows) {
+      const blob = row.storageId && (await ctx.db.system.get(row.storageId));
+      if (!blob) continue;
+      // `_storage` keeps sha256 as base64.
+      const digest = Uint8Array.from(atob(blob.sha256), (c) => c.charCodeAt(0));
+      held.set(row.path, hexFromBytes(digest));
+    }
+
+    return (
+      rows.length === args.files.length &&
+      args.files.every((file) => held.get(file.path) === file.sha256)
+    );
   },
 });
 

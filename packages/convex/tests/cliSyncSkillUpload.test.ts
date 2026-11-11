@@ -4,40 +4,63 @@ import { createHash } from "node:crypto";
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
-import type { SkillBundleFile } from "../model/skills";
+import { MAX_SKILL_BUNDLE_BYTES } from "../model/skillLimits";
 import schema from "../schema";
 
-const { createOrReplaceSkill } = vi.hoisted(() => ({
-  createOrReplaceSkill: vi.fn(
-    async (accountId: string, files: SkillBundleFile[]) => ({
-      name: "docs",
-      description: "Docs.",
-      path: `${accountId}/docs`,
-      files: files.map((file) => ({
-        path: file.path,
-        size: file.bytes.byteLength,
-      })),
-    }),
-  ),
+// The skills bucket, in memory: key -> body and user metadata.
+const { bucket, writes } = vi.hoisted(() => ({
+  bucket: new Map<
+    string,
+    { body: Uint8Array; metadata: Record<string, string> | undefined }
+  >(),
+  writes: { count: 0 },
 }));
 
-vi.mock("../model/skills", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../model/skills")>()),
-  createOrReplaceSkill: createOrReplaceSkill,
+vi.mock("../model/s3", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../model/s3")>()),
+  deleteS3Prefix: async (_bucket: string, prefix: string): Promise<number> => {
+    const keys = [...bucket.keys()].filter((key) => key.startsWith(prefix));
+    for (const key of keys) bucket.delete(key);
+
+    return keys.length;
+  },
+  headS3Object: async (
+    _bucket: string,
+    key: string,
+  ): Promise<{ Metadata: Record<string, string> | undefined } | null> => {
+    const object = bucket.get(key);
+
+    return object ? { Metadata: object.metadata } : null;
+  },
+  writeS3Object: async (
+    _bucket: string,
+    key: string,
+    body: string | Uint8Array,
+    options: { metadata?: Record<string, string> } = {},
+  ): Promise<number> => {
+    writes.count += 1;
+    bucket.set(key, {
+      body: typeof body === "string" ? new TextEncoder().encode(body) : body,
+      metadata: options.metadata,
+    });
+
+    return 0;
+  },
 }));
 
 const modules = import.meta.glob("../**/*.ts");
 
 const PROJECT = "skill-upload";
 const SECRET = "bask_secret_skill_upload";
-const FILES = [
-  { path: "SKILL.md", text: "---\nname: docs\ndescription: Docs.\n---\n" },
-  { path: "notes.md", text: "# Notes\n" },
-];
+const SKILL_MD = "---\nname: docs\ndescription: Docs.\n---\n";
+const PROD_NOTES = "# Notes from prod\n";
+const DEV_NOTES = "# Notes from dev\n";
 
 type T = TestConvex<typeof schema>;
+type File = { path: string; text: string };
 
 const t = (): T => {
   const tt = convexTest(schema, modules);
@@ -48,19 +71,18 @@ const t = (): T => {
 
 beforeEach((): void => {
   vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  vi.stubEnv("SKILLS_BUCKET_NAME", "skills");
 });
 afterEach((): void => {
   vi.unstubAllEnvs();
-  createOrReplaceSkill.mockClear();
+  bucket.clear();
+  writes.count = 0;
 });
 
 test("a filesStorageId another row owns is refused before any read, and kept", async (): Promise<void> => {
   const tt = t();
   await seedAccount(tt);
-  const owned = await tt.run(
-    async (ctx): Promise<Id<"_storage">> =>
-      await ctx.storage.store(new Blob([upload()])),
-  );
+  const owned = await store(tt, skillFiles(PROD_NOTES));
   await tt.run(async (ctx): Promise<void> => {
     await ctx.db.insert("stageSources", {
       stageId: (await ctx.db.query("stages").first())!._id,
@@ -74,33 +96,130 @@ test("a filesStorageId another row owns is refused before any read, and kept", a
     });
   });
 
-  const response = await putSkill(tt, { filesStorageId: owned });
+  const response = await putSkill(tt, "development", skillFiles(PROD_NOTES), {
+    filesStorageId: owned,
+  });
 
   expect(response.status).toBe(400);
   expect(await response.text()).toContain("already registered");
-  expect(createOrReplaceSkill).not.toHaveBeenCalled();
+  expect(writes.count).toBe(0);
   expect(await blobExists(tt, owned)).toBe(true);
 });
 
-test("an uploaded skill is stored from its blob, which is then deleted; an unchanged re-sync writes nothing", async (): Promise<void> => {
+test("an unchanged re-sync is refused once another stage overwrote the account skill", async (): Promise<void> => {
   const tt = t();
   await seedAccount(tt);
-  const blob = await tt.run(
-    async (ctx): Promise<Id<"_storage">> =>
-      await ctx.storage.store(new Blob([upload()])),
+  const prod = skillFiles(PROD_NOTES);
+  const dev = skillFiles(DEV_NOTES);
+  const upload = async (
+    stage: string,
+    files: File[],
+  ): Promise<Id<"_storage">> => {
+    const blob = await store(tt, files);
+    const response = await putSkill(tt, stage, files, { filesStorageId: blob });
+    expect(response.status).toBe(200);
+
+    return blob;
+  };
+
+  const first = await upload("production", prod);
+  expect(await blobExists(tt, first)).toBe(false);
+  expect(await putSkill(tt, "production", prod, {})).toHaveProperty(
+    "status",
+    200,
   );
+  await upload("development", dev);
+  const written = writes.count;
 
-  expect((await putSkill(tt, { filesStorageId: blob })).status).toBe(200);
-  expect(createOrReplaceSkill).toHaveBeenCalledTimes(1);
+  const stale = await putSkill(tt, "production", prod, {});
+  expect(stale.status).toBe(409);
+  expect(await stale.text()).toContain("skill_upload_required");
+  expect(writes.count).toBe(written);
+  expect(notes()).toBe(DEV_NOTES);
+
+  await upload("production", prod);
+  expect(notes()).toBe(PROD_NOTES);
+});
+
+test("an unchanged re-sync is refused when the project's canvas files are stale", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const files = skillFiles(PROD_NOTES);
+  const blob = await store(tt, files);
   expect(
-    createOrReplaceSkill.mock.calls[0]?.[1].map((file) =>
-      new TextDecoder().decode(file.bytes),
-    ),
-  ).toEqual(FILES.map((file) => file.text));
-  expect(await blobExists(tt, blob)).toBe(false);
+    (await putSkill(tt, "development", files, { filesStorageId: blob })).status,
+  ).toBe(200);
+  await tt.mutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
+    secretHash: await sha256Hex(SECRET),
+    project: PROJECT,
+    stage: "development",
+    skillName: "docs",
+    files: [],
+  });
 
-  expect((await putSkill(tt, {})).status).toBe(200);
-  expect(createOrReplaceSkill).toHaveBeenCalledTimes(1);
+  expect((await putSkill(tt, "development", files, {})).status).toBe(409);
+});
+
+test("a blob over the skill cap is refused at the claim, before it is read", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const big = await tt.run(
+    async (ctx): Promise<Id<"_storage">> =>
+      await ctx.storage.store(
+        new Blob([new Uint8Array(MAX_SKILL_BUNDLE_BYTES + 1)]),
+      ),
+  );
+  const tooBig = await putSkill(tt, "development", skillFiles(PROD_NOTES), {
+    filesStorageId: big,
+  });
+  expect(tooBig.status).toBe(400);
+  expect(await tooBig.text()).toContain("Uploaded file exceeds");
+});
+
+test("a failed sync deletes the blob it claimed", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const wrong = await store(tt, skillFiles(DEV_NOTES));
+  const response = await putSkill(tt, "development", skillFiles(PROD_NOTES), {
+    filesStorageId: wrong,
+  });
+  expect(response.status).toBe(400);
+  expect(await blobExists(tt, wrong)).toBe(false);
+  expect(writes.count).toBe(0);
+});
+
+test("declared sizes must be non-negative integers that slice the blob exactly", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const skill = Buffer.byteLength(SKILL_MD);
+  const notesBytes = Buffer.byteLength(PROD_NOTES);
+  const empty = sha(new Uint8Array());
+  const prodSha = sha(Buffer.from(PROD_NOTES));
+  // Each passed before: `subarray` clamps or truncates and the offsets still add up.
+  const cases = [
+    [
+      { path: "SKILL.md", size: skill, sha256: sha(Buffer.from(SKILL_MD)) },
+      { path: "notes.md", size: notesBytes + 1, sha256: prodSha },
+      { path: "extra.md", size: -1, sha256: empty },
+    ],
+    [
+      {
+        path: "SKILL.md",
+        size: skill + 0.5,
+        sha256: sha(Buffer.from(SKILL_MD)),
+      },
+      { path: "notes.md", size: notesBytes - 0.5, sha256: prodSha },
+    ],
+  ];
+
+  for (const declared of cases) {
+    const blob = await store(tt, skillFiles(PROD_NOTES));
+    const response = await putDeclared(tt, "development", declared, {
+      filesStorageId: blob,
+    });
+    expect(response.status).toBe(400);
+  }
+  expect(writes.count).toBe(0);
 });
 
 async function blobExists(tt: T, id: Id<"_storage">): Promise<boolean> {
@@ -109,12 +228,22 @@ async function blobExists(tt: T, id: Id<"_storage">): Promise<boolean> {
   );
 }
 
-async function putSkill(
+function notes(): string | undefined {
+  const object = [...bucket.entries()].find(([key]) =>
+    key.endsWith("/docs/notes.md"),
+  )?.[1];
+
+  return object ? new TextDecoder().decode(object.body) : undefined;
+}
+
+async function putDeclared(
   tt: T,
+  stage: string,
+  files: Array<{ path: string; size: number; sha256: string }>,
   extra: { filesStorageId?: Id<"_storage"> },
 ): Promise<Response> {
   return await tt.fetch(
-    `/v1/account/projects/${PROJECT}/stages/development/manifest`,
+    `/v1/account/projects/${PROJECT}/stages/${stage}/manifest`,
     {
       method: "PUT",
       headers: {
@@ -125,7 +254,7 @@ async function putSkill(
         manifest: {
           version: 1,
           project: PROJECT,
-          stage: "development",
+          stage: stage,
           resources: [
             {
               kind: "skill",
@@ -133,10 +262,8 @@ async function putSkill(
               config: {
                 source: "files",
                 path: "skills/docs",
-                files: FILES.map((file) => ({
-                  path: file.path,
-                  size: Buffer.byteLength(file.text),
-                  sha256: createHash("sha256").update(file.text).digest("hex"),
+                files: files.map((file) => ({
+                  ...file,
                   contentType: "text/markdown",
                 })),
                 ...extra,
@@ -147,6 +274,24 @@ async function putSkill(
         prune: true,
       }),
     },
+  );
+}
+
+async function putSkill(
+  tt: T,
+  stage: string,
+  files: File[],
+  extra: { filesStorageId?: Id<"_storage"> },
+): Promise<Response> {
+  return await putDeclared(
+    tt,
+    stage,
+    files.map((file) => ({
+      path: file.path,
+      size: Buffer.byteLength(file.text),
+      sha256: sha(Buffer.from(file.text)),
+    })),
+    extra,
   );
 }
 
@@ -187,6 +332,22 @@ async function seedAccount(tt: T): Promise<void> {
   });
 }
 
-function upload(): string {
-  return FILES.map((file) => file.text).join("");
+function sha(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function skillFiles(notesText: string): File[] {
+  return [
+    { path: "SKILL.md", text: SKILL_MD },
+    { path: "notes.md", text: notesText },
+  ];
+}
+
+async function store(tt: T, files: File[]): Promise<Id<"_storage">> {
+  return await tt.run(
+    async (ctx): Promise<Id<"_storage">> =>
+      await ctx.storage.store(
+        new Blob([files.map((file) => file.text).join("")]),
+      ),
+  );
 }

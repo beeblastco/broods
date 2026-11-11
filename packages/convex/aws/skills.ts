@@ -8,7 +8,8 @@ import { z } from "zod/mini";
 
 import type { Id } from "../_generated/dataModel";
 import { internalAction, type ActionCtx } from "../_generated/server";
-import { parseInput } from "../model/inputSchema";
+import { internal } from "../_generated/api";
+import { parseInput, skillFileDeclarations } from "../model/inputSchema";
 import { configObject, parseOr } from "../model/storedJson";
 import {
   createJsonSkillFiles,
@@ -17,6 +18,7 @@ import {
   fetchGitHubSkillFiles,
   getSkill,
   listAccountSkills,
+  storedSkillHash,
   validateSkillBundle,
   type SkillBundleFile,
   type SkillMetadata,
@@ -41,17 +43,7 @@ const SKILL_FILE = z.looseObject({
   path: z.string(),
   contentBase64: z.string(),
 });
-// An uploaded skill is its files' bytes back to back, in manifest order.
-const UPLOADED_SKILL = z.looseObject({
-  files: z.array(
-    z.looseObject({
-      path: z.string(),
-      size: z.number(),
-      sha256: z.string(),
-      contentType: z.optional(z.string()),
-    }),
-  ),
-});
+const UPLOADED_SKILL = z.looseObject({ files: skillFileDeclarations });
 
 const skillMetadata = v.object({
   name: v.string(),
@@ -64,6 +56,14 @@ const storedSkill = v.object({
   path: v.string(),
   files: v.array(v.object({ path: v.string(), size: v.optional(v.number()) })),
 });
+const declaredFiles = v.array(
+  v.object({
+    path: v.string(),
+    size: v.number(),
+    sha256: v.string(),
+    contentType: v.optional(v.string()),
+  }),
+);
 const skillNodeFile = v.object({
   path: v.string(),
   storageId: v.id("_storage"),
@@ -87,13 +87,20 @@ export const createSkill = internalAction({
       args.filesStorageId,
     );
 
-    return await createOrReplaceSkill(args.accountId, files);
+    return await createOrReplaceSkill(
+      args.accountId,
+      files,
+      // Only an upload's hashes were checked against its bytes.
+      args.filesStorageId === undefined
+        ? undefined
+        : contentHash(parseInput(UPLOADED_SKILL, args.input, "").files),
+    );
   },
 });
 
-// The last reader of an uploaded skill: splits it into one stored blob per file, then deletes it.
+// Splits an uploaded skill into one stored blob per file; the sync deletes the upload after.
 export const storeUploadedFiles = internalAction({
-  args: { files: v.any(), filesStorageId: v.id("_storage") },
+  args: { files: declaredFiles, filesStorageId: v.id("_storage") },
   returns: v.array(skillNodeFile),
   handler: async (ctx, args): Promise<Array<Infer<typeof skillNodeFile>>> => {
     const files = await uploadedSkillFiles(ctx, args.filesStorageId, {
@@ -111,9 +118,37 @@ export const storeUploadedFiles = internalAction({
         sizeBytes: file.bytes.byteLength,
       });
     }
-    await ctx.storage.delete(args.filesStorageId);
 
     return stored;
+  },
+});
+
+// Skills sent without bytes whose account files or project canvas files are not the declared ones.
+export const unheld = internalAction({
+  args: {
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    skills: v.array(v.object({ name: v.string(), files: declaredFiles })),
+  },
+  returns: v.array(v.string()),
+  handler: async (ctx, args): Promise<string[]> => {
+    const stale: string[] = [];
+    for (const skill of args.skills) {
+      const held =
+        (await storedSkillHash(args.accountId, skill.name)) ===
+          contentHash(skill.files) &&
+        (await ctx.runQuery(internal.cli.sync.skillNodeFilesMatch, {
+          projectId: args.projectId,
+          skillName: skill.name,
+          files: skill.files.map(({ path, sha256 }) => ({
+            path: path,
+            sha256: sha256,
+          })),
+        }));
+      if (!held) stale.push(skill.name);
+    }
+
+    return stale;
   },
 });
 
@@ -165,6 +200,20 @@ export const remove = internalAction({
     return (await deleteSkill(args.accountId, args.skillName)) > 0;
   },
 });
+
+// What a sync compares to tell whether the account already holds a skill's files.
+function contentHash(
+  files: ReadonlyArray<{ path: string; sha256: string }>,
+): string {
+  return createHash("sha256")
+    .update(
+      files
+        .map((file) => `${file.sha256} ${file.path}`)
+        .sort()
+        .join("\n"),
+    )
+    .digest("hex");
+}
 
 async function resolveSkillBundleFiles(
   input: unknown,
@@ -219,6 +268,9 @@ async function uploadedSkillFiles(
   const declared = parseInput(UPLOADED_SKILL, input, "").files;
   const blob = await ctx.storage.get(storageId);
   if (!blob) throw new ClientError("Uploaded skill files were not found");
+  if (declared.reduce((sum, file) => sum + file.size, 0) !== blob.size) {
+    throw new ClientError("Uploaded skill files do not match their sizes");
+  }
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let offset = 0;
   const files = declared.map((file): SkillBundleFile => {
@@ -238,9 +290,6 @@ async function uploadedSkillFiles(
         : {}),
     };
   });
-  if (offset !== bytes.byteLength) {
-    throw new ClientError("Uploaded skill files do not match their sizes");
-  }
 
   return files;
 }

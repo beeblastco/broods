@@ -228,27 +228,35 @@ export class BroodsSyncClient {
     revision?: number,
     source?: StageSource,
   ): Promise<RemoteManifestResponse> {
-    const uploaded = await this.externalizeLargeSkills(
-      await this.externalizeLargeMcpBundles(manifest),
-    );
-    const response = await this.request(
-      manifest.project,
-      manifest.stage,
-      "/manifest",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          manifest: uploaded,
-          prune: prune,
-          rotateRuntimeKey: rotateRuntimeKey,
-          ...(revision !== undefined ? { revision: revision } : {}),
-          ...(source ? { source: source } : {}),
-        }),
-      },
-      // A sync deploys MCP bundles and can hold the connection for minutes.
-      null,
-    );
+    const bundled = await this.externalizeLargeMcpBundles(manifest);
+    const put = async (uploaded: CliManifest): Promise<Response> =>
+      await this.request(
+        manifest.project,
+        manifest.stage,
+        "/manifest",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            manifest: uploaded,
+            prune: prune,
+            rotateRuntimeKey: rotateRuntimeKey,
+            ...(revision !== undefined ? { revision: revision } : {}),
+            ...(source ? { source: source } : {}),
+          }),
+        },
+        // A sync deploys MCP bundles and can hold the connection for minutes.
+        null,
+      );
+    const first = await this.externalizeLargeSkills(bundled);
+    let response = await put(first);
+    if (
+      response.status === 409 &&
+      errorEnvelope(await response.clone().text()).code ===
+        "skill_upload_required"
+    ) {
+      response = await put(await this.externalizeLargeSkills(bundled, first));
+    }
     await assertOk(response, "Sync manifest failed");
 
     return (await response.json()) as RemoteManifestResponse;
@@ -280,6 +288,7 @@ export class BroodsSyncClient {
           "/mcp-bundle-uploads",
           bundle,
           "application/javascript",
+          `MCP server ${resource.name}`,
         );
 
         return {
@@ -296,13 +305,17 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  // One upload per skill that does not fit inline, skipped when the stage already holds it.
+  // One upload per skill that does not fit inline. A first try skips one this stage last synced
+  // unchanged; the retry after the server refused (`sent`) uploads it and reuses `sent`'s blobs.
   private async externalizeLargeSkills(
     manifest: CliManifest,
+    sent?: CliManifest,
   ): Promise<CliManifest> {
     const large = skillsToUpload(manifest.resources);
     if (large.size === 0) return manifest;
-    const remote = await this.getManifest(manifest.project, manifest.stage);
+    const remote = sent
+      ? null
+      : await this.getManifest(manifest.project, manifest.stage);
 
     const resources = await Promise.all(
       manifest.resources.map(async (resource): Promise<CliManifestResource> => {
@@ -317,10 +330,9 @@ export class BroodsSyncClient {
           }): Omit<SkillManifestConfig["files"][number], "contentBase64"> =>
             file,
         );
-        const held = remote?.manifest.resources.find(
-          (entry): boolean =>
-            entry.kind === "skill" && entry.name === resource.name,
-        );
+        const same = (entry: CliManifestResource): boolean =>
+          entry.kind === "skill" && entry.name === resource.name;
+        const held = remote?.manifest.resources.find(same);
         if (
           held &&
           stableJson(snapshotResource(held)) ===
@@ -328,17 +340,23 @@ export class BroodsSyncClient {
         ) {
           return { ...resource, config: { ...config, files: files } };
         }
-        const storageId = await this.upload(
-          manifest.project,
-          manifest.stage,
-          "/skill-uploads",
-          Buffer.concat(
-            config.files.map((file): Buffer =>
-              Buffer.from(file.contentBase64, "base64"),
+        const sentConfig = sent?.resources.find(same)?.config as
+          | SkillManifestConfig
+          | undefined;
+        const storageId =
+          sentConfig?.filesStorageId ??
+          (await this.upload(
+            manifest.project,
+            manifest.stage,
+            "/skill-uploads",
+            Buffer.concat(
+              config.files.map((file): Buffer =>
+                Buffer.from(file.contentBase64, "base64"),
+              ),
             ),
-          ),
-          "application/octet-stream",
-        );
+            "application/octet-stream",
+            `skill ${resource.name}`,
+          ));
 
         return {
           ...resource,
@@ -356,14 +374,17 @@ export class BroodsSyncClient {
     route: "/mcp-bundle-uploads" | "/skill-uploads",
     body: string | Buffer<ArrayBuffer>,
     contentType: string,
+    label: string,
   ): Promise<string> {
     const minted = await this.request(project, stage, route, {
       method: "POST",
     });
-    await assertOk(minted, "Mint upload URL failed");
+    await assertOk(minted, `Mint upload URL for ${label} failed`);
     const { uploadUrl } = (await minted.json()) as { uploadUrl?: string };
     if (!uploadUrl)
-      throw new Error("Mint upload URL failed: response omitted uploadUrl");
+      throw new Error(
+        `Mint upload URL for ${label} failed: response omitted uploadUrl`,
+      );
     // Uploads run to tens of MB, so no fixed timeout fits a slow uplink.
     const stored = await this.send(
       uploadUrl,
@@ -374,10 +395,10 @@ export class BroodsSyncClient {
       },
       null,
     );
-    await assertOk(stored, "Upload failed");
+    await assertOk(stored, `Upload of ${label} failed`);
     const { storageId } = (await stored.json()) as { storageId?: string };
     if (!storageId)
-      throw new Error("Upload failed: response omitted storageId");
+      throw new Error(`Upload of ${label} failed: response omitted storageId`);
 
     return storageId;
   }

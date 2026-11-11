@@ -99,6 +99,93 @@ test("a 6 MiB skill syncs through one upload, and an unchanged one re-syncs with
   expect((held as CliManifest | null)?.resources).toEqual(inline.resources);
 });
 
+test("a skill the server says it does not hold is uploaded and sent once more, once", async (): Promise<void> => {
+  const { manifest } = await compileProject({
+    cwd: await skillProject(),
+    command: "dev",
+  });
+  const sent: string[] = [];
+  const client = (refuseAll: boolean): BroodsSyncClient =>
+    new BroodsSyncClient({
+      baseUrl: "https://convex.example.com",
+      token: "tok",
+      fetch: async (input, init): Promise<Response> => {
+        const url = requestUrl(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        sent.push(`${method} ${url}`);
+        if (url === `${STAGE_URL}/skill-uploads`) {
+          return Response.json({ uploadUrl: "https://storage.example.com/up" });
+        }
+        if (url === "https://storage.example.com/up") {
+          return Response.json({ storageId: "st_skill" });
+        }
+        if (method === "GET")
+          return Response.json({ manifest: manifest, ids: {} });
+        const body = JSON.parse(init?.body as string) as {
+          manifest: CliManifest;
+        };
+        const big = body.manifest.resources[0]?.config as SkillConfig;
+        if (refuseAll || big.filesStorageId === undefined) {
+          return Response.json(
+            {
+              error: {
+                message: "The account does not hold the files of skill big",
+                code: "skill_upload_required",
+              },
+            },
+            { status: 409 },
+          );
+        }
+
+        return Response.json({ manifest: body.manifest, ids: {} });
+      },
+    });
+
+  await client(false).putManifest(manifest, false);
+  expect(sent.splice(0)).toEqual([
+    `GET ${STAGE_URL}/manifest`,
+    `PUT ${STAGE_URL}/manifest`,
+    `POST ${STAGE_URL}/skill-uploads`,
+    "POST https://storage.example.com/up",
+    `PUT ${STAGE_URL}/manifest`,
+  ]);
+
+  await expect(client(true).putManifest(manifest, false)).rejects.toThrow(
+    "Sync manifest failed: 409",
+  );
+  expect(sent.filter((call): boolean => call.startsWith("PUT"))).toHaveLength(
+    2,
+  );
+});
+
+test("an exhausted upload quota names the skill and when to retry", async (): Promise<void> => {
+  const { manifest } = await compileProject({
+    cwd: await skillProject(),
+    command: "dev",
+  });
+  const client = new BroodsSyncClient({
+    baseUrl: "https://convex.example.com",
+    token: "tok",
+    fetch: async (input): Promise<Response> =>
+      requestUrl(input) === `${STAGE_URL}/skill-uploads`
+        ? Response.json(
+            {
+              error: {
+                message:
+                  "upload quota: 20 uploads per hour; retry after 2026-11-11T17:00:00.000Z",
+                code: "upload_quota_exceeded",
+              },
+            },
+            { status: 429 },
+          )
+        : new Response("not found", { status: 404 }),
+  });
+
+  await expect(client.putManifest(manifest, false)).rejects.toThrow(
+    "Mint upload URL for skill big failed: 429 upload quota: 20 uploads per hour; retry after 2026-11-11T17:00:00.000Z",
+  );
+});
+
 async function skillProject(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "broods-skill-upload-"));
   tempDirs.push(cwd);

@@ -12,10 +12,10 @@ const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_SCAN_PAGE = 100;
 
 export const claim = internalMutation({
-  args: { storageId: v.id("_storage") },
+  args: { storageId: v.id("_storage"), maxBytes: v.optional(v.number()) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    await claimUploadedBlob(ctx, args.storageId);
+    await claimUploadedBlob(ctx, args.storageId, args.maxBytes);
 
     return null;
   },

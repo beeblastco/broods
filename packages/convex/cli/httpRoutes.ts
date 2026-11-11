@@ -1,4 +1,4 @@
-import type { FunctionArgs, FunctionReturnType } from "convex/server";
+import type { FunctionArgs } from "convex/server";
 import { z } from "zod/mini";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
@@ -35,7 +35,9 @@ import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse, type UploadKind } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
-import { manifestHash, snapshotResource } from "../model/manifestSnapshot";
+import { parseInput, skillFileDeclarations } from "../model/inputSchema";
+import { MAX_SKILL_BUNDLE_BYTES } from "../model/skillLimits";
+import { manifestHash } from "../model/manifestSnapshot";
 import { stageSourceProblem, type StageSource } from "../model/stageSource";
 import { stageSourceSchema } from "../model/stageSourceSchema";
 import { storeStageSync } from "../model/stageSourceStore";
@@ -107,14 +109,16 @@ type StageRef = { secretHash: string; project: string; stage: string };
 // `kind:name` another stage manages: skills and hooks are account-wide rows keyed by name.
 type ForeignExternalResources = ReadonlySet<string>;
 
-// A skill carries inline files, an uploaded blob, or neither when the stage already holds it.
+// A skill carries inline files, an uploaded blob, or neither when the account already holds it.
 type PreparedExternal = {
-  skills: Array<{
-    name: string;
-    files: unknown[];
-    filesStorageId?: Id<"_storage">;
-    storedId?: string;
-  }>;
+  skills: Array<
+    | { name: string; files: unknown[]; held?: true }
+    | {
+        name: string;
+        files: z.output<typeof skillFileDeclarations>;
+        filesStorageId: Id<"_storage">;
+      }
+  >;
   hooks: Array<{ name: string; upload: RequiredAccountHookUpload }>;
   mcp: Array<{ name: string; input: McpInput }>;
 };
@@ -605,6 +609,7 @@ async function handleManifestSync(
       revision: body.revision,
     },
   );
+  const claimed: Array<Id<"_storage">> = [];
   try {
     // The account key and a login token may move an account-wide name between stages
     // (dev, then deploy); only a stage-scoped project key is fenced.
@@ -621,7 +626,7 @@ async function handleManifestSync(
       ctx,
       originalManifest,
       foreign,
-      { secretHash: secretHash, project: route.project, stage: route.stage },
+      { accountId: accountId, projectId: scope.projectId, claimed: claimed },
     );
     await validateManifest(ctx, scope, originalManifest);
     const externalIds = await syncExternalResources(
@@ -743,6 +748,7 @@ async function handleManifestSync(
         : {}),
     });
   } finally {
+    for (const storageId of claimed) await ctx.storage.delete(storageId);
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
       stageId: scope.stageId,
       revision: scope.revision,
@@ -1057,12 +1063,17 @@ async function prepareExternalResources(
   ctx: ActionCtx,
   manifest: CliManifest,
   foreign: ForeignExternalResources,
-  stageRef: StageRef,
+  owner: {
+    accountId: Id<"accounts">;
+    projectId: Id<"projects">;
+    claimed: Array<Id<"_storage">>;
+  },
 ): Promise<PreparedExternal> {
   const skills: PreparedExternal["skills"] = [];
-  let stored:
-    | FunctionReturnType<typeof internal.cli.sync.getManifestBySecretHash>
-    | undefined;
+  const held: Array<{
+    name: string;
+    files: z.output<typeof skillFileDeclarations>;
+  }> = [];
   for (const resource of manifest.resources.filter(
     (entry) => entry.kind === "skill",
   )) {
@@ -1071,20 +1082,7 @@ async function prepareExternalResources(
     const files = config.files;
     if (!Array.isArray(files))
       throw new ClientError(`skill:${resource.name}.files must be an array`);
-    if (config.filesStorageId !== undefined) {
-      const filesStorageId = stringField(
-        config.filesStorageId,
-        `skill:${resource.name}.filesStorageId`,
-      ) as Id<"_storage">;
-      await ctx.runMutation(internal.account.uploads.claim, {
-        storageId: filesStorageId,
-      });
-      skills.push({
-        name: resource.name,
-        files: files,
-        filesStorageId: filesStorageId,
-      });
-    } else if (
+    if (
       files.some(
         (entry) =>
           asRecord(entry, `skill:${resource.name}.files[]`).contentBase64 !==
@@ -1093,31 +1091,51 @@ async function prepareExternalResources(
     ) {
       for (const entry of files) skillNodeFile(entry, resource.name);
       skills.push({ name: resource.name, files: files });
-    } else {
-      stored ??= await ctx.runQuery(
-        internal.cli.sync.getManifestBySecretHash,
-        stageRef,
-      );
-      const remote = (
-        stored?.manifest as CliManifest | undefined
-      )?.resources.find(
-        (entry) => entry.kind === "skill" && entry.name === resource.name,
-      );
-      const storedId = stored?.ids.skills[resource.name];
-      if (
-        !remote ||
-        !storedId ||
-        stableJson(snapshotResource(remote)) !==
-          stableJson(snapshotResource(resource))
-      ) {
-        throw new ClientError(
-          `skill:${resource.name} has no file content and does not match the stage; sync again`,
-        );
-      }
-      skills.push({ name: resource.name, files: files, storedId: storedId });
+      continue;
     }
+    const declared = parseInput(
+      skillFileDeclarations,
+      files,
+      `skill:${resource.name}.files`,
+    );
+    if (config.filesStorageId === undefined) {
+      held.push({ name: resource.name, files: declared });
+      skills.push({ name: resource.name, files: declared, held: true });
+      continue;
+    }
+    skills.push({
+      name: resource.name,
+      files: declared,
+      filesStorageId: stringField(
+        config.filesStorageId,
+        `skill:${resource.name}.filesStorageId`,
+      ) as Id<"_storage">,
+    });
   }
-  const changed = skills.filter((skill) => skill.storedId === undefined);
+  // Refused before any claim, so the CLI can resend the blobs it already uploaded.
+  const stale =
+    held.length > 0
+      ? await ctx.runAction(internal.aws.skills.unheld, {
+          accountId: owner.accountId,
+          projectId: owner.projectId,
+          skills: held,
+        })
+      : [];
+  if (stale.length > 0) {
+    throw new ClientError(
+      `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
+      "skill_upload_required",
+    );
+  }
+  for (const skill of skills) {
+    if (!("filesStorageId" in skill)) continue;
+    await ctx.runMutation(internal.account.uploads.claim, {
+      storageId: skill.filesStorageId,
+      maxBytes: MAX_SKILL_BUNDLE_BYTES,
+    });
+    owner.claimed.push(skill.filesStorageId);
+  }
+  const changed = skills.filter((skill) => !("held" in skill));
   if (changed.length > 0) {
     await ctx.runAction(internal.aws.skills.validateSkills, {
       skills: changed,
@@ -1262,9 +1280,9 @@ async function syncSkillNodeFiles(
   options: StageRef & { skills: PreparedExternal["skills"] },
 ): Promise<void> {
   for (const skill of options.skills) {
-    if (skill.storedId !== undefined) continue;
+    if ("held" in skill) continue;
     const storedFiles =
-      skill.filesStorageId !== undefined
+      "filesStorageId" in skill
         ? await ctx.runAction(internal.aws.skills.storeUploadedFiles, {
             files: skill.files,
             filesStorageId: skill.filesStorageId,
@@ -1306,20 +1324,20 @@ async function syncSkillResources(
   desired: PreparedExternal["skills"],
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
-  for (const { name, files, filesStorageId, storedId } of desired) {
-    if (storedId !== undefined) {
-      ids[name] = storedId;
+  for (const skill of desired) {
+    if ("held" in skill) {
+      ids[skill.name] = `${accountId}/${skill.name}`;
       continue;
     }
-    const skill = await ctx.runAction(internal.aws.skills.createSkill, {
+    const created = await ctx.runAction(internal.aws.skills.createSkill, {
       accountId: accountId,
-      expectedName: name,
-      input: { source: "files", files: files },
-      ...(filesStorageId !== undefined
-        ? { filesStorageId: filesStorageId }
+      expectedName: skill.name,
+      input: { source: "files", files: skill.files },
+      ...("filesStorageId" in skill
+        ? { filesStorageId: skill.filesStorageId }
         : {}),
     });
-    ids[name] = skill.path;
+    ids[skill.name] = created.path;
   }
 
   return ids;

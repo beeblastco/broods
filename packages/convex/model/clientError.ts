@@ -1,8 +1,8 @@
 import { ConvexError, type Value } from "convex/values";
 import { jsonError } from "./httpJson";
 
-// Codes match `model/apiError`, but for `manifest_conflict` (CLI re-reads and retries) and
-// `payment_required` (dashboard offers an upgrade or a seat).
+// Codes match `model/apiError`, but for `manifest_conflict` (CLI re-reads and retries),
+// `skill_upload_required` (CLI uploads the skill and retries) and `payment_required`.
 export const CLIENT_ERROR_STATUS = {
   invalid_request: 400,
   unauthorized: 401,
@@ -11,6 +11,7 @@ export const CLIENT_ERROR_STATUS = {
   not_found: 404,
   conflict: 409,
   manifest_conflict: 409,
+  skill_upload_required: 409,
 } as const;
 
 export type ClientErrorCode = keyof typeof CLIENT_ERROR_STATUS;

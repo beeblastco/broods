@@ -158,7 +158,9 @@ def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind
 /-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
 large MCP bundle or skill is uploaded and replaced by its storage handle; its
 `sha256` stays. A large skill the stage already `held` with the same snapshot is
-sent with neither bytes nor handle, and the server keeps its stored copy. -/
+sent with neither bytes nor handle. The server keeps its stored copy only when the
+account still holds exactly those files; otherwise it refuses before any write and
+the CLI sends again with `held` false, so `held` stays a free predicate. -/
 def upload (large : Nat → Bool) (held : Resource → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
   | .mcp, some b =>
