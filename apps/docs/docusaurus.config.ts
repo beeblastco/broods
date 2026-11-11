@@ -130,11 +130,6 @@ const themeConfig: Preset.ThemeConfig = {
         position: "right",
       },
       {
-        href: "https://discord.gg/F48633Uca",
-        label: "Discord",
-        position: "right",
-      },
-      {
         href: "https://github.com/beeblastco/broods",
         label: "GitHub",
         position: "right",
