@@ -54,4 +54,4 @@ Runnable examples for most features live in [`packages/demos`](https://github.co
 
 ## Get help
 
-Ask on [Discord](https://discord.gg/F48633Uca) or open an issue on [GitHub](https://github.com/beeblastco/broods).
+Open an issue on [GitHub](https://github.com/beeblastco/broods/issues).

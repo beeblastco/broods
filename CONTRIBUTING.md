@@ -84,5 +84,4 @@ cd packages/demos/basic-stream && bun run start
 
 ## Community
 
-- Chat with maintainers on [Discord](https://discord.gg/beeblast).
 - File bugs and feature requests in [GitHub Issues](https://github.com/beeblastco/broods/issues).

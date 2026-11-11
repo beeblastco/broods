@@ -117,7 +117,6 @@ CI runs on every PR via `.github/workflows/ci.yaml`.
 
 ## Community
 
-- Chat with contributors on [Discord](https://discord.gg/beeblast).
 - File bugs and feature requests in [GitHub Issues](https://github.com/beeblastco/broods/issues).
 
 ---
