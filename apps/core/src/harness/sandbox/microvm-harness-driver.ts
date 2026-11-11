@@ -12,6 +12,7 @@ import type {
 } from "@broods/ai-sdk-sandbox";
 import { createSandboxExecutor } from "./index.ts";
 import {
+  HARNESS_FILE_MAX_BYTES,
   HarnessShellProcess,
   type HarnessShellExecutor,
   readFileChunk,
@@ -21,6 +22,7 @@ import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
 import { MicrovmWebSocketProxy } from "./microvm-websocket-proxy.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
+import { SandboxFileTooLargeError } from "../../shared/errors.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { shellQuote, stringRecord } from "./utils.ts";
 
@@ -290,10 +292,17 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
       if (chunk === null || (first !== undefined && chunk.stamp !== first)) {
         throw new Error(`${options.path} changed while it was being read`);
       }
+      const size = Number(chunk.stamp.split(" ")[0]);
+      if (size > HARNESS_FILE_MAX_BYTES) {
+        throw new SandboxFileTooLargeError(
+          options.path,
+          size,
+          HARNESS_FILE_MAX_BYTES,
+        );
+      }
       first = chunk.stamp;
       chunks.push(chunk.bytes);
       offset += chunk.bytes.byteLength;
-      const size = Number(chunk.stamp.split(" ")[0]);
       if (chunk.bytes.byteLength === 0 || offset >= size) break;
     }
 

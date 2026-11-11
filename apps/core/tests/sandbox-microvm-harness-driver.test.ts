@@ -5,6 +5,7 @@ import {
 } from "../src/harness/sandbox/microvm-harness-driver.ts";
 
 const encoder = new TextEncoder();
+const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 describe("MicrovmHarnessDriver", () => {
   test("maps a persistent reservation to command, file, port, and lifecycle operations", async () => {
@@ -103,6 +104,28 @@ describe("MicrovmHarnessDriver", () => {
       "/workspace/file.bin@184320",
       "/workspace/file.bin@0",
     ]);
+  });
+
+  test("refuses a file over the harness read cap after its first chunk", async () => {
+    const executor = fakeExecutor(true);
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    executor.files.set(
+      "/workspace/huge.bin",
+      new Uint8Array(HARNESS_FILE_MAX_BYTES + 1),
+    );
+
+    const read = session.readFile({ path: "/workspace/huge.bin" });
+
+    await expect(read).rejects.toThrow(
+      `/workspace/huge.bin is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
+    );
+    expect(executor.chunkReads).toEqual(["/workspace/huge.bin@0"]);
   });
 
   test("refuses to stitch a file that changed between chunks", async () => {

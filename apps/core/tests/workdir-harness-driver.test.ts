@@ -6,6 +6,7 @@ import {
 } from "../src/harness/sandbox/workdir-harness-driver.ts";
 
 const encoder = new TextEncoder();
+const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 describe("WorkdirHarnessDriver", () => {
   test("maps an existing core reservation to command, file, port, and lifecycle operations", async () => {
@@ -66,6 +67,27 @@ describe("WorkdirHarnessDriver", () => {
     expect(executor.releases).toEqual([
       { reservationKey: "acct:agent:harness" },
     ]);
+  });
+
+  test("refuses a file over the harness read cap before buffering it", async () => {
+    const fake = fakeWorkdir();
+    const driver = new WorkdirHarnessDriver(
+      driverOptions(),
+      fakeExecutor(fake.sandbox, true).value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    await session.writeFile({
+      path: "/workspace/huge.bin",
+      content: new Uint8Array(HARNESS_FILE_MAX_BYTES + 1),
+    });
+
+    const read = session.readFile({ path: "/workspace/huge.bin" });
+
+    await expect(read).rejects.toThrow(
+      `/workspace/huge.bin is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
+    );
   });
 
   test("leaves a shared machine running when one session ends", async () => {
@@ -417,13 +439,18 @@ function fakeWorkdir(
         );
       }
 
-      const readPath = command.match(/base64 < '([^']+)'/)?.[1];
-      if (readPath) {
-        const content = files.get(readPath);
+      const read =
+        command.match(/head -c (\d+) '([^']+)' \| base64/) ??
+        command.match(/()base64 < '([^']+)'/);
+      if (read) {
+        const content = files.get(read[2]!);
+        if (content === undefined) return result("", 44);
+        const max = Number(read[1]) - 1;
+        if (read[1] && content.byteLength > max) {
+          return result(`${content.byteLength}\n`, 46);
+        }
 
-        return content === undefined
-          ? result("", 44)
-          : result(Buffer.from(content).toString("base64"));
+        return result(Buffer.from(content).toString("base64"));
       }
 
       const write = command.match(/base64 -d '([^']+)' > '([^']+)'/);

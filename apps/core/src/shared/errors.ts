@@ -31,6 +31,18 @@ export class S3ObjectTooLargeError extends Error {
   }
 }
 
+export class SandboxFileTooLargeError extends Error {
+  constructor(
+    path: string,
+    bytes: number,
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `${path} is ${bytes} bytes, over the ${maxBytes} bytes a harness reads from a sandbox file; read a part of it with a shell command`,
+    );
+  }
+}
+
 export function isContextLengthError(message: string): boolean {
   return CONTEXT_LIMIT_PATTERN.test(message);
 }

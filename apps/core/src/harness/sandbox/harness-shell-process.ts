@@ -5,6 +5,8 @@ import { shellQuote } from "./utils.ts";
 // Base64 grows a chunk to 240 KB, under the 256 KB of stdout one MicroVM exec returns.
 const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
+// Core buffers a whole file per harness read, and its pod has 1 GiB for every run.
+export const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 export interface HarnessShellExecutor {
   exec(
