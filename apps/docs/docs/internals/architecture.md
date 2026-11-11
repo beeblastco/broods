@@ -315,15 +315,15 @@ flowchart LR
   GW --> LT
 ```
 
-| Store                | Holds                                                                    | Lifetime                            |
-| -------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
-| Convex tables        | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
-| S3 `Filesystem`      | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
-| S3 `Skills`          | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
-| S3 `ToolBundles`     | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
-| NATS `WS_RESPONSES`  | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
-| NATS `OBSERVABILITY` | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
-| Loki, Tempo          | Long-term logs and traces, via the OTel collector                        | Per collector config                |
+| Store                      | Holds                                                                    | Lifetime                            |
+| -------------------------- | ------------------------------------------------------------------------ | ----------------------------------- |
+| Convex tables              | Config, runtime state, audit, usage. `packages/convex/schema.ts`         | Durable; run status 7 days          |
+| S3 `Filesystem`            | Workspace files under `<namespace>/`, staged skills, channel attachments | Durable                             |
+| S3 `Skills`                | Skill bundles under `<accountId>/<skill-name>`                           | Durable                             |
+| S3 `ToolBundles`           | Code hook and hosted MCP bundles under `account-mcp/`                    | Durable; R2 copy expires in 30 days |
+| NATS `WS_RESPONSES_<env>`  | Agent stream parts per conversation, for WebSocket replay                | 3 minutes, 2,000 per subject        |
+| NATS `OBSERVABILITY_<env>` | Live logs and spans per stage, for dashboard replay                      | 2 hours                             |
+| Loki, Tempo                | Long-term logs and traces, via the OTel collector                        | Per collector config                |
 
 Core reaches Convex with `ConvexHttpClient` and the deploy key (`apps/core/src/shared/convex/client.ts`). Byte layout: [storage](storage.md).
 
@@ -436,7 +436,7 @@ sequenceDiagram
 
 ## WebSocket and JetStream contract
 
-- Subject: `v1.<accountId>.<agentId>.ws.response.<convToken>`, `convToken` the `base64url` public conversation key. One publish per frame, no per-frame ack, so replay is best effort.
+- Subject: `<env>.v1.<accountId>.<agentId>.ws.response.<convToken>`, `<env>` the deployment's `DEPLOYMENT_ENVIRONMENT` and `convToken` the `base64url` public conversation key. One publish per frame, no per-frame ack, so replay is best effort.
 - `Nats-Msg-Id` (`eventId:sequence`) and a 2 minute duplicate window collapse retries.
 - Cursors are opaque, bound to one event, and exclusive. A cursor the stream can no longer serve gets `replay_unavailable` and the durable status.
 - Convex ingress status is the truth for acceptance and terminal state. JetStream only carries output.
