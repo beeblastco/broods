@@ -55,21 +55,16 @@ export default async function CliAuthStartPage({
   redirect(target.toString());
 }
 
+// A Convex site serves only the config plane, so `broods run` and `logs` would 404 there.
 function advertisedBaseUrl(): string {
   const explicit = process.env.BROODS_BASE_URL;
-  if (explicit) {
-    return new URL(explicit).origin;
+  if (!explicit) {
+    throw new Error(
+      "this dashboard has no BROODS_BASE_URL; set it to the public host in front of core",
+    );
   }
-  // Self-hosted Convex has no derivable HTTP-actions host; it must be provided.
-  const siteUrl = process.env.CONVEX_SITE_URL;
-  if (siteUrl) {
-    return new URL(siteUrl).origin;
-  }
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!convexUrl)
-    throw new Error("login base URL is not configured; set BROODS_BASE_URL");
 
-  return new URL(convexUrl.replace(".convex.cloud", ".convex.site")).origin;
+  return new URL(explicit).origin;
 }
 
 function isLocalCallback(value: string): boolean {
