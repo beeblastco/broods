@@ -28,6 +28,7 @@
     "@ai-sdk/deepinfra": "^3.0.87",
     "@ai-sdk/deepseek": "^3.0.81",
     "@ai-sdk/fireworks": "^3.0.90",
+    "@ai-sdk/fish-audio": "3.0.54",
     "@ai-sdk/gateway": "^4.0.139",
     "@ai-sdk/google": "^4.0.114",
     "@ai-sdk/google-vertex": "^5.0.134",

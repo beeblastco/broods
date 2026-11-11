@@ -18,6 +18,9 @@ def providerNames : List String :=
    "mistral", "moonshotai", "ollama", "openai", "openrouter", "perplexity", "togetherai", "v0", "vercel",
    "vertex", "xai", "zai"]
 
+/-- `AGENT_PROVIDER_NAMES`. -/
+def agentProviderNames : List String := providerNames ++ ["fishaudio"]
+
 /-- `AGENT_LIFECYCLE_EVENT_NAMES`. -/
 def lifecycleEvents : List String :=
   ["agent.started", "agent.step.finished", "agent.finished", "agent.failed", "agent.approval.required",
@@ -230,7 +233,7 @@ def modelSchema : Schema :=
 /-- `TRANSCRIPTION`. -/
 def transcriptionSchema : Schema :=
   .object true
-    [("provider", .optional (.enum providerNames none)), ("modelId", optionalString)]
+    [("provider", .optional (.enum agentProviderNames none)), ("modelId", optionalString)]
     none
 
 def gatewayIdError : String := "must be an AI Gateway id (letters, digits, - and _)"
@@ -290,7 +293,8 @@ def providerSettings : Schema :=
 def providersSchema : Schema :=
   refusingProtoKey
     (.check
-      (.record (.enum providerNames (some "is not a supported provider")) providerSettings none)
+      (.record (.enum agentProviderNames (some "is not a supported provider")) providerSettings
+        none)
       fun providers =>
         match field? providers "custom" with
         | none => .ok (some providers)

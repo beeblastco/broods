@@ -5857,6 +5857,7 @@ components:
           - deepinfra
           - deepseek
           - fireworks
+          - fishaudio
           - google
           - groq
           - huggingface
@@ -5999,13 +6000,14 @@ components:
           description: >-
             Provider that transcribes, with its credentials from the matching
             `provider` entry. Defaults to `model.provider`. OpenAI, Groq and
-            Mistral ship speech-to-text.
+            Mistral ship speech-to-text, and so does `fishaudio`, which is
+            valid only here and as a `provider` key.
         modelId:
           type: string
           description: >-
             Speech-to-text model. Defaults to the widest-container model the
             provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
-            Groq, `voxtral-mini-latest` on Mistral).
+            Groq, `voxtral-mini-latest` on Mistral, `transcribe-1` on Fish Audio).
 
     ModelConfig:
       type: object
