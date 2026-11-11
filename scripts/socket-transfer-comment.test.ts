@@ -25,7 +25,7 @@ test("only plain path names with two byte counts survive parsing", (): void => {
     ["one trace by id", { bytes: 15_092, ceiling: 18_000 }],
   ]);
   expect(parseMeasurements("not json").size).toBe(0);
-  expect(parseMeasurements("[1, 2]").size).toBe(0);
+  expect(parseMeasurements('[{"bytes":1,"ceiling":2}]').size).toBe(0);
   expect(parseMeasurements("null").size).toBe(0);
 });
 
@@ -41,6 +41,7 @@ test("the comment compares each path with its base", (): void => {
       ["trace list, 100 traces", { bytes: 1_580_000, ceiling: 1_800_000 }],
       ["one trace by id", { bytes: 15_092, ceiling: 18_000 }],
       ["chat answer, 400 deltas", { bytes: 80_000, ceiling: 90_000 }],
+      ["a path the run lost", { bytes: 34, ceiling: 100 }],
     ]),
     BASE_SHA,
   );
@@ -55,6 +56,9 @@ test("the comment compares each path with its base", (): void => {
     "| chat answer, 400 deltas | 80,000 | 60,000 | -25.0% |",
   );
   expect(comment).toContain("| a new path | n/a | 500 | n/a |");
+  expect(comment).toContain(
+    "| a path the run lost | 34 | not measured | n/a |",
+  );
   expect(comment).toContain("No path is over its ceiling.");
 });
 

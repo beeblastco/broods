@@ -21,7 +21,8 @@ export function parseMeasurements(text: string): Measurements {
   } catch {
     return measurements;
   }
-  if (typeof parsed !== "object" || parsed === null) return measurements;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return measurements;
   for (const [path, value] of Object.entries(parsed)) {
     const entry: unknown = value;
     if (measurements.size === MAX_PATHS) break;
@@ -45,6 +46,12 @@ export function renderComment(
 
     return `| ${path} | ${before === undefined ? "n/a" : count(before)} | ${count(measurement.bytes)} | ${change(before, measurement.bytes)} |`;
   });
+  const missing = [...base]
+    .filter(([path]): boolean => !pr.has(path))
+    .map(
+      ([path, measurement]): string =>
+        `| ${path} | ${count(measurement.bytes)} | not measured | n/a |`,
+    );
   const over = [...pr]
     .filter(
       ([, measurement]): boolean => measurement.bytes >= measurement.ceiling,
@@ -67,6 +74,7 @@ export function renderComment(
     "| Path | Base bytes | PR bytes | Change |",
     "| --- | ---: | ---: | ---: |",
     ...rows,
+    ...missing,
     "",
     over.length === 0
       ? "No path is over its ceiling."
