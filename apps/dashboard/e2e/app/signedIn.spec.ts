@@ -63,6 +63,39 @@ test("a cold project load is one document, no server action, no logo fetch @roll
   ).toEqual([]);
 });
 
+test("a sidebar link between project pages and tabs asks the server for no route", async ({
+  page,
+}) => {
+  const projectId = readProjectId();
+  await page.goto(`/${projectId}`);
+  await page.locator(CANVAS_READY).waitFor();
+  const sidebar = page.locator('[data-hydrated="true"]').first();
+  await sidebar.waitFor();
+  const routeFetches: string[] = [];
+  page.on("request", (request: Request) => {
+    if (request.headers()["rsc"] === "1") routeFetches.push(request.url());
+  });
+
+  await sidebar.getByRole("link", { name: "Settings" }).click();
+  await expect(page).toHaveURL(new RegExp(`/${projectId}/settings`));
+  await expect(
+    page.getByRole("heading", { level: 1, name: "General" }),
+  ).toBeAttached();
+  await sidebar.getByRole("link", { name: "Keys" }).click();
+  await expect(page).toHaveURL(/tab=keys/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Keys" }),
+  ).toBeAttached();
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "General" }),
+  ).toBeAttached();
+  await sidebar.getByRole("link", { name: "Architecture" }).click();
+  await page.locator(CANVAS_READY).waitFor();
+
+  expect(routeFetches, "the browser switches the page itself").toEqual([]);
+});
+
 // @rollout: the stage name reads dashboardReads.stages, which dev has only after the merge.
 test("a page off the canvas subscribes to no palette data until the palette is wanted @rollout", async ({
   page,

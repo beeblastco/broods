@@ -49,6 +49,7 @@ export function Who({
       {"kind" in actor && actor.kind === "agent" && projectId ? (
         <Link
           href={`${navHref(projectId, "", stage)}${stage ? "&" : "?"}node=${actor.agentId}`}
+          prefetch={false}
           onClick={(event) => event.stopPropagation()}
           className="cursor-pointer text-foreground underline-offset-3 hover:underline"
         >

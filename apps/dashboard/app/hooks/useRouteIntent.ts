@@ -1,7 +1,12 @@
 "use client";
 
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
-import { isPlainPress, tabPanelLoader } from "@/app/lib/routeIntent";
+import {
+  isPlainPress,
+  isShallowRoute,
+  sectionLoader,
+  tabPanelLoader,
+} from "@/app/lib/routeIntent";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo, useRef } from "react";
 
@@ -15,6 +20,7 @@ export interface RouteIntentHandlers {
 
 export function useRouteIntent(): {
   handlers: (href: string, alreadyOpen?: boolean) => RouteIntentHandlers;
+  navigate: (href: string) => void;
   warm: (href: string) => void;
 } {
   const router = useRouter();
@@ -27,7 +33,19 @@ export function useRouteIntent(): {
     (href: string): void => {
       // A failed warm-up stays quiet; the click's load surfaces it.
       void tabPanelLoader(href)?.().catch((): void => {});
-      if (pathname !== "/") router.prefetch(href, FULL_ROUTE_PREFETCH);
+      if (isShallowRoute(pathname, href)) {
+        void sectionLoader(href)?.().catch((): void => {});
+      } else if (pathname !== "/") router.prefetch(href, FULL_ROUTE_PREFETCH);
+    },
+    [pathname, router],
+  );
+
+  // Next's router follows a pushState, so the route re-renders for the URL with no request.
+  const navigate = useCallback(
+    (href: string): void => {
+      if (isShallowRoute(pathname, href))
+        window.history.pushState(null, "", href);
+      else router.push(href);
     },
     [pathname, router],
   );
@@ -44,23 +62,32 @@ export function useRouteIntent(): {
             event.detail > 0 && pressedRef.current === event.currentTarget;
           pressedRef.current = null;
           if (event.currentTarget instanceof HTMLAnchorElement) {
-            if (pressed) event.preventDefault();
+            // Next's Link would ask the server for a page this route already renders.
+            const shallow =
+              !alreadyOpen &&
+              isPlainPress(event) &&
+              isShallowRoute(pathname, href);
+            if (pressed || shallow) event.preventDefault();
+            if (!pressed && shallow) navigate(href);
           } else if (!pressed) {
-            router.push(href);
+            navigate(href);
           }
         },
         onFocus: intent,
         onMouseDown: (event) => {
           const push = !alreadyOpen && isPlainPress(event);
           pressedRef.current = push ? event.currentTarget : null;
-          if (push) router.push(href);
+          if (push) navigate(href);
         },
         onMouseEnter: intent,
         onPointerDown: intent,
       };
     },
-    [router, warm],
+    [navigate, pathname, warm],
   );
 
-  return useMemo(() => ({ handlers: handlers, warm: warm }), [handlers, warm]);
+  return useMemo(
+    () => ({ handlers: handlers, navigate: navigate, warm: warm }),
+    [handlers, navigate, warm],
+  );
 }

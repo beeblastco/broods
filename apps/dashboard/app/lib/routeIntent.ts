@@ -1,4 +1,8 @@
 import { DASHBOARD_PANELS } from "@/app/(main)/[projectId]/dashboard/panels";
+import {
+  PROJECT_SECTIONS,
+  projectSection,
+} from "@/app/(main)/[projectId]/sections";
 import { SETTINGS_PANELS } from "@/app/(main)/[projectId]/settings/panels";
 import { ORG_PANELS } from "@/app/(main)/settings/org/panels";
 
@@ -23,6 +27,36 @@ export function isPlainPress(
     !event.shiftKey &&
     !event.altKey
   );
+}
+
+/** True when `href` is a page the open route already renders: no server is asked for it. */
+export function isShallowRoute(pathname: string, href: string): boolean {
+  const target = new URL(href, "http://localhost").pathname;
+  if (target === pathname) return true;
+
+  return (
+    projectSection(pathname) !== null &&
+    projectSection(target) !== null &&
+    target.split("/").find(Boolean) === pathname.split("/").find(Boolean)
+  );
+}
+
+/** Downloads every page and tab of a project, so the first click on each finds its chunk. */
+export function warmProject(): void {
+  const loaders = [PROJECT_SECTIONS, DASHBOARD_PANELS, SETTINGS_PANELS].flatMap(
+    (chunks): Array<(() => Promise<unknown>) | undefined> =>
+      Object.values(chunks),
+  );
+  // A failed warm-up stays quiet; the page's own load surfaces it.
+  for (const load of loaders) void load?.().catch((): void => {});
+}
+
+export function sectionLoader(
+  href: string,
+): (() => Promise<unknown>) | undefined {
+  const section = projectSection(new URL(href, "http://localhost").pathname);
+
+  return section === null ? undefined : PROJECT_SECTIONS[section];
 }
 
 export function tabPanelLoader(
