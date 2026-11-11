@@ -51,25 +51,16 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
     JSON.stringify(asked),
   );
 
-  const answered = await fetch(`${context.edgeUrl}/v1/runs`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${context.accountSecret}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      agentId: agentId,
-      conversationKey: key,
-      eventId: `${key}-answer`,
-      answers: [{ statusId: statusId, answers: { [QUESTION_ID]: [ANSWER] } }],
-    }),
-    signal: AbortSignal.timeout(30_000),
+  const accepted = await context.client.answer({
+    agentId: agentId,
+    conversationKey: key,
+    eventId: `${key}-answer`,
+    answers: [{ statusId: statusId, answers: { [QUESTION_ID]: [ANSWER] } }],
   });
-  const accepted = (await answered.json()) as { invoked?: boolean };
   assertStep(
-    "the answer resumed the conversation",
-    answered.status === 202 && accepted.invoked === true,
-    `status ${answered.status} ${JSON.stringify(accepted)}`,
+    "the SDK's answer resumed the conversation",
+    accepted.invoked === true,
+    JSON.stringify(accepted),
   );
 
   // Admission stores the row in its own transaction, so no sweep delivers it twice.
