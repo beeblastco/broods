@@ -8,6 +8,7 @@ export function PageSkeleton({
 }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col overflow-auto">
+      <output className="sr-only">Loading</output>
       <div
         className={cn(
           "mx-auto flex w-full flex-col gap-4 px-6 pt-6 pb-12",

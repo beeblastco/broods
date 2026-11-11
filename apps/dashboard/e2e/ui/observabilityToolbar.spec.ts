@@ -6,7 +6,7 @@ test("a finished field token becomes a chip and stays in the query", async ({
 }) => {
   await openGallery(page);
   const bar = page.locator('[data-fixture="observability-toolbar"]');
-  const input = bar.getByRole("textbox", { name: "Search" });
+  const input = bar.getByRole("searchbox", { name: "Search" });
   await input.fill("level:error timeout");
 
   await expect(

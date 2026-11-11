@@ -28,9 +28,15 @@ import {
   type AGENT_HARNESS_TYPES,
   type AGENT_LIFECYCLE_EVENT_NAMES,
 } from "@broods/convex/model/agentRules";
-import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+import type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 import type { McpOauth } from "./mcp.ts";
-export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+export type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 
 export const AGENT_MAX_TURN_UNLIMITED = 0;
 export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
@@ -160,7 +166,7 @@ export interface AgentSkillsConfig {
 }
 
 export interface AgentTranscriptionConfig {
-  provider?: AccountModelProviderName;
+  provider?: AgentProviderName;
   modelId?: string;
 }
 
@@ -207,7 +213,7 @@ type AgentModelOutputMetadata = {
 };
 
 export type AgentProviderConfig = Partial<
-  Record<AccountModelProviderName, AgentProviderSettings>
+  Record<AgentProviderName, AgentProviderSettings>
 >;
 
 export interface AgentProviderSettings {

@@ -364,7 +364,7 @@ export function TokensUsagePanel({
   return (
     <div className="grid gap-8">
       <AllowanceUsage view={{ scope: "project", projectId: projectId }} />
-      <section className="grid gap-4">
+      <section className="@container grid gap-4">
         <h2 className="text-sm font-semibold text-foreground">Tokens</h2>
         <UsageToolbar
           range={range}
@@ -403,10 +403,10 @@ export function TokensUsagePanel({
         <div
           className={cn(
             "grid rounded-lg border border-border bg-card",
-            selected !== null && "lg:grid-cols-3",
+            selected !== null && "@3xl:grid-cols-3",
           )}
         >
-          <div className={cn("p-3", selected !== null && "lg:col-span-2")}>
+          <div className={cn("p-3", selected !== null && "@3xl:col-span-2")}>
             <UsageChart
               {...chart}
               height={400}
@@ -712,7 +712,7 @@ function UsageStats({
                 aria-pressed={active}
                 aria-label={`${series.label}: ${column.value}, ${column.detail}`}
                 onClick={() => onMetric(column.metric)}
-                className="grid min-w-0 cursor-pointer gap-1 rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="grid min-w-0 cursor-pointer gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <div className="text-2xl font-semibold whitespace-nowrap tabular-nums">
                   {column.value}

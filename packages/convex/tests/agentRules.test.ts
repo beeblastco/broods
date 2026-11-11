@@ -364,6 +364,15 @@ describe("agent rules", () => {
         transcription: { provider: "openai", modelId: "whisper-1" },
       }),
     ).not.toThrow();
+    expect(() =>
+      normalizeAgentConfig({
+        transcription: { provider: "fishaudio" },
+        provider: { fishaudio: { apiKey: "sk-test" } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      normalizeAgentConfig({ model: { provider: "fishaudio" } }),
+    ).toThrow("config.model.provider must be one of:");
     for (const timeout of [
       60_000,
       {},

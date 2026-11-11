@@ -63,7 +63,7 @@ test("a field inside that chrome still selects its own text", async ({
   await openGallery(page);
   const search = page
     .locator('[data-fixture="observability-toolbar"]')
-    .getByRole("textbox", { name: "Search" });
+    .getByRole("searchbox", { name: "Search" });
 
   await search.fill("timeout");
   await sweep(page, search);
