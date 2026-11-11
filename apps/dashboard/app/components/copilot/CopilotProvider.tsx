@@ -11,6 +11,7 @@ import {
   actionTier,
   changeKey,
   dockProposals,
+  folderQueue,
   openProposal,
   proposedNodes,
   settleApplies,
@@ -284,6 +285,8 @@ export function CopilotProvider({
   );
   // The conversation has one folder, so only the last stage written to it is trusted.
   const folder = useRef<SeededFolder | null>(null);
+  // An answer and every drop take turns on that folder.
+  const [onFolder] = useState(folderQueue);
 
   // Adjusted during render: a finished run is kept, so a later push cannot reopen it.
   const settled = settleApplies(applies, deploys);
@@ -676,13 +679,15 @@ export function CopilotProvider({
             lockedNodes: new Set(codeNodes),
           };
           if (session) {
-            return await askAgent(
-              replyId,
-              trimmed,
-              context,
-              { ...facts, codeNodes: codeNodes },
-              session,
-              controller,
+            return await onFolder(() =>
+              askAgent(
+                replyId,
+                trimmed,
+                context,
+                { ...facts, codeNodes: codeNodes },
+                session,
+                controller,
+              ),
             );
           }
 
@@ -727,6 +732,7 @@ export function CopilotProvider({
       facts,
       items,
       note,
+      onFolder,
       runSafeSteps,
       registry.activeIds,
       scope,
@@ -945,31 +951,24 @@ export function CopilotProvider({
       const step = proposals
         .get(messageId)
         ?.changes.find((change) => change.index === index)?.action;
-      const seeded = folder.current;
       if (
         path === undefined ||
         step?.type !== "commitFiles" ||
-        step.via.kind !== "source" ||
-        seeded?.stageId !== currentStageId
+        step.via.kind !== "source"
       )
         return;
       // The agent's folder keeps the edit, so the next ask would propose the file again.
-      void (async (): Promise<void> => {
+      void onFolder(async (): Promise<void> => {
         const session = await dockSession();
-        if (!session) return;
-        const { readDraft, revertPaths, seedConversation } =
-          await import("@/app/lib/dockSource");
-        const draft = await readDraft(session, conversationKey);
-        await seedConversation(
-          session,
-          conversationKey,
-          revertPaths(draft, seeded.seed.files, [path]),
-        );
-      })().catch((error: unknown): void =>
+        const seeded = folder.current;
+        if (!session || seeded?.stageId !== currentStageId) return;
+        const { revertPaths } = await import("@/app/lib/dockSource");
+        await revertPaths(session, conversationKey, seeded.seed.files, [path]);
+      }).catch((error: unknown): void =>
         note(`Could not drop ${path}: ${toErrorMessage(error)}`),
       );
     },
-    [conversationKey, currentStageId, dockSession, note, proposals],
+    [conversationKey, currentStageId, dockSession, note, onFolder, proposals],
   );
 
   const runAction = useCallback(
