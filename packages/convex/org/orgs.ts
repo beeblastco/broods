@@ -22,13 +22,6 @@ export const orgBootstrapValidator = v.object({
 
 export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 
-// Dashboard tabs loaded before this release call these paths until they reload.
-export {
-  activeAccount as getActiveAccount,
-  activeOrg as getActive,
-  orgs as list,
-} from "../dashboardReads";
-
 export const create = mutation({
   args: {
     name: v.string(),

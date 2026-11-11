@@ -178,9 +178,6 @@ export const removeInternal = internalMutation({
   },
 });
 
-// Core pods deployed before this release call this path until they roll.
-export { roleSessionByTokenHash as resolveSession } from "../runtimeLookups";
-
 const stageScopedTypeValidator = v.union(
   ...STAGE_SCOPED_RESOURCE_TYPES.map((type) => v.literal(type)),
 );

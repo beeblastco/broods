@@ -49,9 +49,6 @@ export const stageSessionValidator = v.object({
 
 export type StageSession = Infer<typeof stageSessionValidator>;
 
-// Core pods deployed before this release call this path until they roll.
-export { deploymentByApiKeyHash as getByApiKeyHash } from "../runtimeLookups";
-
 const ensureReturn = v.object({
   _id: v.id("agentDeployments"),
   endpointId: v.string(),

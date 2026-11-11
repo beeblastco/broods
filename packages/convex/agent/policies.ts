@@ -28,9 +28,6 @@ import { policyDoc } from "../runtimeLookups";
 import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
-// Core pods deployed before this release call this path until they roll.
-export { policyById as getById } from "../runtimeLookups";
-
 const policyStatusValidator = v.union(
   v.literal("active"),
   v.literal("deleted"),

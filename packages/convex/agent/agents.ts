@@ -94,25 +94,6 @@ export const create = internalMutation({
   },
 });
 
-// Core pods built before runtimeLookups.ts still call this until they roll.
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-  },
-  returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
-    const normalized = ctx.db.normalizeId("agents", args.agentId);
-    if (!normalized) return null;
-    const agent = await ctx.db.get(normalized);
-    if (!agent || agent.accountId !== args.accountId) {
-      return null;
-    }
-
-    return agent;
-  },
-});
-
 export const getByName = internalQuery({
   args: {
     accountId: v.id("accounts"),

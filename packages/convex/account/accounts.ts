@@ -52,18 +52,6 @@ export const getByOrgId = internalQuery({
   },
 });
 
-// Core pods built before runtimeLookups.ts still call this until they roll.
-export const getBySecretHash = internalQuery({
-  args: { secretHash: v.string() },
-  returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    return await ctx.db
-      .query("accounts")
-      .withIndex("by_secretHash", (q) => q.eq("secretHash", args.secretHash))
-      .unique();
-  },
-});
-
 export const list = internalQuery({
   args: {},
   returns: v.array(accountDoc),

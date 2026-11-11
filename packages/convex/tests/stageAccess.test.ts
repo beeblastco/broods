@@ -18,7 +18,7 @@ const accessTest = (): TestConvex<typeof schema> => convexTest(schema, modules);
 
 type T = ReturnType<typeof accessTest>;
 
-// `stage.list` feeds every stage-keyed screen, so a member must get it, not only admins.
+// `dashboardReads.stages` feeds every stage-keyed screen, so a member must get it, not only admins.
 
 async function seedOrgProject(t: T): Promise<Id<"projects">> {
   return await t.run(async (ctx) => {
