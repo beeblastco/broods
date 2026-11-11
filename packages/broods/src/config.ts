@@ -49,8 +49,14 @@ export function readStoredAuth(baseUrl?: string): StoredAuthConfig | null {
     };
   }
 
+  return readStoredLogin(baseUrl);
+}
+
+/** The login saved in `~/.broods/config.json`, never the `BROODS_TOKEN` one. */
+export function readStoredLogin(baseUrl?: string): StoredAuthConfig | null {
   const file = readStoredAuthFile();
   if (!file) return null;
+  const envBaseUrl = baseUrl ?? process.env.BROODS_BASE_URL;
   if (envBaseUrl) return file.logins[stripTrailingSlash(envBaseUrl)] ?? null;
   const envDashboardUrl = process.env.BROODS_DASHBOARD_URL;
   if (envDashboardUrl) {
@@ -78,6 +84,20 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   await writePrivateFile(
     USER_CONFIG_PATH,
     `${JSON.stringify(file, null, 2)}\n`,
+  );
+}
+
+export async function removeStoredAuth(baseUrl: string): Promise<void> {
+  const file = readStoredAuthFile();
+  if (!file?.logins[baseUrl]) return;
+  const logins = Object.fromEntries(
+    Object.entries(file.logins).filter(([url]): boolean => url !== baseUrl),
+  );
+  const current =
+    file.current === baseUrl ? (Object.keys(logins)[0] ?? "") : file.current;
+  await writePrivateFile(
+    USER_CONFIG_PATH,
+    `${JSON.stringify({ current: current, logins: logins }, null, 2)}\n`,
   );
 }
 

@@ -42,11 +42,11 @@ export const update = mutation({
     name: v.optional(v.string()),
     agentId: v.optional(v.id("agents")),
     input: v.optional(v.string()),
-    conversationKey: v.optional(v.string()),
+    conversationKey: v.optional(v.union(v.string(), v.null())),
     scheduleExpression: v.optional(v.string()),
     timezone: v.optional(v.string()),
     status: v.optional(STATUS_VALIDATOR),
-    description: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {

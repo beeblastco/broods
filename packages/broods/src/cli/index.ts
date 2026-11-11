@@ -22,6 +22,8 @@ import {
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
+  readStoredLogin,
+  removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
@@ -44,6 +46,7 @@ import {
   type CliProject,
   type CliStage,
   type CliStageSession,
+  cliFetch,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
@@ -155,7 +158,7 @@ const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
   Ship      deploy  env  stage  github
   Inspect   agent  runs  trace  audit  usage  whoami
-  Account   login  connect  disconnect  org  project
+  Account   login  logout  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
 // Help inside an error goes to stderr, so it stays plain rather than guess that stream's TTY.
@@ -268,6 +271,13 @@ Authenticates through the dashboard and stores the token in
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logout: `Usage: broods logout [options]
+
+Revokes the stored login on the server and removes it from
+~/.broods/config.json. Other servers' logins stay. A BROODS_TOKEN
+in the environment is not touched: unset it yourself.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -501,6 +511,10 @@ async function main(): Promise<void> {
       await login(args);
 
       return;
+    case "logout":
+      await logout(args);
+
+      return;
     case "connect":
       await connectCommand(args);
 
@@ -730,6 +744,30 @@ async function login(args: string[]): Promise<void> {
     optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
+}
+
+// Revokes the saved login it removes; a 401 means the server already refuses that token.
+async function logout(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const envTokenNote = process.env.BROODS_TOKEN
+    ? "BROODS_TOKEN is set, so commands keep using it. The CLI cannot remove it: unset it where it is set."
+    : "";
+  const auth = readStoredLogin(optionValue(args, "--base-url"));
+  if (!auth) {
+    throw new Error(`No saved login to remove. ${envTokenNote}`.trim());
+  }
+  const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(
+      `Logout failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  await removeStoredAuth(auth.baseUrl);
+  printSuccess(`Logged out of ${auth.baseUrl}`);
+  if (envTokenNote) printWarning(envTokenNote);
 }
 
 function apiErrorMessage(error: unknown): string {
