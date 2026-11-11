@@ -129,16 +129,11 @@ import {
   majorVersion,
   updateTarget,
 } from "./update.ts";
-import { z } from "zod/mini";
 import packageJson from "../../package.json" with { type: "json" };
 import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
 import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
 
 const VERSION = packageJson.version;
-// Manifest branches `agent get` prints, read leniently: one that does not fit prints as none.
-const CONFIG_BRANCH = z.record(z.string(), z.unknown());
-const SUBAGENT_REFS = z.looseObject({ allowed: z.array(z.unknown()) });
-const WEBHOOK_LIST = z.looseObject({ webhooks: z.array(z.unknown()) });
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const DEV_SYNC_ATTEMPTS = 3;
@@ -751,7 +746,7 @@ async function login(args: string[]): Promise<void> {
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
-// Revokes the saved login it removes; a 401 means the server already refuses that token.
+// Revokes the saved login it removes; on a 401 the server revoked nothing, so it only warns.
 async function logout(args: string[]): Promise<void> {
   loadBroodsRuntimeConfig();
   const envTokenNote = process.env.BROODS_TOKEN
@@ -771,7 +766,11 @@ async function logout(args: string[]): Promise<void> {
     );
   }
   await removeStoredAuth(auth.baseUrl);
-  printSuccess(`Logged out of ${auth.baseUrl}`);
+  if (response.ok) printSuccess(`Logged out of ${auth.baseUrl}`);
+  else
+    printWarning(
+      `Removed the saved login for ${auth.baseUrl}. The server did not revoke it: it was already invalid, or it is lent to an agent and ends with that session.`,
+    );
   if (envTokenNote) printWarning(envTokenNote);
 }
 
@@ -3099,6 +3098,8 @@ async function agentList(args: string[]): Promise<void> {
     return;
   }
   console.log(`Agents in ${manifest.project}/${manifest.stage}:`);
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel } = await import("./manifest-branches.ts");
   for (const agent of agents) {
     const model = agentModelLabel(agent.config);
     const access = agent.config.publicAccess === true ? "public" : "private";
@@ -3116,6 +3117,9 @@ async function agentGet(
   const agent = agents.find((entry): boolean => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel, CONFIG_BRANCH, SUBAGENT_REFS, WEBHOOK_LIST } =
+    await import("./manifest-branches.ts");
   const config = agent.config;
   const sandboxes = [config.sandboxes]
     .flat()
@@ -3183,16 +3187,6 @@ async function agentGet(
       console.log(`    [${index}] ${state} → ${url} (${events})`);
     });
   }
-}
-
-function agentModelLabel(config: Record<string, unknown>): string {
-  const model = CONFIG_BRANCH.safeParse(config.model).data ?? {};
-  const provider =
-    typeof model.provider === "string" ? model.provider : undefined;
-  const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
-  if (provider && modelId) return `${provider}/${modelId}`;
-
-  return modelId ?? provider ?? "unconfigured model";
 }
 
 async function run(args: string[]): Promise<void> {

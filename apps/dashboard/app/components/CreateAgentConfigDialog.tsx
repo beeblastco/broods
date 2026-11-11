@@ -27,6 +27,7 @@ import {
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { analytics } from "@/app/lib/analytics";
 import { NOT_BLANK } from "@/app/lib/notBlank";
 import { useRef, useState } from "react";
@@ -64,7 +65,7 @@ export function CreateAgentConfigDialog({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const { pending, error, reset, run } = useSubmit();
   const keyVariable = providerApiKeyEnvName(provider);
   const nameInput = useRef<HTMLInputElement>(null);
 
@@ -75,7 +76,7 @@ export function CreateAgentConfigDialog({
     setCustomBaseUrl("");
     setDescription("");
     setSystemPrompt("");
-    setIsCreating(false);
+    reset();
   }
 
   function handleClose(): void {
@@ -92,9 +93,8 @@ export function CreateAgentConfigDialog({
     )
       return;
 
-    setIsCreating(true);
-    try {
-      await createAgentConfig({
+    const created = await run(() =>
+      createAgentConfig({
         projectId: projectId,
         stageId: stageId,
         name: name.trim(),
@@ -104,20 +104,19 @@ export function CreateAgentConfigDialog({
         description: description.trim() || undefined,
         systemPrompt: systemPrompt.trim() || undefined,
         position: initialCanvasPosition ?? undefined,
-      });
+      }),
+    );
+    if (!created) return;
 
-      void analytics.then((posthog): void => {
-        posthog.capture("agent_config_created", {
-          provider: provider,
-          has_custom_base_url: provider === "custom",
-          has_description: Boolean(description.trim()),
-          has_system_prompt: Boolean(systemPrompt.trim()),
-        });
+    void analytics.then((posthog): void => {
+      posthog.capture("agent_config_created", {
+        provider: provider,
+        has_custom_base_url: provider === "custom",
+        has_description: Boolean(description.trim()),
+        has_system_prompt: Boolean(systemPrompt.trim()),
       });
-      handleClose();
-    } finally {
-      setIsCreating(false);
-    }
+    });
+    handleClose();
   }
 
   return (
@@ -255,6 +254,11 @@ export function CreateAgentConfigDialog({
                 placeholder="You are a helpful assistant..."
               />
             </div>
+            {error ? (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={handleClose}>
@@ -262,12 +266,12 @@ export function CreateAgentConfigDialog({
             </Button>
             <Button
               type="submit"
-              disabled={!stageId || isCreating}
+              disabled={!stageId || pending}
               className={
-                !stageId || isCreating ? "cursor-not-allowed" : "cursor-pointer"
+                !stageId || pending ? "cursor-not-allowed" : "cursor-pointer"
               }
             >
-              {isCreating ? "Creating..." : "Create"}
+              {pending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </form>

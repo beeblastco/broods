@@ -311,6 +311,47 @@ describe("cli prune of external resources", () => {
       ),
     ).toEqual(["agent-made"]);
   });
+  test("a confirmed cron delete goes through when its agent's delete was declined", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await pruneAll(tt, [
+      {
+        kind: "agent",
+        name: "reporter",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [{ kind: "cron", name: "nightly" }],
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await tt.run(async (ctx) => await ctx.db.query("crons").collect()),
+    ).toEqual([]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["reporter"]);
+  });
   test("the manifest lists only crons code declared, so the next diff stays empty", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);

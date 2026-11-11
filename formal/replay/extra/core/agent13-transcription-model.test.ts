@@ -3,10 +3,13 @@ import type { AgentConfig } from "../../../../apps/core/src/shared/domain/agent-
 import { resolveTranscriptionModel } from "../../../../apps/core/src/harness/provider.ts";
 
 function modelOf(config: AgentConfig): { provider: string; modelId: string } {
-  const model = resolveTranscriptionModel(config);
-  if (!model || typeof model === "string") throw new Error("no model");
+  const resolved = resolveTranscriptionModel(config);
+  if ("reason" in resolved) throw new Error(resolved.reason);
 
-  return { provider: model.provider, modelId: model.modelId };
+  return {
+    provider: resolved.model.provider,
+    modelId: resolved.model.modelId,
+  };
 }
 
 describe("resolveTranscriptionModel", (): void => {
@@ -41,11 +44,8 @@ describe("resolveTranscriptionModel", (): void => {
 
   test("a configured transcription model replaces the default", (): void => {
     const config = {
-      model: {
-        provider: "openai",
-        modelId: "gpt-5",
-        transcriptionModelId: "gpt-4o-transcribe",
-      },
+      model: { provider: "openai", modelId: "gpt-5" },
+      transcription: { modelId: "gpt-4o-transcribe" },
       provider: { openai: { apiKey: "sk-test" } },
     } as AgentConfig;
 

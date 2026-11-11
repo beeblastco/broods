@@ -1,5 +1,6 @@
 // Bundles reach S3 through file storage: a "use node" action caps its args at 5 MiB.
 // The stored blob is only a courier; whoever stores it deletes it, pass or fail.
+// A client-sent storage id is claimed first, so a blob some row owns is never deleted.
 
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -37,6 +38,11 @@ export async function storeMcpBundle(
     input.sha256 === undefined
   ) {
     return undefined;
+  }
+  if (input.bundleStorageId !== undefined) {
+    await ctx.runMutation(internal.account.uploads.claim, {
+      storageId: input.bundleStorageId as Id<"_storage">,
+    });
   }
   // A row stored before placement existed has no flag; storing its bundle again scans it.
   if (

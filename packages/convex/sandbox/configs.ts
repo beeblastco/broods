@@ -2,17 +2,12 @@ import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { sandboxConfigsFields, paginationCursorFields } from "../schema";
+import { paginationCursorFields } from "../schema";
 import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { ClientError } from "../model/clientError";
+import { sandboxConfigDoc } from "../model/sandboxConfigDoc";
 
-const sandboxConfigDoc = v.object({
-  ...sandboxConfigsFields,
-  _id: v.id("sandboxConfigs"),
-  _creationTime: v.number(),
-});
-
-// `v.string()`, not `v.id`: an unknown id reads as not found instead of failing validation.
+// Core pods built before runtimeLookups.ts still call this until they roll.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),

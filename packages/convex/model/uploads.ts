@@ -2,6 +2,7 @@ import type { SystemDataModel } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireActiveAccount } from "./activeAccount";
+import { ClientError } from "./clientError";
 import { jsonError, rateLimitHeaders } from "./httpJson";
 
 export const OPEN_UPLOADS_PER_HOUR = 20;
@@ -20,9 +21,9 @@ export async function claimUploadedBlob(
   storageId: Id<"_storage">,
 ): Promise<StoredBlob> {
   const blob = await ctx.db.system.get(storageId);
-  if (!blob) throw new Error("Uploaded file was not found in storage.");
+  if (!blob) throw new ClientError("Uploaded file was not found in storage.");
   if (await isStorageOwned(ctx, storageId)) {
-    throw new Error("Uploaded file is already registered.");
+    throw new ClientError("Uploaded file is already registered.");
   }
 
   return blob;
