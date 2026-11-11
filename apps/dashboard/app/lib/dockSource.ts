@@ -92,20 +92,22 @@ export async function readDraft(
   conversationKey: string,
   signal?: AbortSignal,
 ): Promise<DockFile[]> {
-  const response = await fetch(filesUrl(session, conversationKey), {
-    headers: headers(session),
-    signal: folderSignal(signal),
-  });
-  if (!response.ok)
-    throw new Error(`Reading the draft failed: ${response.status}`);
-  const decoder = new TextDecoder();
+  return withFolderSignal(signal, async (folder): Promise<DockFile[]> => {
+    const response = await fetch(filesUrl(session, conversationKey), {
+      headers: headers(session),
+      signal: folder,
+    });
+    if (!response.ok)
+      throw new Error(`Reading the draft failed: ${response.status}`);
+    const decoder = new TextDecoder();
 
-  return filesSchema.parse(await response.json()).files.map((file) => ({
-    path: file.path,
-    content: decoder.decode(
-      Uint8Array.from(atob(file.contentBase64), (char) => char.charCodeAt(0)),
-    ),
-  }));
+    return filesSchema.parse(await response.json()).files.map((file) => ({
+      path: file.path,
+      content: decoder.decode(
+        Uint8Array.from(atob(file.contentBase64), (char) => char.charCodeAt(0)),
+      ),
+    }));
+  });
 }
 
 /** The stored source a `stageSources.latest` URL points at. */
@@ -113,11 +115,13 @@ export async function readSource(
   url: string,
   signal?: AbortSignal,
 ): Promise<DockFile[]> {
-  const response = await fetch(url, { signal: folderSignal(signal) });
-  if (!response.ok)
-    throw new Error(`Reading the stage source failed: ${response.status}`);
+  return withFolderSignal(signal, async (folder): Promise<DockFile[]> => {
+    const response = await fetch(url, { signal: folder });
+    if (!response.ok)
+      throw new Error(`Reading the stage source failed: ${response.status}`);
 
-  return sourceSchema.parse(await response.json()).files;
+    return sourceSchema.parse(await response.json()).files;
+  });
 }
 
 /** A newer source with the draft's edits on top; `lost` are edited paths it also moved. */
@@ -198,23 +202,26 @@ export async function seedConversation(
   signal?: AbortSignal,
 ): Promise<void> {
   const encoder = new TextEncoder();
-  const response = await fetch(filesUrl(session, conversationKey), {
-    method: "PUT",
-    headers: { ...headers(session), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      files: files.map((file) => ({
-        path: file.path,
-        contentBase64: btoa(
-          Array.from(encoder.encode(file.content), (byte) =>
-            String.fromCharCode(byte),
-          ).join(""),
-        ),
-      })),
-    }),
-    signal: folderSignal(signal),
+  const body = JSON.stringify({
+    files: files.map((file) => ({
+      path: file.path,
+      contentBase64: btoa(
+        Array.from(encoder.encode(file.content), (byte) =>
+          String.fromCharCode(byte),
+        ).join(""),
+      ),
+    })),
   });
-  if (!response.ok)
-    throw new Error(`Seeding the conversation failed: ${response.status}`);
+  await withFolderSignal(signal, async (folder): Promise<void> => {
+    const response = await fetch(filesUrl(session, conversationKey), {
+      method: "PUT",
+      headers: { ...headers(session), "Content-Type": "application/json" },
+      body: body,
+      signal: folder,
+    });
+    if (!response.ok)
+      throw new Error(`Seeding the conversation failed: ${response.status}`);
+  });
 }
 
 function filesUrl(session: DockSession, conversationKey: string): string {
@@ -227,15 +234,34 @@ function filesUrl(session: DockSession, conversationKey: string): string {
   return `${session.url}/files?${query.toString()}`;
 }
 
-function folderSignal(signal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(FOLDER_TIMEOUT_MS);
-
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
 function headers(session: DockSession): Record<string, string> {
   return {
     Authorization: `Bearer ${session.runtimeKey}`,
     [USER_TOKEN_HEADER]: session.userToken,
   };
+}
+
+// Not AbortSignal.any, which browsers in the build target (Safari 16.4, Chrome 111) lack.
+async function withFolderSignal<T>(
+  signal: AbortSignal | undefined,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const stop = (): void => controller.abort(signal?.reason);
+  const timer = setTimeout(() => {
+    controller.abort(
+      new DOMException(
+        `The agent's folder did not answer within ${FOLDER_TIMEOUT_MS / 1000} seconds`,
+        "TimeoutError",
+      ),
+    );
+  }, FOLDER_TIMEOUT_MS);
+  signal?.addEventListener("abort", stop, { once: true });
+  if (signal?.aborted) stop();
+  try {
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", stop);
+  }
 }

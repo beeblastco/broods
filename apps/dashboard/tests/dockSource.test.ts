@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { z } from "zod";
 import type { DockSession } from "../app/lib/agentDock";
 import {
@@ -25,9 +25,12 @@ const PUT_BODY = z.object({
   files: z.array(z.object({ path: z.string(), contentBase64: z.string() })),
 });
 const realFetch = globalThis.fetch;
+const realAny = Object.getOwnPropertyDescriptor(AbortSignal, "any");
 
 afterEach(() => {
   globalThis.fetch = realFetch;
+  if (realAny) Object.defineProperty(AbortSignal, "any", realAny);
+  jest.useRealTimers();
 });
 
 describe("dock source", () => {
@@ -132,9 +135,38 @@ describe("dock source", () => {
       SEED,
       controller.signal,
     );
-    controller.abort();
+    controller.abort(new Error("stopped by the user"));
 
-    await expect(reseed).rejects.toThrow();
+    await expect(reseed).rejects.toThrow("stopped by the user");
+  });
+
+  test("Stop works where the browser has no AbortSignal.any", async () => {
+    Reflect.deleteProperty(AbortSignal, "any");
+    slowCore();
+    const controller = new AbortController();
+    controller.abort(new Error("stopped by the user"));
+
+    await expect(
+      reseedConversation(
+        SESSION,
+        "c",
+        "http://core.test/source",
+        SEED,
+        controller.signal,
+      ),
+    ).rejects.toThrow("stopped by the user");
+  });
+
+  test("a folder request nobody stops times out and frees the queue", async () => {
+    jest.useFakeTimers();
+    const asked = hungCore();
+    const drop = revertPaths(signedIn, "c", seeded, ["broods/a.ts"]);
+    const next = onFolder(async (): Promise<string> => "ran");
+    await asked;
+    jest.advanceTimersByTime(30_000);
+
+    await expect(drop).rejects.toThrow("did not answer within 30 seconds");
+    expect(await next).toBe("ran");
   });
 
   test("Stop ends an answer waiting behind a slow folder request", async () => {
@@ -162,6 +194,23 @@ function seeded(): DockFile[] {
   return SEED;
 }
 
+/** A core that never answers; resolves once the first request is sent. */
+function hungCore(): Promise<void> {
+  const asked = Promise.withResolvers<void>();
+  globalThis.fetch = Object.assign(
+    (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+      new Promise((_resolve, reject) => {
+        asked.resolve();
+        init?.signal?.addEventListener("abort", () =>
+          reject(init.signal?.reason),
+        );
+      }),
+    { preconnect: realFetch.preconnect },
+  );
+
+  return asked.promise;
+}
+
 /** A core that answers every request 300 ms late, unless the request is aborted first. */
 function slowCore(): void {
   globalThis.fetch = Object.assign(
@@ -171,6 +220,7 @@ function slowCore(): void {
           () => resolve(Response.json({ files: [] })),
           300,
         );
+        if (init?.signal?.aborted) reject(init.signal.reason);
         init?.signal?.addEventListener("abort", () => {
           clearTimeout(timer);
           reject(init.signal?.reason);
