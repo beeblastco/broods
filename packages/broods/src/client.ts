@@ -24,6 +24,11 @@ type AgentRunInputBase = {
   mode?: "reject" | "followup" | "collect" | "steer";
   /** Defaults to `eventId`. */
   idempotencyKey?: string;
+  /**
+   * `run`/`stream`: aborting closes the stream, and core fails the run when it next writes a frame.
+   * `runAsync`: cancels only the request; a run core already accepted keeps going.
+   */
+  signal?: AbortSignal;
 } & AgentRunOverrides;
 
 export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
@@ -39,6 +44,8 @@ export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
+  /** Cancels only the request; a continue core already accepted keeps going. */
+  signal?: AbortSignal;
 }
 
 export interface AgentAnswerInput {
@@ -47,6 +54,8 @@ export interface AgentAnswerInput {
   /** One per open prompt, from an `awaiting_input` status's `questions`. */
   answers: [QuestionAnswer, ...QuestionAnswer[]];
   eventId?: string;
+  /** Cancels only the request; answers core already accepted still resume the run. */
+  signal?: AbortSignal;
 }
 
 export class IngressAcceptedError extends Error {
@@ -282,7 +291,7 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    const response = await this.openStream(body, targetUrl);
+    const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
       throw new Error(
         `Run failed: ${response.status} ${await response.text()}`,
@@ -333,7 +342,7 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Async run");
+    return this.postAcceptedRun(targetUrl, body, "Async run", input.signal);
   }
 
   /** Re-enter a conversation whose last turn stopped short (step cap, provider fault). */
@@ -358,7 +367,7 @@ export class BroodsClient {
     };
     const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Continue");
+    return this.postAcceptedRun(targetUrl, body, "Continue", input.signal);
   }
 
   /** Settles open `ask_questions` prompts; the conversation resumes in the background. */
@@ -386,6 +395,7 @@ export class BroodsClient {
       method: "POST",
       headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: input.signal,
     });
     if (response.status !== 202) {
       throw new Error(
@@ -471,11 +481,13 @@ export class BroodsClient {
     targetUrl: string,
     body: { agentId: string; conversationKey: string },
     label: string,
+    signal?: AbortSignal,
   ): Promise<AsyncAgentRun> {
     const response = await this.fetchJson(targetUrl, {
       method: "POST",
       headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: signal,
     });
     if (response.status !== 202) {
       throw new Error(
@@ -492,12 +504,18 @@ export class BroodsClient {
   private async openStream(
     body: unknown,
     targetUrl: string,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     if (this.apiKey) {
-      return await this.fetchCore(body, targetUrl, {
-        Authorization: `Bearer ${this.apiKey}`,
-        ...(await this.userTokenHeaders()),
-      });
+      return await this.fetchCore(
+        body,
+        targetUrl,
+        {
+          Authorization: `Bearer ${this.apiKey}`,
+          ...(await this.userTokenHeaders()),
+        },
+        signal,
+      );
     }
 
     throw new Error(
@@ -511,6 +529,7 @@ export class BroodsClient {
     body: unknown,
     targetUrl: string,
     authHeaders: Record<string, string>,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     try {
       return await this.fetchImpl(targetUrl, {
@@ -521,8 +540,10 @@ export class BroodsClient {
           ...authHeaders,
         },
         body: JSON.stringify(body),
+        signal: signal,
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or BROODS_HOST/BROODS_BASE_URL ` +
@@ -560,6 +581,7 @@ export class BroodsClient {
     try {
       return await this.fetchImpl(targetUrl, init);
     } catch (error) {
+      if (init.signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `Cause: ${error instanceof Error ? error.message : String(error)}`,

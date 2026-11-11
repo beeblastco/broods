@@ -526,3 +526,47 @@ test("run returns the structured-output frame as output", async (): Promise<void
     "structured-output",
   ]);
 });
+
+test("run stops reading when its signal aborts", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response =>
+      new Response(
+        new ReadableStream({
+          start: (controller): void => {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'data: {"type":"text-delta","id":"0","text":"hi"}\n\n',
+              ),
+            );
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+  });
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: `http://127.0.0.1:${server.port}`,
+  });
+  const controller = new AbortController();
+  setTimeout((): void => controller.abort(), 100);
+
+  try {
+    await expect(
+      client.run({
+        agentId: "agent_1",
+        input: "hello",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      client.run({
+        agentId: "agent_1",
+        input: "hello",
+        signal: AbortSignal.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  } finally {
+    await server.stop(true);
+  }
+});
