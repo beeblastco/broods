@@ -56,6 +56,8 @@ const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 const OBSERVABILITY_STREAM_STORAGE = StorageType.File;
 const OBSERVABILITY_STREAM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const OBSERVABILITY_STREAM_MAX_BYTES = 512 * 1024 * 1024;
+// The dashboard resumes only from a cursor younger than this, so a younger stream never issued it.
+const OBSERVABILITY_CURSOR_MAX_AGE_MS = 30 * 60 * 1000;
 const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 
 // Refuses only NATS-reserved characters: virtual subagent ids carry `~` from their task id.
@@ -242,18 +244,36 @@ export async function readObservabilityStream(options: {
   project: string;
   stage: string;
   startTime?: string;
-}): Promise<ConsumerMessages> {
+  afterSequence?: number;
+}): Promise<{ messages: ConsumerMessages; cursor: number }> {
   await ensureObservabilityStream(options.connection);
   const js = options.connection.jetstream();
   const wildcard =
     options.stream === "logs" ? logsSubjectWildcard : tracesSubjectWildcard;
   const subject = wildcard(options.accountId, options.project, options.stage);
+  let startSequence: number | undefined;
+  if (options.afterSequence !== undefined) {
+    const jsm = await jetstreamManagerFor(options.connection);
+    const { created, state } = await jsm.streams.info(
+      natsNames().observabilityStream,
+    );
+    // Only a stream that issued the cursor and still holds what follows it can resume after it.
+    if (
+      options.afterSequence + 1 >= state.first_seq &&
+      options.afterSequence <= state.last_seq &&
+      Date.parse(created) <= Date.now() - OBSERVABILITY_CURSOR_MAX_AGE_MS
+    )
+      startSequence = options.afterSequence + 1;
+  }
   const consumer = await js.consumers.get(natsNames().observabilityStream, {
     filterSubjects: subject,
-    ...consumerStartPolicy(undefined, options.startTime),
+    ...consumerStartPolicy(startSequence, options.startTime),
   });
+  const messages = await consumer.consume();
+  // The sequence before the first delivery: every later message on the subject is delivered.
+  const { delivered } = await consumer.info(true);
 
-  return consumer.consume();
+  return { messages: messages, cursor: delivered.stream_seq };
 }
 
 export async function flushObservabilityNats(): Promise<void> {

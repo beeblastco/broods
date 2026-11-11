@@ -994,7 +994,7 @@ function sendAgentTest(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   payload: WebSocketServerMessage,
 ): void {
-  socket.send(JSON.stringify(payload));
+  socket.send(JSON.stringify(payload), true);
 }
 
 function sendTerminalFrame(
