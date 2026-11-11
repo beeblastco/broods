@@ -22,7 +22,7 @@ interface SandboxModule {
   ) => { exec(request: ExecCall): Promise<{ ok: boolean }> };
 }
 
-mock.module("cloudflare:workers", () => ({
+await mock.module("cloudflare:workers", () => ({
   DurableObject: class {
     ctx: object;
     constructor(ctx: object) {
