@@ -5,6 +5,8 @@ const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // W3C trace id; all zeros is the "no span" sentinel.
 const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
+// 16 bytes as base64url: the gateway seals the stream sequence so it shows no gaps.
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const MAX_AGENT_ID_LENGTH = 256;
 
 // DEBUG never rides the live NATS relay: a client sees it only through Loki backfill.
@@ -62,7 +64,7 @@ export type ObservabilitySubscribeMessage = {
   agentId?: string;
   // A reconnect's cursor, the last `seq` it saw: the live stream starts after it, not at the
   // replay window. Sent without `backfill` by a client that kept its entries.
-  afterSeq?: number;
+  afterSeq?: string;
 };
 
 export type ObservabilityUnsubscribeMessage = {
@@ -83,11 +85,11 @@ export type ObservabilityClientMessage =
 
 // Sent once the live subscription is up; any requested backfill follows it. `agentId` echoes
 // the subscribe's filter, which a gateway that predates it ignores and never echoes. `seq` is
-// the cursor the live stream starts after; each live entry then carries its own.
+// the opaque cursor the live stream starts after; each live entry then carries its own.
 export type ObservabilityReadyMessage = {
   type: "ready";
   agentId?: string;
-  seq?: number;
+  seq?: string;
 };
 
 // Always sent for a requested backfill, failure included. A traces backfill comes in pieces:
@@ -103,13 +105,13 @@ export type ObservabilityBackfillMessage = {
 export type ObservabilityLogMessage = {
   type: "log";
   entry: ObservabilityLogEntry;
-  seq?: number;
+  seq?: string;
 };
 
 export type ObservabilitySpanMessage = {
   type: "span";
   entry: ObservabilitySpanRow;
-  seq?: number;
+  seq?: string;
 };
 
 export type ObservabilityErrorMessage = {
@@ -192,9 +194,8 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
   const afterSeq = msg["afterSeq"];
   if (
     afterSeq !== undefined &&
-    (typeof afterSeq !== "number" ||
-      !Number.isSafeInteger(afterSeq) ||
-      afterSeq < 0 ||
+    (typeof afterSeq !== "string" ||
+      !CURSOR_PATTERN.test(afterSeq) ||
       sandboxId !== undefined)
   )
     return false;

@@ -11,6 +11,7 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
+import { openCursor, sealCursor } from "./observability-cursor.ts";
 import { resolveSocketScope, type CredentialScope } from "./upstream.ts";
 import {
   decoder,
@@ -25,6 +26,8 @@ export type ObservabilityGatewayData = {
   kind: "observability";
   scope: ObservabilityScope;
   token: string;
+  // Absent: the socket gets no resume cursor and every subscribe loads in full.
+  cursorKey?: Buffer;
 };
 
 type LiveSubscription = { unsubscribe(): void; cursor?: number };
@@ -177,7 +180,9 @@ export async function handleObservabilityMessage(
     msg.sandboxId,
     msg.historyOnly === true,
     msg.agentId,
-    msg.afterSeq,
+    msg.afterSeq === undefined || !socket.data.cursorKey
+      ? undefined
+      : openCursor(socket.data.cursorKey, msg.afterSeq),
   );
 }
 
@@ -198,14 +203,18 @@ export async function relayNatsMessages(
         if (stream === "logs") {
           const entry = parsed as ObservabilityLogEntry;
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
-          sendObs(socket, { type: "log", entry: entry, seq: msg.seq });
+          sendObs(socket, {
+            type: "log",
+            entry: entry,
+            ...sealedSeq(socket, msg.seq),
+          });
         } else {
           // Shedding drops the newest rows, the spans that finish tasks. A full load restores logs.
           await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",
             entry: parsed as ObservabilitySpanRow,
-            seq: msg.seq,
+            ...sealedSeq(socket, msg.seq),
           });
         }
       } catch {
@@ -541,7 +550,7 @@ async function handleObservabilitySubscribe(
   sendObs(socket, {
     type: "ready",
     ...(agentId ? { agentId: agentId } : {}),
-    ...(live.cursor === undefined ? {} : { seq: live.cursor }),
+    ...sealedSeq(socket, live.cursor),
   });
   if (!sandboxId && typeof backfill === "number" && backfill > 0)
     state.backfills[stream] = state.backfills[stream].then(
@@ -1016,6 +1025,15 @@ async function waitForObsDrain(
   ) {
     await new Promise((resolve) => setTimeout(resolve, OBS_DRAIN_POLL_MS));
   }
+}
+
+function sealedSeq(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  sequence: number | undefined,
+): { seq?: string } {
+  return sequence === undefined || !socket.data.cursorKey
+    ? {}
+    : { seq: sealCursor(socket.data.cursorKey, sequence) };
 }
 
 function sendObs(

@@ -52,7 +52,7 @@ describe("active org", () => {
     });
     caller.authId = "auth_victim";
 
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(ownOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(ownOrg);
     expect((await t.mutation(api.org.orgs.getOrCreate, {})).orgId).toBe(ownOrg);
   });
 
@@ -64,13 +64,17 @@ describe("active org", () => {
     caller.authId = "auth_victim";
 
     await t.mutation(api.org.orgs.setActive, { orgId: otherOrg });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(otherOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(
+      otherOrg,
+    );
 
     await t.mutation(api.org.orgs.setActive, { orgId: ownOrg });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(ownOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(ownOrg);
 
     const created = await t.mutation(api.org.orgs.create, { name: "fresh" });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(created);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(
+      created,
+    );
   });
 });
 

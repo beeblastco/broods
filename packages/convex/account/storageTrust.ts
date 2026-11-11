@@ -8,7 +8,7 @@ import {
   storageTrust,
   type StorageTrust,
 } from "../model/storageTrust";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 
 export const storageTrustValidator = v.object({
   externalId: v.string(),

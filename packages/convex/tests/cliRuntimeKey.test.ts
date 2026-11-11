@@ -138,9 +138,12 @@ describe("runtime key wire", () => {
         stage: "production",
       },
     );
-    const scope = await t.query(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: await sha256Hex(deployment!.apiKey),
-    });
+    const scope = await t.query(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: await sha256Hex(deployment!.apiKey),
+      },
+    );
 
     expect(scope).toMatchObject({
       accountId: seeded.accountId,

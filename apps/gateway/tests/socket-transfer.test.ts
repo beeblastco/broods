@@ -202,7 +202,7 @@ test("a streamed chat answer stays under its byte ceiling", async (): Promise<vo
 
 test("a reconnect resumes from the last cursor instead of replaying", async (): Promise<void> => {
   const first = await wireClient(OBSERVABILITY_PATH);
-  let cursor = 0;
+  let cursor = "";
   try {
     first.send({ type: "subscribe", stream: "traces", backfill: TRACE_COUNT });
     for (;;) {
@@ -215,7 +215,7 @@ test("a reconnect resumes from the last cursor instead of replaying", async (): 
   } finally {
     first.close();
   }
-  expect(cursor).toBe(natsMessages.length);
+  expect(cursor).toHaveLength(22);
 
   const second = await wireClient(OBSERVABILITY_PATH);
   try {

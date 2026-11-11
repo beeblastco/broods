@@ -222,9 +222,12 @@ export async function resolveAccountCaller(
       accountId: Id<"accounts">;
       projectId: Id<"projects">;
       stageId: Id<"stages">;
-    } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: tokenHash,
-    });
+    } | null = await ctx.runQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: tokenHash,
+      },
+    );
     if (!deployment) return null;
 
     return {

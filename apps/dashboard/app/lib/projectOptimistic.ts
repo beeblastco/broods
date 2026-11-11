@@ -7,10 +7,10 @@ export function applyProjectRename(
   localStore: OptimisticLocalStore,
   args: { projectId: Id<"projects">; name: string },
 ): void {
-  const list = localStore.getQuery(api.project.list, {});
+  const list = localStore.getQuery(api.dashboardReads.projects, {});
   if (list?.some((project) => project._id === args.projectId)) {
     localStore.setQuery(
-      api.project.list,
+      api.dashboardReads.projects,
       {},
       list.map((project) =>
         project._id === args.projectId
@@ -21,9 +21,9 @@ export function applyProjectRename(
   }
 
   const byId = { projectId: args.projectId };
-  const project = localStore.getQuery(api.project.getById, byId);
+  const project = localStore.getQuery(api.dashboardReads.projectById, byId);
   if (project) {
-    localStore.setQuery(api.project.getById, byId, {
+    localStore.setQuery(api.dashboardReads.projectById, byId, {
       ...project,
       name: args.name,
     });

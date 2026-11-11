@@ -25,7 +25,7 @@ import {
   API_POLICY_ACTIONS,
   type ApiPolicyAction,
   type PolicyDocument,
-} from "./model/policyRules";
+} from "./model/policyDocument";
 import { userByAuthId } from "./model/ownership/org";
 
 export const keyActionsValidator = v.array(
