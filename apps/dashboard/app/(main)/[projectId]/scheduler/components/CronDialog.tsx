@@ -26,6 +26,7 @@ import { useMutation } from "convex/react";
 import { useNow } from "@/app/hooks/useNow";
 import { analytics } from "@/app/lib/analytics";
 import { nextFireAt } from "@/app/lib/cronSchedule";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { useId, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
@@ -96,6 +97,7 @@ export function CronDialog({
   const [timezoneTouched, setTimezoneTouched] = useState(false);
   const submittingRef = useRef(false);
   const timezoneRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
   const now = useNow();
 
@@ -141,6 +143,13 @@ export function CronDialog({
     if (zoneFormat === null) {
       setTimezoneTouched(true);
       timezoneRef.current?.focus();
+
+      return;
+    }
+    // A textarea takes no `pattern`, so a blank prompt is refused here, the same native way.
+    if (input === "") {
+      promptRef.current?.setCustomValidity("Write what the agent should do.");
+      promptRef.current?.reportValidity();
 
       return;
     }
@@ -221,6 +230,7 @@ export function CronDialog({
               <Input
                 id="cj-name"
                 required={true}
+                pattern={NOT_BLANK}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Daily summary"
@@ -296,8 +306,12 @@ export function CronDialog({
                 id="cj-prompt"
                 // Untouched, an edit keeps stored events that may hold no text.
                 required={!cron || storedPrompt.trim() !== ""}
+                ref={promptRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(e) => {
+                  e.target.setCustomValidity("");
+                  setPrompt(e.target.value);
+                }}
                 placeholder="What should the agent do on each invocation?"
                 rows={3}
               />

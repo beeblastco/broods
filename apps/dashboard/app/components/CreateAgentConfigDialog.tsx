@@ -28,12 +28,10 @@ import {
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
 import { analytics } from "@/app/lib/analytics";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { useRef, useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
-
-// `required` accepts whitespace; the submit check trims, so native validation must too.
-const NOT_BLANK = ".*\\S.*";
 
 const providerOptions: Array<{
   value: AgentProvider;

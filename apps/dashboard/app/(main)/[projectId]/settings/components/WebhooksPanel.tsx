@@ -12,6 +12,7 @@ import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { toErrorMessage } from "@/app/lib/errors";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { cn } from "@/app/lib/utils";
 import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
 import { api } from "@broods/convex/_generated/api";
@@ -383,6 +384,7 @@ function AddWebhookForm({
         id={`${fieldId}-secret`}
         noun="secret"
         required={true}
+        pattern={NOT_BLANK}
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
         placeholder="HMAC signing secret"
