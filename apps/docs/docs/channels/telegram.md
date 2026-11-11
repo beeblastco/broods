@@ -64,6 +64,8 @@ A Telegram bot puts your agent in private chats, groups and forum topics.
 
 A direct-message bot cannot know chat ids in advance, because a person's chat only exists once they write. Set `allowedChannelIds: ["*"]` and gate people with `allowedUserIds` instead of declaring channels.
 
+A channel applies on every bot the account has. Add `botId`, the digits before `:` in the bot token, to tie it to one bot.
+
 ## Configuration
 
 | Field               | Required | Description                                                           |

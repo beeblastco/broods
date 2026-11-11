@@ -1,29 +1,20 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  mutation,
-  query,
-  type MutationCtx,
-  type QueryCtx,
-} from "./_generated/server";
+import { mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { readyStageDeployment } from "./agent/deployments";
 import { authKit, type AuthUser } from "./auth";
+import { getCallerActiveOrgId, listProjects } from "./dashboardReads";
 import { uniqueProjectSlug } from "./lib/slug";
 import { requireActiveOrgAccount } from "./model/activeAccount";
 import { purgeProject } from "./model/cascade";
 import { ClientError } from "./model/clientError";
-import { getActiveOrgForUser } from "./model/ownership/org";
-import {
-  getProjectForRole,
-  requireProjectForWrite,
-} from "./model/ownership/project";
+import { requireProjectForWrite } from "./model/ownership/project";
 import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
 import {
   getOrCreateActiveOrg,
   orgBootstrapValidator,
   type OrgBootstrap,
 } from "./org/orgs";
-import { projectsFields } from "./schema";
 
 const RANDOM_ADJECTIVES = [
   "amber",
@@ -139,18 +130,15 @@ const PROJECT_WRITE_REFUSAL = {
   notFound: "Project not found.",
 };
 
-const projectDoc = v.object({
-  ...projectsFields,
-  _id: v.id("projects"),
-  _creationTime: v.number(),
-});
-
 type Ctx = QueryCtx | MutationCtx;
 
 type HomeTarget = OrgBootstrap & {
   projectId: Id<"projects"> | null;
   stageId: Id<"stages"> | null;
 };
+
+// Dashboard tabs loaded before this release call these paths until they reload.
+export { projectById as getById, projects as list } from "./dashboardReads";
 
 export const create = mutation({
   args: {
@@ -194,28 +182,6 @@ export const create = mutation({
     await readyStageDeployment(ctx, authUser, projectId, stageId);
 
     return projectId;
-  },
-});
-
-export const getById = query({
-  args: { projectId: v.id("projects") },
-  returns: v.union(v.null(), projectDoc),
-  handler: async (ctx, { projectId }): Promise<Doc<"projects"> | null> => {
-    const authUser = await requireAuth(ctx);
-
-    return getProjectForRole(ctx, authUser.id, projectId);
-  },
-});
-
-// Soft auth: during the first-login WorkOS webhook gap the dashboard must get [], not a throw.
-export const list = query({
-  args: {},
-  returns: v.array(projectDoc),
-  handler: async (ctx): Promise<Doc<"projects">[]> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) return [];
-
-    return listProjects(ctx, await getCallerActiveOrgId(ctx, authUser.id));
   },
 });
 
@@ -405,35 +371,6 @@ async function defaultProjectId(
   await ctx.db.patch(orgId, { onboardedAt: now });
 
   return projectId;
-}
-
-async function getCallerActiveOrgId(
-  ctx: Ctx,
-  authId: string,
-): Promise<Id<"orgs"> | null> {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-
-  return org?._id ?? null;
-}
-
-async function listProjects(
-  ctx: Ctx,
-  orgId: Id<"orgs"> | null,
-): Promise<Doc<"projects">[]> {
-  if (orgId === null) return [];
-
-  const orgProjects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
-
-  return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function randomProjectName(): string {

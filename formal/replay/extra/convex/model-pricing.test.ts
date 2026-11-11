@@ -6,6 +6,7 @@ import {
 } from "../../../../packages/convex/model/modelPricing.ts";
 import {
   isAccountModelProviderName,
+  isAgentProviderName,
   providerApiKeyEnvName,
 } from "../../../../packages/convex/model/modelProviders.ts";
 
@@ -69,6 +70,14 @@ describe("model providers", (): void => {
     ["nope", false],
   ])("%s", (name: string, expected: boolean): void => {
     expect(isAccountModelProviderName(name)).toBe(expected);
+  });
+
+  test.each([
+    ["openai", true],
+    ["fishaudio", true],
+    ["constructor", false],
+  ])("agent provider %s", (name: string, expected: boolean): void => {
+    expect(isAgentProviderName(name)).toBe(expected);
   });
 
   test("env names", (): void => {

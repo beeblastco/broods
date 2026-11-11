@@ -9,6 +9,7 @@ import { createCohere } from "@ai-sdk/cohere";
 import { createDeepInfra } from "@ai-sdk/deepinfra";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createFireworks } from "@ai-sdk/fireworks";
+import { createFishAudio } from "@ai-sdk/fish-audio";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
 import { createGoogleVertex } from "@ai-sdk/google-vertex";
@@ -52,6 +53,7 @@ import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
   type AccountModelProviderName,
+  type AgentProviderName,
 } from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
@@ -92,8 +94,9 @@ const RATE_LIMIT_WAIT_PATTERN =
 
 // `whisper-1`, not `gpt-4o-mini-transcribe`: only it reads the ogg/opus of voice notes.
 const PROVIDER_TRANSCRIPTION: Partial<
-  Record<AccountModelProviderName, TranscriptionSource>
+  Record<AgentProviderName, TranscriptionSource>
 > = {
+  fishaudio: { factory: createFishAudio, modelId: "transcribe-1" },
   groq: { factory: createGroq, modelId: "whisper-large-v3-turbo" },
   mistral: { factory: createMistral, modelId: "voxtral-mini-latest" },
   openai: { factory: createOpenAI, modelId: "whisper-1" },
@@ -987,7 +990,7 @@ function requireModelId(agentConfig: AgentConfig): string {
 
 function requireProviderSettings(
   agentConfig: AgentConfig,
-  providerName: AccountModelProviderName,
+  providerName: AgentProviderName,
 ): AgentProviderSettings {
   const providerConfig = agentConfig.provider?.[providerName];
   if (!providerConfig) {

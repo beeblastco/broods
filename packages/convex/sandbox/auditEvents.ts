@@ -6,7 +6,7 @@ import {
   type MutationCtx,
   query,
 } from "../_generated/server";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import { sandboxAuditEventsFields } from "../schema";
 
 type SandboxInstanceRow = WithoutSystemFields<Doc<"sandboxInstances">>;

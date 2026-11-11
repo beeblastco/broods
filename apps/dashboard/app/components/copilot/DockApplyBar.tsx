@@ -8,6 +8,7 @@ import {
   type CopilotAction,
   type DockProposal,
 } from "@/app/lib/copilotActions";
+import { cn } from "@/app/lib/utils";
 import { ArrowRight, X } from "lucide-react";
 import { useState } from "react";
 
@@ -29,11 +30,14 @@ export function DockApplyBar(): React.JSX.Element | null {
   const { apply, messageId } = proposal;
   const settling = apply.phase === "applying" || apply.phase === "verifying";
   const isOpen = openFor === messageId && apply.phase === "proposed";
+  const status = phaseStatus(proposal);
 
   return (
+    // Off: the notice strip is a live region; only the always-mounted phase status speaks.
     <section
       data-apply-bar={apply.phase}
       aria-label="Proposed change"
+      aria-live="off"
       className="pointer-events-auto w-full max-w-lg rounded-md border border-border bg-card text-xs text-card-foreground shadow-sm"
     >
       <div className="flex h-8 items-center gap-2 pr-1 pl-2.5">
@@ -51,29 +55,23 @@ export function DockApplyBar(): React.JSX.Element | null {
             <ChangeCount proposal={proposal} />
           </button>
         )}
-        {apply.phase === "applying" && (
-          <span className="shrink-0 text-muted-foreground">
-            {proposal.branch ? (
-              <>
-                {apply.runUrl ? "Deploying to" : "Queued for"}{" "}
-                {proposal.stage ?? proposal.branch} ·{" "}
-                <Elapsed since={apply.startedAt ?? Date.now()} />
-              </>
-            ) : (
-              "Applying"
+        <span className="shrink-0 text-muted-foreground">
+          <output
+            className={cn(
+              apply.phase === "failed" && "text-destructive",
+              !status && "sr-only",
             )}
-          </span>
-        )}
-        {apply.phase === "verifying" && (
-          <span className="shrink-0 text-muted-foreground">
-            Live on {proposal.stage ?? "the stage"}. Verifying{" "}
-            {proposal.branch ?? "its"} deploy ·{" "}
-            <Elapsed since={apply.startedAt ?? Date.now()} />
-          </span>
-        )}
-        {apply.phase === "failed" && (
-          <span className="shrink-0 text-destructive">Deploy failed</span>
-        )}
+          >
+            {status}
+          </output>
+          {(apply.phase === "verifying" ||
+            (apply.phase === "applying" && proposal.branch)) && (
+            <>
+              {" · "}
+              <Elapsed since={apply.startedAt ?? Date.now()} />
+            </>
+          )}
+        </span>
         {apply.phase !== "proposed" && <RunLink href={apply.runUrl} />}
         {!settling && (
           <Button
@@ -305,6 +303,20 @@ function LineCounts({
       </span>
     </>
   );
+}
+
+function phaseStatus({ apply, branch, stage }: DockProposal): string {
+  if (apply.phase === "applying") {
+    if (!branch) return "Applying";
+
+    return `${apply.runUrl ? "Deploying to" : "Queued for"} ${stage ?? branch}`;
+  }
+  if (apply.phase === "verifying") {
+    return `Live on ${stage ?? "the stage"}. Verifying ${branch ?? "its"} deploy`;
+  }
+  if (apply.phase === "failed") return "Deploy failed";
+
+  return "";
 }
 
 function RunLink({ href }: { href?: string }): React.JSX.Element | null {

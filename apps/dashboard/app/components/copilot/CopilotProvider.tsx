@@ -147,9 +147,12 @@ export function CopilotProvider({
     api.canvas.getByProject,
     indexedProject ? stageArgs : "skip",
   );
-  const projects = useQuery(api.project.list, indexedProject ? {} : "skip");
+  const projects = useQuery(
+    api.dashboardReads.projects,
+    indexedProject ? {} : "skip",
+  );
   const stages = useQuery(
-    api.stage.list,
+    api.dashboardReads.stages,
     indexedProject ? { projectId: indexedProject } : "skip",
   );
   const facts = useMemo((): Omit<DockFacts, "codeNodes"> => {
@@ -200,7 +203,7 @@ export function CopilotProvider({
     stageId ?? stages?.find((stage) => stage.isDefault)?._id ?? null;
   // The user menu's subscription. A session lends the open project's org, else the active one.
   const activeOrg = useQuery(
-    api.org.orgs.getActive,
+    api.dashboardReads.activeOrg,
     useSignedIn() ? {} : "skip",
   );
   const orgId = activeOrg?._id;

@@ -6,7 +6,7 @@ import {
   type MutationCtx,
 } from "../_generated/server";
 import { getProjectStage } from "../model/ownership/stage";
-import { getActiveCaller } from "../org/orgs";
+import { getActiveCaller } from "../model/activeCaller";
 import { machineConnectionsFields } from "../schema";
 
 const connectionRef = {

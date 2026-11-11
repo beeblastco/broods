@@ -18,7 +18,9 @@ interface Props {
 
 export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const project = useQuery(api.project.getById, { projectId: projectId });
+  const project = useQuery(api.dashboardReads.projectById, {
+    projectId: projectId,
+  });
   const update = useMutation(api.project.update);
 
   const [name, setName] = useState("");
@@ -112,7 +114,11 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
         </div>
 
         <div className="flex items-center justify-between gap-4">
-          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+          {saveError && (
+            <p role="alert" className="text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
           {canWrite && (
             <Button
               size="sm"

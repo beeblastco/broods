@@ -459,7 +459,9 @@ test("a disabled account cannot change crons, connections or access, and can sti
   ];
   for (const call of refused) await expect(call()).rejects.toThrow(NOT_ACTIVE);
 
-  expect(await caller.query(api.org.orgs.getActiveAccount, {})).toMatchObject({
+  expect(
+    await caller.query(api.dashboardReads.activeAccount, {}),
+  ).toMatchObject({
     accountId: accountId,
     status: "disabled",
   });

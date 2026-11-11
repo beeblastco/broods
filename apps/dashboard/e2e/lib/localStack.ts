@@ -66,7 +66,7 @@ export interface OrgRow {
 }
 
 export function activeOrg(): OrgRow {
-  const org = run(STACK_ADMIN, "org/orgs:getActive", {});
+  const org = run(STACK_ADMIN, "dashboardReads:activeOrg", {});
   if (
     typeof org !== "object" ||
     org === null ||

@@ -488,7 +488,9 @@ export function SandboxInstancesTable({
       </ResizablePanelGroup>
 
       {error && !confirming && (
-        <p className="px-3 py-2 text-xs text-destructive">{error}</p>
+        <p role="alert" className="px-3 py-2 text-xs text-destructive">
+          {error}
+        </p>
       )}
 
       {confirming && (
@@ -617,7 +619,7 @@ function InstanceRow({
           disabled={!toggleable}
           className={toggleable ? "cursor-pointer" : "cursor-not-allowed"}
           onCheckedChange={onToggle}
-          aria-label={running ? "Suspend" : "Resume"}
+          aria-label={`${instance.name} running`}
         />
       </DataTableCell>
     </DataTableRow>

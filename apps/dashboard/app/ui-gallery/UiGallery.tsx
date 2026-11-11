@@ -573,7 +573,7 @@ export function UiGallery(): React.JSX.Element {
         >
           Open details
         </Button>
-        <div className="flex h-64 w-[64rem]">
+        <div className="flex h-64 w-full max-w-5xl">
           <DetailSplit
             detail={
               detailOpen && (

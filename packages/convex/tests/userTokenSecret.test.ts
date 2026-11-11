@@ -53,9 +53,12 @@ test("an admin mints the signing secret once and core opens tokens with it", asy
     await caller.query(api.agent.deployments.userTokenSecretForStage, scope),
   ).toMatchObject({ hint: second.hint });
 
-  const resolved = await t.query(internal.agent.deployments.getByApiKeyHash, {
-    apiKeyHash: await sha256Hex(deployment.rawApiKey),
-  });
+  const resolved = await t.query(
+    internal.runtimeLookups.deploymentByApiKeyHash,
+    {
+      apiKeyHash: await sha256Hex(deployment.rawApiKey),
+    },
+  );
   const sealed = resolved?.userTokenSecret;
   expect(sealed).toBeDefined();
   expect(JSON.stringify(sealed)).not.toContain(second.secret);

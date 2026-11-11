@@ -12,6 +12,7 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import { authKit, type AuthUser, deriveName } from "../auth";
+import { agentDeploymentScopeValidator } from "../runtimeLookups";
 import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   auditDetailsJson,
@@ -19,7 +20,6 @@ import {
   appendAuditEvent,
   type AuditActor,
 } from "../model/auditEvents";
-import { accountDoc } from "../model/accountDoc";
 import { requireDashboardPermission } from "../model/access";
 import {
   keyHint,
@@ -49,14 +49,8 @@ export const stageSessionValidator = v.object({
 
 export type StageSession = Infer<typeof stageSessionValidator>;
 
-const agentDeploymentScopeValidator = v.object({
-  accountId: v.id("accounts"),
-  projectId: v.id("projects"),
-  stageId: v.id("stages"),
-  endpointId: v.string(),
-  projectSlug: v.string(),
-  stageSlug: v.string(),
-});
+// Core pods deployed before this release call this path until they roll.
+export { deploymentByApiKeyHash as getByApiKeyHash } from "../runtimeLookups";
 
 const ensureReturn = v.object({
   _id: v.id("agentDeployments"),
@@ -158,52 +152,6 @@ export const getByAgentId = internalQuery({
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,
-    };
-  },
-});
-
-export const getByApiKeyHash = internalQuery({
-  args: { apiKeyHash: v.string() },
-  // The signing secret stays sealed: core opens it only when a request carries a user token.
-  returns: v.union(
-    v.object({
-      ...agentDeploymentScopeValidator.fields,
-      account: accountDoc,
-      userTokenSecret: v.optional(
-        v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
-      ),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, { apiKeyHash }) => {
-    const deployment = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_apiKeyHash", (q) => q.eq("apiKeyHash", apiKeyHash))
-      .unique();
-    if (!deployment || deployment.status !== "active") return null;
-
-    const account = await ctx.db.get(deployment.accountId);
-    if (!account || account.status !== "active") return null;
-
-    return {
-      accountId: deployment.accountId,
-      projectId: deployment.projectId,
-      stageId: deployment.stageId,
-      endpointId: deployment.endpointId,
-      projectSlug: deployment.projectSlug,
-      stageSlug: deployment.stageSlug,
-      account: account,
-      ...(deployment.userTokenSecretCiphertext &&
-      deployment.userTokenSecretIv &&
-      deployment.userTokenSecretTag
-        ? {
-            userTokenSecret: {
-              ciphertext: deployment.userTokenSecretCiphertext,
-              iv: deployment.userTokenSecretIv,
-              tag: deployment.userTokenSecretTag,
-            },
-          }
-        : {}),
     };
   },
 });

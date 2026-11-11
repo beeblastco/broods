@@ -3,7 +3,10 @@ import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
 import { requireActiveAccount } from "../model/activeAccount";
 import { ClientError } from "../model/clientError";
-import { getActiveAccountForUser, getActiveCaller } from "../org/orgs";
+import {
+  getActiveAccountForUser,
+  getActiveCaller,
+} from "../model/activeCaller";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
 // Runs stored instructions as any org agent, into live channels: an org admin operation.
