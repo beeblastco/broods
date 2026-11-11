@@ -111,7 +111,7 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "03c45a1b9f5b0c3b"
+      "handleManifestSync": "2a807c4a468fbc6e"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "217070cdd14c4f09",
