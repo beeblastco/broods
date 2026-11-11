@@ -20,7 +20,7 @@ import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
 
 // At most one write per key per hour on the CLI's request path.
-export const LAST_USED_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+export const DEPLOY_KEY_LAST_USED_INTERVAL_MS = 60 * 60 * 1000;
 
 export const create = mutation({
   args: {
@@ -98,10 +98,7 @@ export const remove = mutation({
   },
 });
 
-/**
- * Mints a project key for one stage and answers its plaintext, shown once.
- * Used by `create` and by a GitHub repo link, which seals it into a repo secret.
- */
+// Stamps a project key's lastUsedAt, scheduled from the CLI request path.
 export const touchLastUsed = internalMutation({
   args: { keyId: v.id("deployKeys"), usedAt: v.number() },
   returns: v.null(),
@@ -109,7 +106,7 @@ export const touchLastUsed = internalMutation({
     const key = await ctx.db.get(args.keyId);
     if (
       key &&
-      args.usedAt - (key.lastUsedAt ?? 0) >= LAST_USED_WRITE_INTERVAL_MS
+      args.usedAt - (key.lastUsedAt ?? 0) >= DEPLOY_KEY_LAST_USED_INTERVAL_MS
     ) {
       await ctx.db.patch(key._id, { lastUsedAt: args.usedAt });
     }
@@ -118,6 +115,7 @@ export const touchLastUsed = internalMutation({
   },
 });
 
+// Mints a project key for one stage and answers its plaintext, shown once.
 export async function insertDeployKey(
   ctx: MutationCtx,
   key: {

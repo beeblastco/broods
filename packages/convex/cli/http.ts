@@ -23,7 +23,7 @@ import { clientErrorResponse } from "../model/clientError";
 import { jsonError } from "../model/httpJson";
 import { APPLY_TICKET_PREFIX, openApplyTicket } from "../model/applyTicket";
 import { stageTicketSecret } from "../agent/deployments";
-import { LAST_USED_WRITE_INTERVAL_MS } from "../deployKeys";
+import { DEPLOY_KEY_LAST_USED_INTERVAL_MS } from "../deployKeys";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
@@ -178,7 +178,7 @@ async function resolveCliRequestAuth(
   const now = Date.now();
   if (
     auth.deployKeyId &&
-    now - (lastUsedAt ?? 0) >= LAST_USED_WRITE_INTERVAL_MS
+    now - (lastUsedAt ?? 0) >= DEPLOY_KEY_LAST_USED_INTERVAL_MS
   ) {
     await ctx.scheduler
       .runAfter(0, internal.deployKeys.touchLastUsed, {
