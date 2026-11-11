@@ -35,6 +35,7 @@ import type {
   WhatsAppSource,
 } from "./contracts.ts";
 import type { Tool } from "ai";
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import type { McpRuntime } from "./account.ts";
 
 export type { ChannelPartition };
@@ -508,17 +509,23 @@ export type TeamsChannelInput = ChannelRulesInput & {
 export type TelegramChannelInput = ChannelRulesInput & {
   connection: TelegramConnectionDefinition;
   chatId: string;
+  /** The digits before ":" in the bot token. Omit and the record applies on every bot. */
+  botId?: string;
 };
 
 export type TwilioChannelInput = ChannelRulesInput & {
   connection: TwilioConnectionDefinition;
   /** Sender's number in E.164, e.g. "+15551234567". */
   from: string | readonly string[];
+  /** The receiving number in E.164. Omit and the record applies on every number. */
+  phoneNumber?: string;
 };
 
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
   chatId: string | readonly string[];
+  /** The digits before ":" in the bot token. Omit and the record applies on every bot. */
+  botId?: string;
 };
 
 export type InstagramChannelInput = ChannelRulesInput & {
@@ -535,6 +542,8 @@ export type WhatsAppChannelInput = ChannelRulesInput & {
   connection: WhatsAppConnectionDefinition;
   /** The number with country code and no "+". */
   waId: string | readonly string[];
+  /** The receiving number's phone number id. Omit and the record applies on every number. */
+  phoneNumberId?: string;
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
@@ -1092,33 +1101,33 @@ export function defineTeamsChannel<const Name extends string>(
 export function defineTelegramChannel<const Name extends string>(
   input: ResourceInput<Name, TelegramChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, chatId, ...rules } = input;
+  const { name, description, chatId, botId, ...rules } = input;
 
-  return defineChannelResource(name, description, chatId, undefined, rules);
+  return defineChannelResource(name, description, chatId, botId, rules);
 }
 
 export function defineTwilioChannel<const Name extends string>(
   input: ResourceInput<Name, TwilioChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, from, ...rules } = input;
+  const { name, description, from, phoneNumber, ...rules } = input;
 
-  return defineChannelResource(name, description, from, undefined, rules);
+  return defineChannelResource(name, description, from, phoneNumber, rules);
 }
 
 export function defineWhatsAppChannel<const Name extends string>(
   input: ResourceInput<Name, WhatsAppChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, waId, ...rules } = input;
+  const { name, description, waId, phoneNumberId, ...rules } = input;
 
-  return defineChannelResource(name, description, waId, undefined, rules);
+  return defineChannelResource(name, description, waId, phoneNumberId, rules);
 }
 
 export function defineZaloChannel<const Name extends string>(
   input: ResourceInput<Name, ZaloChannelInput>,
 ): ChannelResource<Name> {
-  const { name, description, chatId, ...rules } = input;
+  const { name, description, chatId, botId, ...rules } = input;
 
-  return defineChannelResource(name, description, chatId, undefined, rules);
+  return defineChannelResource(name, description, chatId, botId, rules);
 }
 
 export function isBroodsConfig(
@@ -1156,6 +1165,13 @@ function defineChannelResource<const Name extends string>(
   workspaceRef: string | undefined,
   rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
 ): ChannelResource<Name> {
+  // Records are matched as stored; nothing resolves `${NAME}` in them.
+  if (workspaceRef && ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(workspaceRef)) {
+    throw new Error(
+      `Channel "${name}" must name its team, guild, number or bot literally, not "${workspaceRef}"`,
+    );
+  }
+
   return defineResource("channelRecord", name, description, {
     ...rules,
     externalId: externalId,

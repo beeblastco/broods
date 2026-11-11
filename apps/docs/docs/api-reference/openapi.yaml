@@ -5558,7 +5558,7 @@ components:
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
         workspaceRef:
           type: string
-          description: Team or guild the place sits in, when the provider has one.
+          description: What the place sits in, so a message from another one skips the record. Slack or Teams team id, Discord guild id, GitHub owner, Linear organization id, Pancake or Messenger page id, Instagram account id, WhatsApp phone number id, Twilio receiving number in E.164, Telegram or Zalo bot id (the digits before ":" in the bot token). Unset, the record applies on every one.
         name:
           type: string
         description:
@@ -5575,6 +5575,7 @@ components:
           type: [string, "null"]
         workspaceRef:
           type: [string, "null"]
+          description: The team, page, number or bot the record is tied to, as on create. null removes the tie, so the record applies on every one.
         config:
           $ref: "#/components/schemas/ChannelRecordConfig"
         status:

@@ -54,7 +54,7 @@ const ACCOUNT = {
 };
 
 const TELEGRAM_CHANNEL = {
-  botToken: "bot-token",
+  botToken: "5550001:bot-secret",
   webhookSecret: "telegram-secret",
   allowedChannelIds: ["123"],
 };
@@ -130,6 +130,29 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_sales");
     expect(runs[0]!.agentConfig?.channels?.telegram).toEqual(TELEGRAM_CHANNEL);
     expect(runs[0]!.conversationKey).toContain("agent:agent_sales:");
+  });
+
+  it("applies a record only on the bot it is tied to, and an untied one on every bot", async (): Promise<void> => {
+    const agentFor = async (
+      workspaceRef?: string,
+    ): Promise<string | undefined> => {
+      const runs: ChannelInboundEvent[] = [];
+      await route({
+        records: {
+          "telegram:123": channelRecord(
+            workspaceRef ? { workspaceRef: workspaceRef } : {},
+          ),
+        },
+        runs: runs,
+        path: "/v1/webhooks/acct_test/telegram",
+      });
+
+      return runs[0]!.agentId;
+    };
+
+    expect(await agentFor("5550009")).toBe("agent_support");
+    expect(await agentFor("5550001")).toBe("agent_sales");
+    expect(await agentFor()).toBe("agent_sales");
   });
 
   it("falls back to the receiving agent when no record claims the channel", async () => {
