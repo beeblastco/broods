@@ -67,8 +67,8 @@ export async function largeSkillSync(context: VerifyContext): Promise<void> {
   );
   const over = await sync(MAX_SKILL_BUNDLE_BYTES + 1);
   assertStep(
-    "a skill past 30 MiB is refused before any write",
-    over.includes("Skill bundle exceeds 30 MiB"),
+    "a skill past 30 MiB is refused at the claim, before any read",
+    over.includes("Uploaded file exceeds"),
     over,
   );
   tamper = true;
