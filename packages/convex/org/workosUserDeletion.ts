@@ -4,6 +4,7 @@ import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { purgeUser, sharedOwnedOrgs } from "../model/cascade";
 
+const CLEANUP_ATTEMPTS_MAX = 24;
 const SWEEP_BATCH = 25;
 
 export const listSoleOwnedAccounts = internalQuery({
@@ -123,6 +124,13 @@ export const scheduleRetry = internalMutation({
 
     const attempts = (user.workosDeletionAttempts ?? 0) + 1;
     await ctx.db.patch(user._id, { workosDeletionAttempts: attempts });
+    if (attempts >= CLEANUP_ATTEMPTS_MAX) {
+      console.error(
+        `WorkOS user deletion cleanup gave up for ${args.authId} after ${attempts} attempts; rerun org/workosUserDeletionCleanup:run once core cleanup works`,
+      );
+
+      return null;
+    }
 
     return Math.min(60 * 60 * 1000, 60 * 1000 * 2 ** (attempts - 1));
   },

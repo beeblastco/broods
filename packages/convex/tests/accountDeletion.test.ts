@@ -266,6 +266,25 @@ test("skipped shared owners leave the due range, so they cannot starve a later r
   expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).toBe(null);
 });
 
+test("a cleanup that keeps failing stops retrying and logs one line an operator can alert on", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const leaving = await seedSoleOwner(t, LEAVING);
+  vi.stubEnv("ADMIN_ACCOUNT_SECRET", "");
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+  await t.action(internal.org.workosUserDeletionCleanup.run, {
+    authId: LEAVING,
+  });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+  const gaveUp = errors.mock.calls.filter(([line]) =>
+    String(line).startsWith("WorkOS user deletion cleanup gave up"),
+  );
+  expect(gaveUp).toHaveLength(1);
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).not.toBe(null);
+  errors.mockRestore();
+});
+
 async function addMember(
   t: TestConvex<typeof schema>,
   orgId: Id<"orgs">,
