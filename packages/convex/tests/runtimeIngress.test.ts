@@ -2734,7 +2734,8 @@ describe("runtime ingress", () => {
       ownerEventId: "released-owner",
       ownerGeneration: 1,
     });
-    vi.useFakeTimers({ now: Date.now() + 120_000 });
+    // convex-test can pin a mutation 1 ms ahead of the wall clock: stay off the grace boundary.
+    vi.useFakeTimers({ now: Date.now() + 121_000 });
     try {
       expect(
         await t.mutation(internal.runtimeIngress.recoverQueued, {
