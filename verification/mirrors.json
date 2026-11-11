@@ -94,7 +94,7 @@
   },
   "Sync": {
     "packages/broods/src/sync.ts": {
-      "BroodsSyncClient.putManifest": "9c9e0e219abf2b9d",
+      "BroodsSyncClient.putManifest": "60bad401d9f1e015",
       "diffManifests": "e0ebfd1eed42c281",
       "renameSnapshot": "2f385a52543abc07",
       "isRenamableKind": "382365924c44b5aa"
@@ -111,17 +111,17 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "03c45a1b9f5b0c3b"
+      "handleManifestSync": "599a4eded3c58971"
     },
     "packages/convex/cli/sync.ts": {
-      "recordExternalResourcesBySecretHash": "217070cdd14c4f09",
-      "syncManifestBySecretHash": "514be99dd14c5189"
+      "recordExternalResourcesBySecretHash": "76a45716a84d6dda",
+      "syncManifestBySecretHash": "b6df26ea7919bd9b"
     }
   },
   "SyncCron": {
     "packages/convex/cli/httpRoutes.ts": {
       "desiredCrons": "5b59145810b21d5d",
-      "syncCrons": "57a9ca7617aeb379"
+      "syncCrons": "32b0a470a535d780"
     },
     "packages/convex/model/agentSync.ts": {
       "deleteAgentRow": "6067f5e49d72d132"
@@ -137,7 +137,7 @@
   },
   "SyncExternal": {
     "packages/convex/cli/httpRoutes.ts": {
-      "pruneExternalResources": "22b7d9e1d8ada2e8",
+      "pruneExternalResources": "ef4ef3f4bf524bc7",
       "syncExternalResources": "38672e2bb5106f66"
     }
   },

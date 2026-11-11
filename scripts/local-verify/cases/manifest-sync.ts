@@ -92,6 +92,27 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
       diffManifests(remote.manifest, after.manifest).length === 0,
     "stale sync changed resources",
   );
+  const winner = manifests.find(
+    (manifest): boolean => diffManifests(manifest, after.manifest).length === 0,
+  );
+  const [agent, mcp] = winner?.resources ?? [];
+  await client.putManifest(
+    { ...manifests[0]!, resources: [] },
+    [{ kind: "mcp", name: mcp?.name ?? "" }],
+    false,
+    after.revision,
+  );
+  const pruned = (
+    await client.getManifest(project, "development")
+  )?.manifest.resources.map(
+    (resource): string => `${resource.kind}:${resource.name}`,
+  );
+  assertStep(
+    "a prune list removes only the resource it names",
+    pruned?.includes(`agent:${agent?.name}`) === true &&
+      !pruned.includes(`mcp:${mcp?.name}`),
+    JSON.stringify(pruned),
+  );
   const runtimeKey = await client.getRuntimeKey(project, "development");
   const runtime = new BroodsClient({
     apiKey: runtimeKey?.apiKey,

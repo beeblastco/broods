@@ -1,0 +1,2 @@
+kind	name	reason
+external	^new AccountEndpointUnauthorizedError$	Error subclass whose constructor only passes the fixed message "Unauthorized" to Error; the twin states where it is thrown.

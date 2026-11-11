@@ -11,10 +11,11 @@ import { authKit, type AuthUser } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { requireActiveOrgAccount } from "./model/activeAccount";
 import { purgeProject } from "./model/cascade";
+import { ClientError } from "./model/clientError";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import {
   getProjectForRole,
-  getProjectForWrite,
+  requireProjectForWrite,
 } from "./model/ownership/project";
 import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
 import {
@@ -133,6 +134,11 @@ const RANDOM_NOUNS = [
   "zone",
 ];
 
+const PROJECT_WRITE_REFUSAL = {
+  forbidden: "Projects can only be changed by an org admin.",
+  notFound: "Project not found.",
+};
+
 const projectDoc = v.object({
   ...projectsFields,
   _id: v.id("projects"),
@@ -162,7 +168,10 @@ export const create = mutation({
     const orgId = await getCallerActiveOrgId(ctx, authUser.id);
     if (!orgId) throw new Error("Join or create an organization first.");
     if (!(await callerCanWriteOrg(ctx, authUser.id, orgId))) {
-      throw new Error("Projects can only be created by an org admin.");
+      throw new ClientError(
+        "Projects can only be created by an org admin.",
+        "forbidden",
+      );
     }
     await requireActiveOrgAccount(ctx, orgId);
     const projectId = await ctx.db.insert("projects", {
@@ -247,13 +256,13 @@ export const remove = mutation({
   handler: async (ctx, { projectId }): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForWrite(
+    await requireProjectForWrite(
       ctx,
       authUser.id,
       projectId,
       "admin",
+      PROJECT_WRITE_REFUSAL,
     );
-    if (!project) throw new Error("Project not found.");
 
     await purgeProject(ctx, projectId);
 
@@ -274,13 +283,13 @@ export const update = mutation({
   ): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForWrite(
+    const project = await requireProjectForWrite(
       ctx,
       authUser.id,
       projectId,
       "admin",
+      PROJECT_WRITE_REFUSAL,
     );
-    if (!project) throw new Error("Project not found.");
 
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error("Project name is required.");

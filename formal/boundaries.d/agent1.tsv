@@ -1,0 +1,47 @@
+kind	name	reason
+external	^runtime\.query$	The injected runtime client supplies database pages; the twin checks the operation, pagination arguments and page processing.
+external	^systemModelMessageSchema\.parse$	The shared schema validates a system message; the twin checks which messages are parsed and where the parsed results go.
+external	^response\.text$	The Response implementation supplies the consumed body text; the twin parses that text itself.
+external	^Response\.json$	The platform Response constructor serializes the supplied JSON and status; both constructor arguments are checked.
+external	^Date\.now$	Wall-clock time is an environmental input; invocation order is checked.
+external	^setInterval$	The platform timer registers the callback and interval; both registration arguments are checked.
+external	^timer\.unref$	The Node timer lifecycle method changes process liveness only; its call is checked.
+external	^createWorkersAI$	The provider SDK constructs the Workers AI client from checked settings; model invocation belongs to the returned closure.
+external	^createOpenAICompatible$	The provider SDK constructs the compatible client from checked endpoint, authorization and settings.
+external	^openSandbox$	The supplied sandbox factory owns provisioning; the twin checks its session id and abort signal.
+external	^options\.agent\.createSession$	The harness SDK owns session construction; the twin checks the sandbox, resume state and signal it receives.
+external	^sandboxSession\.stop$	The sandbox lifecycle contract stops a failed session; the twin checks cleanup occurs before the error propagates.
+external	^session\.nativeSession\.destroy$	The harness lifecycle contract destroys the native session; its invocation and swallowed errors are checked.
+external	^session\.sandboxSession\.destroy$	The sandbox lifecycle contract destroys the sandbox session; its invocation and swallowed errors are checked.
+external	^(before|after|load)$	Caller-supplied callbacks define the injected operation; the twin checks invocation arguments and result propagation.
+external	^APICallError\.isInstance$	The AI SDK owns its error brand; the twin independently classifies retryability and HTTP status afterward.
+external	^path\.extname$	Node owns platform path extension semantics; the twin checks the path and applies the extension policy itself.
+external	^getConvexSize$	The Convex SDK owns storage-size accounting; the adapter forwards exactly the supplied entry.
+external	^hkdfSync$	Node crypto implements standard HKDF with checked digest, input, salt, context and output length; the twin computes the encoding.
+external	^new Date$	The clock is an environmental input; the twin formats the returned time itself.
+external	^runtime\.mutate$	The injected runtime client performs the mutation; the operation name and arguments are checked.
+external	^jsonSchema$	The AI SDK wraps a checked schema; the wrapper is only passed on.
+external	^Output\.(object|array|choice|json)$	The AI SDK builds the output spec from checked settings; the twin chooses the constructor.
+external	^performance\.now$	The monotonic clock is an environmental input; the twin only forwards the reading it gets.
+external	^listS3Prefix$	S3 supplies the object listing; bucket and prefix are checked and the twin filters the keys itself.
+external	^deleteS3Object$	S3 performs the delete; bucket and key are checked.
+external	^readS3Text$	S3 supplies the object text; bucket, key and byte limit are checked.
+external	^settleIngress$	The Convex ingress mutation owns the settle transaction; every argument is checked.
+external	^httpPolicyClient$	Builds the OPA HTTP client from the checked URL and headers; the twin only passes it on.
+external	^policyClient\(\)\.evaluate$	OPA decides the policy; the path and input are checked and the twin interprets the decision itself.
+external	^getStorage\(\)\.agentPolicies\.getById$	Storage supplies the policy row; account and policy id are checked.
+external	^hooks$	A caller-supplied callback picks the hooks; the tool name is checked.
+external	^onSaved$	A caller-supplied progress callback; the saved count is checked.
+external	^isContextLengthError$	The shared classifier owns provider wording; the twin checks it gets the error message and negates the answer.
+external	^options\.broodsSession\.saveHarnessSession$	The injected session persists the checkpoint; the whole checkpoint is checked.
+external	^transcribe$	The AI SDK runs the transcription model; model, audio, retries and signal are checked.
+external	^harnessSession \.experimental_steerTurn$	The harness SDK delivers the steering text, which is checked.
+external	^nativeSession \.(detach|stop)$	The harness SDK parks the session; the twin checks which is called and handles its failure.
+external	^createOpenAI$	The AI SDK builds the provider from the checked key and fetch.
+external	^provider$	The AI SDK provider returned by a checked factory builds the model for the checked id.
+external	^wrapLanguageModel$	The AI SDK wraps the model; the model and middleware list are checked.
+opaque	OpenAIResponsesLanguageModel	An AI SDK model object passed through unexamined; only its identity reaches the result.
+opaque	DefaultTranscriptionResult	The AI SDK result; the twin reads only its recorded text field.
+internal	apps/core/src/harness/tool-execute.ts#isStreamingExecute	Tests the function kind, which a recorded function value does not carry; callers branch on the answer.
+external	^new SkillAuthorizationError$	Constructs the error from the checked path; the twin throws what it returns.
+external	^createPi$	The harness SDK builds the adapter from the checked auth and thinking level.

@@ -1,51 +1,31 @@
-import { v } from "convex/values";
+import { v, type ObjectType } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, internalQuery } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
 import { accountDoc } from "../model/accountDoc";
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
+const createArgs = {
+  orgId: v.string(),
+  username: v.string(),
+  description: v.optional(v.string()),
+  secretHash: v.string(),
+  secretHint: v.optional(v.string()),
+  secretRotatedBy: v.optional(v.id("users")),
+  status: v.optional(statusValidator),
+};
+
 export const create = internalMutation({
-  args: {
-    orgId: v.string(),
-    username: v.string(),
-    description: v.optional(v.string()),
-    secretHash: v.string(),
-    secretHint: v.optional(v.string()),
-    secretRotatedBy: v.optional(v.id("users")),
-    status: v.optional(statusValidator),
-  },
+  args: createArgs,
   returns: accountDoc,
   handler: async (ctx, args): Promise<Doc<"accounts">> => {
-    const existing = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
-      .unique();
-    if (existing) {
-      throw new Error(`Account already exists for orgId=${args.orgId}`);
-    }
-
-    const now = Date.now();
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: args.orgId,
-      username: args.username,
-      description: args.description,
-      secretHash: args.secretHash,
-      secretHint: args.secretHint,
-      secretRotatedAt: args.secretHint ? now : undefined,
-      secretRotatedBy: args.secretRotatedBy,
-      status: args.status ?? "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    const account = await ctx.db.get(accountId);
-    if (!account) {
-      throw new Error("Failed to read created account");
-    }
-
-    return account;
+    return await insertAccount(ctx, args);
   },
 });
 
@@ -155,3 +135,37 @@ export const update = internalMutation({
     return await ctx.db.get(accountId);
   },
 });
+
+// The dashboard's provision and the CLI's org creation both make an org's account here.
+export async function insertAccount(
+  ctx: MutationCtx,
+  args: ObjectType<typeof createArgs>,
+): Promise<Doc<"accounts">> {
+  const existing = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+    .unique();
+  if (existing) {
+    throw new Error(`Account already exists for orgId=${args.orgId}`);
+  }
+
+  const now = Date.now();
+  const accountId = await ctx.db.insert("accounts", {
+    orgId: args.orgId,
+    username: args.username,
+    description: args.description,
+    secretHash: args.secretHash,
+    secretHint: args.secretHint,
+    secretRotatedAt: args.secretHint ? now : undefined,
+    secretRotatedBy: args.secretRotatedBy,
+    status: args.status ?? "active",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const account = await ctx.db.get(accountId);
+  if (!account) {
+    throw new Error("Failed to read created account");
+  }
+
+  return account;
+}
