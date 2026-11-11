@@ -55,23 +55,23 @@ export function DockApplyBar(): React.JSX.Element | null {
             <ChangeCount proposal={proposal} />
           </button>
         )}
-        <output
-          className={cn(
-            "shrink-0",
-            apply.phase === "failed"
-              ? "text-destructive"
-              : "text-muted-foreground",
-            !status && "sr-only",
+        <span className="shrink-0 text-muted-foreground">
+          <output
+            className={cn(
+              apply.phase === "failed" && "text-destructive",
+              !status && "sr-only",
+            )}
+          >
+            {status}
+          </output>
+          {(apply.phase === "verifying" ||
+            (apply.phase === "applying" && proposal.branch)) && (
+            <>
+              {" · "}
+              <Elapsed since={apply.startedAt ?? Date.now()} />
+            </>
           )}
-        >
-          {status}
-        </output>
-        {(apply.phase === "verifying" ||
-          (apply.phase === "applying" && proposal.branch)) && (
-          <span className="shrink-0 text-muted-foreground">
-            · <Elapsed since={apply.startedAt ?? Date.now()} />
-          </span>
-        )}
+        </span>
         {apply.phase !== "proposed" && <RunLink href={apply.runUrl} />}
         {!settling && (
           <Button
