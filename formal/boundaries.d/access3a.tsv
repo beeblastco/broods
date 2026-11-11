@@ -1,0 +1,11 @@
+kind	name	reason
+opaque	RateLimiter	Only constructed and returned here; its private window state is never read by the twin.
+external	^SEALED_TICKET\.safeParse$	zod applies the schema declared beside the call; replay checks the parsed input and the twin branches only on its answer.
+external	^getStorage\(\)\.accountApiKeys\.resolveByKeyHash$	Storage is the database boundary; replay checks the key hash asked for and releases the recorded row.
+external	^getStorage\(\)\.accountApiKeys\.touchLastUsed$	Storage write at the database boundary; replay checks the key id and timestamp.
+external	^getStorage\(\)\.agentDeployments\.getByApiKeyHash$	Storage is the database boundary; replay checks the key hash asked for and releases the recorded row.
+external	^getStorage\(\)\.agentDeployments\.touchLastUsed$	Storage write at the database boundary; replay checks the key hash and timestamp.
+external	^waitUntil$	Hands a promise to the request lifetime; it decides nothing and replay checks that it was called.
+external	^new RateLimiter$	Constructor of an object the twin only returns; replay checks the limit and window passed.
+external	^createHash\("sha256"\)\.update\(token\)\.digest$	Node implements the standard hash; replay checks the algorithm, the input and the digest encoding.
+internal	apps/gateway/src/observability.ts#fetchTempoBackfill	An async generator: the recording holds only the generator object, so no call result can be compared.

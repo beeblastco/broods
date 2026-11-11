@@ -20,14 +20,9 @@ import {
   agentsInStage,
   resourceStageScope,
 } from "../model/projectScope";
-import { agentsFields, paginationCursorFields } from "../schema";
+import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-
-const agentDoc = v.object({
-  ...agentsFields,
-  _id: v.id("agents"),
-  _creationTime: v.number(),
-});
+import { agentDoc } from "../model/agentDoc";
 
 const foreignAgentLink = v.object({
   configId: v.id("agentConfigs"),
@@ -99,7 +94,7 @@ export const create = internalMutation({
   },
 });
 
-// `v.string()`, not `v.id`: an unknown id resolves to null instead of failing validation.
+// Core pods built before runtimeLookups.ts still call this until they roll.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -245,10 +240,11 @@ export const listForEndpoint = internalQuery({
   handler: async (ctx, args): Promise<Doc<"agents">[]> => {
     const deployment = await ctx.db
       .query("agentDeployments")
-      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
+      .withIndex("by_accountId_and_endpointId", (q) =>
+        q.eq("accountId", args.accountId).eq("endpointId", args.endpointId),
+      )
       .first();
     if (!deployment) return [];
-    if (deployment.accountId !== args.accountId) return [];
     if (deployment.status !== "active") return [];
 
     return await agentsInStage(

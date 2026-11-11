@@ -107,6 +107,41 @@ test("connect lists a connection type this CLI does not know", async (): Promise
     await server.stop(true);
   }
 });
+test("connect keeps the method, path and status when the error body is not JSON", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response => new Response("Bad Gateway", { status: 502 }),
+  });
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "connect",
+        "chatgpt",
+        "--base-url",
+        `http://127.0.0.1:${server.port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        BROODS_ACCOUNT_SECRET: "bsa_test",
+      },
+    });
+    const [exitCode, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+    ]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/POST \/v1\/\S+ failed with 502: Bad Gateway/);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 async function runConnect(type: ConnectionType): Promise<Connection> {
   let redirectUri = "";
   let state = "";

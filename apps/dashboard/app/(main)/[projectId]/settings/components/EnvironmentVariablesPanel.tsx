@@ -164,15 +164,11 @@ export function EnvironmentVariablesPanel({
                     "truncate rounded-md bg-muted px-3 leading-8",
                   )}
                 >
-                  {shown !== undefined ? (
-                    shown || (
-                      <span className="text-muted-foreground">empty</span>
-                    )
-                  ) : v.value ? (
-                    "••••••••"
-                  ) : (
-                    <span className="text-muted-foreground">empty</span>
-                  )}
+                  {shown !== undefined
+                    ? shown || (
+                        <span className="text-muted-foreground">empty</span>
+                      )
+                    : "••••••••"}
                 </code>
                 {canWrite && (
                   <>

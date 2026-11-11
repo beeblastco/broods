@@ -53,11 +53,11 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
   for (const probe of PAGES) {
     const context = await browser.newContext(SIGNED_IN_CONTEXT);
     const page = await context.newPage();
-    const scripts: Array<{ at: number; request: Request }> = [];
+    const scripts: Request[] = [];
     let devServer = false;
     page.on("request", (request: Request) => {
       if (isStaticScript(request.url())) {
-        scripts.push({ at: Date.now(), request: request });
+        scripts.push(request);
       }
     });
     page.on("websocket", (socket) => {
@@ -70,19 +70,27 @@ test("a cold load stays within its JS budget, every chunk cacheable", async ({
     test.skip(devServer, "next dev ships dev chunks; run against a build");
     await waitForReady(probe.ready(page));
     await waitForReady(page.locator('[data-hydrated="true"]'));
-    const loadedAt = await page.evaluate((): number => {
-      const navigation = performance
-        .getEntriesByType("navigation")
-        .find(
-          (entry): entry is PerformanceNavigationTiming =>
-            entry instanceof PerformanceNavigationTiming,
-        );
+    // The page's own clock: posthog-js is requested inside the load event, a millisecond after
+    // it starts, which the test process's clock cannot tell apart.
+    const beforeLoad = new Set(
+      await page.evaluate((): string[] => {
+        const navigation = performance
+          .getEntriesByType("navigation")
+          .find(
+            (entry): entry is PerformanceNavigationTiming =>
+              entry instanceof PerformanceNavigationTiming,
+          );
+        const loadStart = navigation?.loadEventStart ?? 0;
 
-      return performance.timeOrigin + (navigation?.loadEventStart ?? 0);
-    });
-    const firstLoad = scripts
-      .filter((script) => script.at < loadedAt)
-      .map((script) => script.request);
+        return performance
+          .getEntriesByType("resource")
+          .filter((entry) => entry.startTime < loadStart)
+          .map((entry) => entry.name);
+      }),
+    );
+    const firstLoad = scripts.filter((request) =>
+      beforeLoad.has(request.url()),
+    );
     const responses = await Promise.all(
       firstLoad.map((request) => request.response()),
     );

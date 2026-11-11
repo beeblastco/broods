@@ -92,6 +92,46 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
       diffManifests(remote.manifest, after.manifest).length === 0,
     "stale sync changed resources",
   );
+  const winner = manifests.find(
+    (manifest): boolean => diffManifests(manifest, after.manifest).length === 0,
+  );
+  const [agent, mcp] = winner?.resources ?? [];
+  const cron = {
+    kind: "cron" as const,
+    name: "daily",
+    config: {
+      agentId: agent?.name ?? "",
+      events: [{ role: "user", content: "Report." }],
+      scheduleExpression: "rate(1 day)",
+    },
+  };
+  const withCron = await client.putManifest(
+    { ...manifests[0]!, resources: [...(winner?.resources ?? []), cron] },
+    false,
+    false,
+    after.revision,
+  );
+  await client.putManifest(
+    { ...manifests[0]!, resources: [] },
+    [
+      { kind: "mcp", name: mcp?.name ?? "" },
+      { kind: "cron", name: cron.name },
+    ],
+    false,
+    withCron.revision,
+  );
+  const pruned = (
+    await client.getManifest(project, "development")
+  )?.manifest.resources.map(
+    (resource): string => `${resource.kind}:${resource.name}`,
+  );
+  assertStep(
+    "a prune list removes only the resources it names",
+    pruned?.includes(`agent:${agent?.name}`) === true &&
+      !pruned.includes(`mcp:${mcp?.name}`) &&
+      !pruned.includes(`cron:${cron.name}`),
+    JSON.stringify(pruned),
+  );
   const runtimeKey = await client.getRuntimeKey(project, "development");
   const runtime = new BroodsClient({
     apiKey: runtimeKey?.apiKey,

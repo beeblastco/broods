@@ -349,10 +349,20 @@ describe("agent rules", () => {
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
     expect(() =>
-      normalizeAgentConfig({ model: { transcriptionModelId: 42 } }),
-    ).toThrow("config.model.transcriptionModelId must be a string");
-    expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
+    ).toThrow(
+      "config.model.transcriptionModelId was renamed to config.transcription.modelId",
+    );
+    expect(() =>
+      normalizeAgentConfig({ transcription: { modelId: 42 } }),
+    ).toThrow("config.transcription.modelId must be a string");
+    expect(() =>
+      normalizeAgentConfig({ transcription: { provider: "nope" } }),
+    ).toThrow("config.transcription.provider must be one of:");
+    expect(() =>
+      normalizeAgentConfig({
+        transcription: { provider: "openai", modelId: "whisper-1" },
+      }),
     ).not.toThrow();
     for (const timeout of [
       60_000,
@@ -529,6 +539,26 @@ describe("agent rules", () => {
       }),
     ).toThrow(
       "config.provider.custom.base_url must not point to a private or internal address",
+    );
+    for (const base_url of ["https://localhost./v1", "https://api.local./v1"])
+      expect(() =>
+        normalizeAgentConfig({ provider: { custom: { base_url: base_url } } }),
+      ).toThrow(
+        "config.provider.custom.base_url must not point to a private or internal address",
+      );
+    // A provider SDK reads baseURL itself, so a blank base_url beside it does not exempt it.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: {
+          openai: {
+            apiKey: "sk",
+            base_url: "",
+            baseURL: "https://127.0.0.1/v1",
+          },
+        },
+      }),
+    ).toThrow(
+      "config.provider.openai.baseURL must not point to a private or internal address",
     );
     // Every endpoint a factory reads is held to the base URL's rule, not just broods's two.
     expect(() =>

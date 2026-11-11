@@ -182,6 +182,43 @@ describe("cli prune of external resources", () => {
     ).toEqual([expect.objectContaining({ path: "theirs/SKILL.md" })]);
   });
 
+  test("a prune list removes only the resources it names", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordHook(tt, accountId, STAGE, "kept");
+    await recordHook(tt, accountId, STAGE, "chosen");
+    const agent = (
+      name: string,
+    ): { kind: string; name: string; config: unknown } => ({
+      kind: "agent",
+      name: name,
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Answer." },
+      },
+    });
+    await pruneAll(tt, [agent("kept-agent"), agent("chosen-agent")], false);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [
+        { kind: "agent", name: "chosen-agent" },
+        { kind: "hook", name: "chosen" },
+      ],
+    );
+
+    expect(response.status).toBe(200);
+    expect((await activeNames(tt)).hooks).toEqual(["kept"]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["kept-agent"]);
+  });
+
   test("a pruned agent's crons go with it", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
@@ -273,6 +310,47 @@ describe("cli prune of external resources", () => {
         (job) => job.name,
       ),
     ).toEqual(["agent-made"]);
+  });
+  test("a confirmed cron delete goes through when its agent's delete was declined", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await pruneAll(tt, [
+      {
+        kind: "agent",
+        name: "reporter",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [{ kind: "cron", name: "nightly" }],
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await tt.run(async (ctx) => await ctx.db.query("crons").collect()),
+    ).toEqual([]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["reporter"]);
   });
   test("the manifest lists only crons code declared, so the next diff stays empty", async () => {
     const tt = t();
@@ -409,6 +487,7 @@ async function insertMcpServer(
 async function pruneAll(
   tt: T,
   resources: Array<{ kind: string; name: string; config: unknown }> = [],
+  prune: boolean | Array<{ kind: string; name: string }> = true,
 ): Promise<Response> {
   return await tt.fetch(
     `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
@@ -425,7 +504,7 @@ async function pruneAll(
           stage: STAGE,
           resources: resources,
         },
-        prune: true,
+        prune: prune,
       }),
     },
   );

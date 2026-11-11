@@ -110,6 +110,7 @@ import {
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
+  releaseIngressOwner,
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
@@ -153,6 +154,7 @@ import {
   refundRun,
   planRefusalResponse,
   planRefusalText,
+  type Admission,
   type PlanRefusal,
 } from "./plan-limits.ts";
 import {
@@ -213,6 +215,10 @@ const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
 ]);
 const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
+// Each re-run after a denial is a paid model pass.
+const MAX_CHANNEL_APPROVAL_RETRIES = 2;
+const CHANNEL_APPROVAL_LIMIT_ERROR =
+  "Stopped: the agent kept choosing tools that need approval, which a channel cannot give.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
@@ -302,10 +308,7 @@ export async function settleCronRun(
       cronRun.runId,
       outcome.response,
     );
-  } else {
-    return;
   }
-  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
 
 export async function settleFailedIngressAndDrain(
@@ -387,9 +390,14 @@ function routeCoreRequest(
       handleDirectRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleDirectRequest(event))) ??
         queueFullResponse(event.accountId, (): Response =>
-          event.connectionId || event.answers?.length || event.continuation
-            ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
-            : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS),
+          (event.connectionId || event.answers?.length || event.continuation
+            ? errorResponse
+            : errorSseResponse)(
+            503,
+            WORKER_QUEUE_FULL,
+            {},
+            INGRESS_RETRY_HEADERS,
+          ),
         ),
       handleAsyncRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleAsyncRequest(event))) ??
@@ -474,14 +482,19 @@ async function handleScheduledCron(
     return null;
   }
   const firedAt = scheduledFireTime(event.scheduledTime);
-  const { refusal } = await admitRun(job.accountId);
-  if (refusal) {
-    await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
+  const plan = await admitRun(job.accountId);
+  if (plan.refusal) {
+    await crons.markFailed(
+      job.accountId,
+      job.cronId,
+      plan.refusal.message,
+      firedAt,
+    );
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
 
-    return refusal;
+    return plan.refusal;
   }
 
   try {
@@ -494,6 +507,7 @@ async function handleScheduledCron(
       conversationKey: result.conversationKey,
     });
   } catch (err) {
+    refundRun(plan, job.accountId);
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
       accountId: job.accountId,
@@ -769,6 +783,7 @@ async function resumeConversation(options: {
       admission: admission.outcome,
       invoked: false,
       publicEventId: continuationEvent.publicEventId,
+      ...(admission.runId ? { runId: admission.runId } : {}),
     };
   }
   try {
@@ -790,11 +805,13 @@ async function resumeConversation(options: {
     admission: admission.outcome,
     invoked: true,
     publicEventId: continuationEvent.publicEventId,
+    ...(admission.runId ? { runId: admission.runId } : {}),
   };
 }
 
 async function handleDirectAnswers(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const answers = event.answers ?? [];
   const open = await Promise.all(
@@ -807,6 +824,8 @@ async function handleDirectAnswers(
   );
   const missing = open.findIndex((question) => question === undefined);
   if (missing >= 0) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       404,
       `No open question ${answers[missing]!.statusId} on this conversation`,
@@ -823,15 +842,23 @@ async function handleDirectAnswers(
   );
   let last: AsyncToolResultRecord | null = null;
   let outcome: ContinuationOutcome = { kind: "skip" };
+  let resumed = false;
   for (const row of settled) {
     if (!row) continue;
     last = row;
-    outcome = await continueAfterAsyncToolSettlement(row);
+    const next = await continueAfterAsyncToolSettlement(row);
+    const started =
+      next.kind === "ready" && !NO_RUN_OUTCOMES.has(next.admission);
+    // A later answer that starts nothing must not hide the turn an earlier one started.
+    if (started || !resumed) outcome = next;
+    resumed ||= started;
   }
+  if (!resumed) refundRun(plan, event.accountId);
   const alreadyAnswered = open
     .filter((_question, index) => settled[index] === null)
     .map((question) => question!.record.resultId);
-  if (alreadyAnswered.length > 0) {
+  // Once one answer resumed the run, a 409 would tell the client nothing started.
+  if (!last && alreadyAnswered.length > 0) {
     return errorResponse(
       409,
       `Questions already answered: ${alreadyAnswered.join(", ")}`,
@@ -847,7 +874,7 @@ async function handleDirectAnswers(
   }
 
   return last
-    ? continuationResponse(last, outcome)
+    ? continuationResponse(last, outcome, alreadyAnswered)
     : errorResponse(400, "Request body must include answers", {
         param: "answers",
       });
@@ -856,6 +883,7 @@ async function handleDirectAnswers(
 // True when the message was an answer: a click names its prompt, typed text takes the oldest.
 async function settleChannelQuestion(
   event: ChannelInboundEvent,
+  accountId: string,
 ): Promise<boolean> {
   const click = event.answer;
   const open = click
@@ -878,12 +906,25 @@ async function settleChannelQuestion(
     ? { status: "answered", answers: chosen }
     : answersFromText(open.pending, extractText(event.content));
   if (!answer) return false;
+  const plan = await admitRun(accountId);
+  if (plan.refusal) {
+    await event.channel.sendText(planRefusalText(plan.refusal));
+
+    return true;
+  }
   const settled = await settleQuestion(open.record, {
     ...answer,
     ...(event.identity ? { answeredBy: event.identity } : {}),
   });
-  if (!settled) return false;
+  if (!settled) {
+    refundRun(plan, accountId);
+
+    return false;
+  }
   const outcome = await continueAfterAsyncToolSettlement(settled);
+  if (outcome.kind === "skip" || NO_RUN_OUTCOMES.has(outcome.admission)) {
+    refundRun(plan, accountId);
+  }
   logInfo("Question answered", {
     channel: event.channelName,
     conversationKey: event.conversationKey,
@@ -897,17 +938,19 @@ async function settleChannelQuestion(
 async function handleDirectRequest(
   event: DirectInboundEvent,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return emptySseResponse();
   }
 
@@ -951,6 +994,7 @@ async function handleDirectRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(
       event,
@@ -1114,17 +1158,19 @@ async function directTurnResponse(
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       400,
       "Request must include at least one user event or tool approval response",
@@ -1155,6 +1201,7 @@ async function handleAsyncRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(event, admission, true);
   }
@@ -1174,6 +1221,7 @@ async function handleAsyncRequest(
 // Always 202, whatever `background` said: a live channel session replies in its channel.
 async function handleContinueRequest(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const target = await resolveReentryTarget({
     accountId: event.accountId,
@@ -1184,6 +1232,8 @@ async function handleContinueRequest(
   });
   // A scoped channel key with no live session behind it has nothing to continue.
   if (event.conversationKey !== target.conversationKey) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(404, "Conversation not found", {
       code: "conversation_not_found",
       param: "conversationKey",
@@ -1200,6 +1250,7 @@ async function handleContinueRequest(
     continuation,
     continuationDelivery(continuation),
   );
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (owned) {
     await startOwnedAsyncRun(owned);
   }
@@ -1573,7 +1624,9 @@ async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
     throw new Error("Channel ingress requires account and agent scope");
   }
   const command = queuedCommand(event.events, event.channelName);
-  if (!command && (await settleChannelQuestion(event))) return;
+  if (!command && (await settleChannelQuestion(event, event.accountId))) {
+    return;
+  }
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
   // A provider redelivery must not store its files twice; only messages with files pay this read.
@@ -1773,6 +1826,7 @@ async function runChannelTurns(
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
+  let approvalRetries = 0;
   const hooks = await createAgentHookDispatcher(
     event.accountId,
     event.agentConfig ?? {},
@@ -1881,13 +1935,29 @@ async function runChannelTurns(
               CONTINUATION_DEPENDENCIES,
               hooks,
             );
-            if (approvalRequired) {
+            if (
+              approvalRequired &&
+              approvalRetries < MAX_CHANNEL_APPROVAL_RETRIES
+            ) {
+              approvalRetries += 1;
               incoming = [];
               incomingEphemeral = [];
               continue;
             }
             if (result.didFail) terminal = "failed";
-            if (awaitingInput) {
+            if (approvalRequired) {
+              await session.assertCurrentOwner();
+              const text = await applyMessageSendingHook(
+                hooks,
+                event.channelName,
+                CHANNEL_APPROVAL_LIMIT_ERROR,
+              );
+              if (text !== null) await event.channel.sendText(text);
+              settlement = {
+                status: "failed",
+                error: CHANNEL_APPROVAL_LIMIT_ERROR,
+              };
+            } else if (awaitingInput) {
               // Settled in onQuestionsPending; the answer resumes the conversation.
             } else if (terminal === "failed") {
               settlement = {
@@ -1914,6 +1984,7 @@ async function runChannelTurns(
         };
       }
 
+      approvalRetries = 0;
       // Envelopes hold only a config ref; rebuilding from live rows picks up a rotated key.
       let next = await session.takeNextIngress(settlement);
       while (next) {
@@ -2400,12 +2471,26 @@ export async function dispatchAppliedIngress(
       await invokeAsyncWorker(event);
     }
   } catch (error) {
-    await failOwnedIngress(
-      event,
-      error instanceof Error
-        ? error.message
-        : "Failed to schedule queued ingress",
-    );
+    const owner = {
+      conversationKey: event.conversationKey,
+      ownerEventId: event.eventId,
+      ownerGeneration: next.ownerGeneration,
+    };
+    const requeued =
+      error instanceof Error &&
+      error.message === WORKER_QUEUE_FULL &&
+      (await releaseIngressOwner(owner, true).then(
+        (): boolean => true,
+        (): boolean => false,
+      ));
+    if (!requeued) {
+      await failOwnedIngress(
+        event,
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule queued ingress",
+      );
+    }
     throw error;
   }
   logInfo("Queued ingress transferred to follow-up worker", {
@@ -2659,7 +2744,6 @@ async function startScheduledAgentRun(
   event.cronRun = {
     cronId: job.cronId,
     runId: run.runId,
-    ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
   };
   let ownedEvent: DirectInboundEvent | null = null;
   try {
@@ -2678,12 +2762,16 @@ async function startScheduledAgentRun(
   } catch (err) {
     const error =
       err instanceof Error ? err.message : "Failed to start cron async worker";
-    await getStorage().crons.failRun(
-      job.accountId,
-      job.cronId,
-      run.runId,
-      error,
-    );
+    await getStorage()
+      .crons.failRun(job.accountId, job.cronId, run.runId, error)
+      .catch((markErr: unknown): void => {
+        logError("Cron run failure was not recorded", {
+          accountId: job.accountId,
+          cronId: job.cronId,
+          runId: run.runId,
+          error: markErr instanceof Error ? markErr.message : String(markErr),
+        });
+      });
     if (ownedEvent) {
       await recordAsyncRun(ownedEvent, { status: "failed", error: error });
       await failOwnedIngress(ownedEvent, error);

@@ -70,7 +70,7 @@ crons.interval(
   internal.cli.auth.pruneExpiredTokens,
   {},
 );
-// Blobs minted through an upload URL but never registered by a workspace file.
+// Blobs older than a day that no workspace file or stage source points to.
 crons.interval(
   "prune orphan uploads",
   { hours: 24 },

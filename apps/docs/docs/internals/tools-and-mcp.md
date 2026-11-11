@@ -225,7 +225,7 @@ sequenceDiagram
     end
     W->>W: sha256 check, ensureLoaded
     alt bundle failed to load
-      W-->>H: 422, or 504 on load timeout,<br/>x-broods-nothing-ran
+      W-->>H: 422, or 504 on a load or download timeout,<br/>x-broods-nothing-ran
       H->>H: 422 marks bundle Lambda-only for 10 min
       H->>L: same batch on Lambda
     else Worker unreachable

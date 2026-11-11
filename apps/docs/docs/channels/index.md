@@ -184,7 +184,19 @@ With a workspace attached, each file is saved under `media/` in the default work
 
 ### Voice transcription
 
-Audio the model cannot hear is transcribed on the way in, with the account's own provider credentials. No configuration is needed.
+Audio the model cannot hear is transcribed on the way in. An agent whose chat provider ships speech-to-text needs no configuration. Any other agent names one in `transcription`, with that provider's key in `provider`:
+
+```ts
+export const support = defineAgent({
+  name: "support",
+  provider: {
+    anthropic: { apiKey: env("ANTHROPIC_API_KEY") },
+    openai: { apiKey: env("OPENAI_API_KEY") },
+  },
+  model: { provider: "anthropic", modelId: "claude-haiku-5-5" },
+  transcription: { provider: "openai" },
+});
+```
 
 | Provider       | Default model                                     |
 | -------------- | ------------------------------------------------- |
@@ -193,14 +205,15 @@ Audio the model cannot hear is transcribed on the way in, with the account's own
 | Mistral        | `voxtral-mini-latest`                             |
 | Google, Vertex | none. The recording is sent to the model directly |
 
-Set `model.transcriptionModelId` to use another model on the same provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
+`transcription.provider` defaults to the chat provider, and `transcription.modelId` to the model in the table. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
-A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
+A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, a missing key for the transcription provider, or a provider with no speech-to-text.
 
 ## Shared behavior
 
 - Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo, Teams, Messenger and Instagram show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
-- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
+- Edits. Editing a message never starts a run, on any channel. Send a new message to correct the agent.
+- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` The model gets two more passes to answer without them; a third denial ends the turn with a message saying so. Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
 - Trace links. Replies omit the dashboard trace link. Set `trace: "enabled"` on the connection to include it. Tracing itself is unaffected.

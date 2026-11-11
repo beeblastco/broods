@@ -1,0 +1,5 @@
+kind	name	reason
+external	^server\.upgrade$	Bun performs the upgrade; the trace checks the exact socket data the twin computes.
+external	^crypto\.subtle\.timingSafeEqual$	Platform compare; the trace checks both digests and the twin returns its answer unchanged.
+opaque	Runtime	The Worker entrypoint instance; it carries no state exec reads.
+opaque	ch	The minified just-bash Bash instance; its exec is a recorded effect with checked arguments.

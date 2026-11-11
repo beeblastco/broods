@@ -53,21 +53,21 @@ The `description` decides when the model loads the skill, so write it as a routi
 
 ## Rules and limits
 
-| Rule        | Value                                                                                                                        |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Name        | Lowercase letters, digits and hyphens, up to 64 characters. Names containing `anthropic`, `claude` or XML tags are rejected. |
-| File size   | 5 MB per file, 30 MB per bundle                                                                                              |
-| Frontmatter | Must end within the first 64 KB of `SKILL.md`. A skill whose frontmatter runs past it is left out of the skill list.         |
-| Per agent   | Up to 32 distinct skills in `skills.allowed`. Repeats are dropped. An agent saved before this limit runs with its first 32.  |
-| File types  | Text only, meaning `.css .csv .html .js .json .md .mjs .py .sh .sql .svg .toml .ts .tsx .txt .xml .yaml .yml`                |
-| Paths       | Relative to the skill root. Write `SKILL.md`, not `support-flow/SKILL.md`                                                    |
-| Scope       | Skills belong to the account. A skill's name comes from `SKILL.md`, not from the folder name.                                |
+| Rule        | Value                                                                                                                                                                                                                                                                                                                               |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Name        | Lowercase letters, digits and hyphens, up to 64 characters. Names containing `anthropic`, `claude` or XML tags are rejected.                                                                                                                                                                                                        |
+| File size   | The server accepts 5 MiB per file and 30 MiB per skill, any number of files. `broods dev` and `broods deploy` send at most 4 MiB of skill files per sync, across all skills, and refuse more before any upload. For a larger skill, import it from GitHub with `POST /v1/skills` and list the `path` it returns in `skills.allowed` |
+| Frontmatter | Must end within the first 64 KB of `SKILL.md`. A skill whose frontmatter runs past it is left out of the skill list.                                                                                                                                                                                                                |
+| Per agent   | Up to 32 distinct skills in `skills.allowed`. Repeats are dropped. An agent saved before this limit runs with its first 32.                                                                                                                                                                                                         |
+| File types  | Text only, meaning `.css .csv .html .js .json .md .mjs .py .sh .sql .svg .toml .ts .tsx .txt .xml .yaml .yml`                                                                                                                                                                                                                       |
+| Paths       | Relative to the skill root. Write `SKILL.md`, not `support-flow/SKILL.md`                                                                                                                                                                                                                                                           |
+| Scope       | Skills belong to the account. A skill's name comes from `SKILL.md`, not from the folder name.                                                                                                                                                                                                                                       |
 
 Do not put credentials in a skill. Use [environment variables](deploying.md#secrets-and-environment-variables).
 
 ## Running scripts from a skill
 
-When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts ending in `.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs` or `.ts` are marked executable, so the agent can run them with `bash`. Every load copies a fresh version.
+When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts ending in `.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs` or `.ts` are marked executable, so the agent can run them with `bash`. Every load copies a fresh version. The copy lands in the workspace's own storage, a bring-your-own bucket included; a `disk` workspace gets no copy, since its files live only on its sandbox.
 
 Without a workspace, the instructions still load, but scripts cannot run in that turn.
 

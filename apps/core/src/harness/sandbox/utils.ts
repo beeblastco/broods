@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import { z } from "zod/mini";
 import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
 import {
@@ -357,7 +358,7 @@ export async function assertSnapshotBootable(
         scope: sandboxScope(controlPlane),
       })
     : "config.snapshot names a snapshot, which boots only from a sandbox config of its own account and stage";
-  if (refusal) throw new Error(refusal);
+  if (refusal) throw new ClientError(refusal);
 
   return row;
 }

@@ -99,7 +99,6 @@ const RETIRED_REACH_KEYS = [
 export const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
-  "transcriptionModelId",
   "providerOptions",
   "output",
   "maxOutputTokens",
@@ -348,7 +347,6 @@ const MODEL = z
   .looseObject({
     provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
     modelId: optionalString,
-    transcriptionModelId: optionalString,
     reasoning: z.optional(
       z.enum([
         "provider-default",
@@ -366,7 +364,14 @@ const MODEL = z
   })
   .check(
     z.superRefine((model, ctx): void => {
+      if (model.transcriptionModelId !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["transcriptionModelId"],
+          message: "was renamed to config.transcription.modelId",
+        });
       for (const key of Object.keys(model)) {
+        if (key === "transcriptionModelId") continue;
         if (!(MODEL_CONFIG_SETTING_KEYS as readonly string[]).includes(key))
           ctx.addIssue({
             code: "custom",
@@ -377,6 +382,11 @@ const MODEL = z
       }
     }),
   );
+
+const TRANSCRIPTION = z.strictObject({
+  provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
+  modelId: optionalString,
+});
 
 const PROVIDER_SETTINGS = z.pipe(
   z
@@ -394,17 +404,9 @@ const PROVIDER_SETTINGS = z.pipe(
       headers: z.optional(stringRecord("must be an object with string values")),
     })
     .check(
+      // Both base URL spellings too: a provider SDK reads baseURL even when base_url is set.
       z.superRefine((settings, ctx): void => {
-        const baseURL = providerBaseURL(settings);
-        if (baseURL) {
-          const problem = publicHttpsUrlProblem(baseURL);
-          const label =
-            typeof settings.base_url === "string" ? "base_url" : "baseURL";
-          if (problem)
-            ctx.addIssue({ code: "custom", path: [label], message: problem });
-        }
         for (const key of Object.keys(settings)) {
-          if (key === "baseURL" || (key === "base_url" && baseURL)) continue;
           const endpoint = settings[key];
           if (!PROVIDER_ENDPOINT_SETTING.test(key) || endpoint === undefined)
             continue;
@@ -808,6 +810,7 @@ export const AGENT_CONFIG = z.looseObject({
   agent: z.nullish(AGENT_BEHAVIOR),
   harness: z.nullish(HARNESS),
   model: z.nullish(MODEL),
+  transcription: z.nullish(TRANSCRIPTION),
   provider: z.nullish(PROVIDERS),
   workspaces: z.nullish(WORKSPACE_REFS),
   sandboxes: z.optional(nonEmptyStrings),
@@ -1064,7 +1067,9 @@ export function normalizeModelConfig(
 }
 
 export function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // A trailing DNS dot names the same host: `localhost.` is `localhost`.
+  const bare = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = bare.endsWith(".") ? bare.slice(0, -1) : bare;
   if (
     host === "localhost" ||
     host.endsWith(".localhost") ||

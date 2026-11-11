@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -124,8 +125,9 @@ async function deleteConvexRuntimeRows(
     if (batch.totalDeleted === 0) return totals;
   }
 
-  throw new Error(
+  throw new ClientError(
     `Account runtime cleanup exceeded ${ACCOUNT_RUNTIME_DELETE_MAX_BATCHES} Convex batches; retry deletion to continue`,
+    "conflict",
   );
 }
 

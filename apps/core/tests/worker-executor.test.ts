@@ -205,6 +205,19 @@ it("meters nothing for a call that never reached the Worker", async (): Promise<
   expect(metered).toEqual([]);
 });
 
+it("meters nothing for a call the Worker refused before running anything", async (): Promise<void> => {
+  for (const status of [400, 401, 404, 410]) {
+    mockFetch(
+      async (): Promise<Response> =>
+        new Response("refused", { status: status }),
+    );
+
+    await new WorkerSandboxExecutor(config).run(request).catch((): void => {});
+  }
+
+  expect(metered).toEqual([]);
+});
+
 it("clamps the timeout to the Worker's ceiling, the one the config plane enforces, and turns internet on from the network mode", async (): Promise<void> => {
   await new WorkerSandboxExecutor({
     ...config,

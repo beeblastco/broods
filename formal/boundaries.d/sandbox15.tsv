@@ -1,0 +1,6 @@
+kind	name	reason
+external	^context\.(onBlockingQuestion|onDetachedResult|onResultRead|messageChild|dispatchSubagents|transformText|parent\.ask|parent\.note)$	Hooks the run supplies on the tool context; the trace checks each call's arguments and the twin takes the hook's answer as input.
+external	^actions\.(sendImages|reactToMessage)$	Channel adapter actions the tool context supplies; the trace checks the arguments and the twin takes the adapter's answer.
+external	^(sendSticker|dispatch|loadSkillPrompt|toSandboxCall)$	Callback handed to the tool factory as a parameter; the trace checks its arguments and the twin takes its answer as input.
+external	^accessClients\.(get|set)$	Module WeakMap caching one S3 client per access config; a WeakMap cannot be listed, so the twin takes each lookup's answer and states the key and the client it stores.
+external	^standIn\.execute\.bind$	Function.prototype.bind of the stand-in tool's execute method; the twin states the result is that tool's execute.

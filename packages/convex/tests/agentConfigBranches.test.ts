@@ -225,6 +225,8 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
 async function setEnv(tt: T, value: string): Promise<void> {
   await tt.mutation(internal.cli.sync.setEnvBySecretHash, {
     secretHash: SECRET_HASH,
+    actorKind: "cli",
+    actorId: "auth_test",
     project: PROJECT,
     stage: STAGE,
     name: ENV_NAME,

@@ -1,21 +1,18 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
 import { ClientError } from "./model/clientError";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
-import { upsertEnvironmentVariable } from "./model/environmentWrites";
-import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
-  accountIdForProject,
-  auditDetailsJson,
-  dashboardAuditActor,
-  appendAuditEvent,
-  type AuditActor,
-} from "./model/auditEvents";
+  recordEnvironmentVariableAudit,
+  upsertEnvironmentVariable,
+} from "./model/environmentWrites";
+import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
+import { dashboardAuditActor } from "./model/auditEvents";
 
 const ADMIN_REQUIRED =
   "Environment variables can only be revealed or changed by an org admin.";
@@ -235,36 +232,4 @@ function maskEnvironmentVariable(variable: {
     value: "********",
     updatedAt: variable.updatedAt,
   };
-}
-
-// Audit details carry the name only, never the value.
-async function recordEnvironmentVariableAudit(
-  ctx: MutationCtx,
-  actor: AuditActor,
-  input: {
-    projectId: Id<"projects">;
-    stageId: Id<"stages">;
-    variableId?: Id<"environmentVariables">;
-    action: string;
-    name: string;
-    summary: string;
-  },
-): Promise<void> {
-  const accountId = await accountIdForProject(ctx, input.projectId);
-  if (!accountId) return;
-
-  await appendAuditEvent(ctx.db, {
-    accountId: accountId,
-    projectId: input.projectId,
-    stageId: input.stageId,
-    actor: actor,
-    action: input.action,
-    resource: {
-      kind: "environmentVariable",
-      id: input.variableId,
-      name: input.name,
-    },
-    summary: input.summary,
-    detailsJson: auditDetailsJson({ name: input.name }),
-  });
 }

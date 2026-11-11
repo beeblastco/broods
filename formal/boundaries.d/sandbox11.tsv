@@ -1,0 +1,3 @@
+kind	name	reason
+external	^getStorage\(\)( )?\.crons\.(create|getById|list|update)$	The storage adapter reads and writes cron rows in Convex; the twin checks account, cron id and the patch it sends.
+external	^getStorage\(\)\.machineConnections\.seen$	The storage adapter stamps the machine connection row in Convex; the twin checks the connection ref it sends.

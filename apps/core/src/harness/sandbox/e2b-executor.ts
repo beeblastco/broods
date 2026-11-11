@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import type { CommandResult, Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
 import { setSandboxInstanceSpecs } from "../../shared/convex/sandbox-instances.ts";
@@ -158,7 +159,10 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     const externalId = key ? await getSandboxExternalId("e2b", key) : null;
     if (!externalId) {
-      throw new Error("no reserved e2b sandbox to snapshot for this sandbox");
+      throw new ClientError(
+        "no reserved e2b sandbox to snapshot for this sandbox",
+        "not_found",
+      );
     }
     const { Sandbox } = await e2bModule();
     const snapshot = await Sandbox.createSnapshot(

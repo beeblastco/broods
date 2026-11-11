@@ -19,6 +19,41 @@ interface ProviderErrorPayload {
   response?: unknown;
 }
 
+export class S3ObjectTooLargeError extends Error {
+  constructor(
+    key: string,
+    bytes: number | undefined,
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `S3 object ${key} is ${bytes ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
+    );
+  }
+}
+
+export class SandboxFileTooLargeError extends Error {
+  constructor(
+    path: string,
+    bytes: number,
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `${path} is ${bytes} bytes, over the ${maxBytes} bytes a harness can load from a sandbox file to read or overwrite it; use a shell command instead`,
+    );
+  }
+}
+
+export class SandboxOutputTooLargeError extends Error {
+  constructor(
+    stream: "stdout" | "stderr",
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `the command's ${stream} is over the ${maxBytes / 1024 / 1024} MiB a harness can load from one sandbox command, so it was stopped; search a narrower path or pattern, or pipe a shell command through \`head\``,
+    );
+  }
+}
+
 export function isContextLengthError(message: string): boolean {
   return CONTEXT_LIMIT_PATTERN.test(message);
 }

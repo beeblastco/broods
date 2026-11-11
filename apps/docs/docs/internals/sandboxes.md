@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for an ephemeral row goes through its row lane (see [Instance row](#instance-row)), so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A call the Worker refused before its isolate ran (a 400, 401 or 404, a 410 for a released sandbox, or Cloudflare's own error) is not metered; a 409 means the command ran and lost the store race, so it is.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -199,6 +199,8 @@ stateDiagram-v2
   expired --> taken: sweeper deletes the row, only while expired and same id
   taken --> [*]: provider delete succeeds
   taken --> claimed: provider delete failed, claimed back
+  taken --> kept: claim back failed or lost, re-reserved as teardown:id for 60 s
+  kept --> taken: next sweep retries the delete
   claimed --> [*]: terminate, workspace or account delete
   claimed --> [*]: machine gone, next call claims a new one
 ```
@@ -241,7 +243,7 @@ stateDiagram-v2
 
 ## Lifecycle actions and terminal
 
-The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row with the actor source. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
+The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row naming the actor. Only the config plane, on the service token, may name the dashboard user it acts for in the body's `actor`; any other caller is recorded as its own credential, `service`, with the role id for a scoped key or role session. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
 
 `terminal` opens a real TTY on `sandbox`, `lambda` and `cloudflare`. Other providers answer it as unsupported and the dashboard keeps the bounded `exec` runner.
 
@@ -576,11 +578,11 @@ sequenceDiagram
   W-->>E: SandboxExecResponse, duration measured here
 ```
 
-| Route                         | Does                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse` |
-| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                       |
-| `DELETE /v1/sandboxes/:id`    | Drops the stored disk                                                     |
+| Route                         | Does                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse`              |
+| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                                    |
+| `DELETE /v1/sandboxes/:id`    | Drops the stored disk, leaving an empty `released` marker that later calls get 410 for |
 
 - Nothing runs between commands. A persistent sandbox is its stored disk: one gzip of a JSON header and the files' raw bytes, one R2 object per id, restored into a fresh shell on every call. The runtime packs the disk again after the command and answers "unchanged" when nothing differs, so a read-only command stores nothing. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
 - Billing follows: each command is metered as it ends (its time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
@@ -642,6 +644,8 @@ flowchart TD
 - Claude Code, Codex, Deep Agents and OpenCode keep the conversation on the machine (each CLI's own session store), and the checkpoint holds only its id. When the machine is released, or an adapter version bump moves the conversation to a new one, the next turn starts a fresh session.
 - Pi keeps its conversation in Convex: Pi appends each session entry through `sessionStorage` (`adapters/pi.ts`), the Broods `Session` holds the entries until `saveHarnessSession`, and the checkpoint holds only the leaf entry id and the last entry sequence. A turn usually costs one save and one paged read whatever the history length; a turn over one transaction's budget (4 MiB or 100 entries) stages the rest in `appendHarnessSessionEntries` first. When Pi's machine is released, `openAiSdkHarnessSession` resumes the same session on a fresh machine and logs it; the other adapters start a fresh session. An entry over 512 KiB is stored with every image swapped for `[attachment not retained]` and every long string truncated, in one pass.
 - Neither provider streams processes, so `harness-shell-process.ts` runs the adapter detached and file-spooled; short shell calls poll its output in 180 KiB chunks every 25 ms.
+- Core holds a whole file in memory for each harness file read, so a read of a file over 25 MiB (a symlink counts as the file it points to) fails with `SandboxFileTooLargeError` before its bytes reach core; the harness reads a part of it with a shell command instead.
+- Core also holds a harness command's stdout and stderr whole, because adapters parse them (Pi's `find` and `ls`, `listDirectory`). Each is capped at 16 MiB for core's memory, not the model's context: past it core kills the command, stops polling it, and fails the call with `SandboxOutputTooLargeError` instead of returning a part. The cap bounds one stream, not the pod: several large commands at once can still add up.
 - On `lambda`, WebSocket ingress needs the AWS token and port as subprotocols, so `microvm-websocket-proxy.ts` hands the adapter a loopback URL and adds them upstream. The token stays in core and the upstream header, never a URL or log.
 
 ```mermaid
