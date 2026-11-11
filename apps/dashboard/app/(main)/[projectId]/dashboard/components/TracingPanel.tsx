@@ -112,6 +112,8 @@ interface Props {
 }
 
 const PAGE_SIZE = 50;
+// Core answers a continue with a 202 at once; past this the request is treated as lost.
+const CONTINUE_TIMEOUT_MS = 30_000;
 
 type SpanStatus = ObservabilitySpanRow["status"];
 
@@ -862,6 +864,7 @@ export function TracingPanel({
         })}`,
         {
           method: "POST",
+          signal: AbortSignal.timeout(CONTINUE_TIMEOUT_MS),
           headers: {
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
