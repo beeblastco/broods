@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ObservabilitySpanRow } from "../app/hooks/useObservabilityStream";
 import {
   axisTicks,
+  continueEventId,
   failureCause,
   groupSpans,
   matchesTaskQuery,
@@ -558,3 +559,20 @@ function toolOf(
     attributes: { "tool.name": toolName },
   };
 }
+
+describe("continueEventId", () => {
+  test("a first press and a press after an accepted continue get a new id", () => {
+    const first = continueEventId(undefined);
+    const accepted = continueEventId({ error: null, eventId: first });
+
+    expect(first).toStartWith("continue-");
+    expect(accepted).toStartWith("continue-");
+    expect(accepted).not.toBe(first);
+  });
+
+  test("a Retry resends the failed attempt's id", () => {
+    expect(
+      continueEventId({ error: "signal timed out", eventId: "continue-1" }),
+    ).toBe("continue-1");
+  });
+});
