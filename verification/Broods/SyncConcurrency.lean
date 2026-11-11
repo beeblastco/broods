@@ -82,10 +82,16 @@ def putAt (store : Resource → Resource) (m : Manifest) (prune : Bool)
   else s
 
 /-- A PUT with large skills sent held: the held check runs before the claim, so a PUT
-it refuses (`refusedKeys`, the 409's `skills`) leaves the server as it was. -/
-def putCheckedAt (store : Resource → Resource) (refusedKeys : List (Kind × Nat))
+it refuses (`refusedKeys`, the 409's `skills`) leaves the server as it was. It runs again
+under the claim (`replacedKeys`: held skills another sync replaced in between), and a PUT
+refused there releases its claim having written no rows. -/
+def putCheckedAt (store : Resource → Resource) (refusedKeys replacedKeys : List (Kind × Nat))
     (m : Manifest) (prune : Bool) (expected : Option Nat) (s : Server) : Server :=
-  if refusedKeys = [] then putAt store m prune expected s else s
+  if refusedKeys ≠ [] then s
+  else if replacedKeys = [] then putAt store m prune expected s
+  else if claims s expected then
+    apply store (.release (s.rev + 1)) { s with rev := s.rev + 1, active := some (s.rev + 1) }
+  else s
 
 /-- `GET /manifest`. -/
 def readAll (s : Server) : Manifest := read s.ext ++ read s.main
@@ -181,11 +187,23 @@ theorem busy_put_noop (m : Manifest) (prune : Bool) (s : Server) (e : Option Nat
 
 /-- `broods dev` resends the revision it read after a refusal, and the retry is
 admitted exactly when the refused PUT would have been. -/
-theorem refused_put_keeps_revision (ks : List (Kind × Nat)) (m : Manifest) (prune : Bool)
+theorem refused_put_keeps_revision (ks rs : List (Kind × Nat)) (m : Manifest) (prune : Bool)
     (s : Server) (e : Option Nat) (hks : ks ≠ []) :
-    putCheckedAt store [] m prune e (putCheckedAt store ks m prune e s) =
+    putCheckedAt store [] [] m prune e (putCheckedAt store ks rs m prune e s) =
       putAt store m prune e s := by
   simp [putCheckedAt, hks]
+
+/-- A PUT refused under its claim writes no rows and leaves the stage free. -/
+theorem replaced_put_writes_nothing (rs : List (Kind × Nat)) (m : Manifest) (prune : Bool)
+    (s : Server) (e : Option Nat) (hrs : rs ≠ []) :
+    let s' := putCheckedAt store [] rs m prune e s
+    s'.ext = s.ext ∧ s'.main = s.main ∧ s'.active = s.active := by
+  by_cases hc : claims s e = true
+  · have hnone : s.active = none := by
+      simp only [claims, Bool.and_eq_true, Option.isNone_iff_eq_none] at hc
+      exact hc.1
+    simp [putCheckedAt, hrs, hc, apply, hnone]
+  · simp [putCheckedAt, hrs, hc]
 
 /-- An older action's cleanup cannot release a newer claim. -/
 theorem stale_release_noop (s : Server) (r : Nat) (h : s.active ≠ some r) :
@@ -224,9 +242,19 @@ example :
     let m : Manifest := [⟨.agent, 1, ⟨7, none, none⟩⟩]
     let s : Server := ⟨[], [], 3, none⟩
     let claimedFirst := apply id (.release 4) (apply id (.claim (some 3)) s)
-    readAll (putCheckedAt id [] m false (some 3) (putCheckedAt id [(.skill, 1)] m false (some 3) s))
-        = m ∧
+    readAll (putCheckedAt id [] [] m false (some 3)
+        (putCheckedAt id [(.skill, 1)] [] m false (some 3) s)) = m ∧
       putAt id m false (some 3) claimedFirst = claimedFirst := by
+  decide
+
+/-- Deploy A checks its held skill, deploy B replaces that skill, then A claims: the
+check under the claim refuses A, and B's rows stay. Without it A would land. -/
+example :
+    let mA : Manifest := [⟨.skill, 1, ⟨1, none, none⟩⟩]
+    let mB : Manifest := [⟨.skill, 1, ⟨2, none, none⟩⟩]
+    let b := putAt id mB true none ⟨[], [], 0, none⟩
+    readAll (putCheckedAt id [] [(.skill, 1)] mA true none b) = mB ∧
+      readAll (putCheckedAt id [] [] mA true none b) = mA := by
   decide
 
 /-- A later deploy can replace A once its claim has been released. -/

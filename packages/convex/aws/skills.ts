@@ -124,40 +124,38 @@ export const storeUploadedFiles = internalAction({
 });
 
 // Skills sent without bytes whose account files or project canvas files are not the declared ones.
+// One canvas query per skill keeps each under Convex's per-transaction read limit.
 export const unheld = internalAction({
   args: {
     accountId: v.id("accounts"),
-    secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
     skills: v.array(v.object({ name: v.string(), files: declaredFiles })),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args): Promise<string[]> => {
-    const [hashes, staleNodes] = await Promise.all([
-      Promise.all(
-        args.skills.map((skill) => storedSkillHash(args.accountId, skill.name)),
-      ),
-      ctx.runQuery(internal.cli.sync.staleSkillNodes, {
-        secretHash: args.secretHash,
-        project: args.project,
-        stage: args.stage,
-        skills: args.skills.map((skill) => ({
-          name: skill.name,
-          files: skill.files.map(({ path, sha256 }) => ({
-            path: path,
-            sha256: sha256,
-          })),
-        })),
+    const stale = await Promise.all(
+      args.skills.map(async (skill): Promise<boolean> => {
+        const [hash, staleNode] = await Promise.all([
+          storedSkillHash(args.accountId, skill.name),
+          ctx.runQuery(internal.cli.sync.staleSkillNode, {
+            accountId: args.accountId,
+            project: args.project,
+            stage: args.stage,
+            name: skill.name,
+            files: skill.files.map(({ path, sha256 }) => ({
+              path: path,
+              sha256: sha256,
+            })),
+          }),
+        ]);
+
+        return hash !== contentHash(skill.files) || staleNode;
       }),
-    ]);
+    );
 
     return args.skills
-      .filter(
-        (skill, index) =>
-          hashes[index] !== contentHash(skill.files) ||
-          staleNodes.includes(skill.name),
-      )
+      .filter((_skill, index) => stale[index])
       .map((skill) => skill.name);
   },
 });
