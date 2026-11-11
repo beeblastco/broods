@@ -36,11 +36,8 @@ import { uploadQuotaResponse } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { ClientError } from "../model/clientError";
 import { manifestHash } from "../model/manifestSnapshot";
-import {
-  stageSourceProblem,
-  stageSourceSchema,
-  type StageSource,
-} from "../model/stageSource";
+import { stageSourceProblem, type StageSource } from "../model/stageSource";
+import { stageSourceSchema } from "../model/stageSourceSchema";
 import { storeStageSync } from "../model/stageSourceStore";
 
 export type CliAuth =
