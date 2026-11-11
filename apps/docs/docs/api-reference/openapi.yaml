@@ -1205,7 +1205,7 @@ paths:
         "204":
           description: Login revoked
         "401":
-          description: Not a `bcli_` login, unknown, expired, lent to an agent, or already revoked
+          description: Not a `bcli_` login, unknown, lent to an agent, or already revoked
           content:
             application/json:
               schema:

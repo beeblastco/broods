@@ -126,6 +126,39 @@ describe("a CLI login on the account API", () => {
     expect((await assumeRole(t, cli)).status).toBe(401);
   });
 
+  test("logout revokes it while its user is demoted or its account disabled", async () => {
+    for (const lapse of ["demoted", "disabled"] as const) {
+      const t = prefixTest();
+      const cli = `bcli_${BODY}`;
+      await seed(t, {
+        accountKey: `bask_${BODY}`,
+        runtimeKey: `bsk_${BODY}`,
+        projectKey: `bpdk_${BODY}`,
+        cliToken: cli,
+      });
+      await t.run(async (ctx) => {
+        const membership = await ctx.db.query("orgMembers").first();
+        const account = await ctx.db.query("accounts").first();
+        if (lapse === "demoted" && membership) {
+          await ctx.db.patch(membership._id, { role: "member" });
+        }
+        if (lapse === "disabled" && account) {
+          await ctx.db.patch(account._id, { status: "disabled" });
+        }
+      });
+
+      const logout = await t.fetch("/v1/account/auth/token", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${cli}` },
+      });
+      expect(logout.status, lapse).toBe(204);
+      const token = await t.run(async (ctx) =>
+        ctx.db.query("cliTokens").first(),
+      );
+      expect(token?.status, lapse).toBe("revoked");
+    }
+  });
+
   test("lent to the agent, it reads but never mints or manages a credential", async () => {
     const t = prefixTest();
     const cli = `bcli_${BODY}`;
@@ -194,6 +227,13 @@ describe("a CLI login on the account API", () => {
     });
     expect(logout.status).toBe(401);
     expect((await get(t, "/v1/agents", lent)).status).toBe(200);
+    const lentRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("cliTokens")
+        .filter((q) => q.eq(q.field("lentToAgent"), true))
+        .first(),
+    );
+    expect(lentRow?.status).toBe("active");
     // The user's own `broods login` keeps every route.
     expect((await assumeRole(t, cli)).status).toBe(404);
     const removed = await t.fetch("/v1/roles/brole_missing", {

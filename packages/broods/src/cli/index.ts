@@ -751,7 +751,7 @@ async function login(args: string[]): Promise<void> {
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
-// Revokes the saved login it removes; a 401 means the server already refuses that token.
+// Revokes the saved login it removes; on a 401 the server revoked nothing, so it only warns.
 async function logout(args: string[]): Promise<void> {
   loadBroodsRuntimeConfig();
   const envTokenNote = process.env.BROODS_TOKEN
@@ -771,7 +771,11 @@ async function logout(args: string[]): Promise<void> {
     );
   }
   await removeStoredAuth(auth.baseUrl);
-  printSuccess(`Logged out of ${auth.baseUrl}`);
+  if (response.ok) printSuccess(`Logged out of ${auth.baseUrl}`);
+  else
+    printWarning(
+      `Removed the saved login for ${auth.baseUrl}. The server did not revoke it: it was already invalid, or it is lent to an agent and ends with that session.`,
+    );
   if (envTokenNote) printWarning(envTokenNote);
 }
 
