@@ -13,6 +13,7 @@ import {
 } from "react";
 
 const COPIED_MS = 1500;
+const REFUSED = "The browser refused the copy";
 
 interface Props {
   value: string;
@@ -27,20 +28,30 @@ interface RowProps {
 }
 
 export function CopyButton({ value, label }: Props): React.JSX.Element {
-  const { copied, copy } = useCopied(value);
+  const { copied, failed, copy } = useCopied(value);
 
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-xs"
-      tone="muted"
-      aria-label={`Copy ${label}`}
-      className="cursor-pointer"
-      onClick={copy}
-    >
-      {copied ? <Check /> : <Copy />}
-    </Button>
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        tone="muted"
+        aria-label={`Copy ${label}`}
+        title={failed ? REFUSED : undefined}
+        className="cursor-pointer"
+        onClick={copy}
+      >
+        {copied ? (
+          <Check />
+        ) : failed ? (
+          <X className="text-destructive" />
+        ) : (
+          <Copy />
+        )}
+      </Button>
+      <CopyStatus copied={copied} failed={failed} />
+    </>
   );
 }
 
@@ -60,24 +71,27 @@ export function CopyTextButton({
   const { copied, failed, copy } = useCopied(value);
 
   return (
-    <Button
-      type="button"
-      size="xs"
-      variant="outline"
-      title={failed ? "The browser refused the copy" : title}
-      aria-label={label}
-      onClick={copy}
-      className={cn("cursor-pointer", className)}
-    >
-      {copied ? (
-        <Check className="text-success" />
-      ) : failed ? (
-        <X className="text-destructive" />
-      ) : (
-        <Copy />
-      )}
-      {children}
-    </Button>
+    <>
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        title={failed ? REFUSED : title}
+        aria-label={label}
+        onClick={copy}
+        className={cn("cursor-pointer", className)}
+      >
+        {copied ? (
+          <Check className="text-success" />
+        ) : failed ? (
+          <X className="text-destructive" />
+        ) : (
+          <Copy />
+        )}
+        {children}
+      </Button>
+      <CopyStatus copied={copied} failed={failed} />
+    </>
   );
 }
 
@@ -86,25 +100,45 @@ export function CopyRow({
   className,
   children,
 }: RowProps): React.JSX.Element {
-  const { copied, copy } = useCopied(value);
+  const { copied, failed, copy } = useCopied(value);
 
   return (
-    <button
-      type="button"
-      title={value}
-      onClick={copy}
-      className={cn(
-        "group/copy min-w-0 max-w-full cursor-pointer items-center gap-2 rounded text-left transition-colors hover:bg-accent/40",
-        className,
-      )}
-    >
-      {children}
-      {copied ? (
-        <Check className="size-3 shrink-0 text-success" />
-      ) : (
-        <Copy className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100" />
-      )}
-    </button>
+    <>
+      <button
+        type="button"
+        title={failed ? REFUSED : value}
+        onClick={copy}
+        className={cn(
+          "group/copy min-w-0 max-w-full cursor-pointer items-center gap-2 rounded text-left transition-colors hover:bg-accent/40",
+          className,
+        )}
+      >
+        {children}
+        {copied ? (
+          <Check className="size-3 shrink-0 text-success" />
+        ) : failed ? (
+          <X className="size-3 shrink-0 text-destructive" />
+        ) : (
+          <Copy className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/copy:opacity-100 group-focus-visible/copy:opacity-100 pointer-coarse:opacity-100" />
+        )}
+      </button>
+      <CopyStatus copied={copied} failed={failed} />
+    </>
+  );
+}
+
+// Outside the button: a live region inside one is not reliably announced.
+function CopyStatus({
+  copied,
+  failed,
+}: {
+  copied: boolean;
+  failed: boolean;
+}): React.JSX.Element {
+  return (
+    <output className="sr-only">
+      {copied ? "Copied" : failed ? "Copy failed" : ""}
+    </output>
   );
 }
 

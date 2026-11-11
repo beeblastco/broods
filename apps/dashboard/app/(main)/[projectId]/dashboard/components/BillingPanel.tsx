@@ -212,7 +212,9 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           }
         />
         {actionError && (
-          <p className="text-sm text-destructive">{actionError}</p>
+          <p role="alert" className="text-sm text-destructive">
+            {actionError}
+          </p>
         )}
       </Section>
 
@@ -269,7 +271,7 @@ function PlanTable({
 }): React.JSX.Element {
   return (
     <>
-      <Table className="hidden sm:table">
+      <Table className="hidden sm:table" regionLabel="Plan limits">
         <TableHeader>
           <TableRow>
             <TableHead>Limit</TableHead>

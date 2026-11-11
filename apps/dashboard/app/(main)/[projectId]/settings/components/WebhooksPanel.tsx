@@ -4,11 +4,13 @@
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
 import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
 import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
@@ -17,7 +19,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Trash2 } from "lucide-react";
 import { analytics } from "@/app/lib/analytics";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 interface Props {
   projectId: Id<"projects">;
@@ -141,7 +143,9 @@ export function WebhooksPanel({
 
         {/* The pill flips optimistically and snaps back on rejection; this says why. */}
         {toggleError && (
-          <p className="text-sm text-destructive">{toggleError}</p>
+          <p role="alert" className="text-sm text-destructive">
+            {toggleError}
+          </p>
         )}
 
         <div className="grid gap-6">
@@ -314,6 +318,7 @@ function AddWebhookForm({
   const [events, setEvents] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fieldId = useId();
 
   async function handleSave(): Promise<void> {
     if (!url.trim() || !secret.trim() || busy) return;
@@ -344,41 +349,71 @@ function AddWebhookForm({
   }
 
   return (
-    <div className="grid gap-2 border-t border-border/60 pt-2">
+    <form
+      className="grid gap-2 border-t border-border/60 pt-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void handleSave();
+      }}
+    >
+      <Label htmlFor={`${fieldId}-url`} variant="muted" className="text-xs">
+        Webhook URL{" "}
+        <span aria-hidden="true" className="text-destructive">
+          *
+        </span>
+      </Label>
       <Input
+        id={`${fieldId}-url`}
+        type="url"
+        required={true}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="https://your-service.example/hooks"
-        aria-label="Webhook URL"
         className="text-sm"
         // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
         autoFocus
       />
-      <Input
+      <Label htmlFor={`${fieldId}-secret`} variant="muted" className="text-xs">
+        Signing secret{" "}
+        <span aria-hidden="true" className="text-destructive">
+          *
+        </span>
+      </Label>
+      <SecretInput
+        id={`${fieldId}-secret`}
+        noun="secret"
+        required={true}
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
         placeholder="HMAC signing secret"
-        aria-label="Signing secret"
         className="text-sm"
       />
+      <Label htmlFor={`${fieldId}-events`} variant="muted" className="text-xs">
+        Events
+      </Label>
       <Input
+        id={`${fieldId}-events`}
         value={events}
         onChange={(e) => setEvents(e.target.value)}
-        placeholder="Events, comma-separated (blank = all, e.g. agent.started, agent.finished)"
-        aria-label="Events"
+        placeholder="Comma-separated, blank = all (e.g. agent.started, agent.finished)"
         className="text-sm"
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <Button
+          type="submit"
           size="sm"
-          className="cursor-pointer"
-          disabled={!url.trim() || !secret.trim() || busy}
-          onClick={handleSave}
+          className={busy ? "cursor-not-allowed" : "cursor-pointer"}
+          disabled={busy}
         >
           {busy ? "Adding…" : "Add webhook"}
         </Button>
         <Button
+          type="button"
           variant="ghost"
           size="sm"
           className="cursor-pointer"
@@ -387,6 +422,6 @@ function AddWebhookForm({
           Cancel
         </Button>
       </div>
-    </div>
+    </form>
   );
 }

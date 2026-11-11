@@ -1,7 +1,7 @@
 "use client";
 
 import { Switch } from "@/app/components/ui/switch";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 export function ToggleRow({
   label,
@@ -16,15 +16,29 @@ export function ToggleRow({
   onCheckedChange: (next: boolean) => void;
   disabled?: boolean;
 }): React.JSX.Element {
+  const id = useId();
+
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex flex-col">
-        <span className="text-xs font-medium text-foreground">{label}</span>
+        <span
+          id={`${id}-label`}
+          className="text-xs font-medium text-foreground"
+        >
+          {label}
+        </span>
         {description && (
-          <span className="text-2xs text-muted-foreground">{description}</span>
+          <span
+            id={`${id}-description`}
+            className="text-2xs text-muted-foreground"
+          >
+            {description}
+          </span>
         )}
       </div>
       <Switch
+        aria-labelledby={`${id}-label`}
+        aria-describedby={description ? `${id}-description` : undefined}
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}

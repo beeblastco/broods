@@ -45,6 +45,7 @@
   --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
+  --color-canvas-edge: var(--canvas-edge);
   --color-run-reasoning: var(--run-reasoning);
   --color-span-task: var(--span-task);
   --color-span-cron: var(--span-cron);
@@ -66,6 +67,7 @@
   /* Dense panels sit below text-xs. No line-height token, so the text keeps its parent's. */
   --text-2xs: 0.6875rem;
   --text-3xs: 0.625rem;
+  --text-terminal: 0.8125rem;
 
   --color-stage-development: oklch(0.696 0.17 162.48);
   --color-stage-production: oklch(0.606 0.25 292.717);
@@ -214,6 +216,26 @@
   );
 }
 
+/* A scroller with a hidden scrollbar fades its inline end so cut-off items show
+   there is more; the end padding lets the last item scroll clear of the fade. */
+@utility fade-inline-end {
+  --fade-size: 1.5rem;
+  padding-inline-end: var(--fade-size);
+  mask-image: linear-gradient(
+    to right,
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+
+  &:dir(rtl) {
+    mask-image: linear-gradient(
+      to left,
+      black calc(100% - var(--fade-size)),
+      transparent
+    );
+  }
+}
+
 html,
 body {
   height: 100%;
@@ -221,6 +243,7 @@ body {
 }
 
 :root {
+  color-scheme: light;
   --header-height: 3rem;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -239,7 +262,8 @@ body {
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  /* 3:1 on the white and muted surfaces a field sits on. */
+  --input: oklch(0.64 0 0);
   --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -260,6 +284,9 @@ body {
   --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
+  --canvas-edge: rgba(0, 0, 0, 0.35);
+  --canvas-grid: rgba(0, 0, 0, 0.16);
+  --canvas-bg: transparent;
   --run-reasoning: oklch(0.558 0.288 302.321);
   /* Trace bar hues, tuned for protan/deutan separation; see KIND_THEME in TracingPanel. */
   --span-task: oklch(0.606 0.25 292.717);
@@ -271,6 +298,7 @@ body {
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -308,6 +336,9 @@ body {
   --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
+  --canvas-edge: rgba(255, 255, 255, 0.4);
+  --canvas-grid: rgba(255, 255, 255, 0.3);
+  --canvas-bg: #000;
   --run-reasoning: oklch(0.714 0.203 305.504);
   --span-task: oklch(0.606 0.25 292.717);
   --span-cron: oklch(0.879 0.169 91.605);
@@ -315,6 +346,20 @@ body {
   --span-model: oklch(0.707 0.165 254.624);
   --span-tool: oklch(0.705 0.213 47.604);
   --span-phase: oklch(0.704 0.14 182.503);
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: oklch(0.708 0 0);
+    --input: oklch(0.5 0 0);
+    --muted-foreground: oklch(0.45 0 0);
+  }
+
+  .dark {
+    --border: oklch(1 0 0 / 30%);
+    --input: oklch(1 0 0 / 50%);
+    --muted-foreground: oklch(0.82 0 0);
+  }
 }
 
 /* A picked or linked run's first row in the trace waterfall rings once and
@@ -330,6 +375,12 @@ body {
 
 @utility animate-trace-flash {
   animation: trace-flash 1.5s ease-out;
+}
+
+/* A row of a long list skips layout and paint off screen; `auto` keeps its measured height. */
+@utility render-lazy {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 1lh;
 }
 
 @layer base {

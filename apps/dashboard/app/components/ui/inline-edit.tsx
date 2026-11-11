@@ -66,7 +66,7 @@ function InlineEdit({
       placeholder={opened}
       data-slot="inline-edit"
       className={cn(
-        "w-full min-w-0 flex-1 bg-transparent p-0 caret-primary outline-none selection:bg-primary/20",
+        "w-full min-w-0 flex-1 bg-transparent p-0 caret-primary focus-visible:outline-hidden selection:bg-primary/20",
         "placeholder:text-muted-foreground aria-invalid:caret-destructive aria-invalid:placeholder:text-destructive",
         className,
       )}

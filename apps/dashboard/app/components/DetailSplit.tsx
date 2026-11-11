@@ -104,7 +104,7 @@ export function DetailSplit({
         "--table-min": `${tableMinWidth}px`,
       }}
       className={cn(
-        "relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
+        "@container/split relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
         !flush && "rounded-lg border border-border",
       )}
     >
@@ -112,10 +112,10 @@ export function DetailSplit({
         data-slot="resizable-panel"
         className={cn(
           "min-h-0 min-w-0 flex-1 overflow-auto",
-          // On a phone the table stays laid out under the open detail, so closing keeps its
-          // scroll; CSS only, so nothing remounts across widths.
+          // Too narrow for both, the table stays laid out under the open detail, so closing keeps
+          // its scroll; CSS only, so nothing remounts across widths.
           detail &&
-            "min-w-(--table-min) max-md:invisible max-md:absolute max-md:inset-0",
+            "min-w-(--table-min) @max-2xl/split:invisible @max-2xl/split:absolute @max-2xl/split:inset-0",
         )}
       >
         {children}
@@ -149,11 +149,11 @@ export function DetailSplit({
             onLostPointerCapture={() => {
               drag.current = null;
             }}
-            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden max-md:hidden"
+            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden @max-2xl/split:hidden"
           />
           <div
             data-slot="resizable-panel"
-            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card max-md:grow"
+            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card @max-2xl/split:grow"
           >
             {detail}
           </div>

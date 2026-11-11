@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronRight, Eye, EyeOff } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { BroodsMark } from "@/app/components/BroodsMark";
+import { SecretInput } from "@/app/components/SecretInput";
 import { Button } from "@/app/components/ui/button";
 import {
   Collapsible,
@@ -10,12 +11,6 @@ import {
   CollapsibleTrigger,
 } from "@/app/components/ui/collapsible";
 import { Field, FieldError, FieldLabel } from "@/app/components/ui/field";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from "@/app/components/ui/input-group";
 
 const WRONG_KEY = "That key does not match this stack.";
 
@@ -27,7 +22,6 @@ export function KeyForm({
   returnTo: string;
 }): React.JSX.Element {
   const [pending, setPending] = useState(false);
-  const [shown, setShown] = useState(false);
   const error = rejected && !pending ? WRONG_KEY : null;
 
   return (
@@ -42,27 +36,16 @@ export function KeyForm({
       <input type="hidden" name="returnTo" value={returnTo} />
       <Field data-invalid={error !== null}>
         <FieldLabel htmlFor="admin-key">Admin key</FieldLabel>
-        <InputGroup>
-          <InputGroupInput
-            id="admin-key"
-            name="key"
-            type={shown ? "text" : "password"}
-            autoComplete="current-password"
-            required={true}
-            aria-invalid={error !== null}
-          />
-          <InputGroupAddon align="inline-end">
-            <InputGroupButton
-              size="icon-xs"
-              aria-label={shown ? "Hide key" : "Show key"}
-              onClick={() => setShown(!shown)}
-              className="cursor-pointer"
-            >
-              {shown ? <EyeOff /> : <Eye />}
-            </InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-        <FieldError>{error}</FieldError>
+        <SecretInput
+          id="admin-key"
+          name="key"
+          noun="key"
+          autoComplete="current-password"
+          required={true}
+          aria-invalid={error !== null}
+          aria-describedby={error !== null ? "admin-key-error" : undefined}
+        />
+        <FieldError id="admin-key-error">{error}</FieldError>
       </Field>
       <Button
         type="submit"

@@ -83,7 +83,13 @@ export function CreateAgentConfigDialog({
   }
 
   async function handleCreate(): Promise<void> {
-    if (!name.trim() || !modelId.trim() || !stageId) return;
+    if (
+      !name.trim() ||
+      !modelId.trim() ||
+      !stageId ||
+      (provider === "custom" && !customBaseUrl.trim())
+    )
+      return;
 
     setIsCreating(true);
     try {
@@ -138,10 +144,16 @@ export function CreateAgentConfigDialog({
         >
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="agent-name">Name</Label>
+              <Label htmlFor="agent-name">
+                Name{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 ref={nameInput}
                 id="agent-name"
+                required={true}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Agent"
@@ -180,9 +192,18 @@ export function CreateAgentConfigDialog({
               </p>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="agent-model">Model ID</Label>
+              <Label htmlFor="agent-model">
+                Model ID{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 id="agent-model"
+                required={true}
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
                 value={modelId}
                 onChange={(event) => setModelId(event.target.value)}
                 placeholder={
@@ -193,9 +214,16 @@ export function CreateAgentConfigDialog({
             </div>
             {provider === "custom" && (
               <div className="grid gap-2">
-                <Label htmlFor="agent-base-url">Base URL</Label>
+                <Label htmlFor="agent-base-url">
+                  Base URL{" "}
+                  <span aria-hidden="true" className="text-destructive">
+                    *
+                  </span>
+                </Label>
                 <Input
                   id="agent-base-url"
+                  type="url"
+                  required={true}
                   value={customBaseUrl}
                   onChange={(event) => setCustomBaseUrl(event.target.value)}
                   placeholder="https://api.example.com/v1"
@@ -231,12 +259,9 @@ export function CreateAgentConfigDialog({
             </Button>
             <Button
               type="submit"
-              disabled={
-                !name.trim() ||
-                !modelId.trim() ||
-                !stageId ||
-                (provider === "custom" && !customBaseUrl.trim()) ||
-                isCreating
+              disabled={!stageId || isCreating}
+              className={
+                !stageId || isCreating ? "cursor-not-allowed" : "cursor-pointer"
               }
             >
               {isCreating ? "Creating..." : "Create"}

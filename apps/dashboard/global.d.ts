@@ -34,3 +34,8 @@ declare module "react-file-icon" {
     SVGProps<SVGSVGElement> & { extension?: string } & StyleProps
   >;
 }
+
+// CSSOM View `container` (Chrome 140+): other engines ignore it and scroll every ancestor.
+interface ScrollIntoViewOptions {
+  container?: "all" | "nearest";
+}

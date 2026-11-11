@@ -2,6 +2,7 @@
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -221,11 +222,15 @@ export function EnvironmentVariablesPanel({
               onChange={(e) => setName(e.target.value)}
               placeholder="KEY_NAME"
               aria-label="Variable name"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
               className={cn(FIELD_CLASS, "md:text-xs")}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
               autoFocus
             />
-            <Input
+            <SecretInput
+              noun="value"
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="value"
@@ -272,7 +277,11 @@ export function EnvironmentVariablesPanel({
             Add Variable
           </Button>
         ) : null}
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
       </Section>
 
       {deletingVar && (

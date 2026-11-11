@@ -58,6 +58,7 @@ import {
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { includesSkillRef } from "@/app/lib/skillRefs";
 import { reportPerf } from "@/app/lib/perfReport";
+import { SCROLL_NEAREST } from "@/app/lib/scrollNearest";
 import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -646,6 +647,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     const tab = visibleTabs[Number(event.key) - 1];
     if (tab) setActiveTab(tab.value);
   });
+  const tabRowRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- DOM scroll of the tab row
+  useEffect(() => {
+    tabRowRef.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView(SCROLL_NEAREST);
+  }, [activeTab]);
 
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
@@ -700,19 +708,25 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           onValueChange={setActiveTab}
           className="flex flex-1 flex-col overflow-hidden"
         >
-          <TabsList variant="line" className="w-full shrink-0 px-4 pt-2">
-            {visibleTabs.map((tab) => (
-              <TabsTrigger
-                key={tab.value}
-                value={tab.value}
-                onMouseEnter={tab.warms ? warmTestTab : undefined}
-                onFocus={tab.warms ? warmTestTab : undefined}
-                onPointerDown={tab.warms ? warmTestTab : undefined}
-              >
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          {/* Scrolls when the tabs overflow; pb-0.5 keeps the line underline inside it. */}
+          <div
+            ref={tabRowRef}
+            className="-mb-0.5 shrink-0 overflow-x-auto pb-0.5"
+          >
+            <TabsList variant="line" className="w-full min-w-max px-4 pt-2">
+              {visibleTabs.map((tab) => (
+                <TabsTrigger
+                  key={tab.value}
+                  value={tab.value}
+                  onMouseEnter={tab.warms ? warmTestTab : undefined}
+                  onFocus={tab.warms ? warmTestTab : undefined}
+                  onPointerDown={tab.warms ? warmTestTab : undefined}
+                >
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
           <TabsContent
             value="details"

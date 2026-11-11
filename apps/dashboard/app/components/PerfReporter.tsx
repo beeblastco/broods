@@ -7,8 +7,25 @@ import { useEffect, useRef } from "react";
 
 // Long tasks start at 50 ms, but below 100 they are noise that floods the buffer on a drag.
 const LONG_TASK_FLOOR_MS = 100;
+const LONG_FRAME = "long-animation-frame";
+// INP reports on page hide, so the frames its interaction ran in must still be here.
+const RECENT_FRAMES = 32;
 
 type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
+
+// lib.dom ships no Long Animation Frames types yet.
+interface ScriptTiming {
+  duration: number;
+  forcedStyleAndLayoutDuration: number;
+  invoker: string;
+  sourceURL: string;
+}
+
+interface LongAnimationFrame extends PerformanceEntry {
+  scripts: ScriptTiming[];
+}
+
+let recentFrames: LongAnimationFrame[] = [];
 
 // Module scope: a new callback identity makes useReportWebVitals replay every metric.
 function reportWebVital(metric: WebVitalsMetric): void {
@@ -17,6 +34,9 @@ function reportWebVital(metric: WebVitalsMetric): void {
     attributes: {
       rating: metric.rating,
       navigation_type: metric.navigationType,
+      ...(metric.name === "INP"
+        ? scriptAttributes(framesDuring(metric.entries))
+        : {}),
     },
   });
 }
@@ -43,14 +63,25 @@ export function PerfReporter(): null {
 
     let observer: PerformanceObserver;
     try {
+      // Long animation frames name the script behind a slow frame; only Chromium has them.
+      const framed =
+        PerformanceObserver.supportedEntryTypes.includes(LONG_FRAME);
       observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
+          const frame = framed ? (entry as LongAnimationFrame) : null;
+          if (frame)
+            recentFrames = [...recentFrames, frame].slice(-RECENT_FRAMES);
           if (entry.duration < LONG_TASK_FLOOR_MS) continue;
-          reportPerf("long-task", entry.duration);
+          reportPerf("long-task", entry.duration, {
+            attributes: frame ? scriptAttributes([frame]) : {},
+          });
         }
       });
       // Not every browser ships the longtask entry type.
-      observer.observe({ type: "longtask", buffered: true });
+      observer.observe({
+        type: framed ? LONG_FRAME : "longtask",
+        buffered: true,
+      });
     } catch {
       return;
     }
@@ -59,4 +90,49 @@ export function PerfReporter(): null {
   }, []);
 
   return null;
+}
+
+function framesDuring(entries: PerformanceEntry[]): LongAnimationFrame[] {
+  return recentFrames.filter((frame) =>
+    entries.some(
+      (entry) =>
+        frame.startTime < entry.startTime + entry.duration &&
+        entry.startTime < frame.startTime + frame.duration,
+    ),
+  );
+}
+
+// An element invoker names its node by id or src, which may carry tenant data: keep tag and event.
+function invokerLabel(invoker: string): string {
+  if (URL.canParse(invoker)) return scriptSource(invoker);
+
+  return invoker.replace(/[#[].*(\.on\w+)$/, "$1");
+}
+
+function scriptAttributes(
+  frames: LongAnimationFrame[],
+): Record<string, string | number> {
+  const top = frames
+    .flatMap((frame) => frame.scripts)
+    .reduce<ScriptTiming | null>(
+      (longest, script) =>
+        !longest || script.duration > longest.duration ? script : longest,
+      null,
+    );
+  if (!top) return {};
+
+  return {
+    script_source: scriptSource(top.sourceURL),
+    script_invoker: invokerLabel(top.invoker),
+    forced_style_layout_ms: Math.round(top.forcedStyleAndLayoutDuration),
+  };
+}
+
+// An inline script's URL is the page's, which holds tenant ids.
+function scriptSource(url: string): string {
+  if (!URL.canParse(url)) return url;
+  const { origin, pathname } = new URL(url);
+  if (origin !== window.location.origin) return `${origin}${pathname}`;
+
+  return pathname.startsWith("/_next/") ? pathname : routePattern(pathname);
 }
