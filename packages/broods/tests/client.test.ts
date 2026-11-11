@@ -558,7 +558,14 @@ test("run stops reading when its signal aborts", async (): Promise<void> => {
         input: "hello",
         signal: controller.signal,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      client.run({
+        agentId: "agent_1",
+        input: "hello",
+        signal: AbortSignal.abort(),
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
   } finally {
     server.stop(true);
   }
