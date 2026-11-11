@@ -1,0 +1,13 @@
+kind	name	reason
+opaque	_SlackAdapter	The Chat SDK Slack adapter instance, passed through or used only for its own methods; none of its state is read by these twins.
+opaque	SlackFormatConverter	The SDK formatter instance is only constructed and captured in closures; its state is never read.
+opaque	Blob	The File built for a Pancake upload is only handed to form.set; its contents are never read back.
+opaque	FormData	The upload form is only filled and passed to fetch; its contents are never read back.
+external	^new SlackAdapter$	Vendor SDK constructor; the twin checks the options it is given and returns only closures over it.
+external	^new SlackFormatConverter$	Vendor SDK constructor taking no arguments; only captured in closures.
+external	^slack\.encodeThreadId$	Vendor SDK thread id encoding; the twin only tests whether the id is present.
+external	^new FormData$	Host constructor with no input; the value is only passed on.
+external	^new File$	Host constructor; the twin checks its arguments and only passes the value on.
+external	^form\.set$	Host FormData write whose result is not read.
+external	^fetch$	The Pancake HTTP answer is the outside input; status and body are what the twin decides on.
+external	^response\.text$	Reads the body of the Pancake answer, an outside input.

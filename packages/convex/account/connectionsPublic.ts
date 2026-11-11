@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { requireActiveAccount } from "../model/activeAccount";
 import { getActiveAccountForUser } from "../org/orgs";
 import { connectionsFields } from "../schema";
@@ -37,7 +38,7 @@ export const disconnect = mutation({
       throw new Error("User not found or not authenticated");
     }
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CONNECTION_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(CONNECTION_ADMIN_REQUIRED, "forbidden");
     await requireActiveAccount(ctx, account._id);
 
     return await ctx.runMutation(internal.account.connections.disconnect, {

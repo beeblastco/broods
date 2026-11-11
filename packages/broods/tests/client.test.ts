@@ -567,7 +567,7 @@ test("run stops reading when its signal aborts", async (): Promise<void> => {
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
   } finally {
-    server.stop(true);
+    await server.stop(true);
   }
 });
 

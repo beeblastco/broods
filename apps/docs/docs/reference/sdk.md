@@ -79,18 +79,19 @@ Never call `signUserToken` in a browser: the signing secret speaks for every use
 
 ### Methods
 
-| Method                                         | Returns                           | What it does                                                         |
-| ---------------------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
-| `run(agent, input)`                            | `{ text, events, output }`        | Streams a run and collects the text, parts and structured output     |
-| `stream(agent, input)`                         | `AsyncGenerator<AgentStreamPart>` | Yields AI SDK stream parts, plus `structured-output`, as they arrive |
-| `runAsync(agent, input)`                       | `AsyncAgentRun`                   | Starts a background run, returns `runId` and `statusUrl`             |
-| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                   | Re-enters a run that stopped on the step cap or a provider fault     |
-| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                     | One status snapshot. `{ status: "not_found" }` on 404                |
-| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                     | Polls until a settled status or timeout                              |
-| `agent(ref)`                                   | `AgentHandle`                     | Binds `run`, `stream`, `runAsync`, `continue` to one agent           |
-| `channelWebhookUrl(ref)`                       | `string`                          | Webhook URL for a generated channel reference                        |
-| `accountWebhookUrl(accountId, type)`           | `string`                          | Production webhook URL for a channel type                            |
-| `stageWebhookUrl(accountId, endpointId, type)` | `string`                          | Webhook URL pinned to one non-production stage                       |
+| Method                                         | Returns                           | What it does                                                                 |
+| ---------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `run(agent, input)`                            | `{ text, events, output }`        | Streams a run and collects the text, parts and structured output             |
+| `stream(agent, input)`                         | `AsyncGenerator<AgentStreamPart>` | Yields AI SDK stream parts, plus `structured-output`, as they arrive         |
+| `runAsync(agent, input)`                       | `AsyncAgentRun`                   | Starts a background run, returns `runId` and `statusUrl`                     |
+| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                   | Re-enters a run that stopped on the step cap or a provider fault             |
+| `answer(agent, { conversationKey, answers })`  | `AnswersAccepted`                 | Answers an `awaiting_input` run's prompts; the run resumes in the background |
+| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                     | One status snapshot. `{ status: "not_found" }` on 404                        |
+| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                     | Polls until a settled status or timeout                                      |
+| `agent(ref)`                                   | `AgentHandle`                     | Binds `run`, `stream`, `runAsync`, `continue`, `answer` to one agent         |
+| `channelWebhookUrl(ref)`                       | `string`                          | Webhook URL for a generated channel reference                                |
+| `accountWebhookUrl(accountId, type)`           | `string`                          | Production webhook URL for a channel type                                    |
+| `stageWebhookUrl(accountId, endpointId, type)` | `string`                          | Webhook URL pinned to one non-production stage                               |
 
 `AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs`, default 2000, `timeoutMs`, default 180000, and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
 
@@ -165,6 +166,34 @@ for await (const part of client.stream(api.agents.myAgent, input)) {
 | `completed`                                   | Done. `response` and `result` hold the answer                       |
 | `failed`                                      | `error` explains. `stoppedByUser: true` means a deliberate stop     |
 | `expired`                                     | Queued work was never run                                           |
+
+Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` in the result. `answer` and `continue` take `signal` like `runAsync`: it cancels only the request, and answers core already accepted still resume the run. Approve an `awaiting_approval` run by sending the responses as `events`:
+
+```ts
+const status = await job.wait();
+const prompt = status.questions?.[0];
+if (status.status === "awaiting_input" && prompt) {
+  await client.answer(api.agents.myAgent, {
+    conversationKey: job.conversationKey,
+    answers: [{ statusId: prompt.statusId, answers: { color: ["Blue"] } }],
+  });
+}
+if (status.status === "awaiting_approval") {
+  await client.runAsync(api.agents.myAgent, {
+    conversationKey: job.conversationKey,
+    events: [
+      {
+        role: "tool",
+        content: (status.approvals ?? []).map((approval) => ({
+          type: "tool-approval-response",
+          approvalId: approval.approvalId,
+          approved: true,
+        })),
+      },
+    ],
+  });
+}
+```
 
 Every status core returns also carries the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
 
@@ -273,7 +302,7 @@ const sub = ws.subscribe(
 );
 ```
 
-`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
+`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. It closes its socket after `onDone`. When the gateway answers `replay_unavailable` (no such run for this caller, or a cursor it no longer keeps), it calls `onError` and closes; poll the run's status instead. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
 
 ## BroodsAccountClient
 

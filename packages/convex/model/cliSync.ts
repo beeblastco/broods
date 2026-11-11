@@ -516,6 +516,15 @@ export async function releaseManifestSync(
     await ctx.db.patch(row._id, { activeUntil: undefined });
 }
 
+// `pruneOnly` holds the `kind:name` keys a dev prune chose; a deploy prune sends none.
+export function prunes(
+  pruneOnly: readonly string[] | undefined,
+  kind: CliResource["kind"],
+  name: string,
+): boolean {
+  return pruneOnly === undefined || pruneOnly.includes(`${kind}:${name}`);
+}
+
 export function resourceName(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new ClientError("Resource name is required");

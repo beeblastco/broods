@@ -101,6 +101,8 @@ const sync = (tt: T): Promise<unknown> => syncResources(tt, [agentResource]);
 const setEnv = (tt: T, value: string): Promise<null> =>
   tt.mutation(internal.cli.sync.setEnvBySecretHash, {
     secretHash: SECRET_HASH,
+    actorKind: "cli",
+    actorId: "auth_test",
     project: PROJECT,
     stage: STAGE,
     name: ENV_NAME,
@@ -110,6 +112,8 @@ const setEnv = (tt: T, value: string): Promise<null> =>
 const removeEnv = (tt: T): Promise<{ removed: boolean }> =>
   tt.mutation(internal.cli.sync.removeEnvBySecretHash, {
     secretHash: SECRET_HASH,
+    actorKind: "cli",
+    actorId: "auth_test",
     project: PROJECT,
     stage: STAGE,
     name: ENV_NAME,
@@ -382,6 +386,8 @@ describe("a stage env var name", () => {
     await expect(
       tt.mutation(internal.cli.sync.setEnvBySecretHash, {
         secretHash: SECRET_HASH,
+        actorKind: "cli",
+        actorId: "auth_test",
         project: PROJECT,
         stage: STAGE,
         name: "api_key",

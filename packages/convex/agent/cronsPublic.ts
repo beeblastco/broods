@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
 import { requireActiveAccount } from "../model/activeAccount";
+import { ClientError } from "../model/clientError";
 import { getActiveAccountForUser, getActiveCaller } from "../org/orgs";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
@@ -23,7 +24,7 @@ export const create = mutation({
   returns: v.object({ cronId: v.string() }),
   handler: async (ctx, args): Promise<{ cronId: string }> => {
     const caller = await getActiveCaller(ctx, "admin");
-    if (!caller) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!caller) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
     await requireActiveAccount(ctx, caller.account._id);
 
     const cron = await ctx.runMutation(internal.agent.crons.create, {
@@ -52,7 +53,7 @@ export const update = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { cronId, ...patch } = args;
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
     await requireActiveAccount(ctx, account._id);
 
     const updated = await ctx.runMutation(internal.agent.crons.update, {
@@ -71,7 +72,7 @@ export const remove = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
     await requireActiveAccount(ctx, account._id);
 
     const removed = await ctx.runMutation(internal.agent.crons.remove, {

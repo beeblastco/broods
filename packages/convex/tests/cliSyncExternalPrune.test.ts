@@ -182,6 +182,43 @@ describe("cli prune of external resources", () => {
     ).toEqual([expect.objectContaining({ path: "theirs/SKILL.md" })]);
   });
 
+  test("a prune list removes only the resources it names", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordHook(tt, accountId, STAGE, "kept");
+    await recordHook(tt, accountId, STAGE, "chosen");
+    const agent = (
+      name: string,
+    ): { kind: string; name: string; config: unknown } => ({
+      kind: "agent",
+      name: name,
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Answer." },
+      },
+    });
+    await pruneAll(tt, [agent("kept-agent"), agent("chosen-agent")], false);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [
+        { kind: "agent", name: "chosen-agent" },
+        { kind: "hook", name: "chosen" },
+      ],
+    );
+
+    expect(response.status).toBe(200);
+    expect((await activeNames(tt)).hooks).toEqual(["kept"]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["kept-agent"]);
+  });
+
   test("a pruned agent's crons go with it", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
@@ -409,6 +446,7 @@ async function insertMcpServer(
 async function pruneAll(
   tt: T,
   resources: Array<{ kind: string; name: string; config: unknown }> = [],
+  prune: boolean | Array<{ kind: string; name: string }> = true,
 ): Promise<Response> {
   return await tt.fetch(
     `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
@@ -425,7 +463,7 @@ async function pruneAll(
           stage: STAGE,
           resources: resources,
         },
-        prune: true,
+        prune: prune,
       }),
     },
   );

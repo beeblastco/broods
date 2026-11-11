@@ -1,5 +1,6 @@
 import type {
   CliManifest,
+  CliPruneTarget,
   DeploymentRegion,
   GeneratedIds,
   CliManifestResource,
@@ -181,7 +182,7 @@ export type DiffOperation = "create" | "update" | "delete" | "rename";
 
 export interface DiffEntry {
   operation: DiffOperation;
-  kind: string;
+  kind: CliManifestResource["kind"];
   name: string;
   previousName?: string;
 }
@@ -214,9 +215,10 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
+  /** `prune` true removes every undeclared resource; a list removes only those. */
   async putManifest(
     manifest: CliManifest,
-    prune: boolean,
+    prune: boolean | CliPruneTarget[],
     rotateRuntimeKey = false,
     revision?: number,
     source?: StageSource,

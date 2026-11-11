@@ -8,8 +8,13 @@ import {
   type AgentRunOverrides,
 } from "./run-input.ts";
 import { readSseStream, type AgentStreamPart } from "./stream.ts";
-import type { AsyncRequestAccepted, AsyncStatus } from "./types.ts";
+import type {
+  AnswersAccepted,
+  AsyncRequestAccepted,
+  AsyncStatus,
+} from "./types.ts";
 import { USER_TOKEN_HEADER } from "./user-token.ts";
+import type { QuestionAnswer } from "./websocket-contracts.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
@@ -40,6 +45,18 @@ export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
+  /** Cancels only the request; a continue core already accepted keeps going. */
+  signal?: AbortSignal;
+}
+
+export interface AgentAnswerInput {
+  /** The key the asking run used. */
+  conversationKey: string;
+  /** One per open prompt, from an `awaiting_input` status's `questions`. */
+  answers: [QuestionAnswer, ...QuestionAnswer[]];
+  eventId?: string;
+  /** Cancels only the request; answers core already accepted still resume the run. */
+  signal?: AbortSignal;
 }
 
 export class IngressAcceptedError extends Error {
@@ -123,6 +140,7 @@ export type AgentHandle = {
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
   continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
+  answer: (input: AgentAnswerInput) => Promise<AnswersAccepted>;
   stream: (input: AgentRunInput) => AsyncGenerator<AgentStreamPart>;
 };
 
@@ -192,6 +210,8 @@ export class BroodsClient {
           this.runAsync({ ...input, agentName: name, agentId: id }),
         continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
           this.continue({ ...input, agentId: id }),
+        answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
+          this.answer({ ...input, agentId: id }),
         stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
@@ -211,6 +231,8 @@ export class BroodsClient {
         this.runAsync(ref, input),
       continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
         this.continue(ref, input),
+      answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
+        this.answer(ref, input),
       stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
         this.stream(ref, input),
     };
@@ -348,7 +370,43 @@ export class BroodsClient {
     };
     const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Continue");
+    return this.postAcceptedRun(targetUrl, body, "Continue", input.signal);
+  }
+
+  /** Settles open `ask_questions` prompts; the conversation resumes in the background. */
+  async answer(
+    ref: AgentReference,
+    input: AgentAnswerInput,
+  ): Promise<AnswersAccepted>;
+  async answer(
+    input: AgentAnswerInput & { agentId: string },
+  ): Promise<AnswersAccepted>;
+  async answer(
+    refOrInput: AgentReference | (AgentAnswerInput & { agentId: string }),
+    maybeInput?: AgentAnswerInput,
+  ): Promise<AnswersAccepted> {
+    const ref = maybeInput ? (refOrInput as AgentReference) : null;
+    const input = maybeInput ?? (refOrInput as AgentAnswerInput);
+    const body = {
+      agentId: ref ? ref.id : (refOrInput as { agentId: string }).agentId,
+      eventId: input.eventId ?? `answer-${crypto.randomUUID()}`,
+      conversationKey: input.conversationKey,
+      answers: input.answers,
+    };
+    const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
+    const response = await this.fetchJson(targetUrl, {
+      method: "POST",
+      headers: await this.apiKeyHeaders(),
+      body: JSON.stringify(body),
+      signal: input.signal,
+    });
+    if (response.status !== 202) {
+      throw new Error(
+        `Answer failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
+      );
+    }
+
+    return (await response.json()) as AnswersAccepted;
   }
 
   async getAsyncStatus(

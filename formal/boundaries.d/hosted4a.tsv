@@ -1,0 +1,16 @@
+kind	name	reason
+external	^waiter$	A FrameQueue waiter resolves a promise and takes no value; the twin decides from the recorded queue how many run.
+external	^clearInterval$	The platform timer call takes the reaper handle the twin read from module state.
+external	^worker\.kill$	Each pooled worker is killed once; the method has its own twin.
+external	^new InvokeWithResponseStreamCommand$	The AWS SDK command wraps the checked input; the twin only passes the handle on.
+external	^client\.send$	The AWS SDK sends the checked command; its event stream is the outside answer.
+internal	apps/core/src/harness/mcp/oauth.ts#clearMcpOauthTokens	Only clears a module Map and returns undefined, so no comparable twin exists.
+opaque	FrameQueue	The twin reads only the recorded #buffer and #waiters fields and passes the handle along unread.
+opaque	LambdaClient	The AWS client handle is only passed along; its send is a checked effect.
+opaque	InvokeWithResponseStreamCommand	The command handle is only passed to the checked client.send.
+external	^isCallToolResult$	The MCP SDK's own type guard over a relayed result; the twin acts on its boolean answer.
+external	^testOverrides\.callTool$	A test-installed stub read from module state; the twin checks the connection, tool and arguments it receives.
+external	^booleanEnv$	The shared environment reader supplies the flag; the twin checks the name and default and branches on the answer.
+external	^onInvoked$	The caller's callback takes the checked start time and returns nothing the twin reads.
+external	^\$enter:arg2$	runBatch enters the drain callback; the twin checks every effect the callback then performs.
+internal	apps/core/src/harness/mcp/hosted.ts#defaultClient	Only constructs and caches the AWS client; the handle it returns is opaque and passed along unread.
