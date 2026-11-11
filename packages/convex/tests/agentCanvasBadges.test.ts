@@ -44,17 +44,20 @@ describe("agent.config.canvasBadges", () => {
         publicAccess: true,
         skills: ["skills/release-notes", "triage"],
         structuredOutput: true,
+        voice: null,
       },
       // Skills switched off load none, whatever the list still names.
       [configs.chat]: {
         publicAccess: false,
         skills: [],
         structuredOutput: false,
+        voice: null,
       },
       [configs.plain]: {
         publicAccess: false,
         skills: [],
         structuredOutput: false,
+        voice: null,
       },
     });
   });
@@ -85,6 +88,7 @@ describe("agent.config.canvasBadges", () => {
       publicAccess: false,
       skills: ["triage"],
       structuredOutput: false,
+      voice: null,
     });
   });
 

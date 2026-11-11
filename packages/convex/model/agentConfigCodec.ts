@@ -4,6 +4,7 @@ import { v, type Infer, type Value } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./envRefs";
 import { ClientError } from "./clientError";
+import { agentVoice } from "./modelProviders";
 import { configObject, parseOr } from "./storedJson";
 
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
@@ -104,15 +105,21 @@ export const agentCanvasBadgeValidator = v.object({
   skills: v.array(v.string()),
   // The model answers with data instead of text.
   structuredOutput: v.boolean(),
+  // Who reads inbound voice notes, or null when no one does.
+  voice: v.union(
+    v.null(),
+    v.object({ provider: v.string(), native: v.boolean() }),
+  ),
 });
 
 export type AgentCanvasBadge = Infer<typeof agentCanvasBadgeValidator>;
 
 // Shared by the badges query and the optimistic update, so the server's answer matches it.
 export function agentCanvasBadge(
-  config: Pick<AgentConfigDoc, "extraConfig" | "outputFormat">,
+  config: Pick<AgentConfigDoc, "extraConfig" | "outputFormat" | "provider">,
 ): AgentCanvasBadge {
   const { extraConfig, outputFormat } = config;
+  const transcriber = extraConfig?.transcription?.provider;
   const skills = extraConfig?.skills;
   // The column checks shape only: a hand-edited list can still hold a non-string entry.
   const allowed = skills?.enabled === true ? skills.allowed : [];
@@ -125,6 +132,10 @@ export function agentCanvasBadge(
     structuredOutput:
       outputFormat !== undefined &&
       STRUCTURED_OUTPUT_TYPES.has(outputFormat.type),
+    voice: agentVoice(
+      config.provider,
+      typeof transcriber === "string" ? transcriber : undefined,
+    ),
   };
 }
 

@@ -409,6 +409,7 @@ export declare const api: {
             publicAccess: boolean;
             skills: Array<string>;
             structuredOutput: boolean;
+            voice: null | { native: boolean; provider: string };
           }
         >
       >;
