@@ -176,6 +176,7 @@ export async function handleObservabilityMessage(
     getNatsConnection,
     msg.sandboxId,
     msg.historyOnly === true,
+    msg.agentId,
   );
 }
 
@@ -477,6 +478,7 @@ async function handleObservabilitySubscribe(
   getNatsConnection: () => Promise<NatsConnection>,
   sandboxId?: string,
   historyOnly = false,
+  agentId?: string,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -530,12 +532,20 @@ async function handleObservabilitySubscribe(
   }
   state.subs[stream] = live;
 
-  sendObs(socket, { type: "ready" });
+  sendObs(socket, { type: "ready", ...(agentId ? { agentId: agentId } : {}) });
   if (!sandboxId && typeof backfill === "number" && backfill > 0)
     state.backfills[stream] = state.backfills[stream].then(
       (): Promise<void> | undefined =>
         state.runs[stream] === run
-          ? sendBackfill(socket, scope, stream, backfill, minLevel, run)
+          ? sendBackfill(
+              socket,
+              scope,
+              stream,
+              backfill,
+              minLevel,
+              run,
+              agentId,
+            )
           : undefined,
     );
 }
@@ -549,6 +559,7 @@ async function sendBackfill(
   limit: number,
   minLevel: LogLevel,
   run: number,
+  agentId: string | undefined,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -577,7 +588,12 @@ async function sendBackfill(
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
       let failures = 0;
-      for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
+      for await (const chunk of fetchTempoBackfill(
+        tempoUrl,
+        scope,
+        limit,
+        agentId,
+      )) {
         failures += chunk.failures;
         const traces = new Map<string, ObservabilitySpanRow[]>();
         for (const row of chunk.rows) {
@@ -734,13 +750,15 @@ export async function* fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
+  agentId?: string,
 ): AsyncGenerator<{ rows: ObservabilitySpanRow[]; failures: number }> {
   const url = new URL(`${tempoUrl}/api/search`);
   const end = Math.floor(Date.now() / 1_000);
   const start = end - TEMPO_BACKFILL_WINDOW_S;
   url.searchParams.set(
     "tags",
-    `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}`,
+    `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}` +
+      (agentId ? ` agent_id=${quoteLabel(agentId)}` : ""),
   );
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("start", String(start));

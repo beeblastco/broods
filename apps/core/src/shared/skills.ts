@@ -1,12 +1,16 @@
 import { readS3Text } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
+import {
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_FILE_BYTES,
+} from "@broods/convex/model/skillLimits";
+
+export { MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_FILE_BYTES };
 
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
-export const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
 const EXECUTABLE_EXTENSIONS = new Set([
   ".sh",
   ".bash",

@@ -5,6 +5,7 @@ const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // W3C trace id; all zeros is the "no span" sentinel.
 const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
+const MAX_AGENT_ID_LENGTH = 256;
 
 // DEBUG never rides the live NATS relay: a client sees it only through Loki backfill.
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
@@ -57,6 +58,8 @@ export type ObservabilitySubscribeMessage = {
   historyOnly?: boolean;
   // "logs" only: the UUID ending the instance's `logStream`; these lines never reach NATS.
   sandboxId?: string;
+  // "traces" only: the backfill searches Tempo for this agent's traces alone.
+  agentId?: string;
 };
 
 export type ObservabilityUnsubscribeMessage = {
@@ -75,8 +78,9 @@ export type ObservabilityClientMessage =
   | ObservabilityUnsubscribeMessage
   | ObservabilityFetchTraceMessage;
 
-// Sent once the live subscription is up; any requested backfill follows it.
-export type ObservabilityReadyMessage = { type: "ready" };
+// Sent once the live subscription is up; any requested backfill follows it. `agentId` echoes
+// the subscribe's filter, which a gateway that predates it ignores and never echoes.
+export type ObservabilityReadyMessage = { type: "ready"; agentId?: string };
 
 // Always sent for a requested backfill, failure included. A traces backfill comes in pieces:
 // all but the last carry `more`; the last carries `error` when a query failed.
@@ -170,8 +174,18 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
   const minLevel = msg["minLevel"];
   if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
   const sandboxId = msg["sandboxId"];
+  if (
+    sandboxId !== undefined &&
+    !(stream === "logs" && isSandboxLogId(sandboxId))
+  )
+    return false;
+  const agentId = msg["agentId"];
 
   return (
-    sandboxId === undefined || (stream === "logs" && isSandboxLogId(sandboxId))
+    agentId === undefined ||
+    (stream === "traces" &&
+      typeof agentId === "string" &&
+      agentId.length > 0 &&
+      agentId.length <= MAX_AGENT_ID_LENGTH)
   );
 }

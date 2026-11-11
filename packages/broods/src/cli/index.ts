@@ -420,8 +420,8 @@ takes. Authenticates with your \`broods login\`.
 
 Options:
   --limit <n>           How many to print. Default 20
-  --agent <id>          Only this agent's runs
-  --status <status>     waiting, needs_input, ok or error
+  --agent <id>          Only this agent's runs, from the last seven days
+  --status <status>     waiting, needs_input, ok or error, among the newest 500
   --json                Print them as JSON
 
 ${GLOBAL_OPTIONS}`,
@@ -906,6 +906,7 @@ async function whoami(args: string[]): Promise<void> {
     auth = await requireAuth(optionValue(args, "--base-url"));
   } catch (error) {
     printWarning(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
 
     return;
   }
