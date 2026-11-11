@@ -11,8 +11,9 @@ const HOT_ENTRIES = [
   "runtimeLookups.ts",
   "usage.ts",
 ];
+// `import x from "y"`, `export ... from "y"` and the side-effect `import "y"`; never `import type`.
 const VALUE_IMPORT =
-  /^(?:import|export)\s+(?!type\s)[^;]*?\sfrom\s+"([^"]+)"/gms;
+  /^(?:import|export)\s+(?!type\s)(?:[^;"]*?\sfrom\s+)?"([^"]+)"/gms;
 
 describe("hot Convex modules", () => {
   test.each(HOT_ENTRIES)("%s imports no package but convex", (entry) => {
