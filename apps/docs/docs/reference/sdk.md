@@ -79,18 +79,18 @@ Never call `signUserToken` in a browser: the signing secret speaks for every use
 
 ### Methods
 
-| Method                                         | Returns                          | What it does                                                     |
-| ---------------------------------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `run(agent, input)`                            | `{ text, events }`               | Streams a run and collects the text and parts                    |
-| `stream(agent, input)`                         | `AsyncGenerator<TextStreamPart>` | Yields AI SDK stream parts as they arrive                        |
-| `runAsync(agent, input)`                       | `AsyncAgentRun`                  | Starts a background run, returns `runId` and `statusUrl`         |
-| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                  | Re-enters a run that stopped on the step cap or a provider fault |
-| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                    | One status snapshot. `{ status: "not_found" }` on 404            |
-| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                    | Polls until a settled status or timeout                          |
-| `agent(ref)`                                   | `AgentHandle`                    | Binds `run`, `stream`, `runAsync`, `continue` to one agent       |
-| `channelWebhookUrl(ref)`                       | `string`                         | Webhook URL for a generated channel reference                    |
-| `accountWebhookUrl(accountId, type)`           | `string`                         | Production webhook URL for a channel type                        |
-| `stageWebhookUrl(accountId, endpointId, type)` | `string`                         | Webhook URL pinned to one non-production stage                   |
+| Method                                         | Returns                           | What it does                                                         |
+| ---------------------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
+| `run(agent, input)`                            | `{ text, events, output }`        | Streams a run and collects the text, parts and structured output     |
+| `stream(agent, input)`                         | `AsyncGenerator<AgentStreamPart>` | Yields AI SDK stream parts, plus `structured-output`, as they arrive |
+| `runAsync(agent, input)`                       | `AsyncAgentRun`                   | Starts a background run, returns `runId` and `statusUrl`             |
+| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                   | Re-enters a run that stopped on the step cap or a provider fault     |
+| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                     | One status snapshot. `{ status: "not_found" }` on 404                |
+| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                     | Polls until a settled status or timeout                              |
+| `agent(ref)`                                   | `AgentHandle`                     | Binds `run`, `stream`, `runAsync`, `continue` to one agent           |
+| `channelWebhookUrl(ref)`                       | `string`                          | Webhook URL for a generated channel reference                        |
+| `accountWebhookUrl(accountId, type)`           | `string`                          | Production webhook URL for a channel type                            |
+| `stageWebhookUrl(accountId, endpointId, type)` | `string`                          | Webhook URL pinned to one non-production stage                       |
 
 `AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs`, default 2000, `timeoutMs`, default 180000, and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
 

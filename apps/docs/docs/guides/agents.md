@@ -122,6 +122,8 @@ model: {
 },
 ```
 
+The run ends with a `structured-output` stream part that carries the parsed result. `client.run` returns it as `output`; `client.stream` yields it as `{ type: "structured-output", output }`.
+
 ## System prompt and turn limit
 
 `agent.system` is the base prompt. Broods appends a block for each feature that is on, such as workspace guidance, the memory index, available skills, subagents and the scheduler. Every run also gets an `<environment>` block with the current time. The Tracing tab in the dashboard shows the full assembled prompt for every run.

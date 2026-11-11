@@ -1,4 +1,4 @@
-import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
+import type { ModelMessage } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
@@ -6,7 +6,7 @@ import {
   type AgentRunEventInput,
   type AgentRunOverrides,
 } from "./run-input.ts";
-import { readSseStream } from "./stream.ts";
+import { readSseStream, type AgentStreamPart } from "./stream.ts";
 import type { AsyncRequestAccepted, AsyncStatus } from "./types.ts";
 import { USER_TOKEN_HEADER } from "./user-token.ts";
 
@@ -25,7 +25,9 @@ export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
 
 export interface AgentRunResult {
   text: string;
-  events: TextStreamPart<ToolSet>[];
+  events: AgentStreamPart[];
+  /** The agent's `model.output` result, from the run's `structured-output` frame. */
+  output?: unknown;
 }
 
 export interface AgentContinueInput {
@@ -115,7 +117,7 @@ export type AgentHandle = {
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
   continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
-  stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
+  stream: (input: AgentRunInput) => AsyncGenerator<AgentStreamPart>;
 };
 
 export class BroodsClient {
@@ -184,9 +186,7 @@ export class BroodsClient {
           this.runAsync({ ...input, agentName: name, agentId: id }),
         continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
           this.continue({ ...input, agentId: id }),
-        stream: (
-          input: AgentRunInput,
-        ): AsyncGenerator<TextStreamPart<ToolSet>> =>
+        stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
     }
@@ -205,7 +205,7 @@ export class BroodsClient {
         this.runAsync(ref, input),
       continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
         this.continue(ref, input),
-      stream: (input: AgentRunInput): AsyncGenerator<TextStreamPart<ToolSet>> =>
+      stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
         this.stream(ref, input),
     };
   }
@@ -220,8 +220,9 @@ export class BroodsClient {
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
   ): Promise<AgentRunResult> {
-    const events: TextStreamPart<ToolSet>[] = [];
+    const events: AgentStreamPart[] = [];
     let text = "";
+    let output: unknown;
 
     const stream = maybeInput
       ? this.stream(refOrInput as AgentReference, maybeInput)
@@ -232,24 +233,25 @@ export class BroodsClient {
     for await (const part of stream) {
       events.push(part);
       if (part.type === "text-delta") text += part.text;
+      if (part.type === "structured-output") output = part.output;
     }
 
-    return { text: text, events: events };
+    return { text: text, events: events, output: output };
   }
 
   stream(
     ref: AgentReference,
     input: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   stream(
     input: AgentRunInput & { agentId: string; agentName?: string },
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   async *stream(
     refOrInput:
       | AgentReference
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>> {
+  ): AsyncGenerator<AgentStreamPart> {
     const input = maybeInput
       ? {
           ...maybeInput,
@@ -275,9 +277,9 @@ export class BroodsClient {
     if (!response.body) throw new Error("Run response has no body");
 
     for await (const data of readSseStream(response.body)) {
-      let part: TextStreamPart<ToolSet>;
+      let part: AgentStreamPart;
       try {
-        part = JSON.parse(data) as TextStreamPart<ToolSet>;
+        part = JSON.parse(data) as AgentStreamPart;
       } catch {
         continue;
       }
