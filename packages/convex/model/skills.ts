@@ -269,7 +269,7 @@ export function validateSkillBundle(
     }
   }
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new ClientError("Skill bundle exceeds 30 MB");
+    throw new ClientError("Skill bundle exceeds 30 MiB");
   }
 
   const skillFile = files.find((file) => file.path === SKILL_FILE);

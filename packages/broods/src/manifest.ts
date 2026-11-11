@@ -173,7 +173,7 @@ export default {};
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
-const SKILL_SYNC_LIMIT = `\`broods dev\` and \`broods deploy\` send at most ${MAX_CLI_SKILL_SYNC_BYTES / 1024 / 1024} MiB of skill files per sync, across all skills; the server accepts ${MAX_SKILL_BUNDLE_BYTES / 1024 / 1024} MiB per skill`;
+const SKILL_SYNC_LIMIT = `\`broods dev\` and \`broods deploy\` send at most ${MAX_CLI_SKILL_SYNC_BYTES / 1024 / 1024} MiB of skill files per sync, across all skills. Shrink them, or import a large skill from a GitHub URL with \`POST /v1/skills\` (up to ${MAX_SKILL_BUNDLE_BYTES / 1024 / 1024} MiB) and list the path it returns in \`skills.allowed\``;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [
   /^\.env(?:\.|$)/i,

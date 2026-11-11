@@ -145,11 +145,11 @@ export const publishSkill = action({
       const bytes = buffer.byteLength;
 
       if (bytes > MAX_SKILL_FILE_BYTES) {
-        throw new Error(`${file.path} exceeds the 5 MB per-file limit.`);
+        throw new Error(`${file.path} exceeds the 5 MiB per-file limit.`);
       }
       totalBytes += bytes;
       if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-        throw new Error("Total bundle size exceeds the 30 MB limit.");
+        throw new Error("Total bundle size exceeds the 30 MiB limit.");
       }
 
       skillFiles.push({

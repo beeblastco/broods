@@ -2292,7 +2292,7 @@ export const docs = defineSkill({
   );
 });
 
-test("compileProject refuses skills over the 10 MiB one sync can send, before any upload", async (): Promise<void> => {
+test("compileProject refuses skills over the 4 MiB one sync can send, before any upload", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",
     `
@@ -2307,18 +2307,20 @@ export const second = defineSkill({ name: "second", path: "skills/second" });
     const root = join(cwd, "broods", "skills", name);
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "SKILL.md"), `# ${name}\n`);
-    await writeFile(join(root, "a.txt"), "x".repeat(5 * mib));
-    await writeFile(join(root, "b.txt"), "x".repeat(mib));
+    await writeFile(join(root, "a.txt"), "x".repeat(2 * mib));
+    await writeFile(join(root, "b.txt"), "x".repeat(mib / 2));
   }
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    /Skills total \d+ bytes \(first \d+, second \d+\)\. `broods dev` and `broods deploy` send at most 10 MiB of skill files per sync, across all skills; the server accepts 30 MiB per skill\./,
+    /Skills total \d+ bytes \(first \d+, second \d+\)\. `broods dev` and `broods deploy` send at most 4 MiB of skill files per sync, across all skills\. Shrink them, or import a large skill from a GitHub URL with `POST \/v1\/skills` \(up to 30 MiB\)/,
   );
 
-  await rm(join(cwd, "broods", "skills", "second", "b.txt"));
+  await rm(join(cwd, "broods", "skills", "second", "a.txt"));
+  await compileProject({ cwd: cwd, command: "dev" });
+
   await writeFile(
     join(cwd, "broods", "skills", "first", "c.txt"),
-    "x".repeat(5 * mib),
+    "x".repeat(2 * mib),
   );
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     /Skill bundle at .*first is too large/,
