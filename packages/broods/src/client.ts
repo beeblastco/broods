@@ -400,6 +400,12 @@ export class BroodsClient {
       body: JSON.stringify(body),
       signal: input.signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `Answer failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `Answer failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
