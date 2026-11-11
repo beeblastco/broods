@@ -320,7 +320,7 @@ async function ownInvitation(
   }
   if (authUser.email.toLowerCase() !== invitation.email) {
     throw new ClientError(
-      "This invitation went to an address you no longer sign in with. Ask an admin to revoke it and invite you again.",
+      "Sent to an address you no longer sign in with. Ask an admin to revoke it.",
       "forbidden",
     );
   }
