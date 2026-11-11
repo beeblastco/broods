@@ -455,7 +455,7 @@ export function CopilotProvider({
         } = await import("@/app/lib/agentDock");
         const { answerStep, ASK_TOOL, NAVIGATE_TOOL, navigatePath } =
           await import("@/app/lib/dockTrace");
-        const { readDraft, readSource, seedConversation } =
+        const { readDraft, readSource, rebaseDraft, seedConversation } =
           await import("@/app/lib/dockSource");
         // The stored source goes in the agent's own folder; an agent with none reads the repo.
         // An ask right after the dock opens beats the subscription: read it instead of skipping.
@@ -465,14 +465,32 @@ export function CopilotProvider({
                 .query(api.stageSources.latest, { stageId: currentStageId })
                 .catch((): null => null)
             : source;
+        const held =
+          folder.current?.stageId === currentStageId ? folder.current : null;
+        // A Revert, a deploy or a push stored a newer revision: the agent's edits move onto it.
         if (
           currentStageId &&
-          folder.current?.stageId !== currentStageId &&
-          stored?.url
+          stored?.url &&
+          (!held || stored.revision > (held.seed.revision ?? 0))
         ) {
           folder.current = await readSource(stored.url)
             .then(async (files): Promise<SeededFolder> => {
-              await seedConversation(session, conversationKey, files);
+              const rebased = held
+                ? rebaseDraft(
+                    held.seed.files,
+                    await readDraft(
+                      session,
+                      conversationKey,
+                      controller.signal,
+                    ),
+                    files,
+                  )
+                : { files: files, lost: [] };
+              await seedConversation(session, conversationKey, rebased.files);
+              if (rebased.lost.length > 0)
+                note(
+                  `The stage's source moved to revision ${stored.revision} and changed ${rebased.lost.join(", ")}, so the agent's edits there were dropped.`,
+                );
 
               return {
                 seed: {
