@@ -289,9 +289,12 @@ const agents: Storage["agents"] = {
 
 const agentDeployments: Storage["agentDeployments"] = {
   getByApiKeyHash: async function (apiKeyHash) {
-    const doc = await adminQuery(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: apiKeyHash,
-    });
+    const doc = await adminQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: apiKeyHash,
+      },
+    );
     const account = accountFromConvex(doc?.account ?? null);
 
     return doc && account ? { ...doc, account: account } : null;
@@ -764,7 +767,7 @@ function accountHookFromConvex(
 
 const agentPolicies: Storage["agentPolicies"] = {
   getById: async function (accountId, policyId) {
-    const doc = await adminQuery(internal.agent.policies.getById, {
+    const doc = await adminQuery(internal.runtimeLookups.policyById, {
       accountId: accountId,
       policyId: policyId,
     });
@@ -881,7 +884,7 @@ const connections: Storage["connections"] = {
 
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
-    return await adminQuery(internal.account.roles.resolveSession, {
+    return await adminQuery(internal.runtimeLookups.roleSessionByTokenHash, {
       tokenHash: tokenHash,
     });
   },

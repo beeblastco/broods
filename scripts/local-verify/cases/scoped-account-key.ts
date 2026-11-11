@@ -30,7 +30,9 @@ export async function scopedAccountKey(context: VerifyContext): Promise<void> {
   };
 
   asAdmin("user:ensureSynced", {});
-  const previous = asAdmin("org/orgs:getActive", {}) as { _id: string } | null;
+  const previous = asAdmin("dashboardReads:activeOrg", {}) as {
+    _id: string;
+  } | null;
   const orgId = String(
     asAdmin("org/orgs:create", { name: `keys-${context.runId}` }),
   );

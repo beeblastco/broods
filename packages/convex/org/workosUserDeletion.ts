@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { purgeUser, sharedOwnedOrgs } from "../model/cascade";
+import { purgeUser } from "../model/cascade";
+import { sharedOwnedOrgs } from "../model/ownership/org";
 
 const CLEANUP_ATTEMPTS_MAX = 24;
 const SWEEP_BATCH = 25;

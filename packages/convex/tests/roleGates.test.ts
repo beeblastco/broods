@@ -11,7 +11,7 @@ import {
 import type { OrgRole } from "../model/ownership/org";
 import { getProjectForRole } from "../model/ownership/project";
 import { getOwnedStage } from "../model/ownership/stage";
-import { resolveActiveAccount } from "../org/orgs";
+import { resolveActiveAccount } from "../model/activeCaller";
 import { readCapped } from "../model/skills";
 import schema from "../schema";
 

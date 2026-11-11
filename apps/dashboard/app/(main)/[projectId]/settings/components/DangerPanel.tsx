@@ -18,8 +18,10 @@ interface Props {
 
 export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const project = useQuery(api.project.getById, { projectId: projectId });
-  const stages = useQuery(api.stage.list, {
+  const project = useQuery(api.dashboardReads.projectById, {
+    projectId: projectId,
+  });
+  const stages = useQuery(api.dashboardReads.stages, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
   const removeProject = useMutation(api.project.remove);

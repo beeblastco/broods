@@ -113,7 +113,7 @@ export async function githubRepo(context: VerifyContext): Promise<void> {
   };
   await asAdmin("user:ensureSynced", {});
   const previous = (await asAdmin(
-    "org/orgs:getActive",
+    "dashboardReads:activeOrg",
     {},
   )) as Doc<"orgs"> | null;
   const orgId = String(
@@ -283,7 +283,7 @@ async function link(
       productionBranch: "no-such-branch",
     },
   });
-  const stages = (await asAdmin("stage:list", {
+  const stages = (await asAdmin("dashboardReads:stages", {
     projectId: projectId,
   })) as Array<{ kind: string }>;
   assertStep(
@@ -443,7 +443,7 @@ async function deployFromRepo(run: Run, imported: Imported): Promise<void> {
 // The dock's Apply: each edit is one commit on dev, and a null content deletes the file.
 async function dockEdits(run: Run, projectId: string): Promise<void> {
   const { github } = run;
-  const stages = (await run.asAdmin("stage:list", {
+  const stages = (await run.asAdmin("dashboardReads:stages", {
     projectId: projectId,
   })) as Array<{ _id: string; kind: string }>;
   const stageId = stages.find((stage) => stage.kind === "development")?._id;
@@ -770,7 +770,7 @@ async function newProject(
       name: `${prefix}-${run.context.runId}`,
     }),
   );
-  const project = (await run.asAdmin("project:getById", {
+  const project = (await run.asAdmin("dashboardReads:projectById", {
     projectId: projectId,
   })) as {
     slug: string;

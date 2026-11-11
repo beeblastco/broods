@@ -4,7 +4,7 @@ import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 
 type ActiveAccount = NonNullable<
-  FunctionReturnType<typeof api.org.orgs.getActiveAccount>
+  FunctionReturnType<typeof api.dashboardReads.activeAccount>
 >;
 
 export interface OrgRoleState {
@@ -15,7 +15,7 @@ export interface OrgRoleState {
 export function useOrgRole(): OrgRoleState {
   const signedIn = useSignedIn();
   const active = useQuery(
-    api.org.orgs.getActiveAccount,
+    api.dashboardReads.activeAccount,
     signedIn ? {} : "skip",
   );
   const role = active?.role ?? null;

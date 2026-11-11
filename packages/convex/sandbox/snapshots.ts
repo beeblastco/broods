@@ -7,7 +7,7 @@ import {
   type QueryCtx,
 } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import { ClientError } from "../model/clientError";
 import { lockImage } from "../model/snapshotLocks";
 import { snapshotBootRefusal, type SandboxScope } from "../model/sandboxRules";

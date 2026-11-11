@@ -5,7 +5,7 @@ import type { Id } from "../_generated/dataModel";
 import type { OrgRole } from "../model/ownership/org";
 import { getProjectForRole } from "../model/ownership/project";
 import schema from "../schema";
-import { listStagesForProject } from "../stage";
+import { listStagesForProject } from "../dashboardReads";
 
 const modules = import.meta.glob("../**/*.ts");
 
