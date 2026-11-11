@@ -102,7 +102,9 @@ function AnswerLine({
       {answer.accepted ? (
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 text-success" />
-          You joined <b className="font-medium">{orgName}</b>.
+          <span>
+            You joined <b className="font-medium">{orgName}</b>.
+          </span>
         </span>
       ) : (
         <span className="text-muted-foreground">
@@ -157,11 +159,13 @@ function InvitationLine({
     <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
       <span className="flex flex-wrap items-center gap-1">
         {invitation.invitedBy && <Who actor={invitation.invitedBy} />}
-        invited you to <b className="font-medium">{invitation.orgName}</b> as
-        <span className="capitalize">
-          {invitation.roleName ?? invitation.role}
+        <span>
+          invited you to <b className="font-medium">{invitation.orgName}</b> as{" "}
+          {invitation.roleName ?? (
+            <span className="capitalize">{invitation.role}</span>
+          )}
+          .
         </span>
-        .
       </span>
       {error && (
         <span role="alert" className="text-destructive">
