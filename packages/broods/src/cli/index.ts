@@ -129,7 +129,6 @@ import {
   majorVersion,
   updateTarget,
 } from "./update.ts";
-import type { z } from "zod/mini";
 import packageJson from "../../package.json" with { type: "json" };
 import agentSkillText from "../../skills/broods/SKILL.md" with { type: "text" };
 import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with { type: "text" };
@@ -3096,9 +3095,9 @@ async function agentList(args: string[]): Promise<void> {
   }
   console.log(`Agents in ${manifest.project}/${manifest.stage}:`);
   // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
-  const { CONFIG_BRANCH } = await import("./manifest-branches.ts");
+  const { agentModelLabel } = await import("./manifest-branches.ts");
   for (const agent of agents) {
-    const model = agentModelLabel(agent.config, CONFIG_BRANCH);
+    const model = agentModelLabel(agent.config);
     const access = agent.config.publicAccess === true ? "public" : "private";
     const status = agent.agentId ? agent.agentId : "not deployed";
     console.log(`  ${agent.name}  [${access}]  ${model}  (${status})`);
@@ -3115,7 +3114,7 @@ async function agentGet(
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
   // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
-  const { CONFIG_BRANCH, SUBAGENT_REFS, WEBHOOK_LIST } =
+  const { agentModelLabel, CONFIG_BRANCH, SUBAGENT_REFS, WEBHOOK_LIST } =
     await import("./manifest-branches.ts");
   const config = agent.config;
   const sandboxes = [config.sandboxes]
@@ -3156,7 +3155,7 @@ async function agentGet(
   console.log(
     `  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`,
   );
-  console.log(`  Model:        ${agentModelLabel(config, CONFIG_BRANCH)}`);
+  console.log(`  Model:        ${agentModelLabel(config)}`);
   console.log(
     `  Sandboxes:    ${sandboxes.length > 0 ? sandboxes.join(", ") : "none"}`,
   );
@@ -3184,19 +3183,6 @@ async function agentGet(
       console.log(`    [${index}] ${state} → ${url} (${events})`);
     });
   }
-}
-
-function agentModelLabel(
-  config: Record<string, unknown>,
-  configBranch: z.ZodMiniType<Record<string, unknown>>,
-): string {
-  const model = configBranch.safeParse(config.model).data ?? {};
-  const provider =
-    typeof model.provider === "string" ? model.provider : undefined;
-  const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
-  if (provider && modelId) return `${provider}/${modelId}`;
-
-  return modelId ?? provider ?? "unconfigured model";
 }
 
 async function run(args: string[]): Promise<void> {

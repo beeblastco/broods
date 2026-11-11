@@ -36,6 +36,8 @@ function packageImports(entry: string): string[] {
           existsSync,
         );
         if (path) seen.add(path);
+        else if (!specifier.includes("_generated/"))
+          found.push(`unresolved ${specifier} via ${relative(ROOT, file)}`);
       } else if (specifier !== "convex" && !specifier.startsWith("convex/")) {
         found.push(`${specifier} via ${relative(ROOT, file)}`);
       }

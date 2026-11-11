@@ -1,4 +1,4 @@
-// schema.ts imports this, so every Convex call loads it: no zod, no other runtime import.
+// schema.ts imports this, so every Convex call loads it: no package but convex at runtime.
 import { v, type Validator, type Value } from "convex/values";
 import type { z } from "zod/mini";
 

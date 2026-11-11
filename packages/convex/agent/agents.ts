@@ -22,7 +22,7 @@ import {
 } from "../model/projectScope";
 import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-import { agentDoc } from "../runtimeLookups";
+import { agentDoc } from "../model/agentDoc";
 
 const foreignAgentLink = v.object({
   configId: v.id("agentConfigs"),
@@ -91,6 +91,25 @@ export const create = internalMutation({
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return agentRowId;
+  },
+});
+
+// Core pods built before runtimeLookups.ts still call this until they roll.
+export const getById = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.string(),
+  },
+  returns: v.union(agentDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
+    const normalized = ctx.db.normalizeId("agents", args.agentId);
+    if (!normalized) return null;
+    const agent = await ctx.db.get(normalized);
+    if (!agent || agent.accountId !== args.accountId) {
+      return null;
+    }
+
+    return agent;
   },
 });
 

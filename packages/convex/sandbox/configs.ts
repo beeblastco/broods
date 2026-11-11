@@ -5,7 +5,24 @@ import { internalMutation, internalQuery } from "../_generated/server";
 import { paginationCursorFields } from "../schema";
 import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { ClientError } from "../model/clientError";
-import { sandboxConfigDoc } from "../runtimeLookups";
+import { sandboxConfigDoc } from "../model/sandboxConfigDoc";
+
+// Core pods built before runtimeLookups.ts still call this until they roll.
+export const getById = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    sandboxId: v.string(),
+  },
+  returns: v.union(sandboxConfigDoc, v.null()),
+  handler: async (ctx, args): Promise<Doc<"sandboxConfigs"> | null> => {
+    const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
+    if (!normalized) return null;
+    const doc = await ctx.db.get(normalized);
+    if (!doc || doc.accountId !== args.accountId) return null;
+
+    return doc;
+  },
+});
 
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },

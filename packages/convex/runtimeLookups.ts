@@ -4,19 +4,8 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { accountDoc } from "./model/accountDoc";
-import { agentsFields, sandboxConfigsFields } from "./schema";
-
-export const agentDoc = v.object({
-  ...agentsFields,
-  _id: v.id("agents"),
-  _creationTime: v.number(),
-});
-
-export const sandboxConfigDoc = v.object({
-  ...sandboxConfigsFields,
-  _id: v.id("sandboxConfigs"),
-  _creationTime: v.number(),
-});
+import { agentDoc } from "./model/agentDoc";
+import { sandboxConfigDoc } from "./model/sandboxConfigDoc";
 
 export const accountBySecretHash = internalQuery({
   args: { secretHash: v.string() },

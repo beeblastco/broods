@@ -265,7 +265,6 @@ export async function sandboxConfigByName(
     .unique();
 }
 
-// The sync's rules without writes, so a refused manifest stores nothing. Live-row checks stay.
 // A sync checks every agent before it writes one, so the caller gets the path, not a 500.
 export function assertStoredAgentConfig(flat: FlatPatch): void {
   assertColumn(agentExtraConfigColumn, flat.extraConfig ?? {}, "config");
@@ -277,6 +276,7 @@ export function assertStoredAgentConfig(flat: FlatPatch): void {
     );
 }
 
+// The sync's rules without writes, so a refused manifest stores nothing. Live-row checks stay.
 export function assertManifestResources(
   resources: CliResource[],
   envValues: Record<string, string>,

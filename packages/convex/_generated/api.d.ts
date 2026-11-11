@@ -2476,6 +2476,27 @@ export declare const internal: {
           username: string;
         } | null
       >;
+      getBySecretHash: FunctionReference<
+        "query",
+        "internal",
+        { secretHash: string },
+        {
+          _creationTime: number;
+          _id: Id<"accounts">;
+          auditRetentionDays?: number;
+          createdAt: number;
+          description?: string;
+          orgId: string;
+          secretHash: string;
+          secretHint?: string;
+          secretRotatedAt?: number;
+          secretRotatedBy?: Id<"users">;
+          status: "active" | "disabled";
+          storageExternalId?: string;
+          updatedAt: number;
+          username: string;
+        } | null
+      >;
       list: FunctionReference<
         "query",
         "internal",
@@ -3925,6 +3946,27 @@ export declare const internal: {
           sourceEncryptionTag?: string;
         },
         Id<"agents">
+      >;
+      getById: FunctionReference<
+        "query",
+        "internal",
+        { accountId: Id<"accounts">; agentId: string },
+        {
+          _creationTime: number;
+          _id: Id<"agents">;
+          accountId: Id<"accounts">;
+          createdAt: number;
+          description?: string;
+          encryptedConfig?: string;
+          encryptedSourceConfig?: string;
+          encryptionIv?: string;
+          encryptionTag?: string;
+          name: string;
+          requireUserToken?: boolean;
+          sourceEncryptionIv?: string;
+          sourceEncryptionTag?: string;
+          updatedAt: number;
+        } | null
       >;
       getByName: FunctionReference<
         "query",
@@ -8317,6 +8359,31 @@ export declare const internal: {
           name: string;
         },
         Id<"sandboxConfigs">
+      >;
+      getById: FunctionReference<
+        "query",
+        "internal",
+        { accountId: Id<"accounts">; sandboxId: string },
+        {
+          _creationTime: number;
+          _id: Id<"sandboxConfigs">;
+          accountId: Id<"accounts">;
+          createdAt: number;
+          description?: string;
+          encryptedConfig?: string;
+          encryptedSourceConfig?: string;
+          encryptionIv?: string;
+          encryptionTag?: string;
+          managedBy?: "cli" | "dashboard" | "api";
+          name: string;
+          projectId?: Id<"projects">;
+          runtimeVariables?: Array<{ key: string; value: string }>;
+          snapshotId?: string;
+          sourceEncryptionIv?: string;
+          sourceEncryptionTag?: string;
+          stageId?: Id<"stages">;
+          updatedAt: number;
+        } | null
       >;
       list: FunctionReference<
         "query",
