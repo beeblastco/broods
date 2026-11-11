@@ -6,7 +6,6 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
-  type QueryCtx,
 } from "../_generated/server";
 import { accountIdForProject } from "../model/auditEvents";
 import {
@@ -21,7 +20,7 @@ import {
 import { createRoleId } from "../model/roleRules";
 import { accountRolesFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-import { policyDocumentValidator } from "../model/policyDocument";
+import { getOwnedRole } from "../runtimeLookups";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -32,14 +31,6 @@ const roleDoc = v.object({
 });
 
 const roleFields = v.object(accountRolesFields);
-
-export const rolePrincipalValidator = v.object({
-  accountId: v.id("accounts"),
-  roleId: v.string(),
-  policy: policyDocumentValidator,
-  projectId: v.optional(v.id("projects")),
-  stageId: v.optional(v.id("stages")),
-});
 
 export const createInternal = internalMutation({
   args: {
@@ -187,28 +178,8 @@ export const removeInternal = internalMutation({
   },
 });
 
-// The caller must load the account and check its status.
-export const resolveSession = internalQuery({
-  args: { tokenHash: v.string() },
-  returns: v.union(rolePrincipalValidator, v.null()),
-  handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("roleSessions")
-      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
-      .unique();
-    if (!session || session.expiresAt <= Date.now()) return null;
-    const role = await getOwnedRole(ctx, session.accountId, session.roleId);
-    if (!role || role.status !== "active") return null;
-
-    return {
-      accountId: role.accountId,
-      roleId: role.roleId,
-      policy: role.policy,
-      ...(role.projectId !== undefined ? { projectId: role.projectId } : {}),
-      ...(role.stageId !== undefined ? { stageId: role.stageId } : {}),
-    };
-  },
-});
+// Core pods deployed before this release call this path until they roll.
+export { roleSessionByTokenHash as resolveSession } from "../runtimeLookups";
 
 const stageScopedTypeValidator = v.union(
   ...STAGE_SCOPED_RESOURCE_TYPES.map((type) => v.literal(type)),
@@ -267,19 +238,6 @@ export const updateInternal = internalMutation({
     return await ctx.db.get(role._id);
   },
 });
-
-async function getOwnedRole(
-  ctx: QueryCtx,
-  accountId: Id<"accounts">,
-  roleId: string,
-): Promise<Doc<"accountRoles"> | null> {
-  const role = await ctx.db
-    .query("accountRoles")
-    .withIndex("by_roleId", (q) => q.eq("roleId", roleId))
-    .unique();
-
-  return role && role.accountId === accountId ? role : null;
-}
 
 export async function resolveRoleScope(
   ctx: MutationCtx,

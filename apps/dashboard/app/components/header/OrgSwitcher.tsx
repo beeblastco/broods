@@ -37,8 +37,8 @@ export function OrgSwitcher(): React.JSX.Element {
   const convex = useConvex();
   const params = useParams<{ projectId?: string }>();
   const orgQueryArgs = useSignedIn() ? {} : "skip";
-  const orgs = useQuery(api.org.orgs.list, orgQueryArgs);
-  const active = useQuery(api.org.orgs.getActive, orgQueryArgs);
+  const orgs = useQuery(api.dashboardReads.orgs, orgQueryArgs);
+  const active = useQuery(api.dashboardReads.activeOrg, orgQueryArgs);
   const currentUser = useQuery(api.user.getCurrent, orgQueryArgs);
   const setActive = useMutation(api.org.orgs.setActive);
   const createOrg = useMutation(api.org.orgs.create);
@@ -58,7 +58,7 @@ export function OrgSwitcher(): React.JSX.Element {
     if (active?._id === orgId) return;
     try {
       await setActive({ orgId: orgId });
-      const projects = await convex.query(api.project.list, {});
+      const projects = await convex.query(api.dashboardReads.projects, {});
       if (projects.length === 0) {
         router.replace("/projects");
       } else if (

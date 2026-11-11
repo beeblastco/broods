@@ -20,7 +20,7 @@ import {
   grantUpload,
   uploadQuotaMessage,
 } from "../model/uploads";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import {
   MAX_WORKSPACE_FILE_BYTES,
   normalizeWorkspaceConfig,

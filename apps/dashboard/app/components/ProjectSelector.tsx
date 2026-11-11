@@ -26,7 +26,7 @@ import { useCallback, useEffect, useState } from "react";
 export function ProjectSelector(): React.JSX.Element | null {
   const { canWrite } = useOrgRole();
   const queryArgs = useSignedIn() ? {} : "skip";
-  const projects = useQuery(api.project.list, queryArgs) as
+  const projects = useQuery(api.dashboardReads.projects, queryArgs) as
     | Doc<"projects">[]
     | undefined;
   const currentUser = useQuery(api.user.getCurrent, queryArgs);

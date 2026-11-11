@@ -18,8 +18,13 @@ export default function ProjectLayout({
   children: React.ReactNode;
 }): React.ReactNode {
   const { projectId } = useParams<{ projectId: Id<"projects"> }>();
-  const project = useQuery(api.project.getById, { projectId: projectId });
-  const active = useQuery(api.org.orgs.getActive, useSignedIn() ? {} : "skip");
+  const project = useQuery(api.dashboardReads.projectById, {
+    projectId: projectId,
+  });
+  const active = useQuery(
+    api.dashboardReads.activeOrg,
+    useSignedIn() ? {} : "skip",
+  );
   const setActive = useMutation(api.org.orgs.setActive);
   const [opened, setOpened] = useState<{
     landed: boolean;

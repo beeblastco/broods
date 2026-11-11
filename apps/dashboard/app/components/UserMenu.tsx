@@ -74,7 +74,7 @@ export function UserMenu(): React.JSX.Element | null {
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const activeOrg = useQuery(
-    api.org.orgs.getActive,
+    api.dashboardReads.activeOrg,
     useSignedIn() ? {} : "skip",
   );
   const warmAccountRoutes = useCallback(

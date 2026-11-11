@@ -27,7 +27,7 @@ export default function CronsPage({
   const agents = useQuery(api.agent.agents.listForProject, {
     projectId: typedProjectId,
   });
-  const account = useQuery(api.org.orgs.getActiveAccount, {});
+  const account = useQuery(api.dashboardReads.activeAccount, {});
 
   const [createOpen, setCreateOpen] = useState(false);
   // With no agent (or still loading) the dialog's picker would be empty and unsubmittable.

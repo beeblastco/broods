@@ -27,8 +27,11 @@ export function useDashboardIndex(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
-  const projects = useQuery(api.project.list, projectId ? {} : "skip");
-  const stages = useQuery(api.stage.list, projectArgs);
+  const projects = useQuery(
+    api.dashboardReads.projects,
+    projectId ? {} : "skip",
+  );
+  const stages = useQuery(api.dashboardReads.stages, projectArgs);
 
   return useMemo(() => {
     if (!projectId) return [];

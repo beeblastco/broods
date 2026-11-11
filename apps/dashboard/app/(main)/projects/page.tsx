@@ -14,9 +14,10 @@ import { useState } from "react";
 
 export default function ProjectsPage(): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const projects = useQuery(api.project.list, useSignedIn() ? {} : "skip") as
-    | Doc<"projects">[]
-    | undefined;
+  const projects = useQuery(
+    api.dashboardReads.projects,
+    useSignedIn() ? {} : "skip",
+  ) as Doc<"projects">[] | undefined;
   const rename = useMutation(api.project.update).withOptimisticUpdate(
     applyProjectRename,
   );

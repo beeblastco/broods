@@ -30,7 +30,9 @@ function localStore(
   const writtenArgs = new Map<string, unknown>();
   const store = {
     getQuery: (fn: Parameters<typeof getFunctionName>[0]) =>
-      getFunctionName(fn) === getFunctionName(api.project.list) ? list : byId,
+      getFunctionName(fn) === getFunctionName(api.dashboardReads.projects)
+        ? list
+        : byId,
     setQuery: (
       fn: Parameters<typeof getFunctionName>[0],
       args: unknown,
@@ -53,15 +55,19 @@ describe("applyProjectRename", () => {
 
     applyProjectRename(store, { name: "Alpha prime", projectId: ALPHA });
 
-    expect(written.get(getFunctionName(api.project.list))).toEqual([
+    expect(written.get(getFunctionName(api.dashboardReads.projects))).toEqual([
       { ...project(ALPHA, "alpha"), name: "Alpha prime" },
       project(BETA, "beta"),
     ]);
-    expect(written.get(getFunctionName(api.project.getById))).toEqual({
+    expect(
+      written.get(getFunctionName(api.dashboardReads.projectById)),
+    ).toEqual({
       ...project(ALPHA, "alpha"),
       name: "Alpha prime",
     });
-    expect(writtenArgs.get(getFunctionName(api.project.getById))).toEqual({
+    expect(
+      writtenArgs.get(getFunctionName(api.dashboardReads.projectById)),
+    ).toEqual({
       projectId: ALPHA,
     });
   });

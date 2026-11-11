@@ -72,7 +72,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
 
     await context.measure("Pro shares its seats across orgs", async () => {
       must(fileSubscription(context, "active"), "file the paid subscription");
-      const org = must(asAdmin("org/orgs:getActive", {}), "read the org");
+      const org = must(asAdmin("dashboardReads:activeOrg", {}), "read the org");
       assertStep(
         "a paid subscription puts the owner's org on Pro",
         org.includes('"plan": "pro"'),
