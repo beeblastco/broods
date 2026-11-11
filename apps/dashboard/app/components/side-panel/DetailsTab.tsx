@@ -47,7 +47,7 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 /** `agentDeployments.getForStage` minus the key hash. One key per stage, not per agent. */
 export type StageDeployment = {
@@ -175,6 +175,7 @@ export function DetailsTab({
     setEditCustomBaseUrl(readCustomBaseUrl(agentConfig));
   }
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
+  const fieldId = useId();
 
   const allTools = agentConfig
     ? (readAgentBranch(agentConfig, "tools") as Record<string, unknown>)
@@ -387,7 +388,9 @@ export function DetailsTab({
 
   function saveErrorFor(section: SaveSection): React.JSX.Element | null {
     return saveError?.section === section ? (
-      <p className="text-xs text-destructive">{saveError.message}</p>
+      <p role="alert" className="text-xs text-destructive">
+        {saveError.message}
+      </p>
     ) : null;
   }
 
@@ -401,7 +404,8 @@ export function DetailsTab({
           className="h-8 text-sm"
           onBlur={() => save("name", onSaveName())}
           onKeyDown={(e) => {
-            if (e.key === "Enter") save("name", onSaveName());
+            if (e.key === "Enter" && !e.nativeEvent.isComposing)
+              save("name", onSaveName());
           }}
         />
         {saveErrorFor("name")}
@@ -448,9 +452,14 @@ export function DetailsTab({
               onChange={(event) => setEditModelId(event.target.value)}
               className="h-8 text-xs"
               placeholder="Model ID"
+              aria-label="Model ID"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
               onBlur={() => saveModel(editProvider, editModelId)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") saveModel(editProvider, editModelId);
+                if (event.key === "Enter" && !event.nativeEvent.isComposing)
+                  saveModel(editProvider, editModelId);
               }}
             />
             {editProvider === "custom" && (
@@ -463,7 +472,7 @@ export function DetailsTab({
                   saveModel(editProvider, editModelId, editCustomBaseUrl)
                 }
                 onKeyDown={(event) => {
-                  if (event.key === "Enter")
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing)
                     saveModel(editProvider, editModelId, editCustomBaseUrl);
                 }}
               />
@@ -808,14 +817,22 @@ export function DetailsTab({
             <SectionHeader>Output Format</SectionHeader>
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-foreground">
+                <span
+                  id={`${fieldId}-output-label`}
+                  className="text-xs font-medium text-foreground"
+                >
                   Structured Output
                 </span>
-                <span className="text-2xs text-muted-foreground">
+                <span
+                  id={`${fieldId}-output-description`}
+                  className="text-2xs text-muted-foreground"
+                >
                   Import a JSON schema or write one manually
                 </span>
               </div>
               <Switch
+                aria-labelledby={`${fieldId}-output-label`}
+                aria-describedby={`${fieldId}-output-description`}
                 checked={outputFormatEnabled}
                 onCheckedChange={(checked) => handleToggleOutputFormat(checked)}
               />
@@ -866,10 +883,21 @@ export function DetailsTab({
                     '{\n  "type": "object",\n  "additionalProperties": true,\n  "properties": {\n    "answer": { "type": "string" }\n  },\n  "required": ["answer"]\n}'
                   }
                   spellCheck={false}
+                  aria-label="Output schema"
+                  aria-invalid={outputSchemaError !== null}
+                  aria-describedby={
+                    outputSchemaError !== null
+                      ? `${fieldId}-output-error`
+                      : undefined
+                  }
                   className="min-h-36 resize-y font-mono text-xs"
                 />
                 {outputSchemaError && (
-                  <p className="text-xs text-destructive">
+                  <p
+                    id={`${fieldId}-output-error`}
+                    role="alert"
+                    className="text-xs text-destructive"
+                  >
                     {outputSchemaError}
                   </p>
                 )}
@@ -907,7 +935,10 @@ export function DetailsTab({
             </DialogDescription>
           </DialogHeader>
           {rotateError && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive"
+            >
               {rotateError}
             </p>
           )}
@@ -982,7 +1013,11 @@ function UserTokenToggle({
           );
         }}
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

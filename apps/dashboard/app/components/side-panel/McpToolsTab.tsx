@@ -81,7 +81,11 @@ export function McpToolsTab({
         </Button>
       </div>
 
-      {listError && <p className="text-xs text-destructive">{listError}</p>}
+      {listError && (
+        <p role="alert" className="text-xs text-destructive">
+          {listError}
+        </p>
+      )}
 
       {tools?.length === 0 && !isListing && (
         <p className="text-xs text-muted-foreground">
@@ -183,7 +187,11 @@ function ToolRow({
             className="resize-y"
           />
 
-          {runError && <p className="text-xs text-destructive">{runError}</p>}
+          {runError && (
+            <p role="alert" className="text-xs text-destructive">
+              {runError}
+            </p>
+          )}
 
           <div className="flex items-center gap-2">
             {canWrite && (
