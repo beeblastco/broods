@@ -50,7 +50,7 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { actorName, Who } from "@/app/components/Who";
-import { useListState } from "@/app/hooks/useListState";
+import { matchingRows, useListState } from "@/app/hooks/useListState";
 import { type OrgSeats, useOrgSeats } from "@/app/hooks/useOrgSeats";
 import { usePermissions } from "@/app/hooks/usePermissions";
 import { useSubmit } from "@/app/hooks/useSubmit";
@@ -144,14 +144,11 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     (member) => member.membershipId === selectedId,
   );
   const options = roleOptions(roles ?? []);
-  const search = parseQuery(list.query, QUERY_FIELDS);
-  const pending = (invitations ?? []).filter(
-    (invitation) =>
-      invitation.email.includes(search.text) &&
-      (search.fields.length === 0 ||
-        search.fields.some(({ field, value }) =>
-          matchesField(invitation, field, value),
-        )),
+  const pending = matchingRows(
+    invitations ?? [],
+    parseQuery(list.query, QUERY_FIELDS),
+    matchesField,
+    (invitation) => invitation.email,
   );
   const filters = {
     role: list.filterFor("role", [

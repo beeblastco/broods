@@ -36,6 +36,7 @@ vi.mock("../auth", () => ({
     getAuthUser: async () => ({
       id: caller.authId,
       email: caller.authId === AUTH_ID ? "payer@example.com" : null,
+      emailVerified: true,
     }),
     registerRoutes: () => undefined,
   },

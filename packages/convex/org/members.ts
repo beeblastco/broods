@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import { mutation, query, type MutationCtx } from "../_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "../_generated/server";
 import { authKit } from "../auth";
 import {
   activePolicies,
@@ -172,7 +177,7 @@ export const updateRole = mutation({
     }
 
     await ctx.db.patch(membershipId, { role: role, roleId: args.roleId });
-    await recordMemberAudit(ctx, caller, targetUser, "role-changed", {
+    await recordMemberAudit(ctx, caller, targetUser?.email, "role-changed", {
       orgId: membership.orgId,
       id: membershipId,
       role: role,
@@ -232,7 +237,7 @@ export const remove = mutation({
 
     await ctx.db.delete(membershipId);
     await releaseSeat(ctx, membership.orgId);
-    await recordMemberAudit(ctx, caller, targetUser, "removed", {
+    await recordMemberAudit(ctx, caller, targetUser?.email, "removed", {
       orgId: membership.orgId,
       id: membershipId,
       role: membership.role,
@@ -247,16 +252,7 @@ export const leave = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const caller = await userByAuthId(ctx, authUser.id);
-    if (!caller) {
-      throw new Error("User row not found");
-    }
-
+    const caller = await signedInUser(ctx);
     const membership = await requireOrgMember(ctx, args.orgId, caller._id);
     const org = await ctx.db.get(args.orgId);
     if (org?.ownerAuthId === caller.authId) {
@@ -268,7 +264,7 @@ export const leave = mutation({
 
     await ctx.db.delete(membership._id);
     await releaseSeat(ctx, args.orgId);
-    await recordMemberAudit(ctx, caller, caller, "left", {
+    await recordMemberAudit(ctx, caller, caller.email, "left", {
       orgId: args.orgId,
       id: membership._id,
       role: membership.role,
@@ -323,7 +319,7 @@ export function assertCanTouchOwnerRole(
 export async function recordMemberAudit(
   ctx: MutationCtx,
   caller: Doc<"users">,
-  target: Doc<"users"> | null,
+  targetEmail: string | undefined,
   action: string,
   membership: {
     orgId: Id<"orgs">;
@@ -349,7 +345,7 @@ export async function recordMemberAudit(
     resource: {
       kind: "member",
       id: membership.id,
-      name: target?.email,
+      name: targetEmail,
     },
     summary: `Member ${action.replace("-", " ")}`,
     detailsJson: auditDetailsJson({
@@ -357,4 +353,19 @@ export async function recordMemberAudit(
       roleId: membership.roleId,
     }),
   });
+}
+
+export async function signedInUser(
+  ctx: QueryCtx | MutationCtx,
+): Promise<Doc<"users">> {
+  const authUser = await authKit.getAuthUser(ctx);
+  if (!authUser) {
+    throw new Error("User not found or not authenticated");
+  }
+  const user = await userByAuthId(ctx, authUser.id);
+  if (!user) {
+    throw new Error("User row not found");
+  }
+
+  return user;
 }

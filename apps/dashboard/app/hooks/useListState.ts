@@ -1,5 +1,5 @@
 import type { HeadFilter, HeadSort } from "@/app/components/DataTable";
-import { parseQuery } from "@/app/lib/queryTokens";
+import { parseQuery, type Query } from "@/app/lib/queryTokens";
 import {
   clearField,
   sortRows,
@@ -79,23 +79,10 @@ export function useListState<Row, Column extends string, Field extends string>(
   };
   const parsed = useMemo(() => parseQuery(query, fields), [query, fields]);
   const shown = useMemo(() => {
-    const byField = new Map<Field, string[]>();
-    for (const { field, value } of parsed.fields) {
-      byField.set(field, [...(byField.get(field) ?? []), value]);
-    }
-    const matching = rows.filter((row) => {
-      const chipsPass = [...byField].every(([field, values]) =>
-        values.some((value) => matches(row, field, value)),
-      );
-      if (!chipsPass) return false;
-
-      return !parsed.text || text(row).toLowerCase().includes(parsed.text);
-    });
-
     // A remembered column the list no longer has falls back to the default.
     const key = sortKey[sort.column] ?? sortKey[spec.initialSort.column];
 
-    return sortRows(matching, key, sort.dir);
+    return sortRows(matchingRows(rows, parsed, matches, text), key, sort.dir);
   }, [rows, parsed, sort, sortKey, matches, text, spec.initialSort.column]);
 
   return {
@@ -116,4 +103,20 @@ export function useListState<Row, Column extends string, Field extends string>(
       onClear: () => setQuery(clearField(query, field)),
     }),
   };
+}
+
+export function matchingRows<Row, Field extends string>(
+  rows: readonly Row[],
+  parsed: Query<Field>,
+  matches: (row: Row, field: Field, value: string) => boolean,
+  text: (row: Row) => string,
+): Row[] {
+  return rows.filter(
+    (row) =>
+      parsed.fields.every(({ field }) =>
+        parsed.fields.some(
+          (chip) => chip.field === field && matches(row, field, chip.value),
+        ),
+      ) && text(row).toLowerCase().includes(parsed.text),
+  );
 }

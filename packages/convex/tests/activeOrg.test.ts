@@ -8,7 +8,9 @@ import schema from "../schema";
 const caller = vi.hoisted(() => ({ authId: "auth_victim" }));
 
 vi.mock("../auth", () => ({
-  authKit: { getAuthUser: async () => ({ id: caller.authId }) },
+  authKit: {
+    getAuthUser: async () => ({ id: caller.authId, emailVerified: true }),
+  },
 }));
 
 const modules = import.meta.glob("../**/*.ts");

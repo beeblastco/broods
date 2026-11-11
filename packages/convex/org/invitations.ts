@@ -22,7 +22,10 @@ import {
   assertWithinReach,
   recordMemberAudit,
   roleValidator,
+  signedInUser,
 } from "./members";
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const invitationRow = v.object({
   invitationId: v.id("orgInvitations"),
@@ -56,15 +59,15 @@ export const create = mutation({
     const { orgId } = args;
     const role = args.roleId ? "member" : (args.role ?? "member");
     const caller = await signedInUser(ctx);
-
-    const callerMembership = await requireOrgMember(ctx, orgId, caller._id);
-    await requireDashboardPermission(ctx, orgId, caller, "members:write");
-    assertCanTouchOwnerRole(callerMembership, role);
-    await assertWithinReach(ctx, orgId, caller, role, args.roleId);
+    await assertCanInvite(ctx, caller, {
+      orgId: orgId,
+      role: role,
+      roleId: args.roleId,
+    });
 
     const email = args.email.trim().toLowerCase();
-    if (!email) {
-      throw new ClientError("Email is required");
+    if (!EMAIL_SHAPE.test(email)) {
+      throw new ClientError("Enter an email address like name@example.com");
     }
     const target = await ctx.db
       .query("users")
@@ -98,7 +101,7 @@ export const create = mutation({
       createdAt: Date.now(),
     });
     await syncInvited(ctx, target?._id);
-    await recordMemberAudit(ctx, caller, target, "invited", {
+    await recordMemberAudit(ctx, caller, email, "invited", {
       orgId: orgId,
       id: invitationId,
       role: role,
@@ -186,11 +189,27 @@ export const listMine = query({
   },
 });
 
+// Returns the refusal instead of throwing it, so dropping a stale invitation commits.
 export const accept = mutation({
   args: { invitationId: v.id("orgInvitations") },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
+  returns: v.union(v.null(), v.string()),
+  handler: async (ctx, args): Promise<string | null> => {
     const { caller, invitation } = await ownInvitation(ctx, args.invitationId);
+    const inviter = await ctx.db.get(invitation.invitedBy);
+    const stillGranted =
+      inviter &&
+      (await assertCanInvite(ctx, inviter, invitation).then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof ClientError) return false;
+          throw error;
+        },
+      ));
+    if (!stillGranted) {
+      await dropInvitation(ctx, caller, invitation, "invitation-invalid");
+
+      return "This invitation is no longer valid.";
+    }
     await ctx.db.delete(invitation._id);
     await syncInvited(ctx, caller._id);
     if (await getOrgMembership(ctx, invitation.orgId, caller._id)) return null;
@@ -203,7 +222,7 @@ export const accept = mutation({
       invitedBy: invitation.invitedBy,
       createdAt: Date.now(),
     });
-    await recordMemberAudit(ctx, caller, caller, "joined", {
+    await recordMemberAudit(ctx, caller, caller.email, "joined", {
       orgId: invitation.orgId,
       id: membershipId,
       role: invitation.role,
@@ -234,30 +253,25 @@ export const revoke = mutation({
     if (!invitation) {
       throw new ClientError("Invitation not found", "not_found");
     }
-    const callerMembership = await requireOrgMember(
-      ctx,
-      invitation.orgId,
-      caller._id,
-    );
-    await requireDashboardPermission(
-      ctx,
-      invitation.orgId,
-      caller,
-      "members:write",
-    );
-    assertCanTouchOwnerRole(callerMembership, invitation.role);
-    await assertWithinReach(
-      ctx,
-      invitation.orgId,
-      caller,
-      invitation.role,
-      invitation.roleId,
-    );
+    await assertCanInvite(ctx, caller, invitation);
     await dropInvitation(ctx, caller, invitation, "invitation-revoked");
 
     return null;
   },
 });
+
+// Checked again at accept: an invitation never outlives its inviter's power to grant it.
+async function assertCanInvite(
+  ctx: MutationCtx,
+  inviter: Doc<"users">,
+  invitation: Pick<Doc<"orgInvitations">, "orgId" | "role" | "roleId">,
+): Promise<void> {
+  const { orgId, role, roleId } = invitation;
+  const membership = await requireOrgMember(ctx, orgId, inviter._id);
+  await requireDashboardPermission(ctx, orgId, inviter, "members:write");
+  assertCanTouchOwnerRole(membership, role);
+  await assertWithinReach(ctx, orgId, inviter, role, roleId);
+}
 
 async function customRoleNames(
   ctx: QueryCtx | MutationCtx,
@@ -282,21 +296,15 @@ async function dropInvitation(
   await ctx.db.delete(invitation._id);
   await syncInvited(ctx, invitation.userId);
   await releaseSeat(ctx, invitation.orgId);
-  await recordMemberAudit(
-    ctx,
-    caller,
-    invitation.userId ? await ctx.db.get(invitation.userId) : null,
-    action,
-    {
-      orgId: invitation.orgId,
-      id: invitation._id,
-      role: invitation.role,
-      roleId: invitation.roleId,
-    },
-  );
+  await recordMemberAudit(ctx, caller, invitation.email, action, {
+    orgId: invitation.orgId,
+    id: invitation._id,
+    role: invitation.role,
+    roleId: invitation.roleId,
+  });
 }
 
-// Only the invited person answers: an email invitation is theirs once sign-in bound it to them.
+// Only the invited person answers, once they have verified the address it was sent to.
 async function ownInvitation(
   ctx: MutationCtx,
   invitationId: Id<"orgInvitations">,
@@ -306,21 +314,12 @@ async function ownInvitation(
   if (!invitation || invitation.userId !== caller._id) {
     throw new ClientError("Invitation not found", "not_found");
   }
+  if (!(await authKit.getAuthUser(ctx))?.emailVerified) {
+    throw new ClientError(
+      "Verify your email address, then answer this invitation.",
+      "forbidden",
+    );
+  }
 
   return { caller: caller, invitation: invitation };
-}
-
-async function signedInUser(
-  ctx: QueryCtx | MutationCtx,
-): Promise<Doc<"users">> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) {
-    throw new Error("User not found or not authenticated");
-  }
-  const user = await userByAuthId(ctx, authUser.id);
-  if (!user) {
-    throw new Error("User row not found");
-  }
-
-  return user;
 }

@@ -2,6 +2,7 @@ import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
+import { releaseSeat } from "./model/orgBilling";
 import { syncInvited } from "./model/ownership/org";
 import { isManagedService } from "./model/planLimits";
 import { authProvider } from "./model/selfHostAuth";
@@ -45,7 +46,7 @@ export const { authKitEvent } = authKit.events({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        email: event.data.email,
+        email: event.data.email.toLowerCase(),
         name: existing.nameEdited ? existing.name : deriveName(event.data),
         avatarUrl: avatarUrl,
       });
@@ -56,7 +57,7 @@ export const { authKitEvent } = authKit.events({
 
     const userId = await ctx.db.insert("users", {
       authId: event.data.id,
-      email: event.data.email,
+      email: event.data.email.toLowerCase(),
       name: deriveName(event.data),
       avatarUrl: avatarUrl,
       accountHandle: undefined,
@@ -80,7 +81,7 @@ export const { authKitEvent } = authKit.events({
       picture === null ? undefined : (picture ?? user.avatarUrl);
 
     await ctx.db.patch(user._id, {
-      email: event.data.email,
+      email: event.data.email.toLowerCase(),
       name: user.nameEdited ? user.name : deriveName(event.data),
       avatarUrl: avatarUrl,
     });
@@ -152,4 +153,5 @@ async function claimInvitations(
     await ctx.db.patch(invitation._id, { userId: userId });
   }
   await syncInvited(ctx, userId);
+  await releaseSeat(ctx, ...waiting.map((invitation) => invitation.orgId));
 }

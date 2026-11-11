@@ -67,7 +67,7 @@ export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
 }
 
-// Keyed by user id, or by email for an invitation still waiting on an account: a pending
+// Keyed by user id, or by email for an invitation to an address with no account: a pending
 // invitation holds its seat until it is revoked or declined.
 export async function developersOf(
   ctx: QueryCtx,
@@ -90,7 +90,19 @@ export async function developersOf(
       .collect();
     const keys = [
       ...members.map((member) => member.userId),
-      ...invitations.map((invitation) => invitation.userId ?? invitation.email),
+      ...(await Promise.all(
+        invitations.map(
+          async (invitation) =>
+            invitation.userId ??
+            (
+              await ctx.db
+                .query("users")
+                .withIndex("by_email", (q) => q.eq("email", invitation.email))
+                .first()
+            )?._id ??
+            invitation.email,
+        ),
+      )),
     ];
     for (const key of keys) {
       if (key === owner?._id) continue;
@@ -127,16 +139,19 @@ export async function assertFreeSeat(
   );
 }
 
+// One recount per owner, however many of their orgs changed.
 export async function releaseSeat(
   ctx: MutationCtx,
-  orgId: Id<"orgs">,
+  ...orgIds: Array<Id<"orgs">>
 ): Promise<void> {
   if (!isManagedService()) return;
-  const org = await ctx.db.get(orgId);
-  if (!org) return;
-  await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
-    authId: org.ownerAuthId,
-  });
+  const orgs = await Promise.all(orgIds.map((orgId) => ctx.db.get(orgId)));
+  const owners = new Set(orgs.flatMap((org) => (org ? [org.ownerAuthId] : [])));
+  for (const authId of owners) {
+    await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
+      authId: authId,
+    });
+  }
 }
 
 export async function assertCanCreateOrg(

@@ -1709,7 +1709,7 @@ export declare const api: {
         "mutation",
         "public",
         { invitationId: Id<"orgInvitations"> },
-        null
+        null | string
       >;
       create: FunctionReference<
         "mutation",

@@ -423,11 +423,11 @@ export async function purgeUser(
     .query("orgInvitations")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
     .collect();
-  for (const held of [...memberships, ...invitations]) {
-    if (purgedOrgIds.has(held.orgId)) continue;
-    await ctx.db.delete(held._id);
-    await releaseSeat(ctx, held.orgId);
-  }
+  const held = [...memberships, ...invitations].filter(
+    (row) => !purgedOrgIds.has(row.orgId),
+  );
+  for (const row of held) await ctx.db.delete(row._id);
+  await releaseSeat(ctx, ...held.map((row) => row.orgId));
 
   const cliAuthCodes = await ctx.db
     .query("cliAuthCodes")

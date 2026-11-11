@@ -18,6 +18,7 @@ type Invitation = FunctionReturnType<
 interface Answer {
   invitation: Invitation;
   accepted: boolean;
+  refusal: string | null;
 }
 
 const NO_INVITATIONS: Invitation[] = [];
@@ -48,8 +49,8 @@ export function InvitationNotice({
   if (open.length === 0 && answers.length === 0) return null;
 
   function close(invitationId: Id<"orgInvitations">): void {
-    setAnswers(
-      answers.filter(
+    setAnswers((current) =>
+      current.filter(
         (answer) => answer.invitation.invitationId !== invitationId,
       ),
     );
@@ -68,10 +69,14 @@ export function InvitationNotice({
         <InvitationLine
           key={invitation.invitationId}
           invitation={invitation}
-          onAnswer={(accepted) =>
-            setAnswers([
-              ...answers,
-              { invitation: invitation, accepted: accepted },
+          onAnswer={(accepted, refusal) =>
+            setAnswers((current) => [
+              ...current,
+              {
+                invitation: invitation,
+                accepted: accepted && !refusal,
+                refusal: refusal,
+              },
             ])
           }
         />
@@ -89,17 +94,21 @@ function AnswerLine({
 }): React.JSX.Element {
   const setActive = useMutation(api.org.orgs.setActive);
   const router = useRouter();
+  const { pending, error, run } = useSubmit();
   const { orgId, orgName } = answer.invitation;
 
   async function switchOrg(): Promise<void> {
-    await setActive({ orgId: orgId });
-    onClose();
-    router.replace("/");
+    if (await run(() => setActive({ orgId: orgId }))) {
+      onClose();
+      router.replace("/");
+    }
   }
 
   return (
     <output className="flex flex-wrap items-center gap-2 px-3 py-1.5">
-      {answer.accepted ? (
+      {answer.refusal ? (
+        <span className="text-destructive">{answer.refusal}</span>
+      ) : answer.accepted ? (
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 text-success" />
           <span>
@@ -111,12 +120,18 @@ function AnswerLine({
           Declined the invitation to {orgName}.
         </span>
       )}
+      {error && (
+        <span role="alert" className="text-destructive">
+          {error}
+        </span>
+      )}
       <span className="ml-auto flex gap-1.5">
         {answer.accepted && (
           <Button
             variant="outline"
             size="xs"
             className="cursor-pointer"
+            disabled={pending}
             onClick={() => void switchOrg()}
           >
             Switch to {orgName}
@@ -142,7 +157,7 @@ function InvitationLine({
   onAnswer,
 }: {
   invitation: Invitation;
-  onAnswer: (accepted: boolean) => void;
+  onAnswer: (accepted: boolean, refusal: string | null) => void;
 }): React.JSX.Element {
   const accept = useMutation(api.org.invitations.accept);
   const decline = useMutation(api.org.invitations.decline);
@@ -150,9 +165,9 @@ function InvitationLine({
   const args = { invitationId: invitation.invitationId };
 
   async function answer(accepted: boolean): Promise<void> {
-    if (await run(() => (accepted ? accept(args) : decline(args)))) {
-      onAnswer(accepted);
-    }
+    await run(async () =>
+      onAnswer(accepted, accepted ? await accept(args) : await decline(args)),
+    );
   }
 
   return (

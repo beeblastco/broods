@@ -1,17 +1,26 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { clientErrorData } from "../model/clientError";
+import { developersOf } from "../model/orgBilling";
 import type { OrgRole } from "../model/ownership/org";
 import schema from "../schema";
 
-const caller = vi.hoisted(() => ({ authId: "auth_admin" }));
+const caller = vi.hoisted(() => ({
+  authId: "auth_admin",
+  emailVerified: true,
+}));
 
 vi.mock("../auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../auth")>()),
-  authKit: { getAuthUser: async () => ({ id: caller.authId }) },
+  authKit: {
+    getAuthUser: async () => ({
+      id: caller.authId,
+      emailVerified: caller.emailVerified,
+    }),
+  },
 }));
 
 const modules = import.meta.glob("../**/*.ts");
@@ -20,6 +29,11 @@ const invitationsTest = (): TestConvex<typeof schema> =>
   convexTest(schema, modules);
 
 type T = ReturnType<typeof invitationsTest>;
+
+afterEach(() => {
+  caller.emailVerified = true;
+  vi.unstubAllEnvs();
+});
 
 describe("invitations", () => {
   test("an invited person is not a member until they accept", async () => {
@@ -167,25 +181,160 @@ describe("invitations", () => {
       await t.query(api.org.invitations.list, { orgId: orgA }),
     ).toMatchObject([{ email: "new@example.com", hasAccount: false }]);
 
-    const signIn = (emailVerified: boolean): Promise<null> =>
-      t.mutation(internal.auth.authKitEvent, {
-        event: "user.created",
-        data: {
-          id: "auth_new",
-          email: "new@example.com",
-          emailVerified: emailVerified,
-        },
-      });
     caller.authId = "auth_new";
-    await signIn(false);
+    await signIn(t, "user.created", "new@example.com", false);
     expect(await t.query(api.org.invitations.listMine, {})).toEqual([]);
-    await signIn(true);
+    await signIn(t, "user.updated", "new@example.com", true);
     const [mine] = await t.query(api.org.invitations.listMine, {});
     await t.mutation(api.org.invitations.accept, {
       invitationId: mine!.invitationId,
     });
 
     expect(await memberIds(t, orgA)).toContain("auth_new");
+  });
+
+  test("an account whose email is not verified cannot answer its invitation", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const invitationId = await invite(t, orgA, "auth_guest@example.com");
+    caller.authId = "auth_guest";
+    caller.emailVerified = false;
+
+    for (const answer of [
+      api.org.invitations.accept,
+      api.org.invitations.decline,
+    ]) {
+      await expect(
+        t.mutation(answer, { invitationId: invitationId }),
+      ).rejects.toThrow("Verify your email address");
+    }
+    expect(await memberIds(t, orgA)).not.toContain("auth_guest");
+  });
+
+  test("an email signed in with capitals finds its account", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    await signIn(t, "user.created", "Alice@Example.com", true);
+    await invite(t, orgA, "alice@example.com");
+
+    expect(
+      await t.query(api.org.invitations.list, { orgId: orgA }),
+    ).toMatchObject([{ email: "alice@example.com", hasAccount: true }]);
+    caller.authId = "auth_new";
+    expect(await t.query(api.org.invitations.listMine, {})).toHaveLength(1);
+  });
+
+  test("one person holds one seat, by email before their account is verified and by id after", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const orgC = await seedOrg(t, "Org C", "auth_owner");
+    await invite(t, orgA, "new@example.com");
+    await signIn(t, "user.created", "new@example.com", false);
+    caller.authId = "auth_owner";
+    await invite(t, orgC, "new@example.com");
+
+    const developers = await t.run(
+      async (ctx) => (await developersOf(ctx, "auth_owner")).size,
+    );
+    expect(developers).toBe(3);
+  });
+
+  test("claiming an invitation at sign-in recounts the owner's seats", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    await t.run(async (ctx) => {
+      const admin = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", "auth_admin"))
+        .unique();
+      await ctx.db.insert("orgInvitations", {
+        orgId: orgA,
+        email: "new@example.com",
+        role: "member",
+        invitedBy: admin!._id,
+        createdAt: Date.now(),
+      });
+    });
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    await signIn(t, "user.created", "new@example.com", true);
+
+    const scheduled = await t.run(async (ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    expect(
+      scheduled.map(({ name, args }) => ({ name: name, args: args })),
+    ).toEqual([
+      { name: "stripe:syncSeatsInternal", args: [{ authId: "auth_owner" }] },
+    ]);
+  });
+
+  test("an invitation dies with its inviter's power to grant it", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const invitationId = await invite(t, orgA, "auth_guest@example.com");
+    const adminMembership = await t.run(async (ctx) => {
+      const admin = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", "auth_admin"))
+        .unique();
+      const membership = await ctx.db
+        .query("orgMembers")
+        .withIndex("by_orgId_and_userId", (q) =>
+          q.eq("orgId", orgA).eq("userId", admin!._id),
+        )
+        .unique();
+
+      return membership!._id;
+    });
+    caller.authId = "auth_owner";
+    await t.mutation(api.org.members.remove, {
+      membershipId: adminMembership,
+    });
+
+    caller.authId = "auth_guest";
+    expect(
+      await t.mutation(api.org.invitations.accept, {
+        invitationId: invitationId,
+      }),
+    ).toBe("This invitation is no longer valid.");
+    expect(await memberIds(t, orgA)).not.toContain("auth_guest");
+    expect(await t.query(api.org.invitations.listMine, {})).toEqual([]);
+  });
+
+  test("an address not shaped like an email is refused", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+
+    for (const email of ["name", "name@example", "a b@example.com", "@x.io"]) {
+      expect(await refusal(invite(t, orgA, email))).toBe("invalid_request");
+    }
+  });
+
+  test("the audit log names the email an invitation went to, with or without an account", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    await t.run(async (ctx) =>
+      ctx.db.insert("accounts", {
+        orgId: orgA,
+        username: "org-a",
+        secretHash: "hash-org-a",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const invitationId = await invite(t, orgA, "new@example.com");
+    await t.mutation(api.org.invitations.revoke, {
+      invitationId: invitationId,
+    });
+
+    const events = await t.run(async (ctx) =>
+      ctx.db.query("auditEvents").collect(),
+    );
+    expect(events.map((event) => [event.action, event.resource.name])).toEqual([
+      ["invited", "new@example.com"],
+      ["invitation-revoked", "new@example.com"],
+    ]);
   });
 });
 
@@ -264,6 +413,18 @@ async function memberIds(t: T, orgId: Id<"orgs">): Promise<string[]> {
     const users = await Promise.all(members.map((m) => ctx.db.get(m.userId)));
 
     return users.flatMap((user) => (user ? [user.authId] : []));
+  });
+}
+
+async function signIn(
+  t: T,
+  event: "user.created" | "user.updated",
+  email: string,
+  emailVerified: boolean,
+): Promise<null> {
+  return await t.mutation(internal.auth.authKitEvent, {
+    event: event,
+    data: { id: "auth_new", email: email, emailVerified: emailVerified },
   });
 }
 
