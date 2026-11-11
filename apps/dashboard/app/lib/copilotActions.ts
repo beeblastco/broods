@@ -256,6 +256,18 @@ export function dockProposals(
   return proposals;
 }
 
+/** Runs the agent folder's reads and writes one at a time, so none writes from a stale read. */
+export function folderQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+
+  return <T>(task: () => Promise<T>): Promise<T> => {
+    const run = tail.then(task);
+    tail = run.catch((): void => undefined);
+
+    return run;
+  };
+}
+
 /** The architecture change a proposal makes: the one source the canvas draws it from. */
 export function itemAction(item: SearchItem): CopilotAction {
   switch (item.target.type) {
