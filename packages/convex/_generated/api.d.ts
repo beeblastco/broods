@@ -2307,7 +2307,6 @@ export declare const api: {
           path: string;
           projectId: Id<"projects">;
           sizeBytes?: number;
-          storageId?: Id<"_storage">;
           updatedAt: number;
         }>
       >;
@@ -8980,6 +8979,12 @@ export declare const internal: {
           workspaceId: Id<"workspaceConfigs">;
         },
         null
+      >;
+      listStoredFilesInternal: FunctionReference<
+        "query",
+        "internal",
+        { authId: string; nodeId: string; projectId: Id<"projects"> },
+        Array<{ path: string; storageId: Id<"_storage"> }>
       >;
       resolveByHash: FunctionReference<
         "query",

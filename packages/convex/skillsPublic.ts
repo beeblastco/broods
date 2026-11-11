@@ -2,7 +2,7 @@
 
 import { v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { authKit } from "./auth";
 import { ACCOUNT_KEY_PREFIX, sha256Hex } from "./model/accountSecrets";
@@ -116,12 +116,10 @@ export const publishSkill = action({
 
     const account = await requireAccountForToken(ctx, bearerToken);
 
-    const files = await ctx.runQuery(api.workspace.files.list, {
-      projectId: projectId,
-      nodeId: nodeId,
-    });
-
-    const fileItems = files.filter((f) => !f.isFolder && f.storageId);
+    const fileItems = await ctx.runQuery(
+      internal.workspace.files.listStoredFilesInternal,
+      { authId: user.id, projectId: projectId, nodeId: nodeId },
+    );
     if (!fileItems.length) throw new Error("No files to publish.");
 
     const hasSkillMd = fileItems.some(
@@ -135,7 +133,7 @@ export const publishSkill = action({
     let totalBytes = 0;
 
     for (const file of fileItems) {
-      const url = await ctx.storage.getUrl(file.storageId!);
+      const url = await ctx.storage.getUrl(file.storageId);
       if (!url) throw new Error(`Storage URL not found for: ${file.path}`);
 
       const res = await fetch(url);

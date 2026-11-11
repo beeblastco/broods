@@ -48,7 +48,6 @@ const workspaceFileDoc = v.object({
   path: v.string(),
   name: v.string(),
   isFolder: v.boolean(),
-  storageId: v.optional(v.id("_storage")),
   mimeType: v.optional(v.string()),
   sizeBytes: v.optional(v.number()),
   createdAt: v.number(),
@@ -235,7 +234,10 @@ export const list = query({
     nodeId: v.string(),
   },
   returns: v.array(workspaceFileDoc),
-  handler: async (ctx, args): Promise<Doc<"workspaceFiles">[]> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Omit<Doc<"workspaceFiles">, "storageId">[]> => {
     const { projectId, nodeId } = args;
 
     const user = await authKit.getAuthUser(ctx);
@@ -247,12 +249,44 @@ export const list = query({
     const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) return [];
 
-    return await ctx.db
+    const rows = await ctx.db
       .query("workspaceFiles")
       .withIndex("by_projectId_nodeId_and_path", (q) =>
         q.eq("projectId", projectId).eq("nodeId", nodeId),
       )
       .collect();
+
+    return rows.map(({ storageId: _storageId, ...row }) => row);
+  },
+});
+
+// Storage ids stay server side: only skill publishing reads the stored bytes.
+export const listStoredFilesInternal = internalQuery({
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  returns: v.array(v.object({ path: v.string(), storageId: v.id("_storage") })),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ path: string; storageId: Id<"_storage"> }[]> => {
+    const project = await getProjectForRole(ctx, args.authId, args.projectId);
+    if (!project) return [];
+
+    const rows = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
+      )
+      .collect();
+
+    return rows.flatMap((row) =>
+      !row.isFolder && row.storageId
+        ? [{ path: row.path, storageId: row.storageId }]
+        : [],
+    );
   },
 });
 

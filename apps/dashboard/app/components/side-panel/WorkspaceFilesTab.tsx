@@ -43,7 +43,6 @@ export type FileRecord = {
   path: string;
   name: string;
   isFolder: boolean;
-  storageId?: Id<"_storage">;
   mimeType?: string;
   sizeBytes?: number;
   updatedAt?: string | number;
