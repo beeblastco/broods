@@ -177,7 +177,7 @@ async function requireAccountForToken(
     throw new Error("Invalid Bearer token.");
   }
   const account = await ctx.runQuery(
-    internal.account.accounts.getBySecretHash,
+    internal.runtimeLookups.accountBySecretHash,
     {
       secretHash: await sha256Hex(bearerToken),
     },

@@ -52,6 +52,7 @@ export const getByOrgId = internalQuery({
   },
 });
 
+// Core pods built before runtimeLookups.ts still call this until they roll.
 export const getBySecretHash = internalQuery({
   args: { secretHash: v.string() },
   returns: v.union(accountDoc, v.null()),

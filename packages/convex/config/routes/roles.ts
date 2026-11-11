@@ -240,7 +240,7 @@ export async function resolveAccountCaller(
   if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
 
   const account: Doc<"accounts"> | null = await ctx.runQuery(
-    internal.account.accounts.getBySecretHash,
+    internal.runtimeLookups.accountBySecretHash,
     { secretHash: tokenHash },
   );
   if (!account || account.status !== "active") return null;

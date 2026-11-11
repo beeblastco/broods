@@ -3920,6 +3920,12 @@ export declare const internal: {
       >;
     };
     uploads: {
+      claim: FunctionReference<
+        "mutation",
+        "internal",
+        { storageId: Id<"_storage"> },
+        null
+      >;
       grant: FunctionReference<
         "mutation",
         "internal",
@@ -8234,6 +8240,75 @@ export declare const internal: {
         events: Array<any>;
         ownerGeneration: number;
         requestedMode: "reject" | "followup" | "collect" | "steer";
+      } | null
+    >;
+  };
+  runtimeLookups: {
+    accountBySecretHash: FunctionReference<
+      "query",
+      "internal",
+      { secretHash: string },
+      {
+        _creationTime: number;
+        _id: Id<"accounts">;
+        auditRetentionDays?: number;
+        createdAt: number;
+        description?: string;
+        orgId: string;
+        secretHash: string;
+        secretHint?: string;
+        secretRotatedAt?: number;
+        secretRotatedBy?: Id<"users">;
+        status: "active" | "disabled";
+        storageExternalId?: string;
+        updatedAt: number;
+        username: string;
+      } | null
+    >;
+    agentById: FunctionReference<
+      "query",
+      "internal",
+      { accountId: Id<"accounts">; agentId: string },
+      {
+        _creationTime: number;
+        _id: Id<"agents">;
+        accountId: Id<"accounts">;
+        createdAt: number;
+        description?: string;
+        encryptedConfig?: string;
+        encryptedSourceConfig?: string;
+        encryptionIv?: string;
+        encryptionTag?: string;
+        name: string;
+        requireUserToken?: boolean;
+        sourceEncryptionIv?: string;
+        sourceEncryptionTag?: string;
+        updatedAt: number;
+      } | null
+    >;
+    sandboxConfigById: FunctionReference<
+      "query",
+      "internal",
+      { accountId: Id<"accounts">; sandboxId: string },
+      {
+        _creationTime: number;
+        _id: Id<"sandboxConfigs">;
+        accountId: Id<"accounts">;
+        createdAt: number;
+        description?: string;
+        encryptedConfig?: string;
+        encryptedSourceConfig?: string;
+        encryptionIv?: string;
+        encryptionTag?: string;
+        managedBy?: "cli" | "dashboard" | "api";
+        name: string;
+        projectId?: Id<"projects">;
+        runtimeVariables?: Array<{ key: string; value: string }>;
+        snapshotId?: string;
+        sourceEncryptionIv?: string;
+        sourceEncryptionTag?: string;
+        stageId?: Id<"stages">;
+        updatedAt: number;
       } | null
     >;
   };

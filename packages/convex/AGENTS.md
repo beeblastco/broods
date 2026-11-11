@@ -7,6 +7,7 @@ Convex skills sit in `.claude/skills/`; grab `convex-migration-helper` for any b
 ## Gotchas
 
 - **`args`/`returns` validators are runtime-only. `bun run check` cannot see them.** widening a TS type that a validator also describe pass typecheck, pass tests, then 500 in production the first time the function run. adding a CLI manifest resource kind mean four places, not one: `cli/types.ts`, `resourceValidator`, `idsValidator`, and the sync itself. an extra key on a returned object is rejected just as hard as a missing one.
+- **a function call load its file's whole import graph, every call.** a lean file cost ~2.5 ms a call, one behind zod and the rule modules 8-10 ms. an agent turn make 8 calls, so one import in `schema.ts` cost a turn 40 ms (it did, #1371). `schema.ts`, `runtime.ts`, `runtimeIngress.ts`, `runtimeLookups.ts` and `usage.ts` import no package but `convex`, and `tests/hotPathImports.test.ts` fail when one do. a new read every turn make go in `runtimeLookups.ts`, not next to the heavy functions of its table. need zod on a hot file: put the schema in its own module (`model/stageSourceSchema.ts`) and import it only where it is parsed.
 
 ## Auth
 

@@ -55,7 +55,7 @@ export async function handleAgentChannelDirectoryRoute(
 ): Promise<Response> {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
   const record: Doc<"agents"> | null = await ctx.runQuery(
-    internal.agent.agents.getById,
+    internal.runtimeLookups.agentById,
     {
       accountId: accountId,
       agentId: agentId,
@@ -112,7 +112,7 @@ export async function handleAgentConfigRoute(
 
   if (req.method === "GET") {
     const record: Doc<"agents"> | null = await ctx.runQuery(
-      internal.agent.agents.getById,
+      internal.runtimeLookups.agentById,
       {
         accountId: accountId,
         agentId: agentId,
@@ -143,7 +143,7 @@ export async function handleAgentConfigRoute(
   }
   if (req.method === "DELETE") {
     const existing: Doc<"agents"> | null = await ctx.runQuery(
-      internal.agent.agents.getById,
+      internal.runtimeLookups.agentById,
       {
         accountId: accountId,
         agentId: agentId,
@@ -278,7 +278,7 @@ async function handleAgentCollectionRoute(
       },
     );
     const created: Doc<"agents"> | null = await ctx.runQuery(
-      internal.agent.agents.getById,
+      internal.runtimeLookups.agentById,
       {
         accountId: accountId,
         agentId: createdId,
@@ -317,7 +317,7 @@ async function patchAgentConfigRoute(
   role: RolePrincipal | undefined,
 ): Promise<Response> {
   const existing: Doc<"agents"> | null = await ctx.runQuery(
-    internal.agent.agents.getById,
+    internal.runtimeLookups.agentById,
     {
       accountId: accountId,
       agentId: agentId,
@@ -376,7 +376,7 @@ async function patchAgentConfigRoute(
       : { clearSourceConfig: true }),
   });
   const updated: Doc<"agents"> | null = await ctx.runQuery(
-    internal.agent.agents.getById,
+    internal.runtimeLookups.agentById,
     {
       accountId: accountId,
       agentId: agentId,
@@ -518,7 +518,7 @@ async function validateAgentSubagentIds(
 ): Promise<void> {
   for (const agentId of config.subagent?.allowed ?? []) {
     const agent: Doc<"agents"> | null = await ctx.runQuery(
-      internal.agent.agents.getById,
+      internal.runtimeLookups.agentById,
       {
         accountId: accountId,
         agentId: agentId,
