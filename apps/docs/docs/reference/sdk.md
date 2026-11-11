@@ -144,7 +144,16 @@ await client.run(api.agents.myAgent, {
 
 ### Stream parts
 
-`stream` yields AI SDK `TextStreamPart` values such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+`stream` yields `AgentStreamPart` values: the AI SDK `TextStreamPart` types such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest, plus `{ type: "structured-output", output }` at the end of a run whose agent sets `model.output`. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+
+Upgrading from a release where `stream` and `run().events` were typed `TextStreamPart<ToolSet>`: code that assigns parts to that type, or switches over `part.type` exhaustively, no longer compiles. Type it `AgentStreamPart` (exported from `broods`), or skip `structured-output` first:
+
+```ts
+for await (const part of client.stream(api.agents.myAgent, input)) {
+  if (part.type === "structured-output") continue;
+  handle(part); // TextStreamPart<ToolSet>
+}
+```
 
 ### Async status
 
