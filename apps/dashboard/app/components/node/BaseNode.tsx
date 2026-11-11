@@ -153,7 +153,13 @@ export function BaseNode({
     { key: "subtitle", part: subtitle },
     ...(featureRows ?? []).map((row) => ({
       key: `feature:${row.key}`,
-      part: row.label,
+      part: row.icon ? (
+        <>
+          {row.icon} {row.label}
+        </>
+      ) : (
+        row.label
+      ),
     })),
     {
       key: "state",

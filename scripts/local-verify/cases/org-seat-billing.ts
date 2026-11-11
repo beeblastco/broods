@@ -59,7 +59,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
           second.output.includes("Creating another organization needs Pro"),
         second.output.slice(-300),
       );
-      const free = asAdmin("org/members:add", {
+      const free = asAdmin("org/invitations:create", {
         orgId: orgId,
         email: invitee("first"),
       });
@@ -126,14 +126,21 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         owned,
       );
 
-      for (const name of ["first", "second"]) {
-        must(
-          asAdmin("org/members:add", { orgId: orgId, email: invitee(name) }),
-          `the ${name} invite lands on a seat included with Pro`,
-        );
-      }
+      const invitations = ["first", "second"].map((name) =>
+        String(
+          result(
+            must(
+              asAdmin("org/invitations:create", {
+                orgId: orgId,
+                email: invitee(name),
+              }),
+              `the ${name} invitation reserves a seat included with Pro`,
+            ),
+          ),
+        ),
+      );
       must(
-        asAdmin("org/members:add", {
+        asAdmin("org/invitations:create", {
           orgId: secondOrgId,
           email: invitee("first"),
         }),
@@ -158,7 +165,7 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
           ),
         holders,
       );
-      const full = asAdmin("org/members:add", {
+      const full = asAdmin("org/invitations:create", {
         orgId: secondOrgId,
         email: invitee("third"),
       });
@@ -166,6 +173,17 @@ export async function orgSeatBilling(context: VerifyContext): Promise<void> {
         "a new developer past the pool is refused",
         !full.ok && full.output.includes("Every developer seat"),
         full.output.slice(-300),
+      );
+      must(
+        asAdmin("org/invitations:revoke", { invitationId: invitations[1]! }),
+        "revoke the second invitation",
+      );
+      must(
+        asAdmin("org/invitations:create", {
+          orgId: secondOrgId,
+          email: invitee("third"),
+        }),
+        "the revoked invitation's seat goes to the next developer",
       );
     });
   } finally {

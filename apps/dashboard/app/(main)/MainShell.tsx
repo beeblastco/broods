@@ -4,6 +4,7 @@ import { CopilotDock } from "@/app/components/copilot/CopilotDock";
 import { CopilotProvider } from "@/app/components/copilot/CopilotProvider";
 import { AppSidebar } from "@/app/components/AppSidebar";
 import { Header } from "@/app/components/Header";
+import { InvitationNotice } from "@/app/components/InvitationNotice";
 import { PerfReporter } from "@/app/components/PerfReporter";
 import { ShortcutOverlay } from "@/app/components/ShortcutOverlay";
 import { ShortcutProvider } from "@/app/components/ShortcutProvider";
@@ -168,7 +169,10 @@ export function MainShell({
                 <div className="flex min-h-0 flex-1">
                   <AppSidebar />
                   <SidebarInset className="relative min-w-0 overflow-hidden">
-                    {children}
+                    <InvitationNotice invited={currentUser?.invited === true} />
+                    <div className="relative flex min-h-0 flex-1 flex-col">
+                      {children}
+                    </div>
                   </SidebarInset>
                   <CopilotDock />
                 </div>
