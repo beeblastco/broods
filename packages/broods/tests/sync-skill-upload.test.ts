@@ -83,7 +83,20 @@ test("a 6 MiB skill syncs through one upload, and an unchanged one re-syncs with
   expect(small?.files[0]?.contentBase64).toBeString();
 
   await client.putManifest(manifest, false);
-  expect(sent.map(({ method }): string => method)).toEqual(["GET", "PUT"]);
+  expect(sent.splice(0).map(({ method }): string => method)).toEqual([
+    "GET",
+    "PUT",
+  ]);
+
+  const inline = {
+    ...manifest,
+    resources: manifest.resources.filter(
+      (resource): boolean => resource.name === "small",
+    ),
+  };
+  await client.putManifest(inline, false);
+  expect(sent.map(({ method }): string => method)).toEqual(["PUT"]);
+  expect((held as CliManifest | null)?.resources).toEqual(inline.resources);
 });
 
 async function skillProject(): Promise<string> {

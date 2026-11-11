@@ -157,11 +157,16 @@ def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind
 
 /-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
 large MCP bundle or skill is uploaded and replaced by its storage handle; its
-`sha256` stays. -/
-def upload (large : Nat → Bool) (r : Resource) : Resource :=
+`sha256` stays. A large skill the stage already `held` with the same snapshot is
+sent with neither bytes nor handle, and the server keeps its stored copy. -/
+def upload (large : Nat → Bool) (held : Resource → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
-  | .mcp, some b | .skill, some b =>
+  | .mcp, some b =>
     if large b then { r with config := { r.config with bundle := none, storage := some b } } else r
+  | .skill, some b =>
+    if !large b then r
+    else if held r then { r with config := { r.config with bundle := none } }
+    else { r with config := { r.config with bundle := none, storage := some b } }
   | _, _ => r
 
 /-- `snapshotExternalConfig`: the recorded snapshot of an external resource drops
@@ -174,8 +179,9 @@ def storeExternal (r : Resource) : Resource :=
 
 /-- What the server keeps for a resource: external kinds as their recorded
 snapshot of the uploaded config, every other kind through `normalize`. -/
-def storeReal (large : Nat → Bool) (normalize : Resource → Resource) (r : Resource) : Resource :=
-  if r.kind.external then storeExternal (upload large r) else normalize r
+def storeReal (large : Nat → Bool) (held : Resource → Bool) (normalize : Resource → Resource)
+    (r : Resource) : Resource :=
+  if r.kind.external then storeExternal (upload large held r) else normalize r
 
 /-! ## Lemmas -/
 
@@ -336,44 +342,46 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
 
 end
 
-/-- Skills, hooks and MCP servers, small or large bundle, read back equal to what
-the diff compares. -/
-theorem storeExternal_snapshot (large : Nat → Bool) (r : Resource) (h : r.kind.external = true) :
-    diff.snapshot (storeExternal (upload large r)) = diff.snapshot r := by
+/-- Skills, hooks and MCP servers, small or large bundle, uploaded or already held,
+read back equal to what the diff compares. -/
+theorem storeExternal_snapshot (large : Nat → Bool) (held : Resource → Bool) (r : Resource)
+    (h : r.kind.external = true) :
+    diff.snapshot (storeExternal (upload large held r)) = diff.snapshot r := by
   obtain ⟨kind, name, ⟨settings, bundle, storage⟩⟩ := r
   cases bundle with
   | none => cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
   | some b =>
-    by_cases hl : large b <;> cases kind <;>
-      simp_all [upload, storeExternal, diff.snapshot, Kind.external]
+    by_cases hl : large b <;> by_cases hh : held ⟨kind, name, ⟨settings, some b, storage⟩⟩ <;>
+      cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
 
 /-- Upload and the recorded snapshot keep a resource's key. -/
-theorem storeExternal_key (large : Nat → Bool) (r : Resource) :
-    (storeExternal (upload large r)).key = r.key := by
-  have hu : (upload large r).key = r.key := by
+theorem storeExternal_key (large : Nat → Bool) (held : Resource → Bool) (r : Resource) :
+    (storeExternal (upload large held r)).key = r.key := by
+  have hu : (upload large held r).key = r.key := by
     unfold upload
-    split <;> (try split) <;> rfl
+    split <;> (repeat' split) <;> rfl
   rw [← hu]
   unfold storeExternal
   split <;> rfl
 
 /-- The fixed sync converges for every kind: external kinds with the server's real
 snapshot and upload, every other kind given its normalization round trip. -/
-theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Resource)
+theorem sync_converges_real (large : Nat → Bool) (held : Resource → Bool)
+    (normalize : Resource → Resource)
     (hkey : ∀ r, (normalize r).key = r.key)
     (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
-    (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
+    (∀ e ∈ diff m (read (sync (storeReal large held normalize) m prune s)), e.op = .delete) ∧
       (prune = true →
-        diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
+        diff m (read (sync (storeReal large held normalize) m prune s)) = []) := by
   refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
   · unfold storeReal
     split
-    · exact storeExternal_key large r
+    · exact storeExternal_key large held r
     · exact hkey r
   · unfold storeReal
     split
-    · exact storeExternal_snapshot large r (by assumption)
+    · exact storeExternal_snapshot large held r (by assumption)
     · exact hround r (by simpa using ‹¬r.kind.external = true›)
 
 /-- A prune list deletes nothing it does not name: a row the sync without prune
@@ -401,8 +409,18 @@ theorem syncOnly_all {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
 large ones as a storage handle, and the diff compares neither. -/
 example :
     let m : Manifest := [⟨.mcp, 1, ⟨0, some 42, none⟩⟩]
-    diff m (read (sync (storeReal (· > 10) id) m true [])) = [] ∧
-      diff m (read (sync (storeReal (· > 100) id) m true [])) = [] := by
+    diff m (read (sync (storeReal (· > 10) (fun _ => false) id) m true [])) = [] ∧
+      diff m (read (sync (storeReal (· > 100) (fun _ => false) id) m true [])) = [] := by
+  decide
+
+/-- A large skill is uploaded once: a second sync of the same skill, which the stage
+already holds, carries neither its bytes nor an upload handle, and both converge. -/
+example :
+    let r : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    upload (· > 10) (fun _ => false) r = ⟨.skill, 1, ⟨0, none, some 42⟩⟩ ∧
+      upload (· > 10) (fun _ => true) r = ⟨.skill, 1, ⟨0, none, none⟩⟩ ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => false) id) [r] true [])) = [] ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => true) id) [r] true [])) = [] := by
   decide
 
 /-- An edited hosted MCP or hook bundle carries a new `sha256`, so the diff shows it. -/

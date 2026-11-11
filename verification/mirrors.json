@@ -98,6 +98,7 @@
   "Sync": {
     "packages/broods/src/sync.ts": {
       "BroodsSyncClient.putManifest": "056397c56445d8b4",
+      "BroodsSyncClient.externalizeLargeSkills": "1ffb73ddd4914eab",
       "diffManifests": "e0ebfd1eed42c281",
       "renameSnapshot": "2f385a52543abc07",
       "isRenamableKind": "382365924c44b5aa"
