@@ -9,7 +9,11 @@ const caller = vi.hoisted(() => ({ authId: "auth_victim" }));
 
 vi.mock("../auth", () => ({
   authKit: {
-    getAuthUser: async () => ({ id: caller.authId, emailVerified: true }),
+    getAuthUser: async () => ({
+      id: caller.authId,
+      email: `${caller.authId.replace("auth_", "")}@example.com`,
+      emailVerified: true,
+    }),
   },
 }));
 

@@ -10,7 +10,7 @@ import { authKit } from "../auth";
 import { requireDashboardPermission } from "../model/access";
 import { actorsOf, actorValidator } from "../model/actor";
 import { ClientError } from "../model/clientError";
-import { assertFreeSeat, releaseSeat } from "../model/orgBilling";
+import { assertFreeSeat, dropInvitations } from "../model/orgBilling";
 import {
   getOrgMembership,
   requireOrgMember,
@@ -58,7 +58,7 @@ export const create = mutation({
   handler: async (ctx, args): Promise<Id<"orgInvitations">> => {
     const { orgId } = args;
     const role = args.roleId ? "member" : (args.role ?? "member");
-    const caller = await signedInUser(ctx);
+    const { caller } = await signedInUser(ctx);
     await assertCanInvite(ctx, caller, {
       orgId: orgId,
       role: role,
@@ -116,7 +116,7 @@ export const list = query({
   args: { orgId: v.id("orgs") },
   returns: v.array(invitationRow),
   handler: async (ctx, args) => {
-    const caller = await signedInUser(ctx);
+    const { caller } = await signedInUser(ctx);
     await requireOrgMember(ctx, args.orgId, caller._id);
     await requireDashboardPermission(ctx, args.orgId, caller, "members:write");
 
@@ -248,7 +248,7 @@ export const revoke = mutation({
   args: { invitationId: v.id("orgInvitations") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const caller = await signedInUser(ctx);
+    const { caller } = await signedInUser(ctx);
     const invitation = await ctx.db.get(args.invitationId);
     if (!invitation) {
       throw new ClientError("Invitation not found", "not_found");
@@ -293,9 +293,7 @@ async function dropInvitation(
   invitation: Doc<"orgInvitations">,
   action: string,
 ): Promise<void> {
-  await ctx.db.delete(invitation._id);
-  await syncInvited(ctx, invitation.userId);
-  await releaseSeat(ctx, invitation.orgId);
+  await dropInvitations(ctx, [invitation]);
   await recordMemberAudit(ctx, caller, invitation.email, action, {
     orgId: invitation.orgId,
     id: invitation._id,
@@ -304,19 +302,25 @@ async function dropInvitation(
   });
 }
 
-// Only the invited person answers, once they have verified the address it was sent to.
+// Only the invited person answers, signed in with the verified address it was sent to.
 async function ownInvitation(
   ctx: MutationCtx,
   invitationId: Id<"orgInvitations">,
 ): Promise<{ caller: Doc<"users">; invitation: Doc<"orgInvitations"> }> {
-  const caller = await signedInUser(ctx);
+  const { caller, authUser } = await signedInUser(ctx);
   const invitation = await ctx.db.get(invitationId);
   if (!invitation || invitation.userId !== caller._id) {
     throw new ClientError("Invitation not found", "not_found");
   }
-  if (!(await authKit.getAuthUser(ctx))?.emailVerified) {
+  if (!authUser.emailVerified) {
     throw new ClientError(
       "Verify your email address, then answer this invitation.",
+      "forbidden",
+    );
+  }
+  if (authUser.email.toLowerCase() !== invitation.email) {
+    throw new ClientError(
+      "This invitation went to an address you no longer sign in with. Ask an admin to revoke it and invite you again.",
       "forbidden",
     );
   }

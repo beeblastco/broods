@@ -3,7 +3,7 @@ import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
-import { userByAuthId } from "./ownership/org";
+import { syncInvited, userByAuthId } from "./ownership/org";
 import { isManagedService, PLAN_LIMITS, type Plan } from "./planLimits";
 
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
@@ -152,6 +152,23 @@ export async function releaseSeat(
       authId: authId,
     });
   }
+}
+
+// Recounts once per owner of the invitations' orgs and of any other orgs that changed with them.
+export async function dropInvitations(
+  ctx: MutationCtx,
+  invitations: Array<Doc<"orgInvitations">>,
+  ...changedOrgIds: Array<Id<"orgs">>
+): Promise<void> {
+  for (const invitation of invitations) {
+    await ctx.db.delete(invitation._id);
+    await syncInvited(ctx, invitation.userId);
+  }
+  await releaseSeat(
+    ctx,
+    ...invitations.map((invitation) => invitation.orgId),
+    ...changedOrgIds,
+  );
 }
 
 export async function assertCanCreateOrg(

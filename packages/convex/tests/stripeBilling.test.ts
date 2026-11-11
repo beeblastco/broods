@@ -35,7 +35,7 @@ vi.mock("../auth", () => ({
   authKit: {
     getAuthUser: async () => ({
       id: caller.authId,
-      email: caller.authId === AUTH_ID ? "payer@example.com" : null,
+      email: `${caller.authId.replace("auth_", "")}@example.com`,
       emailVerified: true,
     }),
     registerRoutes: () => undefined,

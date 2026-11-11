@@ -1543,6 +1543,7 @@ export default defineSchema({
   orgInvitations: defineTable(orgInvitationsFields)
     .index("by_orgId_and_email", ["orgId", "email"])
     .index("by_email_and_userId", ["email", "userId"])
+    .index("by_invitedBy_and_orgId", ["invitedBy", "orgId"])
     .index("by_userId", ["userId"]),
   permissions: defineTable(permissionsFields).index("by_accountId_and_name", [
     "accountId",

@@ -10,6 +10,7 @@ import schema from "../schema";
 
 const caller = vi.hoisted(() => ({
   authId: "auth_admin",
+  email: undefined as string | undefined,
   emailVerified: true,
 }));
 
@@ -18,6 +19,7 @@ vi.mock("../auth", async (importOriginal) => ({
   authKit: {
     getAuthUser: async () => ({
       id: caller.authId,
+      email: caller.email ?? `${caller.authId}@example.com`,
       emailVerified: caller.emailVerified,
     }),
   },
@@ -31,6 +33,7 @@ const invitationsTest = (): TestConvex<typeof schema> =>
 type T = ReturnType<typeof invitationsTest>;
 
 afterEach(() => {
+  caller.email = undefined;
   caller.emailVerified = true;
   vi.unstubAllEnvs();
 });
@@ -182,6 +185,7 @@ describe("invitations", () => {
     ).toMatchObject([{ email: "new@example.com", hasAccount: false }]);
 
     caller.authId = "auth_new";
+    caller.email = "new@example.com";
     await signIn(t, "user.created", "new@example.com", false);
     expect(await t.query(api.org.invitations.listMine, {})).toEqual([]);
     await signIn(t, "user.updated", "new@example.com", true);
@@ -272,23 +276,10 @@ describe("invitations", () => {
     const t = invitationsTest();
     const { orgA } = await seed(t);
     const invitationId = await invite(t, orgA, "auth_guest@example.com");
-    const adminMembership = await t.run(async (ctx) => {
-      const admin = await ctx.db
-        .query("users")
-        .withIndex("by_authId", (q) => q.eq("authId", "auth_admin"))
-        .unique();
-      const membership = await ctx.db
-        .query("orgMembers")
-        .withIndex("by_orgId_and_userId", (q) =>
-          q.eq("orgId", orgA).eq("userId", admin!._id),
-        )
-        .unique();
-
-      return membership!._id;
-    });
     caller.authId = "auth_owner";
-    await t.mutation(api.org.members.remove, {
-      membershipId: adminMembership,
+    await t.mutation(api.org.members.updateRole, {
+      membershipId: await membershipOf(t, orgA, "auth_admin"),
+      role: "member",
     });
 
     caller.authId = "auth_guest";
@@ -300,6 +291,77 @@ describe("invitations", () => {
     expect(await memberIds(t, orgA)).not.toContain("auth_guest");
     expect(await t.query(api.org.invitations.listMine, {})).toEqual([]);
   });
+
+  test("an account whose email changed cannot answer an invitation sent to its old address", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const invitationId = await invite(t, orgA, "auth_guest@example.com");
+    caller.authId = "auth_guest";
+    caller.email = "mallory@example.org";
+
+    for (const answer of [
+      api.org.invitations.accept,
+      api.org.invitations.decline,
+    ]) {
+      await expect(
+        t.mutation(answer, { invitationId: invitationId }),
+      ).rejects.toThrow("an address you no longer sign in with");
+    }
+    expect(await memberIds(t, orgA)).not.toContain("auth_guest");
+    caller.email = "Auth_Guest@Example.com";
+    await t.mutation(api.org.invitations.accept, {
+      invitationId: invitationId,
+    });
+    expect(await memberIds(t, orgA)).toContain("auth_guest");
+  });
+
+  test.each([
+    "they are removed",
+    "they leave",
+    "their account is deleted",
+  ] as const)(
+    "an inviter's invitations go when %s, with one seat recount",
+    async (exit) => {
+      const t = invitationsTest();
+      const { orgA } = await seed(t);
+      await invite(t, orgA, "auth_guest@example.com");
+      await invite(t, orgA, "new@example.com");
+      vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+
+      if (exit === "they are removed") {
+        caller.authId = "auth_owner";
+        await t.mutation(api.org.members.remove, {
+          membershipId: await membershipOf(t, orgA, "auth_admin"),
+        });
+      } else if (exit === "they leave") {
+        await t.mutation(api.org.members.leave, { orgId: orgA });
+      } else {
+        await t.mutation(internal.org.workosUserDeletion.finalize, {
+          authId: "auth_admin",
+        });
+      }
+
+      const { invitations, guestInvited, recounts } = await t.run(
+        async (ctx) => ({
+          invitations: await ctx.db.query("orgInvitations").collect(),
+          guestInvited: (
+            await ctx.db
+              .query("users")
+              .withIndex("by_authId", (q) => q.eq("authId", "auth_guest"))
+              .unique()
+          )?.invited,
+          recounts: (
+            await ctx.db.system.query("_scheduled_functions").collect()
+          ).filter(({ name }) => name === "stripe:syncSeatsInternal"),
+        }),
+      );
+      expect(invitations).toEqual([]);
+      expect(guestInvited).toBeUndefined();
+      expect(recounts.map(({ args }) => args)).toEqual([
+        [{ authId: "auth_owner" }],
+      ]);
+    },
+  );
 
   test("an address not shaped like an email is refused", async () => {
     const t = invitationsTest();
@@ -401,6 +463,27 @@ async function invite(
     orgId: orgId,
     email: email,
     role: "admin",
+  });
+}
+
+async function membershipOf(
+  t: T,
+  orgId: Id<"orgs">,
+  authId: string,
+): Promise<Id<"orgMembers">> {
+  return await t.run(async (ctx) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", authId))
+      .unique();
+    const membership = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_orgId_and_userId", (q) =>
+        q.eq("orgId", orgId).eq("userId", user!._id),
+      )
+      .unique();
+
+    return membership!._id;
   });
 }
 

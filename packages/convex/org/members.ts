@@ -6,7 +6,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
+import { type AuthUser, authKit } from "../auth";
 import {
   activePolicies,
   assertGrantsWithinReach,
@@ -20,7 +20,7 @@ import {
   dashboardAuditActor,
 } from "../model/auditEvents";
 import { ClientError } from "../model/clientError";
-import { releaseSeat } from "../model/orgBilling";
+import { dropInvitations } from "../model/orgBilling";
 import {
   type getOrgMembership,
   orgRoleMeets,
@@ -125,15 +125,7 @@ export const updateRole = mutation({
     const { membershipId } = args;
     const role = args.roleId ? "member" : args.role;
 
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const caller = await userByAuthId(ctx, authUser.id);
-    if (!caller) {
-      throw new Error("User row not found");
-    }
+    const { caller } = await signedInUser(ctx);
 
     const membership = await ctx.db.get(membershipId);
     if (!membership) {
@@ -194,15 +186,7 @@ export const remove = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { membershipId } = args;
 
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const caller = await userByAuthId(ctx, authUser.id);
-    if (!caller) {
-      throw new Error("User row not found");
-    }
+    const { caller } = await signedInUser(ctx);
 
     const membership = await ctx.db.get(membershipId);
     if (!membership) {
@@ -236,7 +220,7 @@ export const remove = mutation({
     }
 
     await ctx.db.delete(membershipId);
-    await releaseSeat(ctx, membership.orgId);
+    await dropSentInvitations(ctx, membership);
     await recordMemberAudit(ctx, caller, targetUser?.email, "removed", {
       orgId: membership.orgId,
       id: membershipId,
@@ -252,7 +236,7 @@ export const leave = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const caller = await signedInUser(ctx);
+    const { caller } = await signedInUser(ctx);
     const membership = await requireOrgMember(ctx, args.orgId, caller._id);
     const org = await ctx.db.get(args.orgId);
     if (org?.ownerAuthId === caller.authId) {
@@ -263,7 +247,7 @@ export const leave = mutation({
     }
 
     await ctx.db.delete(membership._id);
-    await releaseSeat(ctx, args.orgId);
+    await dropSentInvitations(ctx, membership);
     await recordMemberAudit(ctx, caller, caller.email, "left", {
       orgId: args.orgId,
       id: membership._id,
@@ -357,15 +341,29 @@ export async function recordMemberAudit(
 
 export async function signedInUser(
   ctx: QueryCtx | MutationCtx,
-): Promise<Doc<"users">> {
+): Promise<{ caller: Doc<"users">; authUser: AuthUser }> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) {
     throw new Error("User not found or not authenticated");
   }
-  const user = await userByAuthId(ctx, authUser.id);
-  if (!user) {
+  const caller = await userByAuthId(ctx, authUser.id);
+  if (!caller) {
     throw new Error("User row not found");
   }
 
-  return user;
+  return { caller: caller, authUser: authUser };
+}
+
+// A departing member's invitations go with them; a demoted one's are checked at accept.
+async function dropSentInvitations(
+  ctx: MutationCtx,
+  membership: Doc<"orgMembers">,
+): Promise<void> {
+  const sent = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_invitedBy_and_orgId", (q) =>
+      q.eq("invitedBy", membership.userId).eq("orgId", membership.orgId),
+    )
+    .collect();
+  await dropInvitations(ctx, sent, membership.orgId);
 }
