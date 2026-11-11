@@ -289,6 +289,10 @@ private def modelProviders : List String :=
 private def isAccountModelProviderName (call : Json) : Prog Json :=
   pure (toJson (modelProviders.contains (str (Twin.callArg call 0))))
 
+private def isAgentProviderName (call : Json) : Prog Json :=
+  let name := str (Twin.callArg call 0)
+  pure (toJson (name == "v0" || name == "fishaudio" || modelProviders.contains name))
+
 private def providerApiKeyEnvName (call : Json) : Prog Json :=
   let provider := str (Twin.callArg call 0)
   pure (if provider == "chatgpt" then Json.null else toJson s!"{provider.toUpper}_API_KEY")
@@ -315,6 +319,8 @@ def twins : List Spec.Twin :=
     Twin.traced "packages/convex/model/modelPricing.ts#priceLookupIds" priceLookupIds,
     Twin.traced "packages/convex/model/modelProviders.ts#isAccountModelProviderName"
       isAccountModelProviderName,
+    Twin.traced "packages/convex/model/modelProviders.ts#isAgentProviderName"
+      isAgentProviderName,
     Twin.traced "packages/convex/model/modelProviders.ts#providerApiKeyEnvName"
       providerApiKeyEnvName ]
 

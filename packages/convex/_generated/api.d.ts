@@ -506,6 +506,7 @@ export declare const api: {
               deepinfra?: Record<string, any>;
               deepseek?: Record<string, any>;
               fireworks?: Record<string, any>;
+              fishaudio?: Record<string, any>;
               google?: Record<string, any>;
               groq?: Record<string, any>;
               huggingface?: Record<string, any>;
@@ -610,6 +611,7 @@ export declare const api: {
               deepinfra?: Record<string, any>;
               deepseek?: Record<string, any>;
               fireworks?: Record<string, any>;
+              fishaudio?: Record<string, any>;
               google?: Record<string, any>;
               groq?: Record<string, any>;
               huggingface?: Record<string, any>;

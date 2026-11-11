@@ -23,6 +23,7 @@ import { configObject } from "./storedJson";
 import { AGENT_HOOK_EVENT_NAMES } from "./accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
+  AGENT_PROVIDER_NAMES,
   PROVIDER_ENDPOINT_SETTING,
 } from "./modelProviders";
 import { ClientError } from "./clientError";
@@ -384,7 +385,7 @@ const MODEL = z
   );
 
 const TRANSCRIPTION = z.strictObject({
-  provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
+  provider: z.optional(z.enum(AGENT_PROVIDER_NAMES)),
   modelId: optionalString,
 });
 
@@ -443,7 +444,7 @@ const PROVIDERS = refusingProtoKey(
     .partialRecord(
       z.pipe(
         z.string(),
-        z.enum(ACCOUNT_MODEL_PROVIDER_NAMES, {
+        z.enum(AGENT_PROVIDER_NAMES, {
           error: "is not a supported provider",
         }),
       ),

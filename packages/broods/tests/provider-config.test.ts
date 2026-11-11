@@ -73,6 +73,9 @@ test("supports every provider on the shared list, deepseek included", (): void =
     ).not.toThrow();
   }
   expect((): void =>
+    validateProviderConfig("a", { fishaudio: { apiKey: "k" } }),
+  ).not.toThrow();
+  expect((): void =>
     validateProviderConfig("a", { nope: { apiKey: "k" } }),
   ).toThrow("is not a supported provider");
 });
