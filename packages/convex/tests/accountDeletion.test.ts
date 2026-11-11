@@ -5,6 +5,8 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api, components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+// The package exports no schema or test helper, so register its built schema from disk.
+import stripeSchema from "../node_modules/@convex-dev/stripe/dist/component/schema.js";
 import schema from "../schema";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,6 +28,9 @@ vi.mock("../auth", async (importOriginal) => ({
 }));
 
 const modules = import.meta.glob("../**/*.ts");
+const stripeModules = import.meta.glob(
+  "../node_modules/@convex-dev/stripe/dist/component/**/*.js",
+);
 
 beforeEach((): void => {
   vi.useFakeTimers();
@@ -181,6 +186,33 @@ test("one sweep handles a bounded batch and the next one picks up the rest", asy
   expect(await t.run(async (ctx) => ctx.db.query("users").collect())).toEqual(
     [],
   );
+});
+
+test("billing is cancelled once the identity is gone, even while core cleanup keeps failing", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  t.registerComponent("stripe", stripeSchema, stripeModules);
+  vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+  vi.stubEnv("ADMIN_ACCOUNT_SECRET", "");
+  const leaving = await seedSoleOwner(t, LEAVING);
+  await requestDeletion(t, [LEAVING]);
+
+  vi.advanceTimersByTime(8 * DAY_MS);
+  await t.mutation(internal.org.workosUserDeletion.sweep, {});
+  for (let step = 0; step < 4; step += 1) {
+    vi.runOnlyPendingTimers();
+    await t.finishInProgressScheduledFunctions();
+  }
+
+  expect(deleteUser.mock.calls).toEqual([[LEAVING]]);
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).not.toBe(null);
+  const scheduled = await t.run(async (ctx) =>
+    ctx.db.system.query("_scheduled_functions").collect(),
+  );
+  expect(
+    scheduled
+      .filter(({ name }) => name === "stripe:cancelUserSubscriptionsInternal")
+      .map(({ state }) => state.kind),
+  ).toEqual(["success"]);
 });
 
 async function requestDeletion(

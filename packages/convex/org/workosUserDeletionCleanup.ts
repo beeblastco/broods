@@ -7,6 +7,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
 import { authKit } from "../auth";
+import { isManagedService } from "../model/planLimits";
 import { authProvider } from "../model/selfHostAuth";
 
 // Deletes a claimed user's sign-in before the teardown, so a failure leaves a retryable account.
@@ -30,6 +31,14 @@ export const deleteIdentity = internalAction({
           return null;
         }
       }
+    }
+    // Signed out for good and past cancelling, so stop billing before core cleanup can fail.
+    if (isManagedService()) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.stripe.cancelUserSubscriptionsInternal,
+        { authId: args.authId },
+      );
     }
     await ctx.scheduler.runAfter(
       0,
