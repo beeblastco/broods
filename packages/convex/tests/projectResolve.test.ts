@@ -44,6 +44,8 @@ test("without the old duplicate pair, the CLI and GitHub routes reach the same p
     stage: "development",
     name: "API_TOKEN",
     value: "x",
+    actorId: "user_cli",
+    actorKind: "cli",
   });
 
   const routes = await Promise.all(
