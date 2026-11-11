@@ -11,7 +11,6 @@ export const STAGE_SOURCE_ROOT_FILES: readonly string[] = [
   "package.json",
   "bun.lock",
 ];
-export const STAGE_SOURCE_ORIGINS = ["cli", "apply", "github"] as const;
 
 const BUILD_FOLDERS: ReadonlySet<string> = new Set([
   "_generated",
@@ -21,8 +20,6 @@ const BUILD_FOLDERS: ReadonlySet<string> = new Set([
   "node_modules",
 ]);
 const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
-
-export type StageSourceOrigin = (typeof STAGE_SOURCE_ORIGINS)[number];
 
 export const stageSourceSchema = z.object({
   files: z.array(z.object({ content: z.string(), path: z.string() })),

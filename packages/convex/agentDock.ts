@@ -33,8 +33,8 @@ import {
   stageSourceProblem,
   stageSourceSchema,
   type StageSource,
-  type StageSourceOrigin,
 } from "./model/stageSource";
+import type { StageSourceOrigin } from "./model/stageSourceOrigins";
 import { storeStageSync } from "./model/stageSourceStore";
 import {
   sealUserToken,

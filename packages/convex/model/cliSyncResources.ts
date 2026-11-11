@@ -1,3 +1,5 @@
+import type { GenericValidator } from "convex/values";
+import { validate, ValidationError } from "convex-helpers/validators";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertSnapshotInScope } from "../sandbox/snapshots";
@@ -7,6 +9,7 @@ import {
   collectEnvPlaceholderNames,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
+  type FlatPatch,
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import {
@@ -38,7 +41,10 @@ import {
   type CliResource,
 } from "./cliSync";
 import { normalizeChannelRecordResource } from "./cliSyncChannels";
-import { assertStoredAgentConfig } from "./agentConfigColumns";
+import {
+  agentExtraConfigColumn,
+  agentOutputFormatColumn,
+} from "./agentConfigColumns";
 import { storedRefList } from "./agentRules";
 import { parseOr } from "./storedJson";
 import { stableJson } from "./objects";
@@ -260,6 +266,17 @@ export async function sandboxConfigByName(
 }
 
 // The sync's rules without writes, so a refused manifest stores nothing. Live-row checks stay.
+// A sync checks every agent before it writes one, so the caller gets the path, not a 500.
+export function assertStoredAgentConfig(flat: FlatPatch): void {
+  assertColumn(agentExtraConfigColumn, flat.extraConfig ?? {}, "config");
+  if (flat.outputFormat !== undefined)
+    assertColumn(
+      agentOutputFormatColumn,
+      flat.outputFormat,
+      "config.model.output",
+    );
+}
+
 export function assertManifestResources(
   resources: CliResource[],
   envValues: Record<string, string>,
@@ -846,6 +863,22 @@ export async function workspaceConfigByName(
       q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
+}
+
+function assertColumn(
+  column: GenericValidator,
+  value: unknown,
+  root: string,
+): void {
+  try {
+    validate(column, value, { throw: true });
+  } catch (error) {
+    if (!(error instanceof ValidationError)) throw error;
+
+    throw new ClientError(
+      `${root}${error.path ? `.${error.path}` : ""} must be ${error.expected}, got ${error.got}`,
+    );
+  }
 }
 
 async function deleteOwnedAgent(
