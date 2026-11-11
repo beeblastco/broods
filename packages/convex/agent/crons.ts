@@ -24,6 +24,7 @@ import {
 import {
   deleteCron,
   deleteRegistrationIfExists,
+  deleteRunWaits,
   registerSchedule,
   unregisterSchedule,
 } from "../model/cronSchedules";
@@ -158,6 +159,7 @@ export const createRun = internalMutation({
     const runId = await ctx.db.insert("cronRuns", {
       ...args,
       ...(isOneTimeSchedule(cron.scheduleExpression) ? { oneShot: true } : {}),
+      waitingOn: [],
       status: "started",
       startedAt: startedAt,
     });
@@ -224,14 +226,15 @@ export const failRun = internalMutation({
     settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
+// Takes any string: an id the model made up is a miss, not a validation error.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
-    cronId: v.id("crons"),
+    cronId: v.string(),
   },
   returns: v.union(cronDoc, v.null()),
   handler: (ctx, { accountId, cronId }): Promise<Doc<"crons"> | null> =>
-    getOwned(ctx, accountId, cronId),
+    getOwnedByString(ctx, accountId, cronId),
 });
 
 export const isLive = internalQuery({
@@ -476,33 +479,47 @@ export const removeRunsCascade = internalMutation({
   },
 });
 
-// A run paused for an approval ends in the later turn that answered it, with that turn's outcome.
+// A paused run records what it waits on; the turn that answers one of those ends it, or pauses
+// it again on what that turn asked in turn.
 export const settleAnsweredRun = internalMutation({
   args: {
     conversationKey: v.string(),
+    ownerEventId: v.string(),
+    answered: v.array(v.string()),
+    waitingOn: cronRunsFields.waitingOn,
     status: v.union(v.literal("completed"), v.literal("failed")),
     result: v.optional(v.any()),
     error: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (
-    ctx,
-    { conversationKey, status, result, error },
-  ): Promise<null> => {
-    const run = await ctx.db
-      .query("cronRuns")
-      .withIndex("by_ingressConversationKey_and_status", (q) =>
-        q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
-      )
-      .order("desc")
-      .first();
-    if (run) {
+  handler: async (ctx, args): Promise<null> => {
+    const run =
+      args.answered.length > 0
+        ? await runWaitingOn(ctx, args.conversationKey, args.answered)
+        : await ctx.db
+            .query("cronRuns")
+            .withIndex("by_ingressEventId", (q) =>
+              q.eq("ingressEventId", args.ownerEventId),
+            )
+            .first();
+    if (run?.status !== "started") return null;
+    if (args.waitingOn) {
+      await deleteRunWaits(ctx, run._id);
+      for (const promptId of args.waitingOn) {
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: args.conversationKey,
+          promptId: promptId,
+          runId: run._id,
+        });
+      }
+      await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
+    } else {
       await finishRun(
         ctx,
         run,
-        status === "completed"
-          ? { status: "completed", result: result ?? null }
-          : { status: "failed", error: error ?? DEAD_RUN_ERROR },
+        args.status === "completed"
+          ? { status: "completed", result: args.result ?? null }
+          : { status: "failed", error: args.error ?? DEAD_RUN_ERROR },
       );
     }
 
@@ -677,7 +694,10 @@ async function deleteRunsBatch(
       q.eq("accountId", accountId).eq("cronId", cronId),
     )
     .take(limit);
-  for (const run of runs) await ctx.db.delete(run._id);
+  for (const run of runs) {
+    await deleteRunWaits(ctx, run._id);
+    await ctx.db.delete(run._id);
+  }
 
   return runs.length;
 }
@@ -707,7 +727,7 @@ async function getOwnedAgent(
 }
 
 async function getOwnedByString(
-  ctx: MutationCtx,
+  ctx: Ctx,
   accountId: Id<"accounts">,
   cronId: string,
 ): Promise<Doc<"crons"> | null> {
@@ -738,6 +758,33 @@ function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
+async function runWaitingOn(
+  ctx: QueryCtx,
+  conversationKey: string,
+  answered: string[],
+): Promise<Doc<"cronRuns"> | null> {
+  for (const promptId of answered) {
+    const wait = await ctx.db
+      .query("cronRunWaits")
+      .withIndex("by_conversationKey_and_promptId", (q) =>
+        q.eq("conversationKey", conversationKey).eq("promptId", promptId),
+      )
+      .first();
+    const run = wait ? await ctx.db.get(wait.runId) : null;
+    if (run?.status === "started") return run;
+  }
+  // Rows from before `waitingOn` keep the old rule. Delete 7 days after release: swept by then.
+  const newest = await ctx.db
+    .query("cronRuns")
+    .withIndex("by_ingressConversationKey_and_status", (q) =>
+      q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+    )
+    .order("desc")
+    .first();
+
+  return newest?.waitingOn === undefined ? newest : null;
+}
+
 async function settleRun(
   ctx: MutationCtx,
   ids: {
@@ -756,6 +803,7 @@ async function settleRun(
   }
   if (run.status !== "started") return null;
   const now = Date.now();
+  await deleteRunWaits(ctx, ids.runId);
   await ctx.db.patch(ids.runId, { ...outcome, completedAt: now });
   const cron = await ctx.db.get(ids.cronId);
   if (cron?.lastRunId === ids.runId) {

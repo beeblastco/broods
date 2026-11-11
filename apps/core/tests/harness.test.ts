@@ -1594,6 +1594,48 @@ describe("runAgentLoop", () => {
     expect(usageWrites).toHaveLength(1);
   });
 
+  it("settles the run as failed when its policies fail to load", async () => {
+    installHarnessEnv();
+    const usageWrites: TaskUsageInput[] = [];
+    setStorageForTests({
+      ...usageStorage(usageWrites),
+      agentPolicies: {
+        getById: async () => {
+          throw new Error("Convex unavailable");
+        },
+      },
+    } as unknown as Storage);
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+
+    await expect(
+      runAgentLoop(
+        {
+          accountId: "account_1",
+          conversationKey: "direct:conversation",
+          eventId: "direct-event",
+          filesystemNamespace: () => "fs-test",
+          resolvedWorkspaces: () => [],
+          sandboxes: () => [],
+          environmentText: () => "<environment>",
+        } as never,
+        {
+          messages: [{ role: "user", content: "hello" }],
+          system: [],
+          ephemeralSystem: [],
+          systemContextSnapshot: { cursor: null, messages: [] },
+        },
+        {
+          provider: { google: { apiKey: "google-key" } },
+          model: { provider: "google", modelId: "gemini-test" },
+          policies: ["policy_1"],
+        },
+      ),
+    ).rejects.toThrow("Convex unavailable");
+    await Bun.sleep(0);
+
+    expect(usageWrites.map((write) => write.status)).toEqual(["failed"]);
+  });
+
   it("treats tool approval requests as pending work instead of empty responses", async () => {
     streamTextScenario = "approval-request";
     installHarnessEnv();

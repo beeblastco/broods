@@ -136,6 +136,10 @@ function RuntimeKeysTable({
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
   const [rotating, setRotating] = useState<RuntimeKey | null>(null);
+  const [rotated, setRotated] = useState<{
+    stageName: string;
+    secret: string;
+  } | null>(null);
   const { pending, error, run } = useSubmit();
   const list = useListState({
     rows: keys,
@@ -148,11 +152,13 @@ function RuntimeKeysTable({
 
   async function confirmRotate(): Promise<void> {
     if (!rotating) return;
-    const done = await run(() =>
-      rotate({ projectId: projectId, stageId: rotating.stageId }).then(
-        () => undefined,
-      ),
-    );
+    const done = await run(async () => {
+      const result = await rotate({
+        projectId: projectId,
+        stageId: rotating.stageId,
+      });
+      setRotated({ stageName: rotating.stageName, secret: result.rawApiKey });
+    });
     if (done) setRotating(null);
   }
 
@@ -245,6 +251,14 @@ function RuntimeKeysTable({
           error={error}
           onConfirm={confirmRotate}
           onClose={() => setRotating(null)}
+        />
+      )}
+      {rotated && (
+        <RevealSecretDialog
+          title={`Save the new ${rotated.stageName} runtime key`}
+          label="runtime key"
+          secret={rotated.secret}
+          onClose={() => setRotated(null)}
         />
       )}
     </section>
@@ -484,7 +498,7 @@ function NewKeyDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New API key</DialogTitle>

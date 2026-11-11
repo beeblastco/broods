@@ -759,6 +759,7 @@ export declare const api: {
           oneShot?: boolean;
           startedAt: number;
           status: "started" | "completed" | "failed";
+          waitingOn?: Array<string>;
         }>
       >;
     };
@@ -1344,6 +1345,7 @@ export declare const api: {
           branch: string;
           conclusion?: string;
           error?: string;
+          runId: number;
           sha: string;
           status: string;
           updatedAt: number;
@@ -4245,7 +4247,7 @@ export declare const internal: {
       getById: FunctionReference<
         "query",
         "internal",
-        { accountId: Id<"accounts">; cronId: Id<"crons"> },
+        { accountId: Id<"accounts">; cronId: string },
         {
           _creationTime: number;
           _id: Id<"crons">;
@@ -4364,6 +4366,7 @@ export declare const internal: {
           result?: any;
           startedAt: number;
           status: "started" | "completed" | "failed";
+          waitingOn?: Array<string>;
         }>
       >;
       listRunsPage: FunctionReference<
@@ -4399,6 +4402,7 @@ export declare const internal: {
             result?: any;
             startedAt: number;
             status: "started" | "completed" | "failed";
+            waitingOn?: Array<string>;
           }>;
           pageStatus?: "SplitRecommended" | "SplitRequired" | null;
           splitCursor?: string | null;
@@ -4432,10 +4436,13 @@ export declare const internal: {
         "mutation",
         "internal",
         {
+          answered: Array<string>;
           conversationKey: string;
           error?: string;
+          ownerEventId: string;
           result?: any;
           status: "completed" | "failed";
+          waitingOn?: Array<string>;
         },
         null
       >;
@@ -6216,6 +6223,7 @@ export declare const internal: {
           branch: string;
           conclusion?: string;
           error?: string;
+          runId: number;
           sha: string;
           status: string;
           updatedAt: number;
@@ -8094,6 +8102,7 @@ export declare const internal: {
         accountId: Id<"accounts">;
         agentId: string;
         conversationKey: string;
+        expectedOwnerEventId?: string;
         expectedOwnerTaskId?: string;
       },
       { queuedCount: number; stopped: boolean }

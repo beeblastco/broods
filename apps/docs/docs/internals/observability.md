@@ -77,6 +77,8 @@ sequenceDiagram
 
 Traces take the same path with a Tempo search in place of the Loki query.
 
+Each core log line carries a `logId`, so a client drops the Loki copy of a line it already got live and keeps two lines that only look alike.
+
 | Limit               | Value                                                                                                                                                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Credential          | stage ticket `bdts_` (15 min), or a read-only `bdob_` (5 min at most, [the dock agent](security.md#the-dock-agent-reading-logs)). The runtime key is refused. Closes `4419` at expiry; reconnect fresh |

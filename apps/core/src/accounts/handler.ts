@@ -83,7 +83,9 @@ import {
 } from "@broods/convex/model/sandboxRules";
 import {
   CLIENT_ERROR_STATUS,
+  ClientError,
   clientErrorData,
+  clientErrorResponse,
 } from "@broods/convex/model/clientError";
 import {
   sealTerminalTicket,
@@ -304,10 +306,11 @@ async function handleSandboxLifecycleRoute(
     return errorResponse(404, "Sandbox not found");
   }
 
-  return await handleSandboxLifecycle(accountId, record, action, request);
+  return await handleSandboxLifecycle(auth, accountId, record, action, request);
 }
 
 async function handleSandboxLifecycle(
+  auth: AuthContext,
   accountId: string,
   record: SandboxConfigRecord,
   action: SandboxLifecycleAction,
@@ -350,7 +353,7 @@ async function handleSandboxLifecycle(
     }
   }
 
-  const actor = sandboxAuditActor(body.actor);
+  const actor = sandboxAuditActor(auth, body.actor);
   const context: SandboxLifecycleContext = {
     accountId: accountId,
     audit: async (result, details = {}): Promise<void> => {
@@ -796,9 +799,8 @@ function errorResponseForError(err: unknown): Response {
     return errorResponse(502, err.message);
   }
 
-  return errorResponse(
-    400,
-    err instanceof Error ? err.message : "Invalid request",
+  return (
+    clientErrorResponse(err) ?? errorResponse(500, "Internal server error")
   );
 }
 
@@ -852,16 +854,26 @@ function requireAccountAuth(
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {
-    throw new Error("Admin must use account-specific endpoints");
+    throw new ClientError("Admin must use account-specific endpoints");
   }
   if (auth.viaServiceToken && options.allowServiceToken !== true) {
-    throw new Error("Service token is not allowed for this account endpoint");
+    throw new ClientError(
+      "Service token is not allowed for this account endpoint",
+    );
   }
 
   return auth.account;
 }
 
-function sandboxAuditActor(input: unknown): SandboxAuditActor {
+// Only the config plane, on the service token, may name the dashboard user it acts for.
+function sandboxAuditActor(
+  auth: AuthContext,
+  input: unknown,
+): SandboxAuditActor {
+  if (auth.kind === "role") return { source: "service", id: auth.role.roleId };
+  if (auth.kind !== "account" || !auth.viaServiceToken) {
+    return { source: "service" };
+  }
   const value = parseOr(configObject, input);
   if (!value) {
     return { source: "unknown" };

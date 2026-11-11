@@ -299,7 +299,7 @@ Stateless; scale it with replicas.
 | `DASHBOARD_ASSET_ORIGIN`      | build time | CDN origin pulling `/_next/static` from here, with CORS. Unset serves them here |
 | `ADMIN_ACCOUNT_SECRET`        | runtime    | The admin sign-in key. At least 32 characters or the dashboard refuses to start |
 | `BROODS_SESSION_SIGNING_KEY`  | runtime    | Private ES256 JWK that signs the session                                        |
-| `CONVEX_SITE_URL`             | runtime    | A self-hosted Convex has no derivable `.convex.site` host                       |
+| `BROODS_BASE_URL`             | runtime    | The public host `broods login` hands the CLI. Login fails without it            |
 
 Make the key pair once. The first line goes to the dashboard, the second to Convex:
 

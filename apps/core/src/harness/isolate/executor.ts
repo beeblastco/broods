@@ -24,6 +24,7 @@ const RUNNER_ENV = Object.fromEntries(
 );
 // Added to the request size: a hook may hand back its whole input plus a result.
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
+const STDERR_TAIL_CHARS = 16 * 1024;
 
 export async function* streamIsolatePayload(
   accountId: string | undefined,
@@ -137,8 +138,7 @@ async function* streamViaOneShot(
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-      if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
+      stderr = (stderr + chunk).slice(-STDERR_TAIL_CHARS);
     });
     void exited
       .then(() => {
@@ -284,6 +284,7 @@ class IsolateWorker {
   readonly ready = this.#ready.promise;
 
   #buffer = "";
+  #stderr = "";
   #stdoutBytes = 0;
   #stdoutLimit = RUNNER_OUTPUT_LIMIT_BYTES;
   #sink: {
@@ -305,7 +306,9 @@ class IsolateWorker {
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (chunk: string) => this.#onData(chunk));
     this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", () => {});
+    this.child.stderr.on("data", (chunk: string) => {
+      this.#stderr = (this.#stderr + chunk).slice(-STDERR_TAIL_CHARS);
+    });
     const die = (error: Error): void => {
       this.alive = false;
       clearTimeout(this.#startup);
@@ -315,9 +318,14 @@ class IsolateWorker {
     this.child.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
-    this.child.once("exit", (code, signal) =>
-      die(new Error(`isolate worker exited (${signal ?? code})`)),
-    );
+    this.child.once("exit", (code, signal) => {
+      const stderr = this.#stderr.trim();
+      die(
+        new Error(
+          `isolate worker exited (${signal ?? code})${stderr ? `: ${stderr}` : ""}`,
+        ),
+      );
+    });
     this.child.stdin.once("error", (error) =>
       die(error instanceof Error ? error : new Error(String(error))),
     );
@@ -326,8 +334,7 @@ class IsolateWorker {
   #onData(chunk: string): void {
     this.#stdoutBytes += Buffer.byteLength(chunk);
     if (this.#stdoutBytes > this.#stdoutLimit) {
-      this.kill();
-      this.#sink?.fail(new Error("isolate output exceeded limit"));
+      this.kill(new Error("isolate output exceeded limit"));
 
       return;
     }
@@ -356,6 +363,8 @@ class IsolateWorker {
     request: Record<string, unknown>,
   ): AsyncGenerator<IsolateFrame, void, void> {
     const body = JSON.stringify(request) + "\n";
+    // A worker serves several tenants: an error quotes only this call's stderr.
+    this.#stderr = "";
     this.#stdoutBytes = 0;
     this.#stdoutLimit = RUNNER_OUTPUT_LIMIT_BYTES + Buffer.byteLength(body);
     const frames: IsolateFrame[] = [];
@@ -371,7 +380,7 @@ class IsolateWorker {
         wake = null;
       },
       fail: (error) => {
-        failure = error;
+        failure ??= error;
         done = true;
         wake?.();
         wake = null;
@@ -395,7 +404,8 @@ class IsolateWorker {
     }
   }
 
-  kill(): void {
+  kill(reason?: Error): void {
+    if (reason) this.#sink?.fail(reason);
     this.alive = false;
     try {
       this.child.kill("SIGKILL");
@@ -531,7 +541,9 @@ async function* streamViaPool(
 
   let terminalReceived = false;
   const guard = setTimeout(() => {
-    if (!terminalReceived) worker.kill();
+    if (!terminalReceived) {
+      worker.kill(new Error("isolate execution timed out"));
+    }
   }, runnerTimeoutMs() + 2_000);
   try {
     for await (const frame of worker.runCall(request)) {

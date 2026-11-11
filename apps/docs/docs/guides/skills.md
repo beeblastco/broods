@@ -67,7 +67,7 @@ Do not put credentials in a skill. Use [environment variables](deploying.md#secr
 
 ## Running scripts from a skill
 
-When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts ending in `.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs` or `.ts` are marked executable, so the agent can run them with `bash`. Every load copies a fresh version.
+When the agent has a workspace, `load_skill` also copies the bundle into it at `.claude/skills/<name>/`, mirrored at `.agents/skills/<name>/`. Scripts ending in `.sh`, `.bash`, `.zsh`, `.py`, `.js`, `.mjs` or `.ts` are marked executable, so the agent can run them with `bash`. Every load copies a fresh version. The copy lands in the workspace's own storage, a bring-your-own bucket included; a `disk` workspace gets no copy, since its files live only on its sandbox.
 
 Without a workspace, the instructions still load, but scripts cannot run in that turn.
 

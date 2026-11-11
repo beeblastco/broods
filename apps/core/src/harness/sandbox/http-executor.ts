@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import type { SandboxExecRequest } from "../../shared/domain/sandbox-config.ts";
 import {
@@ -45,7 +46,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     const options = this.#config.options ?? {};
     const endpoint = configString(options.endpoint);
     if (!endpoint) {
-      throw new Error("custom sandbox needs options.endpoint");
+      throw new ClientError("custom sandbox needs options.endpoint");
     }
     assertPublicHttpsUrl(endpoint, "custom sandbox endpoint");
     const token = configString(options.token);
@@ -56,7 +57,7 @@ export class HttpSandboxExecutor implements SandboxExecutor {
         ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
       )
     ) {
-      throw new Error(
+      throw new ClientError(
         "custom sandbox token or header still carries a ${NAME} ref: refs resolve when the sandbox syncs from code, not through the API",
       );
     }

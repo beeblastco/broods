@@ -9,7 +9,6 @@ import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   org: Doc<"orgs">;
@@ -22,18 +21,16 @@ export function OrgDangerPanel({ org }: Props): React.JSX.Element {
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function handleDelete(): Promise<void> {
     setDeleting(true);
-    setDeleteError(null);
     try {
       await removeOrg({ orgId: org._id });
       setDeleteOpen(false);
       router.replace("/");
     } catch (err) {
-      setDeleteError(toErrorMessage(err));
       setDeleting(false);
+      throw err;
     }
   }
 
@@ -59,18 +56,12 @@ export function OrgDangerPanel({ org }: Props): React.JSX.Element {
               variant="destructive"
               size="sm"
               className="cursor-pointer"
-              onClick={() => {
-                setDeleteError(null);
-                setDeleteOpen(true);
-              }}
+              onClick={() => setDeleteOpen(true)}
             >
               Delete
             </Button>
           )}
         </div>
-        {deleteError && (
-          <p className="text-xs text-destructive">{deleteError}</p>
-        )}
       </Section>
 
       <DeleteConfirmDialog
