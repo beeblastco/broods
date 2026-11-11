@@ -203,7 +203,11 @@ Branch on `code`, never on `message`. Each response also carries an `X-Request-I
 | 429    | `ingress_capacity`        | Conversation queue is full                                                                                                              |
 | 503    | `service_unavailable`     | `POST /v1/runs` when the deployment's run queue is full. Nothing is recorded or counted; retry after `Retry-After`. A plan refusal wins |
 
-On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
+On a streamed run, `conversation_busy`, `idempotency_conflict`, `ingress_capacity` and `service_unavailable` arrive as the only SSE `error` frame instead of a JSON body, with the same HTTP status, `code` and `Retry-After`. The frame names the error class `errorType`, since its `type` is `error`:
+
+```text
+data: {"type":"error","error":"Conversation is already processing another turn. Try again when the current turn finishes.","code":"conversation_busy","errorType":"conflict_error"}
+```
 
 ## Python example
 
@@ -271,7 +275,7 @@ The key opens a socket for its own stage only; another stage's path answers `403
 | `status`             | Later state of that input, with `appliedMode` and `appliedToEventId` |
 | `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`   |
 | `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl` |
-| `done`, `error`      | The run ended                                                        |
+| `done`, `error`      | The run ended. An `error` core refused carries `status` and `code`   |
 
 Besides AI SDK parts, `output.data` can be `question-request` (`questions`, answer with an `execute` carrying `answers`), `tool-approval-request` (`approvals`) and `waiting` (a heartbeat while async work is pending).
 

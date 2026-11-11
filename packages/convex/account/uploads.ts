@@ -4,6 +4,7 @@ import { internalMutation } from "../_generated/server";
 import {
   claimUploadedBlob,
   grantUpload,
+  isStorageOwned,
   type UploadGrant,
 } from "../model/uploads";
 
@@ -50,11 +51,7 @@ export const pruneOrphans = internalMutation({
         reachedCutoff = true;
         break;
       }
-      const referenced = await ctx.db
-        .query("workspaceFiles")
-        .withIndex("by_storageId", (q) => q.eq("storageId", blob._id))
-        .first();
-      if (referenced) continue;
+      if (await isStorageOwned(ctx, blob._id)) continue;
       await ctx.storage.delete(blob._id);
       deleted += 1;
     }
