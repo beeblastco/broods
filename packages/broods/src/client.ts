@@ -44,6 +44,8 @@ export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
+  /** Cancels only the request; a continue core already accepted keeps going. */
+  signal?: AbortSignal;
 }
 
 export interface AgentAnswerInput {
@@ -52,6 +54,8 @@ export interface AgentAnswerInput {
   /** One per open prompt, from an `awaiting_input` status's `questions`. */
   answers: [QuestionAnswer, ...QuestionAnswer[]];
   eventId?: string;
+  /** Cancels only the request; answers core already accepted still resume the run. */
+  signal?: AbortSignal;
 }
 
 export class IngressAcceptedError extends Error {
@@ -363,7 +367,7 @@ export class BroodsClient {
     };
     const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Continue");
+    return this.postAcceptedRun(targetUrl, body, "Continue", input.signal);
   }
 
   /** Settles open `ask_questions` prompts; the conversation resumes in the background. */
@@ -391,6 +395,7 @@ export class BroodsClient {
       method: "POST",
       headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: input.signal,
     });
     if (response.status !== 202) {
       throw new Error(
