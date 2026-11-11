@@ -2322,6 +2322,51 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
   }
 });
 
+test("a traces subscribe with agentId searches Tempo for that agent and echoes it on ready", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const searches: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = requestUrl(input);
+    if (url.includes("/api/search")) {
+      searches.push(new URL(url).searchParams.get("tags") ?? "");
+
+      return json({ traces: [] });
+    }
+
+    return json({ batches: [] });
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "traces",
+        backfill: 5,
+        historyOnly: true,
+        agentId: "ag_A",
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+
+    expect(sent[0]).toEqual({ type: "ready", agentId: "ag_A" });
+    expect(searches).toHaveLength(1);
+    expect(searches[0]).toEndWith(' agent_id="ag_A"');
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
 test("a traces backfill closes with the count of lookups Tempo could not serve", async () => {
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;

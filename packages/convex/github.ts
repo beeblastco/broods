@@ -706,7 +706,14 @@ export const unlinkFor = internalMutation({
   args: { authId: v.string(), projectId: v.id("projects") },
   returns: v.null(),
   handler: async (ctx, { authId, projectId }): Promise<null> => {
-    await clearLink(ctx, await requireLinkAccess(ctx, authId, projectId));
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    if (!project.repo) {
+      throw new ClientError(
+        `${project.name} has no linked repository.`,
+        "not_found",
+      );
+    }
+    await clearLink(ctx, project);
 
     return null;
   },
@@ -894,6 +901,7 @@ export const cliProject = internalQuery({
   returns: v.union(v.id("projects"), v.null()),
   handler: async (ctx, { orgId, slug }): Promise<Id<"projects"> | null> => {
     if (!slug.trim()) return null;
+    // Slug only, not resolveProject's order: existing repo links were made under this rule.
     const project = await ctx.db
       .query("projects")
       .withIndex("by_orgId_and_slug", (q) =>

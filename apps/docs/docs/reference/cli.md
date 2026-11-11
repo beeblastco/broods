@@ -146,7 +146,7 @@ Forgets the connection and revokes its refresh token at the provider.
 
 ## whoami
 
-Shows the login, server, organization, plan, project and stage the next command will use.
+Shows the login, server, organization, plan, project and stage the next command will use. Exits 1 when no login is saved for the server, so `broods whoami && broods deploy` stops early.
 
 ```bash
 broods whoami
@@ -342,7 +342,7 @@ The trace id is the 32-character id on the run in the dashboard Tracing tab. Its
 
 ## runs
 
-Prints the stage's recent runs, newest first, with the trace id `broods trace` takes. Needs a `broods login` token and a deployed stage.
+Prints the stage's recent runs, newest first, with the trace id `broods trace` takes. Needs a `broods login` token and a deployed stage. `--agent` asks the gateway for that agent's runs only. `--status` filters the newest 500 runs. Both search the last seven days.
 
 ```bash
 broods runs [--limit <n>] [--agent <id>] [--status <status>] [--json]
@@ -423,7 +423,7 @@ broods github connect                    # install the Broods GitHub App on anot
 | `--development-branch <name\|none>` | Branch Development deploys from, created when missing. Default: `dev` beside Production, else the default branch      |
 | `--json`                            | Print the result as JSON                                                                                              |
 
-`none` leaves that stage out: no key for it, and no push deploys it. Linking the project's repo again changes its branches in place: new keys, the old ones revoked. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
+`none` leaves that stage out: no key for it, and no push deploys it. Linking the project's repo again changes its branches in place: new keys, the old ones revoked. Naming a Production branch adds the Production stage when the project has none. The two branches must differ. `unlink` on a project with no linked repo fails with a not-found error. Linking and unlinking need `keys:write` on the project, `connect` an org admin. The commands use your `broods login` and act in its organization.
 
 ## stage
 

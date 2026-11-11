@@ -62,7 +62,7 @@ test("uses the login for the server .env.local names, not the latest one", async
   expect(prod.paths).toEqual([]);
 });
 
-test("refuses another server's login when .env.local names one without a login", async (): Promise<void> => {
+test("refuses another server's login and exits non-zero when .env.local names one without a login", async (): Promise<void> => {
   const prod = serveBackend();
   const home = await homeWithLogins([prod.baseUrl]);
   const cwd = await workdir(['BROODS_BASE_URL="https://gateway.dev.example"']);
@@ -72,6 +72,7 @@ test("refuses another server's login when .env.local names one without a login",
   expect(result.stdout).toContain(
     "Not logged in to https://gateway.dev.example.",
   );
+  expect(result.exitCode).toBe(1);
   expect(prod.paths).toEqual([]);
 });
 
