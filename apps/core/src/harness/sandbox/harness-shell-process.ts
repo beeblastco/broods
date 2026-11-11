@@ -133,7 +133,7 @@ export class HarnessShellProcess {
     return process;
   }
 
-  /** Reads both streams whole; on a failure it kills and awaits the command, then throws. */
+  /** Reads both streams whole; on a failure it kills, awaits the kill unless aborted, throws. */
   async collect(): Promise<{
     exitCode: number;
     stdout: string;
@@ -148,9 +148,12 @@ export class HarnessShellProcess {
 
       return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
     } catch (error) {
-      await this.kill()
+      const cleanup = this.kill()
         .then(() => this.wait())
         .catch(() => {});
+      await raceWithAbort(cleanup, this.#abortSignal, () => this.kill()).catch(
+        () => {},
+      );
       throw error;
     }
   }

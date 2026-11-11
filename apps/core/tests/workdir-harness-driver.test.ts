@@ -153,9 +153,9 @@ describe("WorkdirHarnessDriver", () => {
     const run = session.runCommand({ command: "cat big.bin" });
 
     await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
-    await expect(run).rejects.toThrow("stdout is over the 16 MiB");
     expect(fake.killCalls).toBe(1);
     expect(fake.runningProcesses).toBe(0);
+    await expect(run).rejects.toThrow("stdout is over the 16 MiB");
     const execCalls = fake.execCalls;
     await Bun.sleep(200);
     expect(fake.execCalls).toBe(execCalls);

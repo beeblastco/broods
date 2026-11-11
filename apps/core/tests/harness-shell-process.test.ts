@@ -5,12 +5,14 @@ import { join } from "node:path";
 import {
   HARNESS_OUTPUT_MAX_BYTES,
   type HarnessShellExecutor,
+  HarnessShellProcess,
   readFileChunk,
   readHarnessStream,
 } from "../src/harness/sandbox/harness-shell-process.ts";
 import { SandboxOutputTooLargeError } from "../src/shared/errors.ts";
 
 const CHUNK_BYTES = 180 * 1024;
+const SLOW_KILL_MS = 1000;
 
 const bash: HarnessShellExecutor = {
   exec: async function (command) {
@@ -50,6 +52,41 @@ describe("harness shell process", () => {
     expect(cancelled).toBe(true);
   });
 
+  test("returns an abort at once while a slow kill runs on", async () => {
+    const sandbox = slowKillSandbox(new Uint8Array());
+    const controller = new AbortController();
+    const failure = new DOMException("run stopped", "AbortError");
+    const process = await HarnessShellProcess.start({
+      executor: sandbox.executor,
+      command: "sleep 60",
+      workingDirectory: "/workspace",
+      abortSignal: controller.signal,
+    });
+    const started = performance.now();
+    setTimeout(() => controller.abort(failure), 100);
+
+    await expect(process.collect()).rejects.toBe(failure);
+    expect(performance.now() - started).toBeLessThan(SLOW_KILL_MS / 2);
+    expect(sandbox.killed).toBe(false);
+  });
+
+  test("waits for a slow kill past the output cap and throws the output error", async () => {
+    const sandbox = slowKillSandbox(
+      new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
+    );
+    const process = await HarnessShellProcess.start({
+      executor: sandbox.executor,
+      command: "cat big.bin",
+      workingDirectory: "/workspace",
+      abortSignal: new AbortController().signal,
+    });
+
+    await expect(process.collect()).rejects.toBeInstanceOf(
+      SandboxOutputTooLargeError,
+    );
+    expect(sandbox.killed).toBe(true);
+  });
+
   test("stamps a symlinked file with the size of the file it points to", async () => {
     const dir = await mkdtemp(join(tmpdir(), "harness-shell-"));
     try {
@@ -64,3 +101,39 @@ describe("harness shell process", () => {
     }
   });
 });
+
+function slowKillSandbox(stdout: Uint8Array): {
+  executor: HarnessShellExecutor;
+  readonly killed: boolean;
+} {
+  let killed = false;
+  const executor: HarnessShellExecutor = {
+    exec: async function (command) {
+      if (command.includes("kill -TERM")) {
+        await Bun.sleep(SLOW_KILL_MS);
+        killed = true;
+
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (command.includes("echo running")) {
+        return {
+          exitCode: 0,
+          stdout: killed ? "done 143" : "running",
+          stderr: "",
+        };
+      }
+      const offset = Number(command.match(/tail -c \+(\d+)/)?.[1] ?? 0) - 1;
+      const bytes = command.includes(".stdout'") ? stdout.subarray(offset) : [];
+      const encoded = offset < 0 ? "" : Buffer.from(bytes).toString("base64");
+
+      return { exitCode: 0, stdout: `0 0 0\n${encoded}`, stderr: "" };
+    },
+  };
+
+  return {
+    executor: executor,
+    get killed() {
+      return killed;
+    },
+  };
+}
