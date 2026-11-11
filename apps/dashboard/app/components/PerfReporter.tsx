@@ -61,32 +61,22 @@ export function PerfReporter(): null {
   useEffect(() => {
     if (typeof PerformanceObserver === "undefined") return;
 
-    let observer: PerformanceObserver;
-    try {
-      // Long animation frames name the script behind a slow frame; only Chromium has them.
-      const framed =
-        PerformanceObserver.supportedEntryTypes.includes(LONG_FRAME);
-      observer = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          const frame = framed ? (entry as LongAnimationFrame) : null;
-          if (frame)
-            recentFrames = [...recentFrames, frame].slice(-RECENT_FRAMES);
-          if (entry.duration < LONG_TASK_FLOOR_MS) continue;
-          reportPerf("long-task", entry.duration, {
-            attributes: frame ? scriptAttributes([frame]) : {},
-          });
-        }
-      });
-      // Not every browser ships the longtask entry type.
-      observer.observe({
-        type: framed ? LONG_FRAME : "longtask",
-        buffered: true,
-      });
-    } catch {
-      return;
-    }
+    const observers = [
+      observe("longtask", (entry) => {
+        if (entry.duration >= LONG_TASK_FLOOR_MS)
+          reportPerf("long-task", entry.duration);
+      }),
+      // Long animation frames name the script behind a slow INP; only Chromium has them.
+      observe(LONG_FRAME, (entry) => {
+        recentFrames = [...recentFrames, entry as LongAnimationFrame].slice(
+          -RECENT_FRAMES,
+        );
+      }),
+    ];
 
-    return () => observer.disconnect();
+    return () => {
+      for (const observer of observers) observer?.disconnect();
+    };
   }, []);
 
   return null;
@@ -107,6 +97,20 @@ function invokerLabel(invoker: string): string {
   if (URL.canParse(invoker)) return scriptSource(invoker);
 
   return invoker.replace(/[#[].*(\.on\w+)$/, "$1");
+}
+
+// Not every browser ships every entry type; an unsupported one observes nothing.
+function observe(
+  type: string,
+  onEntry: (entry: PerformanceEntry) => void,
+): PerformanceObserver | null {
+  if (!PerformanceObserver.supportedEntryTypes.includes(type)) return null;
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) onEntry(entry);
+  });
+  observer.observe({ type: type, buffered: true });
+
+  return observer;
 }
 
 function scriptAttributes(

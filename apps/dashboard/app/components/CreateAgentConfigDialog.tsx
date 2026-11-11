@@ -32,6 +32,9 @@ import { useRef, useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
 
+// `required` accepts whitespace; the submit check trims, so native validation must too.
+const NOT_BLANK = ".*\\S.*";
+
 const providerOptions: Array<{
   value: AgentProvider;
   label: string;
@@ -154,6 +157,7 @@ export function CreateAgentConfigDialog({
                 ref={nameInput}
                 id="agent-name"
                 required={true}
+                pattern={NOT_BLANK}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Agent"
@@ -201,6 +205,7 @@ export function CreateAgentConfigDialog({
               <Input
                 id="agent-model"
                 required={true}
+                pattern={NOT_BLANK}
                 spellCheck={false}
                 autoCapitalize="none"
                 autoCorrect="off"

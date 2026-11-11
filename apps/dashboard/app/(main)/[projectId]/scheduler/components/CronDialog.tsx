@@ -407,7 +407,7 @@ export function CronDialog({
                 >
                   {showTimezoneError
                     ? "Unknown timezone. Pick one from the list."
-                    : nextRun !== null && zoneFormat
+                    : status === "active" && nextRun !== null && zoneFormat
                       ? `Next run ${zoneFormat.format(nextRun)}`
                       : null}
                 </p>
