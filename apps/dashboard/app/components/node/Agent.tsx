@@ -27,8 +27,8 @@ export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
   const voice = (badge?.voice ?? null) as AgentVoice | null;
   const voiceLabel = voice
     ? voice.native
-      ? "hears voice"
-      : `voice via ${agentProviderLabel(voice.provider)}`
+      ? "native"
+      : agentProviderLabel(voice.provider)
     : null;
   const featureRows = useMemo(
     () => [
