@@ -284,10 +284,12 @@ describe("an AuthKit user at /mcp", () => {
     });
   });
 
-  test("an admin of several orgs names one in the URL, whatever the dashboard shows", async () => {
+  test("an admin of several orgs with no active one among them names one in the URL", async () => {
     const t = loginTest();
     const acme = await seedOrg(t, "acme", { [AUTH_ID]: "owner" });
     await seedOrg(t, "globex", { [AUTH_ID]: "owner" });
+    await seedOrg(t, "initech", { [AUTH_ID]: "member" });
+    await setActive(t, AUTH_ID, "initech");
 
     expect(await signIn(t, AUTH_ID)).toEqual({
       refused:
@@ -301,7 +303,7 @@ describe("an AuthKit user at /mcp", () => {
     });
   });
 
-  test("being added as admin elsewhere keeps an owner signed in to the org they created", async () => {
+  test("being added as admin by a stranger keeps a user in their active org", async () => {
     const t = loginTest();
     const home = await seedOrg(
       t,
@@ -309,9 +311,12 @@ describe("an AuthKit user at /mcp", () => {
       { auth_victim: "owner" },
       "auth_victim",
     );
-    const stranger = await seedOrg(t, "stranger", {
-      [AUTH_ID]: "owner",
-      auth_victim: "admin",
+    await setActive(t, "auth_victim", "home");
+    const stranger = await seedOrg(t, "stranger", { [AUTH_ID]: "owner" });
+    await t.mutation(api.org.members.add, {
+      orgId: await orgBySlug(t, "stranger"),
+      email: "auth_victim@example.com",
+      role: "admin",
     });
 
     const unnamed = await signIn(t, "auth_victim");
@@ -319,4 +324,48 @@ describe("an AuthKit user at /mcp", () => {
     const named = await signIn(t, "auth_victim", "stranger");
     expect("account" in named && named.account._id).toBe(stranger);
   });
+
+  test("a team admin with an auto-created workspace lands in the team org they switched to", async () => {
+    const t = loginTest();
+    const personal = await seedOrg(
+      t,
+      "personal",
+      { auth_alice: "owner" },
+      "auth_alice",
+    );
+    await setActive(t, "auth_alice", "personal");
+    const team = await seedOrg(t, "team", {
+      [AUTH_ID]: "owner",
+      auth_alice: "admin",
+    });
+    await setActive(t, "auth_alice", "team");
+
+    const unnamed = await signIn(t, "auth_alice");
+    expect("account" in unnamed && unnamed.account._id).toBe(team);
+    const named = await signIn(t, "auth_alice", "personal");
+    expect("account" in named && named.account._id).toBe(personal);
+  });
+
+  async function orgBySlug(t: T, slug: string): Promise<Id<"orgs">> {
+    const org = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("orgs")
+          .withIndex("by_slug", (q) => q.eq("slug", slug))
+          .unique(),
+    );
+
+    return org!._id;
+  }
+
+  async function setActive(t: T, authId: string, slug: string): Promise<void> {
+    const orgId = await orgBySlug(t, slug);
+    await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", authId))
+        .unique();
+      await ctx.db.patch(user!._id, { activeOrgId: orgId });
+    });
+  }
 });
