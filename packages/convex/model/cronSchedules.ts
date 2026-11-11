@@ -35,6 +35,17 @@ export async function deleteRegistrationIfExists(
   }
 }
 
+export async function deleteRunWaits(
+  ctx: MutationCtx,
+  runId: Id<"cronRuns">,
+): Promise<void> {
+  for await (const wait of ctx.db
+    .query("cronRunWaits")
+    .withIndex("by_runId", (q) => q.eq("runId", runId))) {
+    await ctx.db.delete(wait._id);
+  }
+}
+
 // Returns an at(...) job's `scheduledRunId` for the caller's own row write: one patch per mutation.
 export async function registerSchedule(
   ctx: MutationCtx,

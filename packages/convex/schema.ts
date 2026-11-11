@@ -1281,6 +1281,9 @@ export const cronRunsFields = {
   // The scoped id of the run's envelope; `eventId` is the public one. Absent on older rows.
   ingressEventId: v.optional(v.string()),
   ingressConversationKey: v.optional(v.string()),
+  // While paused: the approval ids or question status ids an answer must name to settle this run.
+  // Absent only on rows created before it existed.
+  waitingOn: v.optional(v.array(v.string())),
   // Fixed at fire time: the job can be rescheduled while this run is still open.
   oneShot: v.optional(v.boolean()),
   conversationKey: v.string(),
@@ -1293,6 +1296,12 @@ export const cronRunsFields = {
   error: v.optional(v.string()),
   startedAt: v.number(),
   completedAt: v.optional(v.number()),
+};
+
+export const cronRunWaitsFields = {
+  conversationKey: v.string(),
+  promptId: v.string(),
+  runId: v.id("cronRuns"),
 };
 
 export const taskUsageFields = {
@@ -1752,7 +1761,12 @@ export default defineSchema({
     .index("by_ingressConversationKey_and_status", [
       "ingressConversationKey",
       "status",
-    ]),
+    ])
+    .index("by_ingressEventId", ["ingressEventId"]),
+  // One row per id in a paused run's `waitingOn`: Convex can not index an array's items.
+  cronRunWaits: defineTable(cronRunWaitsFields)
+    .index("by_conversationKey_and_promptId", ["conversationKey", "promptId"])
+    .index("by_runId", ["runId"]),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
     .index("by_accountId_and_endpointId_and_finishedAt", [

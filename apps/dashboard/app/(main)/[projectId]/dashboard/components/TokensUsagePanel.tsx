@@ -18,6 +18,7 @@ import {
 import { useModelRates } from "@/app/hooks/useModelRates";
 import { useTween } from "@/app/hooks/useTween";
 import { formatNumber } from "@/app/lib/formatNumber";
+import { formatDuration } from "@/app/lib/formatTime";
 import {
   formatUsd,
   isModelCallSpan,
@@ -622,7 +623,7 @@ function UsageStats({
       value: formatNumber(values[2]),
       detail:
         scope.invocations > 0
-          ? `${formatMs(perTask(scope.runtimeWallMs, scope.invocations))} average run`
+          ? `${formatDuration(perTask(scope.runtimeWallMs, scope.invocations))} average run`
           : "No runs",
       trend: bins.map((b) => b.invocations),
       color: "var(--color-usage-tasks)",
@@ -814,12 +815,6 @@ function fillBucketsAcrossRange(
   );
 
   return out;
-}
-
-function formatMs(ms: number): string {
-  if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`;
-
-  return `${Math.round(ms)}ms`;
 }
 
 // A call counts under its running root span, not the trace a subtask shares, so a
