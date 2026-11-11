@@ -206,7 +206,7 @@ it("meters nothing for a call that never reached the Worker", async (): Promise<
 });
 
 it("meters nothing for a call the Worker refused before running anything", async (): Promise<void> => {
-  for (const status of [400, 401, 404]) {
+  for (const status of [400, 401, 404, 410]) {
     mockFetch(
       async (): Promise<Response> =>
         new Response("refused", { status: status }),

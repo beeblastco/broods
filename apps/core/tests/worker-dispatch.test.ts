@@ -468,7 +468,9 @@ describe("streamed runs", (): void => {
 
     expect(response.status).toBe(503);
     expect(response.headers.get("retry-after")).toBe("5");
-    expect(await response.text()).toContain("In-process worker queue is full");
+    expect(await response.text()).toBe(
+      `data: {"type":"error","error":"In-process worker queue is full","code":"service_unavailable","errorType":"overloaded_error"}\n\n`,
+    );
     const recordedBy503 = recorded.size;
     const settledBy503 = settles().length;
 
