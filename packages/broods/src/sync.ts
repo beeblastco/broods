@@ -7,13 +7,23 @@ import type {
 } from "./contracts.ts";
 import { errorEnvelope } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
-import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import {
+  INLINE_MCP_BUNDLE_BYTES,
+  sha256Hex,
+  type SkillManifestConfig,
+} from "./manifest.ts";
 import { snapshotResource } from "../../convex/model/manifestSnapshot.ts";
 import type { StageSource } from "../../convex/model/stageSource.ts";
 import { stableJson } from "../../convex/model/objects.ts";
+import { MAX_CLI_SKILL_SYNC_BYTES } from "../../convex/model/skillLimits.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+
+// The 409 `skill_upload_required` body: the skills whose files the server does not hold.
+interface SkillUploadRequired {
+  skills: string[];
+}
 
 export interface SyncClientOptions {
   baseUrl: string;
@@ -223,25 +233,46 @@ export class BroodsSyncClient {
     revision?: number,
     source?: StageSource,
   ): Promise<RemoteManifestResponse> {
-    const uploaded = await this.externalizeLargeMcpBundles(manifest);
-    const response = await this.request(
-      manifest.project,
-      manifest.stage,
-      "/manifest",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          manifest: uploaded,
-          prune: prune,
-          rotateRuntimeKey: rotateRuntimeKey,
-          ...(revision !== undefined ? { revision: revision } : {}),
-          ...(source ? { source: source } : {}),
-        }),
-      },
-      // A sync deploys MCP bundles and can hold the connection for minutes.
-      null,
-    );
+    const bundled = await this.externalizeLargeMcpBundles(manifest);
+    const put = async (uploaded: CliManifest): Promise<Response> =>
+      await this.request(
+        manifest.project,
+        manifest.stage,
+        "/manifest",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            manifest: uploaded,
+            prune: prune,
+            rotateRuntimeKey: rotateRuntimeKey,
+            ...(revision !== undefined ? { revision: revision } : {}),
+            ...(source ? { source: source } : {}),
+          }),
+        },
+        // A sync deploys MCP bundles and can hold the connection for minutes.
+        null,
+      );
+    const first = await this.externalizeLargeSkills(bundled);
+    let response = await put(first);
+    const refusal =
+      response.status === 409 ? await response.clone().text() : "";
+    if (errorEnvelope(refusal).code === "skill_upload_required") {
+      const stale = new Set(
+        (JSON.parse(refusal) as SkillUploadRequired).skills,
+      );
+      response = await put({
+        ...first,
+        resources: await Promise.all(
+          bundled.resources.map(
+            async (resource, index): Promise<CliManifestResource> =>
+              resource.kind === "skill" && stale.has(resource.name)
+                ? await this.uploadSkill(manifest, resource)
+                : (first.resources[index] ?? resource),
+          ),
+        ),
+      });
+    }
     await assertOk(response, "Sync manifest failed");
 
     return (await response.json()) as RemoteManifestResponse;
@@ -267,10 +298,13 @@ export class BroodsSyncClient {
           string,
           unknown
         >;
-        const storageId = await this.uploadMcpBundle(
+        const storageId = await this.upload(
           manifest.project,
           manifest.stage,
+          "/mcp-bundle-uploads",
           bundle,
+          "application/javascript",
+          `MCP server ${resource.name}`,
         );
 
         return {
@@ -287,36 +321,89 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  private async uploadMcpBundle(
+  // One upload per skill that does not fit inline, but for one this stage last synced unchanged.
+  private async externalizeLargeSkills(
+    manifest: CliManifest,
+  ): Promise<CliManifest> {
+    const large = skillsToUpload(manifest.resources);
+    if (large.size === 0) return manifest;
+    const remote = await this.getManifest(manifest.project, manifest.stage);
+
+    const resources = await Promise.all(
+      manifest.resources.map(async (resource): Promise<CliManifestResource> => {
+        if (resource.kind !== "skill" || !large.has(resource.name)) {
+          return resource;
+        }
+        const held = remote?.manifest.resources.find(
+          (entry): boolean =>
+            entry.kind === "skill" && entry.name === resource.name,
+        );
+
+        return held &&
+          stableJson(snapshotResource(held)) ===
+            stableJson(snapshotResource(resource))
+          ? withoutSkillContent(resource)
+          : await this.uploadSkill(manifest, resource);
+      }),
+    );
+
+    return { ...manifest, resources: resources };
+  }
+
+  private async upload(
     project: string,
     stage: string,
-    bundle: string,
+    route: "/mcp-bundle-uploads" | "/skill-uploads",
+    body: string | Buffer<ArrayBuffer>,
+    contentType: string,
+    label: string,
   ): Promise<string> {
-    const minted = await this.request(project, stage, "/mcp-bundle-uploads", {
+    const minted = await this.request(project, stage, route, {
       method: "POST",
     });
-    await assertOk(minted, "Mint bundle upload URL failed");
+    await assertOk(minted, `Mint upload URL for ${label} failed`);
     const { uploadUrl } = (await minted.json()) as { uploadUrl?: string };
     if (!uploadUrl)
       throw new Error(
-        "Mint bundle upload URL failed: response omitted uploadUrl",
+        `Mint upload URL for ${label} failed: response omitted uploadUrl`,
       );
-    // Bundles run to tens of MB, so no fixed timeout fits a slow uplink.
+    // Uploads run to tens of MB, so no fixed timeout fits a slow uplink.
     const stored = await this.send(
       uploadUrl,
       {
         method: "POST",
-        headers: { "Content-Type": "application/javascript" },
-        body: bundle,
+        headers: { "Content-Type": contentType },
+        body: body,
       },
       null,
     );
-    await assertOk(stored, "Bundle upload failed");
+    await assertOk(stored, `Upload of ${label} failed`);
     const { storageId } = (await stored.json()) as { storageId?: string };
     if (!storageId)
-      throw new Error("Bundle upload failed: response omitted storageId");
+      throw new Error(`Upload of ${label} failed: response omitted storageId`);
 
     return storageId;
+  }
+
+  private async uploadSkill(
+    manifest: CliManifest,
+    resource: CliManifestResource,
+  ): Promise<CliManifestResource> {
+    const config = resource.config as SkillManifestConfig;
+    const storageId = await this.upload(
+      manifest.project,
+      manifest.stage,
+      "/skill-uploads",
+      Buffer.concat(
+        config.files.map((file): Buffer =>
+          Buffer.from(file.contentBase64, "base64"),
+        ),
+      ),
+      "application/octet-stream",
+      `skill ${resource.name}`,
+    );
+
+    return withoutSkillContent(resource, storageId);
   }
 
   async getRuntimeKey(
@@ -877,6 +964,29 @@ function networkFailureReason(
     : error.message;
 }
 
+// Largest skills first, until the rest fit in one sync's inline budget.
+function skillsToUpload(resources: CliManifestResource[]): Set<string> {
+  const skills = resources
+    .filter((resource): boolean => resource.kind === "skill")
+    .map((resource): { name: string; bytes: number } => ({
+      name: resource.name,
+      bytes: (resource.config as SkillManifestConfig).files.reduce(
+        (sum, file): number => sum + file.size,
+        0,
+      ),
+    }))
+    .sort((a, b): number => b.bytes - a.bytes);
+  let inline = skills.reduce((sum, skill): number => sum + skill.bytes, 0);
+  const upload = new Set<string>();
+  for (const skill of skills) {
+    if (inline <= MAX_CLI_SKILL_SYNC_BYTES) break;
+    upload.add(skill.name);
+    inline -= skill.bytes;
+  }
+
+  return upload;
+}
+
 function largeBundleOf(
   resource: CliManifest["resources"][number],
 ): string | null {
@@ -885,4 +995,28 @@ function largeBundleOf(
   if (typeof bundle !== "string") return null;
 
   return Buffer.byteLength(bundle) > INLINE_MCP_BUNDLE_BYTES ? bundle : null;
+}
+
+// Declares a skill's files without their bytes: the account holds them, or `filesStorageId` does.
+function withoutSkillContent(
+  resource: CliManifestResource,
+  filesStorageId?: string,
+): CliManifestResource {
+  const config = resource.config as SkillManifestConfig;
+
+  return {
+    ...resource,
+    config: {
+      ...config,
+      files: config.files.map(
+        ({
+          contentBase64: _content,
+          ...file
+        }): Omit<SkillManifestConfig["files"][number], "contentBase64"> => file,
+      ),
+      ...(filesStorageId !== undefined
+        ? { filesStorageId: filesStorageId }
+        : {}),
+    },
+  };
 }

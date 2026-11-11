@@ -188,6 +188,7 @@ On every sync `dev`:
 - pushes each `env("NAME")` value from `.env.local` that the stage does not already hold, like `env sync`
 - asks about each remote resource you removed from code and deletes only the ones you confirm
 - sends the stage revision it read, so a sync from another session in between refuses the write instead of overwriting it; `dev` then reads the stage again, reprints the diff and tries again, three attempts in all, and asks again before any delete
+- uploads each skill too large to send inline when anything in its definition changed since this stage last synced it, its files or a moved skill folder alike, or when the account no longer holds exactly those files (another stage or the dashboard may have replaced them); when the server names skills it does not hold, `dev` uploads only those and sends the manifest once more
 - regenerates `broods/_generated/`
 - writes a new user token signing secret to `.env.local` as `BROODS_USER_TOKEN_SECRET` when the stage has none yet, and warns when the stage has one this checkout does not hold (see [Signing secret](#signing-secret))
 - prints each channel's webhook URL

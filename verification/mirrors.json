@@ -97,7 +97,8 @@
   },
   "Sync": {
     "packages/broods/src/sync.ts": {
-      "BroodsSyncClient.putManifest": "60bad401d9f1e015",
+      "BroodsSyncClient.putManifest": "e7703a9b3a7a5ad2",
+      "BroodsSyncClient.externalizeLargeSkills": "5cf42d70d34fc2bd",
       "diffManifests": "e0ebfd1eed42c281",
       "renameSnapshot": "2f385a52543abc07",
       "isRenamableKind": "382365924c44b5aa"
@@ -110,11 +111,14 @@
     },
     "packages/convex/model/cliSyncManifest.ts": {
       "resourcesForStage": "8b080375b990bd58"
+    },
+    "packages/convex/aws/skills.ts": {
+      "unheld": "1986f24ff960ed0e"
     }
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "f8064afcdfa76e64"
+      "handleManifestSync": "3096783227178501"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "76a45716a84d6dda",

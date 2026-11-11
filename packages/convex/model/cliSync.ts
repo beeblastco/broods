@@ -694,7 +694,12 @@ export function snapshotExternalConfig(value: unknown): unknown {
   if (object) {
     return Object.fromEntries(
       Object.entries(object).flatMap(([key, entry]) => {
-        if (key === "contentBase64" || key === "bundle") return [];
+        if (
+          key === "contentBase64" ||
+          key === "bundle" ||
+          key === "filesStorageId"
+        )
+          return [];
         if (key === "files" && Array.isArray(entry)) {
           return [
             [

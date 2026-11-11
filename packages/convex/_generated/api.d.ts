@@ -4089,13 +4089,13 @@ export declare const internal: {
       claim: FunctionReference<
         "mutation",
         "internal",
-        { storageId: Id<"_storage"> },
+        { maxBytes?: number; storageId: Id<"_storage"> },
         null
       >;
       grant: FunctionReference<
         "mutation",
         "internal",
-        { accountId: Id<"accounts">; kind: "mcp" | "workspace" },
+        { accountId: Id<"accounts">; kind: "mcp" | "skill" | "workspace" },
         { uploadUrl: string } | { retryAt: number }
       >;
       pruneOrphans: FunctionReference<
@@ -5267,7 +5267,12 @@ export declare const internal: {
       createSkill: FunctionReference<
         "action",
         "internal",
-        { accountId: Id<"accounts">; expectedName?: string; input: any },
+        {
+          accountId: Id<"accounts">;
+          expectedName?: string;
+          filesStorageId?: Id<"_storage">;
+          input: any;
+        },
         {
           description: string;
           files: Array<{ path: string; size?: number }>;
@@ -5298,10 +5303,55 @@ export declare const internal: {
         { accountId: Id<"accounts">; skillName: string },
         boolean
       >;
+      storeUploadedFiles: FunctionReference<
+        "action",
+        "internal",
+        {
+          files: Array<{
+            contentType?: string;
+            path: string;
+            sha256: string;
+            size: number;
+          }>;
+          filesStorageId: Id<"_storage">;
+        },
+        Array<{
+          mimeType: string;
+          path: string;
+          sizeBytes: number;
+          storageId: Id<"_storage">;
+        }>
+      >;
+      unheld: FunctionReference<
+        "action",
+        "internal",
+        {
+          accountId: Id<"accounts">;
+          project: string;
+          secretHash: string;
+          skills: Array<{
+            files: Array<{
+              contentType?: string;
+              path: string;
+              sha256: string;
+              size: number;
+            }>;
+            name: string;
+          }>;
+          stage: string;
+        },
+        Array<string>
+      >;
       validateSkills: FunctionReference<
         "action",
         "internal",
-        { skills: Array<{ files: any; name: string }> },
+        {
+          skills: Array<{
+            files: any;
+            filesStorageId?: Id<"_storage">;
+            name: string;
+          }>;
+        },
         null
       >;
     };
@@ -6209,6 +6259,20 @@ export declare const internal: {
           value: string;
         },
         null
+      >;
+      staleSkillNodes: FunctionReference<
+        "query",
+        "internal",
+        {
+          project: string;
+          secretHash: string;
+          skills: Array<{
+            files: Array<{ path: string; sha256: string }>;
+            name: string;
+          }>;
+          stage: string;
+        },
+        Array<string>
       >;
       syncManifestBySecretHash: FunctionReference<
         "mutation",

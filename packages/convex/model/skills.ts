@@ -8,11 +8,19 @@ import {
   MAX_SKILL_METADATA_BYTES,
   SKILL_FILE,
 } from "./skillRules";
-import { deleteS3Prefix, listS3Prefix, readS3Text, writeS3Object } from "./s3";
+import {
+  deleteS3Object,
+  deleteS3Prefix,
+  headS3Object,
+  listS3Prefix,
+  readS3Text,
+  writeS3Object,
+} from "./s3";
 import { ClientError } from "./clientError";
 import { MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_FILE_BYTES } from "./skillLimits";
 
 const MAX_SKILL_ARCHIVE_BYTES = 2 * MAX_SKILL_BUNDLE_BYTES;
+const CONTENT_HASH_KEY = "content-sha256";
 
 const TEXT_EXTENSIONS = new Set([
   ".css",
@@ -54,6 +62,7 @@ export interface StoredSkill extends SkillMetadata {
 export interface ValidatedSkillBundle {
   metadata: Omit<SkillMetadata, "path">;
   files: SkillBundleFile[];
+  skillFile: SkillBundleFile;
 }
 
 export function createJsonSkillFiles(
@@ -74,24 +83,33 @@ export function createJsonSkillFiles(
   ];
 }
 
+// SKILL.md holds `contentHash`: deleted first, written last, so a failed replace is never held.
 export async function createOrReplaceSkill(
   accountId: string,
   input: SkillBundleFile[],
+  contentHash?: string,
 ): Promise<StoredSkill> {
-  const { metadata, files } = validateSkillBundle(input);
+  const { metadata, files, skillFile } = validateSkillBundle(input);
   const skillPath = `${accountId}/${metadata.name}`;
+  const write = async (file: SkillBundleFile, hash?: string): Promise<number> =>
+    await writeS3Object(
+      skillsBucketName(),
+      `${skillPath}/${file.path}`,
+      file.bytes,
+      {
+        contentType: file.contentType ?? contentTypeForSkillPath(file.path),
+        ...(hash !== undefined
+          ? { metadata: { [CONTENT_HASH_KEY]: hash } }
+          : {}),
+      },
+    );
 
+  await deleteS3Object(skillsBucketName(), `${skillPath}/${SKILL_FILE}`);
   await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
   await Promise.all(
-    files.map((file) =>
-      writeS3Object(
-        skillsBucketName(),
-        `${skillPath}/${file.path}`,
-        file.bytes,
-        { contentType: file.contentType ?? contentTypeForSkillPath(file.path) },
-      ),
-    ),
+    files.filter((file) => file !== skillFile).map((file) => write(file)),
   );
+  await write(skillFile, contentHash);
 
   return {
     ...metadata,
@@ -244,6 +262,19 @@ export function skillsBucketName(): string {
   return bucket;
 }
 
+export async function storedSkillHash(
+  accountId: string,
+  skillName: string,
+): Promise<string | null> {
+  validateSkillName(skillName);
+  const head = await headS3Object(
+    skillsBucketName(),
+    `${accountId}/${skillName}/${SKILL_FILE}`,
+  );
+
+  return head?.Metadata?.[CONTENT_HASH_KEY] ?? null;
+}
+
 export function validateSkillBundle(
   input: SkillBundleFile[],
 ): ValidatedSkillBundle {
@@ -285,6 +316,7 @@ export function validateSkillBundle(
       ),
     ),
     files: files,
+    skillFile: skillFile,
   };
 }
 

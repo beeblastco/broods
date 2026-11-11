@@ -19,6 +19,16 @@ export const nonEmptyStrings = wholeValue(
   "must be an array of non-empty strings",
 );
 
+// Skill files a CLI manifest declares without bytes; an upload holds them back to back, in order.
+export const skillFileDeclarations = z.array(
+  z.object({
+    path: z.string(),
+    size: z.int().check(z.nonnegative()),
+    sha256: z.string(),
+    contentType: z.optional(z.string()),
+  }),
+);
+
 // The `{ name, description, config }` body every config resource is created with.
 export const resourceCreateInput = z.looseObject(
   {

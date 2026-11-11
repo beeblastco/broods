@@ -37,7 +37,6 @@ import {
   supportsS3WorkspaceMount,
 } from "../../convex/model/sandboxProviders.ts";
 import {
-  MAX_CLI_SKILL_SYNC_BYTES,
   MAX_CONFIGURED_SKILLS,
   MAX_SKILL_BUNDLE_BYTES,
   MAX_SKILL_FILE_BYTES,
@@ -112,6 +111,8 @@ export type SkillManifestConfig = {
   source: "files";
   path: string;
   files: SkillBundleFile[];
+  // Set by the sync client when it uploads the files instead of sending them inline.
+  filesStorageId?: string;
 };
 
 type SkillBundleFile = {
@@ -173,7 +174,6 @@ export default {};
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
-const SKILL_SYNC_LIMIT = `\`broods dev\` and \`broods deploy\` send at most ${MAX_CLI_SKILL_SYNC_BYTES / 1024 / 1024} MiB of skill files per sync, across all skills. Shrink them, or import a large skill from a GitHub URL with \`POST /v1/skills\` (up to ${MAX_SKILL_BUNDLE_BYTES / 1024 / 1024} MiB) and list the path it returns in \`skills.allowed\``;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [
   /^\.env(?:\.|$)/i,
@@ -250,7 +250,6 @@ export async function compileProject(
     .sort((a, b): number =>
       `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
     );
-  assertSkillSyncSize(sortedResources);
   const mcpServers = new Map(
     sortedResources
       .filter((resource): boolean => resource.kind === "mcp")
@@ -871,24 +870,6 @@ function assertUniqueResources(
     }
     seen.add(key);
   }
-}
-
-function assertSkillSyncSize(resources: CliManifestResource[]): void {
-  const skills = resources
-    .filter((resource): boolean => resource.kind === "skill")
-    .map((resource): { name: string; bytes: number } => ({
-      name: resource.name,
-      bytes: (resource.config as SkillManifestConfig).files.reduce(
-        (sum, file): number => sum + file.size,
-        0,
-      ),
-    }));
-  const total = skills.reduce((sum, skill): number => sum + skill.bytes, 0);
-  if (total <= MAX_CLI_SKILL_SYNC_BYTES) return;
-
-  throw new Error(
-    `Skills total ${total} bytes (${skills.map((skill): string => `${skill.name} ${skill.bytes}`).join(", ")}). ${SKILL_SYNC_LIMIT}.`,
-  );
 }
 
 function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
@@ -2057,9 +2038,9 @@ async function readBundleFiles(root: string): Promise<SkillBundleFile[]> {
           );
         }
         totalBytes += bytes.byteLength;
-        if (totalBytes > MAX_CLI_SKILL_SYNC_BYTES) {
+        if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
           throw new Error(
-            `Skill bundle at ${root} is too large (over ${totalBytes} bytes). ${SKILL_SYNC_LIMIT}.`,
+            `Skill bundle at ${root} is too large (over ${totalBytes} bytes, max ${MAX_SKILL_BUNDLE_BYTES})`,
           );
         }
         files.push({
