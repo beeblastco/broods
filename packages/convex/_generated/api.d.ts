@@ -5606,6 +5606,12 @@ export declare const internal: {
           }
         | { refused: string }
       >;
+      revokeToken: FunctionReference<
+        "mutation",
+        "internal",
+        { tokenHash: string },
+        boolean
+      >;
       selectOnboardingOrg: FunctionReference<
         "mutation",
         "internal",
