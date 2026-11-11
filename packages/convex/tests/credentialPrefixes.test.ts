@@ -188,6 +188,12 @@ describe("a CLI login on the account API", () => {
       body: JSON.stringify({ project: "demo-app", stage: "development" }),
     });
     expect(session.status).toBe(401);
+    const logout = await t.fetch("/v1/account/auth/token", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${lent}` },
+    });
+    expect(logout.status).toBe(401);
+    expect((await get(t, "/v1/agents", lent)).status).toBe(200);
     // The user's own `broods login` keeps every route.
     expect((await assumeRole(t, cli)).status).toBe(404);
     const removed = await t.fetch("/v1/roles/brole_missing", {

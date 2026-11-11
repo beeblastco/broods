@@ -498,12 +498,9 @@ export const revokeToken = internalMutation({
   args: { tokenHash: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    const token = await ctx.db
-      .query("cliTokens")
-      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
-      .unique();
-    if (!token || token.status !== "active") return false;
-    await ctx.db.patch(token._id, { status: "revoked" });
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
+    if (!resolved) return false;
+    await ctx.db.patch(resolved.token._id, { status: "revoked" });
 
     return true;
   },
