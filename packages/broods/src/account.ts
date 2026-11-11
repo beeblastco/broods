@@ -503,11 +503,31 @@ export class BroodsAccountClient {
     options: { agentId?: string; limit?: number; status?: string } = {},
   ): Promise<{ runs: RunSummary[]; incomplete?: string }> {
     const limit = options.limit ?? 20;
+    const backfill = options.status
+      ? MAX_OBSERVABILITY_BACKFILL
+      : Math.min(MAX_OBSERVABILITY_BACKFILL, limit);
     const { fetchObservabilitySpans } = await observabilityClient();
-    const { error, rows } = await fetchObservabilitySpans(
-      await this.openObservabilitySession(scope.project, scope.stage),
-      Math.min(MAX_OBSERVABILITY_BACKFILL, limit),
+    const session = await this.openObservabilitySession(
+      scope.project,
+      scope.stage,
     );
+    let result = await fetchObservabilitySpans(
+      session,
+      backfill,
+      options.agentId,
+    );
+    // No echo: a gateway that predates the agent filter sent every agent's newest traces.
+    if (
+      options.agentId &&
+      result.agentId !== options.agentId &&
+      backfill < MAX_OBSERVABILITY_BACKFILL
+    )
+      result = await fetchObservabilitySpans(
+        session,
+        MAX_OBSERVABILITY_BACKFILL,
+        options.agentId,
+      );
+    const { error, rows } = result;
 
     return {
       runs: runSummaries(rows, { ...options, limit: limit }),

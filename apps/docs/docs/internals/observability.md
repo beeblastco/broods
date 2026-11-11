@@ -75,7 +75,7 @@ sequenceDiagram
   G-->>C: closing backfill message, error set on failure
 ```
 
-Traces take the same path with a Tempo search in place of the Loki query.
+Traces take the same path with a Tempo search in place of the Loki query. A traces subscribe may carry `agentId`: the search then adds an `agent_id` tag, and `ready` echoes `agentId`. A gateway that predates the field ignores it and sends no echo, so `broods runs --agent` falls back to scanning the newest 500 traces and filtering them itself.
 
 Each core log line carries a `logId`, so a client drops the Loki copy of a line it already got live and keeps two lines that only look alike.
 

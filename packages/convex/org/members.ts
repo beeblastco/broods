@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import { mutation, query } from "../_generated/server";
+import { mutation, query, type MutationCtx } from "../_generated/server";
 import { authKit } from "../auth";
 import {
   activePolicies,
@@ -9,6 +9,11 @@ import {
   requireDashboardPermission,
 } from "../model/access";
 import { actorsOf, actorValidator } from "../model/actor";
+import {
+  appendAuditEvent,
+  auditDetailsJson,
+  dashboardAuditActor,
+} from "../model/auditEvents";
 import { ClientError } from "../model/clientError";
 import { assertFreeSeat, releaseSeat } from "../model/orgBilling";
 import {
@@ -165,6 +170,12 @@ export const add = mutation({
       invitedBy: caller._id,
       createdAt: Date.now(),
     });
+    await recordMemberAudit(ctx, caller, target, "added", {
+      orgId: orgId,
+      membershipId: membershipId,
+      role: role,
+      roleId: args.roleId,
+    });
 
     return membershipId;
   },
@@ -233,6 +244,12 @@ export const updateRole = mutation({
     }
 
     await ctx.db.patch(membershipId, { role: role, roleId: args.roleId });
+    await recordMemberAudit(ctx, caller, targetUser, "role-changed", {
+      orgId: membership.orgId,
+      membershipId: membershipId,
+      role: role,
+      roleId: args.roleId,
+    });
 
     return null;
   },
@@ -287,6 +304,12 @@ export const remove = mutation({
 
     await ctx.db.delete(membershipId);
     await releaseSeat(ctx, membership.orgId);
+    await recordMemberAudit(ctx, caller, targetUser, "removed", {
+      orgId: membership.orgId,
+      membershipId: membershipId,
+      role: membership.role,
+      roleId: membership.roleId,
+    });
 
     return null;
   },
@@ -330,4 +353,44 @@ function assertCanTouchOwnerRole(
       "forbidden",
     );
   }
+}
+
+// The ledger is the org account's: an org with no account yet records nothing.
+async function recordMemberAudit(
+  ctx: MutationCtx,
+  caller: Doc<"users">,
+  target: Doc<"users"> | null,
+  action: string,
+  membership: {
+    orgId: Id<"orgs">;
+    membershipId: Id<"orgMembers">;
+    role: Doc<"orgMembers">["role"];
+    roleId?: Id<"orgRoles">;
+  },
+): Promise<void> {
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", membership.orgId))
+    .unique();
+  if (!account) return;
+
+  await appendAuditEvent(ctx.db, {
+    accountId: account._id,
+    actor: dashboardAuditActor({
+      id: caller.authId,
+      email: caller.email,
+      name: caller.name,
+    }),
+    action: action,
+    resource: {
+      kind: "member",
+      id: membership.membershipId,
+      name: target?.email,
+    },
+    summary: `Member ${action.replace("-", " ")}`,
+    detailsJson: auditDetailsJson({
+      role: membership.role,
+      roleId: membership.roleId,
+    }),
+  });
 }
