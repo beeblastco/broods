@@ -3,6 +3,7 @@ import { DeliverPolicy } from "nats.ws";
 import {
   conversationReplaySnapshot,
   consumerStartPolicy,
+  readObservabilityStream,
   streamResponseSubject,
   subjectToken,
 } from "../src/shared/nats.ts";
@@ -206,5 +207,78 @@ describe("conversationReplaySnapshot", () => {
       ),
       lastSequence: 100,
     });
+  });
+});
+
+describe("readObservabilityStream resume", () => {
+  const OLD = "2026-01-01T00:00:00.000Z";
+
+  async function startOf(
+    afterSequence: number,
+    stream: { created: string; first_seq: number; last_seq: number },
+  ): Promise<{ deliver_policy?: DeliverPolicy; opt_start_seq?: number }> {
+    let opened: { deliver_policy?: DeliverPolicy; opt_start_seq?: number } = {};
+    const streams = {
+      add: async (): Promise<void> => {},
+      info: async (): Promise<object> => ({
+        created: stream.created,
+        state: { first_seq: stream.first_seq, last_seq: stream.last_seq },
+      }),
+      update: async (): Promise<void> => {},
+    };
+    await readObservabilityStream({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+        jetstream: () => ({
+          consumers: {
+            get: async (_name: string, options: typeof opened) => {
+              opened = options;
+
+              return {
+                consume: async () => ({}),
+                info: async () => ({ delivered: { stream_seq: 0 } }),
+              };
+            },
+          },
+        }),
+      } as never,
+      stream: "logs",
+      accountId: "acct1",
+      project: "p",
+      stage: "dev",
+      startTime: "2026-06-05T00:00:00.000Z",
+      afterSequence: afterSequence,
+    });
+
+    return opened;
+  }
+
+  it("resumes after a cursor the stream issued and still covers", async () => {
+    expect(
+      await startOf(40, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject({ opt_start_seq: 41 });
+    expect(
+      await startOf(9, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject({ opt_start_seq: 10 });
+  });
+
+  it("replays by time when the stream cannot vouch for the cursor", async () => {
+    const byTime = { deliver_policy: DeliverPolicy.StartTime };
+    // Evicted past the cursor: the entries right after it are gone.
+    expect(
+      await startOf(1, { created: OLD, first_seq: 44, last_seq: 104 }),
+    ).toMatchObject(byTime);
+    // Past the end: another stream issued it.
+    expect(
+      await startOf(101, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject(byTime);
+    // Recreated a moment ago and already longer than the old cursor.
+    expect(
+      await startOf(13, {
+        created: new Date().toISOString(),
+        first_seq: 1,
+        last_seq: 17,
+      }),
+    ).toMatchObject(byTime);
   });
 });
