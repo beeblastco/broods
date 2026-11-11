@@ -327,7 +327,7 @@ def providerTwinList : List Spec.Twin := [
   { source := "apps/core/src/harness/provider.ts#modelSettingsFromModelConfig"
     run := fun args =>
       let settings := without (get (Twin.arg args 0) "model")
-        ["provider", "modelId", "transcriptionModelId", "providerOptions", "output"]
+        ["provider", "modelId", "providerOptions", "output"]
       Json.mkObj ([("maxRetries", nat 5)] ++ entries settings) },
   { source := "apps/core/src/harness/provider.ts#modelIdentityFromModelConfig"
     run := fun args =>

@@ -1,5 +1,7 @@
-import { z } from "zod/mini";
+// schema.ts and the CLI import this: no zod here, stageSourceSchema.ts holds the wire check.
+import type { z } from "zod/mini";
 import { sha256Hex } from "./accountSecrets";
+import type { stageSourceSchema } from "./stageSourceSchema";
 
 /** What a stage's source may hold: its `broods/` folder plus the manifest it installs from. */
 export const STAGE_SOURCE_LIMITS = {
@@ -23,12 +25,6 @@ const BUILD_FOLDERS: ReadonlySet<string> = new Set([
 const SOURCE_FILE_PATTERN = /\.(ts|tsx|js|mjs|json|md|txt|ya?ml)$/;
 
 export type StageSourceOrigin = (typeof STAGE_SOURCE_ORIGINS)[number];
-
-export const stageSourceSchema = z.object({
-  files: z.array(z.object({ content: z.string(), path: z.string() })),
-  commitSha: z.optional(z.string().check(z.regex(/^[0-9a-f]{40}$/))),
-});
-
 export type StageSource = z.infer<typeof stageSourceSchema>;
 export type StageSourceFile = StageSource["files"][number];
 

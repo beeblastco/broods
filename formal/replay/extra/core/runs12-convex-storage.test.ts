@@ -115,7 +115,7 @@ describe("accounts and crons", (): void => {
       createdAt: CREATED_ISO,
       updatedAt: UPDATED_ISO,
     });
-    answer("account/accounts:getBySecretHash", {
+    answer("runtimeLookups:accountBySecretHash", {
       ...row,
       description: "builder",
       status: "disabled",
@@ -186,7 +186,7 @@ describe("encrypted configs", (): void => {
   };
 
   test("an agent without a stored blob has an empty config", async (): Promise<void> => {
-    answer("agent/agents:getById", agentRow);
+    answer("runtimeLookups:agentById", agentRow);
     expect(await convexStorage.agents.getById(ACCOUNT, "agent_1")).toEqual({
       accountId: ACCOUNT,
       agentId: "agent_1",
@@ -195,7 +195,7 @@ describe("encrypted configs", (): void => {
       createdAt: CREATED_ISO,
       updatedAt: UPDATED_ISO,
     });
-    answer("agent/agents:getById", null);
+    answer("runtimeLookups:agentById", null);
     expect(await convexStorage.agents.getById(ACCOUNT, "none")).toBeNull();
     expect(calls).not.toContain("account/keys:list");
   });
@@ -226,7 +226,7 @@ describe("encrypted configs", (): void => {
   });
 
   test("a blob sealed for another column is refused", async (): Promise<void> => {
-    answer("agent/agents:getById", {
+    answer("runtimeLookups:agentById", {
       ...agentRow,
       ...(await sealed("sandboxConfigs:encryptedConfig", { a: 1 })),
     });
@@ -243,7 +243,7 @@ describe("encrypted configs", (): void => {
       createdAt: CREATED,
       updatedAt: UPDATED,
     };
-    answer("sandbox/configs:getById", row);
+    answer("runtimeLookups:sandboxConfigById", row);
     expect(
       await convexStorage.sandboxConfigs.getById(ACCOUNT, "sbx_1"),
     ).toEqual({
@@ -276,7 +276,7 @@ describe("encrypted configs", (): void => {
         config: config,
       }),
     ]);
-    answer("sandbox/configs:getById", null);
+    answer("runtimeLookups:sandboxConfigById", null);
     expect(await convexStorage.sandboxConfigs.getById(ACCOUNT, "x")).toBeNull();
   });
 });
