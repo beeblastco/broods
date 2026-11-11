@@ -41,6 +41,7 @@ import {
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
+import { cursorKey } from "./observability-cursor.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 import { resolveSocketScope } from "./upstream.ts";
 import {
@@ -207,6 +208,14 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               kind: "observability",
               scope: { ...scope, expiresAt: expiresAt },
               token: token,
+              ...(config.terminalTicketSecrets[0]
+                ? {
+                    cursorKey: cursorKey(
+                      config.terminalTicketSecrets[0],
+                      scope,
+                    ),
+                  }
+                : {}),
             };
           } else if (agentWebSocketPath) {
             // Attach never posts through core's run path, so the endpoint check must happen here.

@@ -8,6 +8,11 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import {
+  cursorKey,
+  openCursor,
+  sealCursor,
+} from "../src/observability-cursor.ts";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -1806,25 +1811,42 @@ test("bounds observability backfill requests", () => {
   ).toBe(false);
 });
 
-test("a resume cursor is a whole sequence, and never a sandbox tail's", () => {
+test("a resume cursor is one sealed block, and never a sandbox tail's", () => {
   const resume = { type: "subscribe", stream: "logs" };
+  const cursor = "AAAAAAAAAAAAAAAAAAAAAA";
 
-  expect(isObservabilityClientMessage({ ...resume, afterSeq: 0 })).toBe(true);
-  expect(isObservabilityClientMessage({ ...resume, afterSeq: 41 })).toBe(true);
-  expect(isObservabilityClientMessage({ ...resume, afterSeq: -1 })).toBe(false);
-  expect(isObservabilityClientMessage({ ...resume, afterSeq: 1.5 })).toBe(
-    false,
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: cursor })).toBe(
+    true,
   );
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 41 })).toBe(false);
   expect(isObservabilityClientMessage({ ...resume, afterSeq: "41" })).toBe(
     false,
   );
   expect(
+    isObservabilityClientMessage({ ...resume, afterSeq: `${cursor}=` }),
+  ).toBe(false);
+  expect(
     isObservabilityClientMessage({
       ...resume,
-      afterSeq: 41,
+      afterSeq: cursor,
       sandboxId: "0f8fad5b-d9cb-469f-a165-70867728950e",
     }),
   ).toBe(false);
+});
+
+test("a cursor opens only under the key that sealed it", () => {
+  const scope = { accountId: "acct_1", projectSlug: "p", stageSlug: "dev" };
+  const key = cursorKey("secret", scope);
+  const other = cursorKey("secret", { ...scope, accountId: "acct_2" });
+
+  expect(openCursor(key, sealCursor(key, 41))).toBe(41);
+  expect(openCursor(key, sealCursor(key, 0))).toBe(0);
+  expect(openCursor(other, sealCursor(key, 41))).toBeUndefined();
+  expect(openCursor(key, "AAAAAAAAAAAAAAAAAAAAAA")).toBeUndefined();
+  expect(openCursor(key, "short")).toBeUndefined();
+  // Neighbouring sequences share nothing a reader could order or subtract.
+  expect(sealCursor(key, 41)).toMatch(/^[A-Za-z0-9_-]{22}$/);
+  expect(sealCursor(key, 41)).not.toBe(sealCursor(key, 42));
 });
 
 test("observability relay skips malformed and below-threshold log messages", async () => {
@@ -2335,7 +2357,7 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
     );
 
     const pieces = sent.filter((message) => message.type === "backfill");
-    expect(sent[0]).toEqual({ type: "ready", seq: 0 });
+    expect(sent[0]).toEqual({ type: "ready" });
     expect(pieces.map((piece): unknown => piece.more)).toEqual([
       ...Array.from({ length: 25 }, (): boolean => true),
       undefined,
@@ -2796,7 +2818,7 @@ test("a traces subscribe whose transport fails after it was replaced stays silen
     failFirst?.(new Error("NATS is down"));
     await first;
 
-    expect(sent).toEqual([{ type: "ready", seq: 0 }]);
+    expect(sent).toEqual([{ type: "ready" }]);
   } finally {
     cleanupObservabilitySocket(socket);
   }

@@ -75,7 +75,7 @@ const RESUME_WINDOW_MS = 30 * 60 * 1000;
 
 export interface ResumeCursor {
   key: string;
-  seq: number;
+  seq: string;
   at: number;
   historyLoaded: boolean;
 }
@@ -469,7 +469,7 @@ export function resumeSeqFor(
   key: string,
   minLevel: LogLevel | undefined,
   now: number,
-): number | undefined {
+): string | undefined {
   // DEBUG lines never ride the live relay, so only a backfill brings the new ones.
   return cursor?.key === key &&
     cursor.historyLoaded &&
