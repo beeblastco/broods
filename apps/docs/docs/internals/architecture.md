@@ -436,7 +436,7 @@ sequenceDiagram
 
 ## WebSocket and JetStream contract
 
-- Subject: `v1.<accountId>.<agentId>.ws.response.<convToken>`, `convToken` the `base64url` public conversation key. One publish per frame, no per-frame ack, so replay is best effort.
+- Subject: `<env>.v1.<accountId>.<agentId>.ws.response.<convToken>`, `<env>` the deployment's `DEPLOYMENT_ENVIRONMENT` and `convToken` the `base64url` public conversation key. One publish per frame, no per-frame ack, so replay is best effort.
 - `Nats-Msg-Id` (`eventId:sequence`) and a 2 minute duplicate window collapse retries.
 - Cursors are opaque, bound to one event, and exclusive. A cursor the stream can no longer serve gets `replay_unavailable` and the durable status.
 - Convex ingress status is the truth for acceptance and terminal state. JetStream only carries output.
