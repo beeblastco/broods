@@ -12,7 +12,7 @@ import {
   handleEnvRoute,
   handleLogsRoute,
   handleManifestRoute,
-  handleMcpBundleUploadRoute,
+  handleUploadRoute,
   handleResourceDeleteRoute,
   handleRuntimeKeyRoute,
   handleUserTokenSecretRoute,
@@ -45,7 +45,9 @@ export const handle = httpAction(async (ctx, req): Promise<Response> => {
       case "manifest":
         return await handleManifestRoute(ctx, req, route, authResult);
       case "mcpBundleUpload":
-        return await handleMcpBundleUploadRoute(ctx, req, authResult);
+        return await handleUploadRoute(ctx, req, authResult, "mcp");
+      case "skillUpload":
+        return await handleUploadRoute(ctx, req, authResult, "skill");
       case "logs":
         return handleLogsRoute(req);
       case "runtimeKey":
@@ -95,6 +97,9 @@ function parseRoute(pathname: string): RouteParts | null {
   if (rest.length === 1 && rest[0] === "mcp-bundle-uploads") {
     return { kind: "mcpBundleUpload", project: project, stage: stage };
   }
+  if (rest.length === 1 && rest[0] === "skill-uploads") {
+    return { kind: "skillUpload", project: project, stage: stage };
+  }
   if (rest.length === 2 && rest[0] === "env") {
     return { kind: "env", project: project, stage: stage, name: rest[1] };
   }
@@ -129,7 +134,11 @@ async function resolveCliRequestAuth(
   route: RouteParts,
 ): Promise<CliAuth | null> {
   if (token.startsWith(APPLY_TICKET_PREFIX)) {
-    if (route.kind !== "manifest" && route.kind !== "mcpBundleUpload")
+    if (
+      route.kind !== "manifest" &&
+      route.kind !== "mcpBundleUpload" &&
+      route.kind !== "skillUpload"
+    )
       return null;
     const ticket = await openApplyTicket(token, stageTicketSecret());
 

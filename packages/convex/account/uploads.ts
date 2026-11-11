@@ -24,7 +24,7 @@ export const claim = internalMutation({
 export const grant = internalMutation({
   args: {
     accountId: v.id("accounts"),
-    kind: v.union(v.literal("mcp"), v.literal("workspace")),
+    kind: v.union(v.literal("mcp"), v.literal("skill"), v.literal("workspace")),
   },
   returns: v.union(
     v.object({ uploadUrl: v.string() }),

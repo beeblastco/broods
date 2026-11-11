@@ -29,7 +29,8 @@ inductive Kind where
 
 /-- What equality sees of a resource config: its settings (every plain key,
 including an artifact's `sha256`), the inline bytes (`bundle`, `contentBase64`),
-and the `bundleStorageId` handle a large MCP bundle is uploaded as. -/
+and the `bundleStorageId` or `filesStorageId` handle a large MCP bundle or skill
+is uploaded as. -/
 structure Config where
   settings : Nat
   bundle : Option Nat
@@ -154,18 +155,22 @@ def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind
   (sync store m false s).filter
     (fun row => !row.cli || m.any (·.key == row.res.key) || !chosen.contains row.res.key)
 
-/-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
-replaced by its storage handle; its `sha256` stays. -/
+/-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
+large MCP bundle or skill is uploaded and replaced by its storage handle; its
+`sha256` stays. -/
 def upload (large : Nat → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
-  | .mcp, some b =>
+  | .mcp, some b | .skill, some b =>
     if large b then { r with config := { r.config with bundle := none, storage := some b } } else r
   | _, _ => r
 
 /-- `snapshotExternalConfig`: the recorded snapshot of an external resource drops
-its bytes and keeps everything else. -/
+its bytes, and a skill's upload handle, and keeps everything else. -/
 def storeExternal (r : Resource) : Resource :=
-  if r.kind.external then { r with config := { r.config with bundle := none } } else r
+  if r.kind.external then
+    { r with config := { r.config with
+        bundle := none, storage := if r.kind == .skill then none else r.config.storage } }
+  else r
 
 /-- What the server keeps for a resource: external kinds as their recorded
 snapshot of the uploaded config, every other kind through `normalize`. -/

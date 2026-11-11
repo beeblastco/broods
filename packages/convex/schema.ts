@@ -915,7 +915,7 @@ export const workspaceFilesFields = {
 
 export const uploadGrantsFields = {
   accountId: v.id("accounts"),
-  kind: v.union(v.literal("mcp"), v.literal("workspace")),
+  kind: v.union(v.literal("mcp"), v.literal("skill"), v.literal("workspace")),
   createdAt: v.number(),
   expiresAt: v.number(),
 };

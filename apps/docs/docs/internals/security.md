@@ -180,7 +180,7 @@ The runtime key is embeddable, so it carries no end-user identity. A `buat_` use
 
 The dashboard's Apply deploys approved files without handing a deploy key to anyone. `agentDock.apply` checks the member can write the stage, mints a `bdap_` ticket (`model/applyTicket.ts`: `{accountId, projectId, stageId, authId, expiresAt}`, 5 minutes, signed with `STAGE_TICKET_SECRET` under its own key context so it never opens as `bdts_`), and asks core's in-cluster `POST /v1/apply-runs` (service token; refused through the gateway) to run `bun install` and `broods deploy --prune` in the `APPLY_SANDBOX` sandbox with the ticket as `BROODS_TOKEN`.
 
-- The config plane takes a `bdap_` only on its own stage's `manifest` and `mcp-bundle-uploads` routes, and re-checks the member's write access at each use (`resolveApplyTicketAuth`). It syncs fenced like a project key, and the audit row names the member.
+- The config plane takes a `bdap_` only on its own stage's `manifest`, `mcp-bundle-uploads` and `skill-uploads` routes, and re-checks the member's write access at each use (`resolveApplyTicketAuth`). It syncs fenced like a project key, and the audit row names the member.
 - Core runs no user code: the files run only in that sandbox, reserved per stage and `bun.lock` hash so two stages never share one. The dock agent's own sandbox never sees the ticket.
 - The ticket is a bearer for its 5 minutes: it reaches one stage's manifest, which the member could already deploy.
 
