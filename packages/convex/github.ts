@@ -107,6 +107,7 @@ const rootValidator = v.object({
 
 const deployValidator = v.object({
   branch: v.string(),
+  runId: v.number(),
   sha: v.string(),
   status: v.string(),
   conclusion: v.optional(v.string()),
@@ -297,6 +298,7 @@ async function readStatus(
     repo: linked?.repo,
     deploys: deploys.map((deploy) => ({
       branch: deploy.branch,
+      runId: deploy.runId,
       sha: deploy.sha,
       status: deploy.status,
       conclusion: deploy.conclusion,

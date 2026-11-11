@@ -19,6 +19,18 @@ interface ProviderErrorPayload {
   response?: unknown;
 }
 
+export class S3ObjectTooLargeError extends Error {
+  constructor(
+    key: string,
+    bytes: number | undefined,
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `S3 object ${key} is ${bytes ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
+    );
+  }
+}
+
 export function isContextLengthError(message: string): boolean {
   return CONTEXT_LIMIT_PATTERN.test(message);
 }
