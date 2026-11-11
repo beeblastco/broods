@@ -1,0 +1,1 @@
+external	^(readConversationFiles|writeConversationFiles|resolveAgentRuntime)$	Replaced by a mock.module stub in the tests that reach handleConversationFilesRequest, so the label has no target; the real functions have their own credited twins and the stub answers are inputs here.

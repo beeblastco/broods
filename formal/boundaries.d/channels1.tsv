@@ -1,0 +1,58 @@
+kind	name	reason
+external	^context\.(agentLoader|channelRecordLoader)$	Injected storage loaders supply records; the twin checks account and lookup keys and computes routing from their returned records.
+external	^adapter\.applyReplyIn$	The adapter owns provider-specific source rewriting; the twin checks the selected source and configured reply target.
+external	^runtime\.mutate$	Convex owns lease state; the twin checks mutation names, scope, TTL, generation and release order.
+external	^run$	The caller supplies the leased operation; its result or error is preserved after releasing ownership.
+external	^getHarnessPublicUrl$	Environment configuration supplies the public base URL; the twin constructs the encoded run URL or configuration error.
+external	^createHash$	Node crypto constructs the requested SHA-256 digest; the following effects check the exact input and digest encoding.
+external	^createHash\("sha256"\)\.update$	Node crypto hashes the exact computed text and attachment URL identity passed by the twin.
+external	^createHash\("sha256"\)\.update\(identity\)\.digest$	Node crypto returns the SHA-256 hex digest; the twin computes its twelve-character truncation.
+external	^this\.(getClient|fetchClientIdentity)$	The Linear SDK supplies its authenticated client and identity; the twin checks client forwarding and selects botUserId.
+external	^this\.graphApiFetch$	The Messenger SDK authenticates the Graph request; the twin checks me, GET and the id field projection.
+opaque	BroodsLinearAdapter	Only defaultBotUserId is read and is captured in receiver fields; inherited client operations are explicit effects.
+opaque	LinearClient	SDK client identity is passed unchanged to the recorded identity lookup; client internals are not inspected.
+opaque	BroodsMessengerAdapter	The receiver is used only through its explicit Graph API effect.
+external	^parseTwilioWebhookBody$	The Twilio SDK validates and converts the form; the twin computes ordered decoded fields and removes received status fields before validation.
+external	^RegExp\.escape$	The JavaScript standard library escapes a literal username; the twin computes the case-insensitive literal match and trailing word restriction.
+external	^TWILIO_FORMAT\.fromMarkdown$	The SDK owns Markdown conversion; the twin forwards its result to the channel chunker at the actual SMS limit.
+external	^this\.verifySignature$	The GitHub SDK verifies the signature; the wrapper's twin checks exact body and signature forwarding.
+external	^handler\.execute$	The selected command callback owns command-specific work; the twin verifies dispatch, exception conversion and response delivery.
+external	^ctx\.channel\?\.sendText$	The channel performs delivery; the twin checks the reply derived from the selected command outcome.
+opaque	BroodsGitHubAdapter	The wrapper uses this receiver only through the explicit signature verification effect.
+opaque	GatewaySocket	The twin reads only scalar receiver fields captured at entry; socket identity and options are not inspected.
+opaque	FakeWebSocket	The socket is passed unchanged and only readyState is read; sends and closes are explicit effects.
+opaque	Timeout	A timer handle is only forwarded to clearTimeout or clearInterval.
+opaque	ZodMiniObject	The schema is only forwarded to parseInput, whose validated answer the twin normalizes.
+external	^(clearTimeout|clearInterval|setTimeout|Math\.random|new WebSocket)$	The runtime schedules timers, draws randomness and opens the socket; the twin checks the handle or delay and the URL passed.
+external	^socket(\?)?\.(send|close|addEventListener)$	The socket delivers frames and events; the twin checks the exact frame, close code and listeners.
+external	^response\.text$	The HTTP response body is what the provider sent; the twin computes the parse and failure handling from it.
+external	^(readS3Bytes|headS3Object|requireEnv|Date\.now)$	S3, the environment and the clock are outside the program; the twin checks the bucket, key and variable requested.
+external	^getStorage\(\)\.workspaceConfigs\.getById$	Convex owns workspace records; the twin checks account and workspace ids.
+internal	apps/core/src/media.ts#readMediaObject	Some recorded reads exceed the recorder size limit, so it cannot earn credit; its bytes are returned to the HTTP layer uninspected by the caller.
+internal	apps/discord-forwarder/src/socket.ts#GatewaySocket.reserveIdentify	The bot token lives in non-scalar options the recorder drops, so the twin cannot derive its budget key; the caller only branches on the boolean.
+internal	apps/discord-forwarder/src/socket.ts#GatewaySocket.handleClose	Whether the closed socket is this.socket is object identity the recorder cannot carry; the caller ignores the result.
+internal	apps/discord-forwarder/src/socket.ts#GatewaySocket.identifyPayload	The bot token lives in non-scalar options the recorder drops; the caller forwards the payload unchanged to send.
+internal	apps/discord-forwarder/src/socket.ts#GatewaySocket.resumePayload	The bot token lives in non-scalar options the recorder drops; the caller forwards the payload unchanged to send.
+external	^new (ConsoleLogger|TwilioAdapter|TeamsAdapter|LinearWebhookClient|BroodsLinearAdapter|BroodsMessengerAdapter)$	SDK constructors only store the exact options the twin checks; their internals are not read by these factories.
+external	^new ConsoleLogger\("error"\)\.child$	The SDK derives a named logger; the twin checks the channel name and forwards the logger.
+external	^fetch$	The provider answers over HTTP; the twin checks the URL and exact request body, then computes failure handling.
+opaque	_ConsoleLogger	A logger is only forwarded to an SDK constructor.
+opaque	TwilioAdapter	The adapter is built and retained by closures the factory does not run.
+opaque	TeamsAdapter	The adapter is built and retained by closures the factory does not run.
+opaque	LinearWebhookClient	The client is retained by closures the factory does not run.
+external	^(createSign|createSign\("RSA-SHA256"\) \.update|createSign\("RSA-SHA256"\) \.update\(unsigned\) \.end|createSign\("RSA-SHA256"\) \.update\(unsigned\) \.end\(\) \.sign)$	Node crypto signs; the twin checks the algorithm, the exact signing input and the normalized key.
+external	^new (GitHubAdapter|BroodsGitHubAdapter)$	SDK constructors store the exact options the twin checks.
+external	^(request|tokenResponse\.json|client\.get|github\.encodeThreadId)$	GitHub answers and the SDK encodes thread ids; the twin checks each URL, header set and thread descriptor.
+opaque	Sign	The Node signer is chained through the explicit update, end and sign effects only.
+opaque	GitHubAdapter	The adapter is retained by closures the factory does not run.
+opaque	InstagramAdapter	The transport is retained by closures the factory does not run.
+opaque	_Message	Only scalar message fields captured by the recorder are read.
+opaque	JwtValidator	The validator is opaque and only handed back to its caller.
+opaque	ZodMiniRecord	The schema is only forwarded to parseOr, whose answer the twin branches on.
+external	^(agents\.listForAccount|agents\.listForEndpoint|context\.(agentLister|stageAgentLister|deploymentLoader|waitUntil))$	Injected storage loaders supply records; the twin checks account and endpoint keys and computes filtering from the rows.
+external	^\$enter:list$	The list callback is entered by the module cache or by the function directly; the twin handles its storage effect.
+external	^(channel\.canHandle|adapter\.authenticate|candidate\.adapter\.authenticate|adapter\.actions|adapter\.actions\(message\)\.sendText)$	Channel adapters decide and deliver; each has its own twins, and these sites receive adapters from the registry.
+external	^options\.transport\.parseMessage$	The chat SDK parses the provider event; the twin computes filtering and the inbound message from scalar message fields.
+internal	apps/core/src/harness/integrations.ts#cachedChannelAgentList	A hit depends on a module-level Map no argument reveals; callers only forward the list it resolves to.
+internal	apps/core/src/harness/integrations.ts#dropAgedChannelAgentList	The answer depends on a module-level Map no argument reveals; the caller only branches on the boolean.
+external	^new Direct(NotFound|Forbidden)Error$	The error constructors store the exact message and init the twin checks; the caller throws the constructed error unchanged.

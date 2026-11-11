@@ -1,0 +1,2 @@
+kind	name	reason
+external	^source\.(load|refresh|refreshFailed|save)$	The TokenSource the caller passes to the connection token functions; the twin checks what each is given and takes its answer.

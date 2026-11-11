@@ -1,0 +1,14 @@
+kind	name	reason
+external	^\$enter:arg5$	handleChannelWebhook's own acked closure, passed to receiveChannelWebhook; entering it carries no answer
+external	^adapter\.parse$	channel adapter parser injected through the receiver; its parsed result is the routed input
+external	^adapter ?\.actions(\(message\) \.sendText)?$	channel adapter reply surface; only the arguments sent to it are relied on
+external	^channel \.sendText$	channel adapter send; its result is not read
+external	^context\.(accountLoader|authResolver|deploymentLoader|ingressStatusLoader|waitUntil)$	routing context injected by the server; loaders are storage reads taken as inputs
+external	^event\.channel( \.sendText|\.reactToMessage|\.sendTyping)$	channel adapter side effects whose results are not read
+external	^handlers\.(handleAsyncRequest|handleChannelRequest|handleDirectRequest|handleSandboxJobCompletionRequest|handleStatusRequest)$	run handlers injected by the server; their response is returned unchanged
+external	^otelContextApi\.active$	OpenTelemetry context value carried through unread
+external	^redactSensitiveText$	redaction helper; the twin only continues from its returned text
+external	^redeliver$	the caller's closure deciding redelivery; its boolean is an input
+external	^(setTimeout|clearTimeout|resolve)$	host timer and promise resolver in the ack race; only the timer handle is passed back
+external	^setObservabilityContext$	sets the ambient log scope; no answer is read
+external	^AbortSignal\.timeout$	host signal constructor, passed through to the fetch unread

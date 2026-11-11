@@ -1,0 +1,14 @@
+kind	name	reason
+external	^options\.now$	The injected deadline clock supplies the current time; the twin compares it with the deadline itself.
+external	^options\.policyApproval$	The injected policy approval callback decides a tool call; the twin checks the call it is handed and reads its answer.
+external	^getStorage\(\)\.auditLedger\.append$	The audit ledger is a database write in the storage backend; the twin checks the entry it appends.
+external	^client\.evaluate$	The OPA policy server answers the decision request; the twin checks the path and input and passes its answer or error on.
+external	^(doGenerate|doStream|model\.doGenerate)$	The language model provider answers the request; the twin checks the call and passes its answer or error on.
+external	^(workersAI|compatible|createOllama)$	The provider SDK builds the model object; the twin checks the model id and settings it is given.
+opaque	OpenAICompatibleChatLanguageModel	A provider SDK model object, handed through to the caller and never inspected.
+opaque	WorkersAIChatLanguageModel	A provider SDK model object, handed through to the caller and never inspected.
+external	^clearInterval$	The platform clears the lease monitor's timer and returns nothing the code reads.
+external	^runAbort\.abort$	The platform AbortController aborts its signal with the given reason and returns nothing the code reads.
+external	^options\.abortSignal\?\.removeEventListener$	The platform AbortSignal detaches the listener and returns nothing the code reads.
+opaque	DefaultStepResult	The AI SDK's step result object, handed in by the SDK and only read for its listed fields.
+opaque	MockLanguageModelV4	The AI SDK's test language model, passed through in the step callback arguments and never inspected.

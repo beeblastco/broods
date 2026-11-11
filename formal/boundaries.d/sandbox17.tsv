@@ -1,0 +1,4 @@
+kind	name	reason
+external	^sender\.(urgent|ready)\.values\(\)\.next$	Set iterator of the platform; the twin takes the first lane it yields and checks which set it asked.
+external	^sender\.idle\.resolve$	Resolver from Promise.withResolvers; it takes no value and the twin checks when it is called.
+external	^write\.send$	Port: the send function the caller handed to queueMirrorWrite; the twin takes its answer as input.
