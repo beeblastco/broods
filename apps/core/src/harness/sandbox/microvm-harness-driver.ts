@@ -252,8 +252,8 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     options.abortSignal?.throwIfAborted();
     const process = await this.spawnCommand(options);
     const [stdout, stderr, result] = await Promise.all([
-      readHarnessStream(process.stdout),
-      readHarnessStream(process.stderr),
+      readHarnessStream(process.stdout, "stdout"),
+      readHarnessStream(process.stderr, "stderr"),
       process.wait(),
     ]);
 

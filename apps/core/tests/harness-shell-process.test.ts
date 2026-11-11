@@ -3,11 +3,12 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  HARNESS_OUTPUT_MAX_BYTES,
   type HarnessShellExecutor,
   readFileChunk,
   readHarnessStream,
 } from "../src/harness/sandbox/harness-shell-process.ts";
-import { workspaceSandboxLimits } from "../src/shared/sandbox.ts";
+import { SandboxOutputTooLargeError } from "../src/shared/errors.ts";
 
 const CHUNK_BYTES = 180 * 1024;
 
@@ -24,14 +25,12 @@ const bash: HarnessShellExecutor = {
 };
 
 describe("harness shell process", () => {
-  test("keeps the head of a command's output and stops reading past the output limit", async () => {
-    const limit = workspaceSandboxLimits().maxOutputLimitBytes;
+  test("fails past the output cap holding at most the cap plus one chunk", async () => {
     let produced = 0;
     let cancelled = false;
     const stream = new ReadableStream<Uint8Array>(
       {
         pull: function (controller) {
-          if (produced >= 64 * CHUNK_BYTES) return controller.close();
           produced += CHUNK_BYTES;
           controller.enqueue(new Uint8Array(CHUNK_BYTES).fill(120));
         },
@@ -42,11 +41,13 @@ describe("harness shell process", () => {
       { highWaterMark: 0 },
     );
 
-    const output = await readHarnessStream(stream);
+    const read = readHarnessStream(stream, "stdout");
 
-    expect(produced).toBeLessThanOrEqual(limit + CHUNK_BYTES);
+    await expect(read).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
+    expect(produced).toBeLessThanOrEqual(
+      HARNESS_OUTPUT_MAX_BYTES + CHUNK_BYTES,
+    );
     expect(cancelled).toBe(true);
-    expect(output).toBe(`${"x".repeat(limit)}\n[output truncated]`);
   });
 
   test("stamps a symlinked file with the size of the file it points to", async () => {

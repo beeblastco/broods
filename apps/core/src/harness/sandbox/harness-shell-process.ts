@@ -1,13 +1,15 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
-import { shellQuote, truncateText } from "./utils.ts";
+import { SandboxOutputTooLargeError } from "../../shared/errors.ts";
+import { shellQuote } from "./utils.ts";
 
 // Base64 grows a chunk to 240 KB, under the 256 KB of stdout one MicroVM exec returns.
 const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
 // Core buffers a whole file per harness read, and its pod has 1 GiB for every run.
 export const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
+// Bounds core's memory per stream of a harness command; the harness trims what the model sees.
+export const HARNESS_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface HarnessShellExecutor {
   exec(
@@ -215,33 +217,31 @@ export class HarnessShellProcess {
   }
 }
 
-/** Keeps the head of a command's output the way workspace exec does, then cancels the stream. */
+/** Reads a command's stream whole; past HARNESS_OUTPUT_MAX_BYTES it fails, never returns a part. */
 export async function readHarnessStream(
   stream: ReadableStream<Uint8Array>,
+  name: "stdout" | "stderr",
 ): Promise<string> {
-  const limit = workspaceSandboxLimits().maxOutputLimitBytes;
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let text = "";
   let total = 0;
   try {
-    while (total <= limit) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      chunks.push(value);
       total += value.byteLength;
+      if (total > HARNESS_OUTPUT_MAX_BYTES) {
+        await reader.cancel();
+        throw new SandboxOutputTooLargeError(name, HARNESS_OUTPUT_MAX_BYTES);
+      }
+      text += decoder.decode(value, { stream: true });
     }
-    if (total > limit) await reader.cancel();
   } finally {
     reader.releaseLock();
   }
-  const content = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    content.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
 
-  return truncateText(new TextDecoder().decode(content), limit).value;
+  return text + decoder.decode();
 }
 
 function delay(ms: number): Promise<void> {

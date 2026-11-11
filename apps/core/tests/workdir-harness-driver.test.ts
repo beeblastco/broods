@@ -7,11 +7,14 @@ import {
   WorkdirHarnessDriver,
   type WorkdirHarnessDriverOptions,
 } from "../src/harness/sandbox/workdir-harness-driver.ts";
-import { SandboxFileTooLargeError } from "../src/shared/errors.ts";
-import { workspaceSandboxLimits } from "../src/shared/sandbox.ts";
+import {
+  SandboxFileTooLargeError,
+  SandboxOutputTooLargeError,
+} from "../src/shared/errors.ts";
 
 const encoder = new TextEncoder();
 const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
+const HARNESS_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 describe("WorkdirHarnessDriver", () => {
   test("maps an existing core reservation to command, file, port, and lifecycle operations", async () => {
@@ -101,10 +104,40 @@ describe("WorkdirHarnessDriver", () => {
     }
   });
 
-  test("returns the head of a command's output past the output limit", async () => {
-    const limit = workspaceSandboxLimits().maxOutputLimitBytes;
+  test("returns a find listing over the old 256 KiB cap whole, so every match parses", async () => {
+    const noise = Array.from(
+      { length: 40_000 },
+      (_, i) => `/workspace/node_modules/pkg-${i}/dist/index.js`,
+    );
+    const matches = Array.from(
+      { length: 175 },
+      (_, i) => `/workspace/apps/core/src/module-${i}.ts`,
+    );
+    const listing = `${[...noise, ...matches].join("\n")}\n`;
+    const fake = fakeWorkdir({ processStdout: encoder.encode(listing) });
+    const driver = new WorkdirHarnessDriver(
+      driverOptions(),
+      fakeExecutor(fake.sandbox, true).value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    const glob = new Bun.Glob("/workspace/apps/core/src/**/*.ts");
+
+    const { stdout } = await session.runCommand({
+      command: "find /workspace -type f -print",
+    });
+
+    expect(listing.length).toBeGreaterThan(1024 * 1024);
+    expect(stdout).toBe(listing);
+    expect(stdout.split("\n").filter((path) => glob.match(path))).toEqual(
+      matches,
+    );
+  });
+
+  test("fails a command whose output is over the output cap", async () => {
     const fake = fakeWorkdir({
-      processStdout: new Uint8Array(10 * 1024 * 1024).fill(120),
+      processStdout: new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
     });
     const driver = new WorkdirHarnessDriver(
       driverOptions(),
@@ -114,9 +147,12 @@ describe("WorkdirHarnessDriver", () => {
       identity: "bootstrap-v1",
     });
 
-    const { stdout } = await session.runCommand({ command: "cat big.bin" });
+    const run = session.runCommand({ command: "cat big.bin" });
 
-    expect(stdout).toBe(`${"x".repeat(limit)}\n[output truncated]`);
+    await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
+    await expect(run).rejects.toThrow(
+      `stdout is over the ${HARNESS_OUTPUT_MAX_BYTES} bytes`,
+    );
   });
 
   test("leaves a shared machine running when one session ends", async () => {

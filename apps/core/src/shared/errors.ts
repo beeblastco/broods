@@ -43,6 +43,17 @@ export class SandboxFileTooLargeError extends Error {
   }
 }
 
+export class SandboxOutputTooLargeError extends Error {
+  constructor(
+    stream: "stdout" | "stderr",
+    public readonly maxBytes: number,
+  ) {
+    super(
+      `the command's ${stream} is over the ${maxBytes} bytes a harness can load from one sandbox command; narrow it with a path filter, \`| head -n 1000\` or a count (\`| wc -l\`)`,
+    );
+  }
+}
+
 export function isContextLengthError(message: string): boolean {
   return CONTEXT_LIMIT_PATTERN.test(message);
 }
