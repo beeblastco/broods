@@ -117,7 +117,9 @@ async function exec(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof SandboxReleased)
-      return new Response(message, { status: 410 });
+      return new Response("the sandbox was released; it runs nothing more", {
+        status: 410,
+      });
     if (error instanceof StateConflict)
       return new Response(message, { status: 409 });
     if (error instanceof StateTooLarge)
@@ -136,7 +138,7 @@ async function readState(
   const object = await bucket.get(key);
   if (object === null) return null;
   if (object.customMetadata?.released)
-    throw new SandboxReleased("the sandbox was released; it runs nothing more");
+    throw new SandboxReleased();
   const bytes = new Uint8Array(await object.arrayBuffer());
 
   return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };
