@@ -424,7 +424,7 @@ test("G200 retention deletion permits a second run for the same idempotency key"
   try {
     const t = convexTest(schema, modules);
     const accountId = await t.run(
-      async (ctx) =>
+      async (ctx): Promise<Id<"accounts">> =>
         await ctx.db.insert("accounts", {
           orgId: "retention",
           username: "retention",
