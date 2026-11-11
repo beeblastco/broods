@@ -71,7 +71,7 @@ export async function handleSandboxConfigRoute(
         },
       );
       const created: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-        internal.sandbox.configs.getById,
+        internal.runtimeLookups.sandboxConfigById,
         {
           accountId: accountId,
           sandboxId: createdId,
@@ -103,7 +103,7 @@ export async function handleSandboxConfigRoute(
 
   if (req.method === "GET") {
     const record: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -124,7 +124,7 @@ export async function handleSandboxConfigRoute(
   }
   if (req.method === "PATCH") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -158,7 +158,7 @@ export async function handleSandboxConfigRoute(
       encryptionTag: encrypted.tag,
     });
     const updated: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -188,7 +188,7 @@ export async function handleSandboxConfigRoute(
   }
   if (req.method === "DELETE") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,

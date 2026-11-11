@@ -20,14 +20,9 @@ import {
   agentsInStage,
   resourceStageScope,
 } from "../model/projectScope";
-import { agentsFields, paginationCursorFields } from "../schema";
+import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-
-const agentDoc = v.object({
-  ...agentsFields,
-  _id: v.id("agents"),
-  _creationTime: v.number(),
-});
+import { agentDoc } from "../runtimeLookups";
 
 const foreignAgentLink = v.object({
   configId: v.id("agentConfigs"),
@@ -96,25 +91,6 @@ export const create = internalMutation({
     await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return agentRowId;
-  },
-});
-
-// `v.string()`, not `v.id`: an unknown id resolves to null instead of failing validation.
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-  },
-  returns: v.union(agentDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agents"> | null> => {
-    const normalized = ctx.db.normalizeId("agents", args.agentId);
-    if (!normalized) return null;
-    const agent = await ctx.db.get(normalized);
-    if (!agent || agent.accountId !== args.accountId) {
-      return null;
-    }
-
-    return agent;
   },
 });
 

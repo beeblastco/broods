@@ -8,6 +8,7 @@ const HOT_ENTRIES = [
   "schema.ts",
   "runtime.ts",
   "runtimeIngress.ts",
+  "runtimeLookups.ts",
   "usage.ts",
 ];
 const HEAVY_PACKAGES = ["zod", "convex-helpers"];
