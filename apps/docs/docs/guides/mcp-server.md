@@ -6,7 +6,7 @@ Broods serves your agents on an MCP server at `/mcp`. A client such as Claude Co
 claude mcp add --transport http broods https://gateway.broods.app/mcp
 ```
 
-The client opens a browser to sign in with your Broods login, the same one as the dashboard. It needs the owner or admin role, like `broods login`. If you administer one organization, it acts as that one's account. With several, name one in the URL, `https://gateway.broods.app/mcp?org=<slug>`; switching organizations in the dashboard never changes what a connected client acts as. A client without OAuth, or a script, sends a key instead:
+The client opens a browser to sign in with your Broods login, the same one as the dashboard. It needs the owner or admin role, like `broods login`. If you administer one organization, it acts as that one's account. With several, it acts as the one you created; when that is still ambiguous, name one in the URL, `https://gateway.broods.app/mcp?org=<slug>`, which always wins; switching organizations in the dashboard never changes what a connected client acts as. A client without OAuth, or a script, sends a key instead:
 
 ```sh
 claude mcp add --transport http broods https://gateway.broods.app/mcp \
