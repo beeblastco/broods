@@ -20,6 +20,7 @@ import { getOwnedStage } from "./model/ownership/stage";
 import {
   getProjectForRole,
   getProjectForWrite,
+  requireProjectForWrite,
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
 import { deploymentRegionValidator, stagesFields } from "./schema";
@@ -31,6 +32,8 @@ const stageDoc = v.object({
   _id: v.id("stages"),
   _creationTime: v.number(),
 });
+
+const STAGE_NOT_FOUND = "Stage not found.";
 
 // Copies agents, secrets and runtime wiring, so admin-only like deleting a stage.
 const STAGE_ADMIN_REQUIRED =
@@ -258,17 +261,14 @@ export const remove = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage) throw new Error("Stage not found.");
+    const stage = await ctx.db.get(stageId);
+    if (!stage) throw new ClientError(STAGE_NOT_FOUND, "not_found");
+    await requireProjectForWrite(ctx, authUser.id, stage.projectId, "admin", {
+      forbidden: "Stages can only be deleted by an org admin.",
+      notFound: STAGE_NOT_FOUND,
+    });
     if (stage.isDefault)
       throw new Error("The default stage cannot be deleted.");
-    const project = await getProjectForWrite(
-      ctx,
-      authUser.id,
-      stage.projectId,
-      "admin",
-    );
-    if (!project) throw new Error("Stage not found.");
 
     await deleteStageContents(ctx, stage);
 

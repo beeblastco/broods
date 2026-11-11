@@ -15,7 +15,7 @@ import { ClientError } from "./model/clientError";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import {
   getProjectForRole,
-  getProjectForWrite,
+  requireProjectForWrite,
 } from "./model/ownership/project";
 import { getOrgMembership, orgRoleMeets } from "./model/ownership/org";
 import {
@@ -134,6 +134,11 @@ const RANDOM_NOUNS = [
   "zone",
 ];
 
+const PROJECT_WRITE_REFUSAL = {
+  forbidden: "Projects can only be changed by an org admin.",
+  notFound: "Project not found.",
+};
+
 const projectDoc = v.object({
   ...projectsFields,
   _id: v.id("projects"),
@@ -251,13 +256,13 @@ export const remove = mutation({
   handler: async (ctx, { projectId }): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForWrite(
+    await requireProjectForWrite(
       ctx,
       authUser.id,
       projectId,
       "admin",
+      PROJECT_WRITE_REFUSAL,
     );
-    if (!project) throw new Error("Project not found.");
 
     await purgeProject(ctx, projectId);
 
@@ -278,13 +283,13 @@ export const update = mutation({
   ): Promise<Id<"projects">> => {
     const authUser = await requireAuth(ctx);
 
-    const project = await getProjectForWrite(
+    const project = await requireProjectForWrite(
       ctx,
       authUser.id,
       projectId,
       "admin",
+      PROJECT_WRITE_REFUSAL,
     );
-    if (!project) throw new Error("Project not found.");
 
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error("Project name is required.");
