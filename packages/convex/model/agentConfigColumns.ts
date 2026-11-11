@@ -72,6 +72,15 @@ export const agentExtraConfigColumn = v.object({
       v.null(),
     ),
   ),
+  transcription: v.optional(
+    v.union(
+      v.object({
+        provider: v.optional(v.string()),
+        modelId: v.optional(v.string()),
+      }),
+      v.null(),
+    ),
+  ),
   workspaces: v.optional(v.union(v.array(OPEN), v.null())),
   sandboxes: v.optional(v.array(v.string())),
   session: v.optional(v.union(OPEN, v.null())),
