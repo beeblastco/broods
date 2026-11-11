@@ -36,7 +36,12 @@ import {
   sandboxHoldsWorkspace,
   supportsS3WorkspaceMount,
 } from "../../convex/model/sandboxProviders.ts";
-import { MAX_CONFIGURED_SKILLS } from "../../convex/model/skillLimits.ts";
+import {
+  MAX_CLI_SKILL_SYNC_BYTES,
+  MAX_CONFIGURED_SKILLS,
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_FILE_BYTES,
+} from "../../convex/model/skillLimits.ts";
 import {
   WORKSPACE_ISOLATION_LEVELS,
   isWorkspaceIsolation,
@@ -103,6 +108,20 @@ type McpAuth = {
   oauth?: Record<string, unknown>;
 };
 
+export type SkillManifestConfig = {
+  source: "files";
+  path: string;
+  files: SkillBundleFile[];
+};
+
+type SkillBundleFile = {
+  path: string;
+  size: number;
+  sha256: string;
+  contentBase64: string;
+  contentType: string;
+};
+
 type ExportedResource = {
   exportName: string;
   file: string;
@@ -149,13 +168,12 @@ export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
-// MCP and skill limits copy packages/convex/model/mcp.ts and skills.ts, which the CLI cannot
-// import. Change both or the CLI accepts what the config plane rejects.
+// MCP limits copy packages/convex/model/mcp.ts, which is not a leaf module the CLI can import.
+// Change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
+const SKILL_SYNC_LIMIT = `\`broods dev\` and \`broods deploy\` send at most ${MAX_CLI_SKILL_SYNC_BYTES / 1024 / 1024} MiB of skill files per sync, across all skills; the server accepts ${MAX_SKILL_BUNDLE_BYTES / 1024 / 1024} MiB per skill`;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [
   /^\.env(?:\.|$)/i,
@@ -232,6 +250,7 @@ export async function compileProject(
     .sort((a, b): number =>
       `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`),
     );
+  assertSkillSyncSize(sortedResources);
   const mcpServers = new Map(
     sortedResources
       .filter((resource): boolean => resource.kind === "mcp")
@@ -851,6 +870,24 @@ function assertUniqueResources(
     }
     seen.add(key);
   }
+}
+
+function assertSkillSyncSize(resources: CliManifestResource[]): void {
+  const skills = resources
+    .filter((resource): boolean => resource.kind === "skill")
+    .map((resource): { name: string; bytes: number } => ({
+      name: resource.name,
+      bytes: (resource.config as SkillManifestConfig).files.reduce(
+        (sum, file): number => sum + file.size,
+        0,
+      ),
+    }));
+  const total = skills.reduce((sum, skill): number => sum + skill.bytes, 0);
+  if (total <= MAX_CLI_SKILL_SYNC_BYTES) return;
+
+  throw new Error(
+    `Skills total ${total} bytes (${skills.map((skill): string => `${skill.name} ${skill.bytes}`).join(", ")}). ${SKILL_SYNC_LIMIT}.`,
+  );
 }
 
 function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
@@ -1739,7 +1776,7 @@ async function buildBundleModule(options: {
 async function normalizeSkillConfig(
   config: { path: string },
   projectRoot: string,
-): Promise<Record<string, unknown>> {
+): Promise<SkillManifestConfig> {
   const skillRoot = resolveContainedResourcePath(
     projectRoot,
     config.path,
@@ -1997,10 +2034,8 @@ function rewriteValues(value: unknown): unknown {
   return value;
 }
 
-async function readBundleFiles(
-  root: string,
-): Promise<Array<Record<string, unknown>>> {
-  const files: Array<Record<string, unknown>> = [];
+async function readBundleFiles(root: string): Promise<SkillBundleFile[]> {
+  const files: SkillBundleFile[] = [];
   let totalBytes = 0;
 
   async function walk(dir: string): Promise<void> {
@@ -2021,9 +2056,9 @@ async function readBundleFiles(
           );
         }
         totalBytes += bytes.byteLength;
-        if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+        if (totalBytes > MAX_CLI_SKILL_SYNC_BYTES) {
           throw new Error(
-            `Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_SKILL_BUNDLE_BYTES})`,
+            `Skill bundle at ${root} is too large (over ${totalBytes} bytes). ${SKILL_SYNC_LIMIT}.`,
           );
         }
         files.push({

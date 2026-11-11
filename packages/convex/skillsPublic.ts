@@ -11,9 +11,10 @@ import {
   createOrReplaceSkill,
   fetchGitHubSkillFiles,
 } from "./model/skills";
-
-const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+import {
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_FILE_BYTES,
+} from "./model/skillLimits";
 
 export const createFromGithub = action({
   args: {
@@ -143,11 +144,11 @@ export const publishSkill = action({
       const buffer = await res.arrayBuffer();
       const bytes = buffer.byteLength;
 
-      if (bytes > MAX_FILE_BYTES) {
+      if (bytes > MAX_SKILL_FILE_BYTES) {
         throw new Error(`${file.path} exceeds the 5 MB per-file limit.`);
       }
       totalBytes += bytes;
-      if (totalBytes > MAX_BUNDLE_BYTES) {
+      if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
         throw new Error("Total bundle size exceeds the 30 MB limit.");
       }
 

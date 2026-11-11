@@ -10,9 +10,7 @@ import {
 } from "./skillRules";
 import { deleteS3Prefix, listS3Prefix, readS3Text, writeS3Object } from "./s3";
 import { ClientError } from "./clientError";
-
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+import { MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_FILE_BYTES } from "./skillLimits";
 
 const MAX_SKILL_ARCHIVE_BYTES = 2 * MAX_SKILL_BUNDLE_BYTES;
 
