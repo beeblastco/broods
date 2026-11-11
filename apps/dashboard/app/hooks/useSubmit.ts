@@ -4,6 +4,7 @@ import { useState } from "react";
 export function useSubmit(): {
   pending: boolean;
   error: string | null;
+  reset: () => void;
   run: (write: () => Promise<unknown>) => Promise<boolean>;
 } {
   const [pending, setPending] = useState(false);
@@ -12,6 +13,7 @@ export function useSubmit(): {
   return {
     pending: pending,
     error: error,
+    reset: (): void => setError(null),
     run: async (write) => {
       setPending(true);
       setError(null);
