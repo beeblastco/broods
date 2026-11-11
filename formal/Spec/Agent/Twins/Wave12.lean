@@ -54,6 +54,7 @@ def modelOutputFromModelConfig (call : Json) : Prog Json := do
 (`PROVIDER_TRANSCRIPTION`). -/
 private def defaultTranscriptionModel (provider : String) : Option String :=
   match provider with
+  | "fishaudio" => some "transcribe-1"
   | "groq" => some "whisper-large-v3-turbo"
   | "mistral" => some "voxtral-mini-latest"
   | "openai" => some "whisper-1"

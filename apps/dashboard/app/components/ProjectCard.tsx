@@ -38,7 +38,7 @@ export function ProjectCard({
       <button
         type="button"
         aria-label={`Open ${name}`}
-        className="absolute inset-0 cursor-pointer rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="absolute inset-0 cursor-pointer rounded-lg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         {...handlers(href)}
       />
       <div className="flex w-full items-center gap-2 text-sm font-medium text-foreground">
@@ -76,7 +76,9 @@ export function ProjectCard({
         )}
       </div>
       {error ? (
-        <p className="line-clamp-2 text-xs text-destructive">{error}</p>
+        <p role="alert" className="line-clamp-2 text-xs text-destructive">
+          {error}
+        </p>
       ) : (
         <p className="line-clamp-2 text-xs text-muted-foreground">
           {description || "No description"}

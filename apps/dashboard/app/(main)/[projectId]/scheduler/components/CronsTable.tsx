@@ -19,6 +19,11 @@ import { SearchInput } from "@/app/components/SearchInput";
 import { StatusWord, type StatusTone } from "@/app/components/StatusDot";
 import { FilterButton, Toolbar } from "@/app/components/Toolbar";
 import { Button } from "@/app/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/app/components/ui/tooltip";
 import { actorName, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
@@ -397,7 +402,11 @@ function CronPanel({
       onClose={onClose}
     >
       <DetailRows rows={facts} />
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
 
       <h4 className="mt-5 mb-1.5 text-sm font-medium">Prompt</h4>
       <CopyTextarea value={eventsToText(cron.events)} label="prompt" />
@@ -495,10 +504,31 @@ function RunsTable({
             <DataTableCell className="font-mono tabular-nums" muted>
               {formatDateTime(run.startedAt)}
             </DataTableCell>
-            <DataTableCell title={run.error}>
-              <StatusWord tone={RUN_TONE[run.status]}>
-                {RUN_WORD[run.status]}
-              </StatusWord>
+            <DataTableCell>
+              {run.error ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={`${RUN_WORD[run.status]}: ${run.error}`}
+                        className="cursor-help"
+                      />
+                    }
+                  >
+                    <StatusWord tone={RUN_TONE[run.status]}>
+                      {RUN_WORD[run.status]}
+                    </StatusWord>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-64">
+                    {run.error}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <StatusWord tone={RUN_TONE[run.status]}>
+                  {RUN_WORD[run.status]}
+                </StatusWord>
+              )}
             </DataTableCell>
             <DataTableCell align="right" muted className="tabular-nums">
               {durationLabel(run)}

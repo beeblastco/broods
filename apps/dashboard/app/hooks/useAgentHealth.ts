@@ -80,10 +80,14 @@ async function fetchHealthWithTimeout(
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { signal: controller.signal, priority: "low" });
   } finally {
     window.clearTimeout(timeoutId);
   }
+}
+
+function checkWhenVisible(): void {
+  if (document.visibilityState === "visible") void checkServiceHealth();
 }
 
 function notifyListeners(): void {
@@ -96,8 +100,9 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   listenerCount++;
   if (listenerCount === 1) {
-    void checkServiceHealth();
-    pollingInterval = setInterval(checkServiceHealth, HEALTH_CHECK_INTERVAL);
+    checkWhenVisible();
+    pollingInterval = setInterval(checkWhenVisible, HEALTH_CHECK_INTERVAL);
+    document.addEventListener("visibilitychange", checkWhenVisible);
   }
 
   return () => {
@@ -106,6 +111,7 @@ function subscribe(listener: () => void): () => void {
     if (listenerCount === 0 && pollingInterval) {
       clearInterval(pollingInterval);
       pollingInterval = null;
+      document.removeEventListener("visibilitychange", checkWhenVisible);
     }
   };
 }

@@ -29,6 +29,7 @@ import {
 import { useMutation } from "convex/react";
 import { useSubmit } from "@/app/hooks/useSubmit";
 import { analytics } from "@/app/lib/analytics";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { useRef, useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
@@ -84,7 +85,13 @@ export function CreateAgentConfigDialog({
   }
 
   async function handleCreate(): Promise<void> {
-    if (!name.trim() || !modelId.trim() || !stageId) return;
+    if (
+      !name.trim() ||
+      !modelId.trim() ||
+      !stageId ||
+      (provider === "custom" && !customBaseUrl.trim())
+    )
+      return;
 
     const created = await run(() =>
       createAgentConfig({
@@ -137,10 +144,17 @@ export function CreateAgentConfigDialog({
         >
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="agent-name">Name</Label>
+              <Label htmlFor="agent-name">
+                Name{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 ref={nameInput}
                 id="agent-name"
+                required={true}
+                pattern={NOT_BLANK}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Agent"
@@ -179,9 +193,19 @@ export function CreateAgentConfigDialog({
               </p>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="agent-model">Model ID</Label>
+              <Label htmlFor="agent-model">
+                Model ID{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 id="agent-model"
+                required={true}
+                pattern={NOT_BLANK}
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
                 value={modelId}
                 onChange={(event) => setModelId(event.target.value)}
                 placeholder={
@@ -192,9 +216,16 @@ export function CreateAgentConfigDialog({
             </div>
             {provider === "custom" && (
               <div className="grid gap-2">
-                <Label htmlFor="agent-base-url">Base URL</Label>
+                <Label htmlFor="agent-base-url">
+                  Base URL{" "}
+                  <span aria-hidden="true" className="text-destructive">
+                    *
+                  </span>
+                </Label>
                 <Input
                   id="agent-base-url"
+                  type="url"
+                  required={true}
                   value={customBaseUrl}
                   onChange={(event) => setCustomBaseUrl(event.target.value)}
                   placeholder="https://api.example.com/v1"
@@ -223,7 +254,11 @@ export function CreateAgentConfigDialog({
                 placeholder="You are a helpful assistant..."
               />
             </div>
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={handleClose}>
@@ -231,12 +266,9 @@ export function CreateAgentConfigDialog({
             </Button>
             <Button
               type="submit"
-              disabled={
-                !name.trim() ||
-                !modelId.trim() ||
-                !stageId ||
-                (provider === "custom" && !customBaseUrl.trim()) ||
-                pending
+              disabled={!stageId || pending}
+              className={
+                !stageId || pending ? "cursor-not-allowed" : "cursor-pointer"
               }
             >
               {pending ? "Creating..." : "Create"}

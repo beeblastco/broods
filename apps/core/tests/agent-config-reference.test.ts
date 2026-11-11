@@ -20,6 +20,7 @@ import {
 import { ClientError } from "@broods/convex/model/clientError";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
+  AGENT_PROVIDER_NAMES,
   PROVIDER_ENDPOINT_SETTING,
 } from "@broods/convex/model/modelProviders";
 import { workspaceOnLaterSandbox } from "@broods/convex/model/sandboxMounts";
@@ -310,7 +311,7 @@ const MODEL = z
   );
 
 const TRANSCRIPTION = z.strictObject({
-  provider: z.optional(z.enum(ACCOUNT_MODEL_PROVIDER_NAMES)),
+  provider: z.optional(z.enum(AGENT_PROVIDER_NAMES)),
   modelId: optionalString,
 });
 
@@ -373,7 +374,7 @@ const PROVIDERS = refusingProtoKey(
     .partialRecord(
       z.pipe(
         z.string(),
-        z.enum(ACCOUNT_MODEL_PROVIDER_NAMES, {
+        z.enum(AGENT_PROVIDER_NAMES, {
           error: "is not a supported provider",
         }),
       ),

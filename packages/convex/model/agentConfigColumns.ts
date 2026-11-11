@@ -3,7 +3,7 @@ import { v, type Validator, type Value } from "convex/values";
 import type { z } from "zod/mini";
 
 import type { AGENT_CONFIG, MODEL_OUTPUT } from "./agentRules";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./modelProviders";
+import { AGENT_PROVIDER_NAMES } from "./modelProviders";
 
 // What a zod output is once Convex holds it: literals widen and a loose object is an open record.
 type Stored<T> = unknown extends T
@@ -66,7 +66,7 @@ export const agentExtraConfigColumn = v.object({
     v.union(
       v.object(
         Object.fromEntries(
-          ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => [name, v.optional(OPEN)]),
+          AGENT_PROVIDER_NAMES.map((name) => [name, v.optional(OPEN)]),
         ),
       ),
       v.null(),

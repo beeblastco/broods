@@ -1,6 +1,7 @@
 "use client";
 
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -16,7 +17,7 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { AlertTriangle, BookOpen, Eye, EyeOff, Send, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Send, X } from "lucide-react";
 import { useCallback, useEffect, useEffectEvent, useId, useState } from "react";
 
 const ALLOWED_EXTENSIONS = new Set([
@@ -344,6 +345,7 @@ function CreateSkillMdForm({
   const [desc, setDesc] = useState("");
   const nameValid =
     /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  const nameInvalid = name !== "" && !nameValid;
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
@@ -374,12 +376,14 @@ function CreateSkillMdForm({
           value={name}
           placeholder="support-flow"
           className="h-7 font-mono text-2xs"
+          aria-invalid={nameInvalid}
+          aria-describedby={nameInvalid ? `${formId}-name-error` : undefined}
           onChange={(e) =>
             setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
           }
         />
-        {name && !nameValid && (
-          <p className="text-3xs text-destructive">
+        {nameInvalid && (
+          <p id={`${formId}-name-error`} className="text-3xs text-destructive">
             Name must start and end with a letter or number.
           </p>
         )}
@@ -421,7 +425,6 @@ function TokenPrompt({
   onCancel: () => void;
 }): React.JSX.Element {
   const [draft, setDraft] = useState("");
-  const [show, setShow] = useState(false);
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
@@ -438,38 +441,24 @@ function TokenPrompt({
         Your account key (starts with <code>bask_</code>). Saved in session
         only.
       </p>
-      <div className="flex items-center gap-1.5">
-        <Input
-          // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just asked to publish
-          autoFocus
-          type={show ? "text" : "password"}
-          value={draft}
-          placeholder="bask_…"
-          className="h-7 flex-1 font-mono text-2xs"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            }
-          }}
-        />
-        <IconTooltip label={show ? "Hide key" : "Show key"}>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="cursor-pointer"
-            onClick={() => setShow((v) => !v)}
-          >
-            {show ? (
-              <EyeOff className="size-3.5" />
-            ) : (
-              <Eye className="size-3.5" />
-            )}
-          </Button>
-        </IconTooltip>
-      </div>
+      <SecretInput
+        noun="key"
+        aria-label={label}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just asked to publish
+        autoFocus
+        value={draft}
+        placeholder="bask_…"
+        className="h-7 flex-1 font-mono text-2xs"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && draft.trim())
+            onConfirm(draft.trim());
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+      />
       <Button
         size="sm"
         className="h-7 cursor-pointer self-end text-2xs"

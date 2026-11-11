@@ -18,11 +18,17 @@ import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowRight, Moon, Sun } from "lucide-react";
+import { ArrowRight, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
+
+const THEMES = [
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+  { value: "system", label: "System", Icon: Monitor },
+];
 
 interface Profile {
   name: string;
@@ -64,6 +70,10 @@ export function AccountPanel(): React.JSX.Element {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [handleTouched, setHandleTouched] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const handleInput = useRef<HTMLInputElement>(null);
+  const handleHintId = useId();
 
   const savedName = currentUser?.name ?? claimName;
   const savedHandle = currentUser?.accountHandle ?? "";
@@ -72,6 +82,7 @@ export function AccountPanel(): React.JSX.Element {
   const normalizedHandle = accountHandle.trim().toLowerCase();
   const hasHandleError =
     normalizedHandle.length > 0 && !HANDLE_REGEX.test(normalizedHandle);
+  const showHandleError = handleTouched && hasHandleError;
   const hasProfileChanges =
     name.trim() !== savedName.trim() ||
     normalizedHandle !== savedHandle.trim().toLowerCase();
@@ -80,16 +91,17 @@ export function AccountPanel(): React.JSX.Element {
   const email = currentUser?.email ?? claimEmail;
 
   async function handleSaveProfile(): Promise<void> {
+    if (isSavingProfile || !hasProfileChanges) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setSaveError("Display name is required.");
+      nameInput.current?.focus();
 
       return;
     }
     if (hasHandleError) {
-      setSaveError(
-        "Account handle must be 3-32 chars and use a-z, 0-9, '_' or '-'.",
-      );
+      setHandleTouched(true);
+      handleInput.current?.focus();
 
       return;
     }
@@ -124,11 +136,24 @@ export function AccountPanel(): React.JSX.Element {
         title="Profile"
         description="Editable attributes for your account."
       >
-        <div className="grid gap-4">
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSaveProfile();
+          }}
+        >
           <div className="grid gap-2">
-            <Label htmlFor="account-display-name">Display name</Label>
+            <Label htmlFor="account-display-name">
+              Display name{" "}
+              <span aria-hidden="true" className="text-destructive">
+                *
+              </span>
+            </Label>
             <Input
+              ref={nameInput}
               id="account-display-name"
+              required={true}
               value={name}
               onChange={(event) => {
                 setDraft({
@@ -144,7 +169,14 @@ export function AccountPanel(): React.JSX.Element {
           <div className="grid gap-2">
             <Label htmlFor="account-handle">Account handle</Label>
             <Input
+              ref={handleInput}
               id="account-handle"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+              aria-invalid={showHandleError}
+              aria-describedby={handleHintId}
+              onBlur={() => setHandleTouched(true)}
               value={accountHandle}
               onChange={(event) => {
                 setDraft({ name: name, accountHandle: event.target.value });
@@ -154,12 +186,13 @@ export function AccountPanel(): React.JSX.Element {
               placeholder="your_handle"
             />
             <p
+              id={handleHintId}
               className={cn(
                 "text-xs",
-                hasHandleError ? "text-destructive" : "text-muted-foreground",
+                showHandleError ? "text-destructive" : "text-muted-foreground",
               )}
             >
-              {hasHandleError
+              {showHandleError
                 ? "Use 3-32 chars: lowercase letters, numbers, '_' or '-'."
                 : "Public identifier shown as @handle."}
             </p>
@@ -171,21 +204,22 @@ export function AccountPanel(): React.JSX.Element {
                 : (saveNotice ?? "All changes saved.")}
             </p>
             <Button
+              type="submit"
               size="sm"
-              className="cursor-pointer"
-              onClick={handleSaveProfile}
-              disabled={
-                !hasProfileChanges ||
-                hasHandleError ||
-                !name.trim() ||
-                isSavingProfile
+              className={
+                isSavingProfile ? "cursor-not-allowed" : "cursor-pointer"
               }
+              disabled={isSavingProfile}
             >
               {isSavingProfile ? "Saving..." : "Save changes"}
             </Button>
           </div>
-          {saveError && <p className="text-sm text-destructive">{saveError}</p>}
-        </div>
+          {saveError && (
+            <p role="alert" className="text-sm text-destructive">
+              {saveError}
+            </p>
+          )}
+        </form>
       </Section>
 
       <Separator />
@@ -250,24 +284,19 @@ export function AccountPanel(): React.JSX.Element {
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="mb-3 text-sm font-medium text-foreground">Theme</p>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              className="cursor-pointer"
-              variant={theme === "light" ? "default" : "outline"}
-              onClick={() => setTheme("light")}
-            >
-              <Sun className="size-4 mr-1" />
-              Light
-            </Button>
-            <Button
-              size="sm"
-              className="cursor-pointer"
-              variant={theme === "dark" ? "default" : "outline"}
-              onClick={() => setTheme("dark")}
-            >
-              <Moon className="size-4 mr-1" />
-              Dark
-            </Button>
+            {THEMES.map(({ value, label, Icon }) => (
+              <Button
+                key={value}
+                size="sm"
+                className="cursor-pointer"
+                variant={theme === value ? "default" : "outline"}
+                aria-pressed={theme === value}
+                onClick={() => setTheme(value)}
+              >
+                <Icon className="size-4 mr-1" />
+                {label}
+              </Button>
+            ))}
           </div>
         </div>
       </Section>

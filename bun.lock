@@ -79,6 +79,7 @@
         "@ai-sdk/deepinfra": "^3.0.87",
         "@ai-sdk/deepseek": "^3.0.81",
         "@ai-sdk/fireworks": "^3.0.90",
+        "@ai-sdk/fish-audio": "3.0.54",
         "@ai-sdk/gateway": "^4.0.139",
         "@ai-sdk/google": "^4.0.114",
         "@ai-sdk/google-vertex": "^5.0.134",
@@ -407,6 +408,8 @@
     "@ai-sdk/deepseek": ["@ai-sdk/deepseek@3.0.81", "", { "dependencies": { "@ai-sdk/provider": "4.0.37", "@ai-sdk/provider-utils": "5.0.76" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-oaW8zX9NxdyTkL/f6fxePmMK9uYoaE9ZgJFhGTag+D+evofzTyYYGNoVabV++dXIlYmhMOE+mfAPApApjnrBrw=="],
 
     "@ai-sdk/fireworks": ["@ai-sdk/fireworks@3.0.90", "", { "dependencies": { "@ai-sdk/openai-compatible": "3.0.87", "@ai-sdk/provider": "4.0.37", "@ai-sdk/provider-utils": "5.0.76" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-C0xpFI1DYfaMoRKZklubckkubXxhtU9Gxs5wMF9YGbPpRwHSnkzEb21okgXPapDzxCLaeF9qh8MTr7+nbOoTcQ=="],
+
+    "@ai-sdk/fish-audio": ["@ai-sdk/fish-audio@3.0.54", "", { "dependencies": { "@ai-sdk/provider": "4.0.37", "@ai-sdk/provider-utils": "5.0.76" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-dkMkOzezdt61PtneA9g9Qrha7yojVwuCMluu0Pazk9Vp5QJS91KNKr2MBig8hhr7sE2w+GhDVVQiFhF3TZ4Klw=="],
 
     "@ai-sdk/gateway": ["@ai-sdk/gateway@4.0.139", "", { "dependencies": { "@ai-sdk/provider": "4.0.37", "@ai-sdk/provider-utils": "5.0.76", "@vercel/oidc": "3.2.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-2YEIPm4n59nm4PBhMGjFWH0g+ztPgfybqoeMIjfJYNiB8zLHftUrONgb8P3Ho3Yy5cdoLCjiDE/Hv2Crol0JBw=="],
 
