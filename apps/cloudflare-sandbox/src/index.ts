@@ -37,6 +37,12 @@ const execRequest = z.object({
 
 type ExecRequest = z.infer<typeof execRequest>;
 
+// The Container this DO started, with the policy it was started under; `up` once an exec answered.
+interface Instance {
+  launch: string;
+  up: boolean;
+}
+
 interface Env {
   SANDBOX: DurableObjectNamespace<Sandbox>;
   SANDBOX_API_KEY: string;
@@ -45,8 +51,8 @@ interface Env {
 export type ExecResult = SandboxExecAnswer;
 
 export class Sandbox extends DurableObject<Env> {
-  #starting: Promise<void> | null = null;
-  #booting = false;
+  #starting: Promise<Instance> | null = null;
+  #instance: Instance | null = null;
 
   // The idle window lives on this DO instance, so a restarted one must set it again or the
   // platform default stops the running Container within a minute.
@@ -54,6 +60,9 @@ export class Sandbox extends DurableObject<Env> {
     super(ctx, env);
     const container = ctx.container;
     const idleMs = ctx.storage.kv.get<number>(IDLE_KEY);
+    const launch = ctx.storage.kv.get<string>(LAUNCH_KEY);
+    if (container?.running && launch !== undefined)
+      this.#instance = { launch: launch, up: true };
     if (container?.running && idleMs !== undefined) {
       void ctx.blockConcurrencyWhile((): Promise<void> =>
         container
@@ -69,7 +78,7 @@ export class Sandbox extends DurableObject<Env> {
   async exec(request: ExecRequest): Promise<ExecResult> {
     const startedAt = Date.now();
     const container = this.#container();
-    await this.#ensureRunning(container, request);
+    const instance = await this.#ensureRunning(container, request);
     const backstop = new AbortController();
     const timer = setTimeout(
       (): void => backstop.abort(),
@@ -93,7 +102,7 @@ export class Sandbox extends DurableObject<Env> {
           },
         )
         .finally((): void => {
-          this.#booting = false;
+          instance.up = true;
         });
       const [stdout, stderr] = await Promise.all([
         readCapped(process.stdout, request.outputLimitBytes, backstop.signal),
@@ -123,7 +132,8 @@ export class Sandbox extends DurableObject<Env> {
 
   async destroy(): Promise<void> {
     const container = this.#container();
-    if (container.running || this.#booting) await container.destroy();
+    if (container.running || this.#instance?.up === false)
+      await container.destroy();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -192,7 +202,9 @@ export class Sandbox extends DurableObject<Env> {
   }
 
   status(): { running: boolean } {
-    return { running: this.#container().running || this.#booting };
+    return {
+      running: this.#container().running || this.#instance?.up === false,
+    };
   }
 
   #container(): Container {
@@ -202,20 +214,26 @@ export class Sandbox extends DurableObject<Env> {
     return container;
   }
 
-  // `running` reads false until the first exec after start() gets through; #booting covers that.
-  // Internet and size are fixed at start(), so a Container under another policy is replaced.
-  #ensureRunning(container: Container, request: ExecRequest): Promise<void> {
+  // `running` reads false until the first exec after start() answers; `up` covers that. A running
+  // Container under another policy is replaced, a booting one refuses, since replacing it could
+  // hand its waiting exec the new policy. Only a new start replaces #instance, never an exec.
+  #ensureRunning(
+    container: Container,
+    request: ExecRequest,
+  ): Promise<Instance> {
     const launch = `${request.enableInternet ? "internet" : "offline"}:${request.instance}`;
-    const relaunch =
-      container.running &&
-      this.ctx.storage.kv.get<string>(LAUNCH_KEY) !== launch;
-    if (
-      this.#starting === null ||
-      relaunch ||
-      (!this.#booting && !container.running)
-    ) {
-      this.#booting = true;
-      this.#starting = (async (): Promise<void> => {
+    const current = this.#instance;
+    if (current?.up === false && current.launch !== launch)
+      throw new Error(
+        `it is starting as ${current.launch}, not ${launch}; retry once it is up`,
+      );
+    const relaunch = container.running && current?.launch !== launch;
+    const fresh =
+      current === null || relaunch || (current.up && !container.running);
+    if (this.#starting === null || fresh) {
+      const instance = fresh ? { launch: launch, up: false } : current;
+      this.#instance = instance;
+      this.#starting = (async (): Promise<Instance> => {
         if (relaunch) await container.destroy();
         if (!container.running) {
           container.start({
@@ -234,9 +252,13 @@ export class Sandbox extends DurableObject<Env> {
           await container.destroy();
           throw error;
         }
+
+        return instance;
       })().catch((error: unknown): never => {
-        this.#starting = null;
-        this.#booting = false;
+        if (this.#instance === instance) {
+          this.#instance = null;
+          this.#starting = null;
+        }
         throw error;
       });
     }

@@ -8,16 +8,18 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 // Core reads only this head of each SKILL.md for the per-turn skill list.
 export const MAX_SKILL_METADATA_BYTES = 64 * 1024;
 
+export function isValidSkillName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_SKILL_NAME_LENGTH &&
+    /^[a-z0-9-]+$/.test(value) &&
+    !value.includes("anthropic") &&
+    !value.includes("claude")
+  );
+}
+
 export function validateSkillName(value: unknown): asserts value is string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_SKILL_NAME_LENGTH ||
-    !/^[a-z0-9-]+$/.test(value) ||
-    value.includes("anthropic") ||
-    value.includes("claude") ||
-    /<[^>]*>/.test(value)
-  ) {
+  if (typeof value !== "string" || !isValidSkillName(value)) {
     throw new ClientError(
       "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
     );

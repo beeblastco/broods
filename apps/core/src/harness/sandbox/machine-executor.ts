@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   authorize,
   rolePrincipal,
@@ -215,8 +216,9 @@ export async function runMachineComputerAction(
 ): Promise<MachineComputerResultFrame> {
   const connection = connectedMachine(config);
   if (!connection.computer) {
-    throw new Error(
+    throw new ClientError(
       `computer use is off on machine sandbox "${connection.name}". Restart it with \`broods machine ${connection.name} --computer\`.`,
+      "conflict",
     );
   }
   const frame: MachineComputerFrame = {
@@ -474,8 +476,9 @@ function connectedMachine(config: SandboxExecutorConfig): MachineConnection {
     registryKey(plane.accountId, plane.sandboxConfigId),
   );
   if (!connection) {
-    throw new Error(
+    throw new ClientError(
       `machine sandbox "${plane.name}" is not connected. Run \`broods machine ${plane.name}\` on that computer.`,
+      "conflict",
     );
   }
 
@@ -490,13 +493,15 @@ function machineServingMcp(record: McpRecord): MachineConnection {
       entry.name === sandbox,
   );
   if (!connection) {
-    throw new Error(
+    throw new ClientError(
       `machine sandbox "${sandbox}" is not connected. Run \`broods machine ${sandbox} --mcp <file>\` on that computer.`,
+      "conflict",
     );
   }
   if (!connection.mcp.has(record.name)) {
-    throw new Error(
+    throw new ClientError(
       `machine sandbox "${sandbox}" does not serve MCP server "${record.name}". Add it under mcpServers in its --mcp file.`,
+      "conflict",
     );
   }
 

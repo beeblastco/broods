@@ -721,7 +721,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           >
             {isAgent ? (
               <DetailsTab
-                key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
+                key={agentConfigId ?? "agent-details"}
                 agentConfig={agentConfig}
                 projectId={projectId}
                 stageId={stageId}

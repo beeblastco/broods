@@ -42,6 +42,7 @@ const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
 const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
   "level",
+  "logId",
   "service",
   "service.name",
   "time",

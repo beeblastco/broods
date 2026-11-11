@@ -3001,6 +3001,30 @@ describe("createSandboxExecutor", () => {
     expect(daytonaDeleteMock).toHaveBeenCalledTimes(1);
   });
 
+  it("gives a Daytona background job the current env, not the one from creation", async () => {
+    const { DaytonaSandboxExecutor } =
+      await import("../src/harness/sandbox/daytona-executor.ts");
+    const executor = new DaytonaSandboxExecutor({
+      provider: "daytona",
+      persistent: true,
+      envVars: { MY_API_BASE: "https://edited.example.com" },
+    });
+
+    await executor.runBackground({
+      code: "sleep 1",
+      reservationKey: "custom-tool:acct_1:qs78zwc4z4q5ysxm74fgrhd13s88xxt",
+      jobId: "job_env",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+      callback: { url: "https://core.example.com/cb", token: "cb-token" },
+    });
+
+    expect(daytonaExecuteCommandMock.mock.calls.at(-1)?.[2]).toEqual({
+      MY_API_BASE: "https://edited.example.com",
+      __CB_TOKEN: "cb-token",
+    });
+  });
+
   it("requires a tenant API key when a tenant Daytona API URL is configured", async () => {
     const {
       createSandboxExecutor,

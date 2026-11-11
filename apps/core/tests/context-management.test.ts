@@ -1,4 +1,5 @@
 import { APICallError } from "@ai-sdk/provider";
+import { type GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import {
   afterAll,
   afterEach,
@@ -7,6 +8,7 @@ import {
   it,
   mock,
   setSystemTime,
+  spyOn,
 } from "bun:test";
 import * as actualAi from "ai";
 import type { ModelMessage, ToolCallPart, UserContent } from "ai";
@@ -19,6 +21,10 @@ import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as actualS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
+// Taken before the module mock below replaces it.
+const realReadS3TextHead = actualS3.readS3TextHead;
+const INDEX_LINE = "- [fact](fact.md) - a saved fact\n";
+const MIB = 1024 * 1024;
 
 type StoredRow = StoredConversationEventPage["page"][number];
 
@@ -41,7 +47,12 @@ const generateTextMock = mock(
   }),
 );
 const readS3TextMock = mock(
-  async (_bucket: string, _key: string): Promise<string> => {
+  async (
+    _bucket: string,
+    _key: string,
+    _maxBytes: number,
+    _access?: actualS3.S3Access,
+  ): Promise<string> => {
     const error = new Error("not found") as Error & {
       name: string;
       $metadata: { httpStatusCode: number };
@@ -312,6 +323,8 @@ describe("session system context", () => {
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem",
       expect.stringContaining("/memory/MEMORY.md"),
+      MIB + 1,
+      undefined,
     );
     expect(
       enabledContext.system.some((message) =>
@@ -319,6 +332,51 @@ describe("session system context", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    [2 * 1024 * MIB, Math.floor((MIB + 1) / INDEX_LINE.length), true],
+    [INDEX_LINE.length * 3_100, 3_100, false],
+    [1.5 * MIB, Math.floor((MIB + 1) / INDEX_LINE.length), true],
+  ])(
+    "loads a %p byte memory index with one ranged read",
+    async (size, lines, cut): Promise<void> => {
+      process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+      readS3TextMock.mockImplementation(realReadS3TextHead);
+      const send = spyOn(S3Client.prototype, "send").mockImplementation((async (
+        command: GetObjectCommand,
+      ) => {
+        const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? "");
+        if (!range) throw new Error("read the index without a range");
+        const length = Math.min(size, Number(range[1]) + 1);
+        const text = INDEX_LINE.repeat(
+          Math.ceil(length / INDEX_LINE.length),
+        ).slice(0, length);
+
+        return {
+          ContentLength: length,
+          Body: { transformToString: async (): Promise<string> => text },
+        };
+      }) as never);
+
+      const session = await newSession({
+        workspaces: [{ name: "default", workspaceId: "ws_a" }],
+      });
+      const context = await session
+        .createEphemeralTurnContext([{ role: "user", content: "hello" }])
+        .finally(() => send.mockRestore());
+      const note = cut
+        ? "(index cut at 1 MiB: later entries were not loaded. Shorten it to one line per memory.)"
+        : "";
+
+      expect(
+        context.system.find((message) =>
+          message.content.includes("Current memory index"),
+        )?.content,
+      ).toBe(
+        `Current memory index (memory/MEMORY.md) for this conversation:\n\n${`${INDEX_LINE.repeat(lines)}${note}`.trimEnd()}`,
+      );
+    },
+  );
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";

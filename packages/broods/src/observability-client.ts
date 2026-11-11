@@ -90,7 +90,8 @@ export async function* subscribeObservabilityLogs(
           live = true;
         },
       )) {
-        const key = `${entry.ts}|${entry.eventType}|${entry.message}`;
+        const key =
+          entry.logId ?? `${entry.ts}|${entry.eventType}|${entry.message}`;
         if (seen.has(key)) continue;
         seen.add(key);
         if (seen.size > 5_000) seen.delete(seen.values().next().value!);

@@ -116,6 +116,16 @@ export BROODS_BASE_URL="https://gateway.your-domain.example"
 broods login --dashboard-url https://your-dashboard.example.com
 ```
 
+## logout
+
+Revokes the stored login on its server and removes it from `~/.broods/config.json`. Logins for other servers stay.
+
+```bash
+broods logout [--base-url <url>]
+```
+
+A revoked token stops working at once, so run it on a machine you no longer trust with the login, or after a token leaked. A token the server already refuses is removed locally all the same. A `BROODS_TOKEN` in the environment is left alone, and logout says so: the CLI cannot unset it, so remove it from your shell or CI settings.
+
 ## connect
 
 Signs an external account in through the browser and keeps it on your deployment, so agents act through it. There is nothing to pass. Without a type, lists the account's connections. See [Connections](../guides/connections.md).

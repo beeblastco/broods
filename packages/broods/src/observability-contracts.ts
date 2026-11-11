@@ -11,6 +11,8 @@ const MAX_AGENT_ID_LENGTH = 256;
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 export type ObservabilityLogEntry = {
+  /** Core's id for the line: its live copy and its Loki replay share it. */
+  logId?: string;
   ts: number;
   level: LogLevel;
   eventType: string;
