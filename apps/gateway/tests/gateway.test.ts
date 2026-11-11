@@ -2735,6 +2735,25 @@ test("defaults a Loki line with no eventType to its level, like the live stream"
   ).toBe("error");
 });
 
+test("keeps core's log id from a Loki line or its OTLP metadata", () => {
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1" },
+      JSON.stringify({ logId: "line-1", message: "progress ." }),
+      1_700_000_000_000,
+      "fallback",
+    ).logId,
+  ).toBe("line-1");
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1", logId: "line-2" },
+      "progress .",
+      1_700_000_000_000,
+      "fallback",
+    ).logId,
+  ).toBe("line-2");
+});
+
 test("rehydrates Loki OTLP metadata for durable log history", () => {
   expect(
     lokiLogEntry(

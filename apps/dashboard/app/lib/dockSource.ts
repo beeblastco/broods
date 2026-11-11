@@ -81,6 +81,34 @@ export async function readSource(url: string): Promise<DockFile[]> {
   return sourceSchema.parse(await response.json()).files;
 }
 
+/** A newer source with the draft's edits on top; `lost` are edited paths it also moved. */
+export function rebaseDraft(
+  seed: readonly DockFile[],
+  draft: readonly DockFile[],
+  source: readonly DockFile[],
+): { files: DockFile[]; lost: string[] } {
+  const before = new Map(seed.map((file) => [file.path, file.content]));
+  const after = new Map(draft.map((file) => [file.path, file.content]));
+  const files = new Map(source.map((file) => [file.path, file.content]));
+  const lost: string[] = [];
+  for (const { path } of draftChanges(seed, draft)) {
+    const next = after.get(path);
+    const base = files.get(path);
+    if (base === next) continue;
+    if (base !== before.get(path)) lost.push(path);
+    else if (next === undefined) files.delete(path);
+    else files.set(path, next);
+  }
+
+  return {
+    files: [...files].map(([path, content]) => ({
+      content: content,
+      path: path,
+    })),
+    lost: lost,
+  };
+}
+
 /** Puts the stage's source in the conversation's folder before the agent's first turn. */
 export async function seedConversation(
   session: DockSession,
