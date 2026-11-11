@@ -117,7 +117,7 @@ sequenceDiagram
 - Every write for an ephemeral row goes through its row lane (see [Instance row](#instance-row)), so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
-- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A call the Worker refused before its isolate ran (a 400, 401 or 404, or Cloudflare's own error) is not metered.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
