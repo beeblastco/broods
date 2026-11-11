@@ -626,6 +626,48 @@ describe("account-manage sandbox endpoints", () => {
     expect(text).not.toContain("tenant-key");
   });
 
+  it("answers 404, not the update hint, when the workdir host no longer has the sandbox", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    let probes = 0;
+    globalThis.fetch = (async (
+      url: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const path = new URL(String(url)).pathname;
+      const gone = Response.json(
+        { error: { code: "not_found", message: "sandbox sbx_handler" } },
+        { status: 404 },
+      );
+      if (path.endsWith("/pty-token")) return gone;
+      // The first read is the handler's own instance check; the second is the probe.
+      if (
+        path === "/v1/sandboxes/sbx_handler" &&
+        (init?.method ?? "GET") === "GET"
+      ) {
+        probes += 1;
+        if (probes > 1) return gone;
+      }
+
+      return fetchMock(url, init);
+    }) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
+
+    expect(response.status).toBe(404);
+    const text = JSON.stringify(await responseJson(response));
+    expect(text).toContain("no longer exists");
+    expect(text).not.toContain("update the workdir host");
+  });
+
   it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
