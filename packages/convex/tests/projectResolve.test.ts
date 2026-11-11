@@ -41,6 +41,55 @@ test("`--project` names the same project on the GitHub and env routes", async ()
   expect(env).toEqual({ projects: 1, envProject: projectId });
 });
 
+test("an org holding the old duplicate pair keeps reaching the same project", async () => {
+  const t = resolveTest();
+  const { orgId, projectId: dashboardId } = await seed(t);
+  const cliId = await t.run(async (ctx) => {
+    const id = await ctx.db.insert("projects", {
+      authId: "auth_owner",
+      orgId: orgId,
+      name: "my bot",
+      slug: "my-bot-2",
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("stages", {
+      authId: "auth_owner",
+      projectId: id,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: Date.now(),
+    });
+
+    return id;
+  });
+  await t.mutation(internal.cli.sync.setEnvBySecretHash, {
+    secretHash: SECRET_HASH,
+    project: "my bot",
+    stage: "development",
+    name: "API_TOKEN",
+    value: "x",
+  });
+
+  const resolved = await Promise.all(
+    ["my bot", "My Bot", "my-bot", "my-bot-2", "MY BOT!"].map((name) =>
+      t.query(internal.github.cliProject, { orgId: orgId, slug: name }),
+    ),
+  );
+
+  expect(resolved).toEqual([
+    cliId,
+    dashboardId,
+    dashboardId,
+    cliId,
+    dashboardId,
+  ]);
+  const env = await t.run(async (ctx) =>
+    ctx.db.query("environmentVariables").first(),
+  );
+  expect(env?.projectId).toBe(cliId);
+});
+
 async function seed(
   t: T,
 ): Promise<{ orgId: Id<"orgs">; projectId: Id<"projects"> }> {

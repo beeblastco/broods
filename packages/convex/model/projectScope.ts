@@ -75,7 +75,7 @@ export async function cronsInProject(
   return crons.flat();
 }
 
-// Every CLI route names a project by its slug or by a name that slugifies to it.
+// As the CLI always resolved it: exact name or slug, lowest slug first, then the slugified name.
 export async function resolveProject(
   ctx: Ctx,
   orgId: Id<"orgs"> | null,
@@ -84,17 +84,18 @@ export async function resolveProject(
   const name = project.trim();
   if (!orgId || !name) return null;
 
-  for (const slug of new Set([name, slugifyName(name, "")])) {
-    const found = await ctx.db
-      .query("projects")
-      .withIndex("by_orgId_and_slug", (q) =>
-        q.eq("orgId", orgId).eq("slug", slug),
-      )
-      .first();
-    if (found) return found;
-  }
+  const named = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId_and_name_and_slug", (q) =>
+      q.eq("orgId", orgId).eq("name", name),
+    )
+    .first();
+  const exact = await projectBySlug(ctx, orgId, name);
+  if (named && (!exact || named.slug <= exact.slug)) return named;
+  if (exact) return exact;
+  const slug = slugifyName(name, "");
 
-  return null;
+  return slug && slug !== name ? await projectBySlug(ctx, orgId, slug) : null;
 }
 
 export async function resolveProjectStage(
@@ -249,6 +250,19 @@ async function getRow<
   const normalized = ctx.db.normalizeId(table, id);
 
   return normalized ? await ctx.db.get(normalized) : null;
+}
+
+async function projectBySlug(
+  ctx: Ctx,
+  orgId: Id<"orgs">,
+  slug: string,
+): Promise<Doc<"projects"> | null> {
+  return await ctx.db
+    .query("projects")
+    .withIndex("by_orgId_and_slug", (q) =>
+      q.eq("orgId", orgId).eq("slug", slug),
+    )
+    .first();
 }
 
 function rowStageScope(
