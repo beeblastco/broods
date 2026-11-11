@@ -6,6 +6,7 @@ import type {
   ChannelParseResult,
 } from "./channels.ts";
 import {
+  botIdFromToken,
   chunkChannelText,
   isAllowedId,
   parseChannelWebhookBody,
@@ -142,6 +143,7 @@ export function createZaloChannel(
   options: ZaloChannelOptions = {},
 ): ChannelAdapter {
   const { allowedChannelIds, allowedUserIds } = options;
+  const botId = botIdFromToken(botToken);
 
   return {
     name: "zalo",
@@ -237,6 +239,7 @@ export function createZaloChannel(
             ? { attachments: media.attachments }
             : {}),
           identity: {
+            ...(botId ? { workspaceRef: botId } : {}),
             channelId: chatId,
             ...(senderId ? { userId: senderId } : {}),
             ...(senderName ? { userName: senderName } : {}),
