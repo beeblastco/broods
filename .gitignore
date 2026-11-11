@@ -18,6 +18,10 @@ kubeconfig*
 .generated/
 
 na_tmp/
+
+# Written by scripts/jittest.ts, never committed
+.jittest/
+**/tests/jittest/
 .docusaurus/
 build/
 .docusaurus.d
