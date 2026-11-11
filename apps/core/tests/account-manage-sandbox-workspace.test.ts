@@ -557,7 +557,9 @@ describe("account-manage sandbox endpoints", () => {
       websocketPath: string;
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
-    expect(body.expiresAt).toBe(Date.parse(PTY_TOKEN_EXPIRES_AT));
+    // The host answers 2099; the ticket keeps its own two minutes.
+    expect(body.expiresAt).toBeGreaterThan(Date.now());
+    expect(body.expiresAt).toBeLessThanOrEqual(Date.now() + 120_000);
     expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
     const ticket = openTerminalTicket(body.token, "terminal-secret");
     expect(ticket).toMatchObject({
@@ -626,33 +628,19 @@ describe("account-manage sandbox endpoints", () => {
     expect(text).not.toContain("tenant-key");
   });
 
-  it("answers 404, not the update hint, when the workdir host no longer has the sandbox", async () => {
+  it("answers 404 and asks for no token when the workdir host no longer has the sandbox", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
     process.env.WORKDIR_URL = "https://workdir.example.com";
     process.env.WORKDIR_API_KEY = "tenant-key";
-    let probes = 0;
     globalThis.fetch = (async (
       url: string | URL,
       init?: RequestInit,
-    ): Promise<Response> => {
-      const path = new URL(String(url)).pathname;
-      const gone = Response.json(
-        { error: { code: "not_found", message: "sandbox sbx_handler" } },
-        { status: 404 },
-      );
-      if (path.endsWith("/pty-token")) return gone;
-      // The first read is the handler's own instance check; the second is the probe.
-      if (
-        path === "/v1/sandboxes/sbx_handler" &&
-        (init?.method ?? "GET") === "GET"
-      ) {
-        probes += 1;
-        if (probes > 1) return gone;
-      }
-
-      return fetchMock(url, init);
-    }) as unknown as typeof fetch;
+    ): Promise<Response> =>
+      new URL(String(url)).pathname === "/v1/sandboxes/sbx_handler" &&
+      (init?.method ?? "GET") === "GET"
+        ? Response.json({ id: "sbx_handler", state: "deleted", image: "base" })
+        : fetchMock(url, init)) as unknown as typeof fetch;
     const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
     const created = await seedSandbox({
       provider: "sandbox",
@@ -665,7 +653,7 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.status).toBe(404);
     const text = JSON.stringify(await responseJson(response));
     expect(text).toContain("no longer exists");
-    expect(text).not.toContain("update the workdir host");
+    expect(ptyTokenAuthorizations).toEqual([]);
   });
 
   it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {

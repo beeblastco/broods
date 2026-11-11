@@ -85,7 +85,6 @@ const AUTO_STOP_MAX_SECONDS = 60 * 60;
 
 interface WorkdirPtyToken {
   token: string;
-  expires_at: string;
 }
 
 export interface WorkdirHarnessReservation {
@@ -832,7 +831,7 @@ function workdirConnection(config: SandboxExecutorConfig): {
 export async function workdirTerminalTarget(
   config: SandboxExecutorConfig,
   externalId: string,
-): Promise<{ url: string; authorization: string; expiresAt: number }> {
+): Promise<{ url: string; authorization: string }> {
   const { baseUrl, apiKey } = workdirConnection(config);
   const sandboxUrl = `${stripTrailingSlashes(baseUrl)}/v1/sandboxes/${encodeURIComponent(externalId)}`;
   const response = await fetch(`${sandboxUrl}/pty-token`, {
@@ -840,16 +839,6 @@ export async function workdirTerminalTarget(
     headers: { authorization: `Bearer ${apiKey}` },
   });
   if (response.status === 404 || response.status === 405) {
-    // An updated host also answers 404 for a sandbox it no longer has.
-    const sandbox = await fetch(sandboxUrl, {
-      headers: { authorization: `Bearer ${apiKey}` },
-    });
-    if (sandbox.status === 404) {
-      throw new ClientError(
-        "The sandbox no longer exists on the workdir host",
-        "not_found",
-      );
-    }
     throw new ClientError(
       "The workdir host does not issue terminal tokens; update the workdir host to open a live terminal",
       "conflict",
@@ -865,7 +854,6 @@ export async function workdirTerminalTarget(
   return {
     url: `${sandboxUrl.replace(/^http/, "ws")}/pty`,
     authorization: `Bearer ${minted.token}`,
-    expiresAt: Date.parse(minted.expires_at),
   };
 }
 
