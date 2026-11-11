@@ -514,9 +514,9 @@ export const settleAnsweredRun = internalMutation({
       }
       await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
     } else {
-      await finishRun(
+      await settleRun(
         ctx,
-        run,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
         args.status === "completed"
           ? { status: "completed", result: args.result ?? null }
           : { status: "failed", error: args.error ?? DEAD_RUN_ERROR },
@@ -547,7 +547,11 @@ export const sweepDeadRuns = internalMutation({
     for (const run of page.page) {
       const outcome = await deadRunOutcome(ctx, run, now);
       if (outcome === null) continue;
-      await finishRun(ctx, run, outcome);
+      await settleRun(
+        ctx,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
+        outcome,
+      );
       settled += 1;
     }
     if (!page.isDone) {
@@ -736,26 +740,21 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
-async function finishRun(
-  ctx: MutationCtx,
-  run: Doc<"cronRuns">,
-  outcome: RunOutcome,
-): Promise<void> {
-  await settleRun(
-    ctx,
-    { accountId: run.accountId, cronId: run.cronId, runId: run._id },
-    outcome,
-  );
-  if (run.oneShot) {
-    await ctx.scheduler.runAfter(0, internal.agent.crons.remove, {
-      accountId: run.accountId,
-      cronId: run.cronId,
-    });
-  }
-}
-
 function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
+}
+
+// A reschedule registers a newer at(...) run, or none: an older one is the run that fired.
+async function isSpentOneShot(
+  ctx: QueryCtx,
+  cron: Doc<"crons">,
+  run: Doc<"cronRuns">,
+): Promise<boolean> {
+  if (!run.oneShot || cron.scheduledRunId === undefined) return false;
+  const registration = await ctx.db.system.get(cron.scheduledRunId);
+
+  // Convex keeps a finished scheduled function's row for 7 days only.
+  return registration === null || registration._creationTime <= run.startedAt;
 }
 
 async function runWaitingOn(
@@ -812,6 +811,9 @@ async function settleRun(
       lastError: outcome.status === "failed" ? outcome.error : undefined,
       updatedAt: now,
     });
+  }
+  if (cron && (await isSpentOneShot(ctx, cron, run))) {
+    await deleteCron(ctx, cron);
   }
 
   return null;

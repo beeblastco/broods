@@ -13,6 +13,7 @@ const modules = import.meta.glob("../**/*.ts");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const STALE_AGE_MS = 10 * 60 * 1000;
+const ONE_TIME = "at(2026-01-03T00:00:00)";
 
 const t = () => {
   const tt = convexTest(schema, modules);
@@ -210,26 +211,98 @@ describe("sweepDeadRuns", () => {
   });
 
   test("retires a job only when the dead run fired it as one-time", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
     const tt = t();
     const { accountId, cronId } = await firstCron(tt);
     await staleRun(tt, accountId, cronId, "event-edited");
     await insertEnvelope(tt, accountId, "event-edited", "expired", HOUR_MS + 1);
-    await tt.run((ctx) =>
-      ctx.db.patch(cronId, { scheduleExpression: "at(2100-01-01T09:00:00)" }),
-    );
+    await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { scheduleExpression: ONE_TIME },
+    });
 
     await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
-    await tt.finishAllScheduledFunctions(vi.runAllTimers);
+    await settleScheduled(tt);
     expect(await tt.run((ctx) => ctx.db.get(cronId))).not.toBeNull();
 
-    await staleRun(tt, accountId, cronId, "event-once");
-    await insertEnvelope(tt, accountId, "event-once", "expired", HOUR_MS + 1);
+    const once = await oneTimeCron(tt, accountId);
+    const onceRun = await startRun(tt, accountId, once, Date.now());
+    await tt.run((ctx) =>
+      ctx.db.patch(onceRun, { ingressEventId: "event-once" }),
+    );
+    await insertEnvelope(tt, accountId, "event-once", "expired", 0);
+    vi.advanceTimersByTime(2 * HOUR_MS);
     await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
-    await tt.finishAllScheduledFunctions(vi.runAllTimers);
+    await settleScheduled(tt);
+    vi.useRealTimers();
+
+    expect(await tt.run((ctx) => ctx.db.get(once))).toBeNull();
+  });
+});
+
+describe("one-time jobs", () => {
+  test("a one-time job is removed when its run settles", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    const cronId = await oneTimeCron(tt, accountId);
+    const runId = await startRun(tt, accountId, cronId, Date.now());
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    await settleScheduled(tt);
     vi.useRealTimers();
 
     expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
+  });
+
+  test("a one-time job rescheduled while its run waits on an answer keeps its new schedule", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    for (const scheduleExpression of [
+      "rate(1 day)",
+      "at(2026-01-05T00:00:00)",
+    ]) {
+      const cronId = await oneTimeCron(tt, accountId);
+      const runId = await startRun(tt, accountId, cronId, Date.now());
+      await tt.run((ctx) =>
+        ctx.db.patch(runId, {
+          ingressEventId: `event-${cronId}`,
+          ingressConversationKey: "scoped:cron",
+        }),
+      );
+      await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+        conversationKey: "scoped:cron",
+        ownerEventId: `event-${cronId}`,
+        answered: [],
+        waitingOn: [`approval-${cronId}`],
+        status: "completed",
+        result: { status: "awaiting_approval" },
+      });
+      vi.advanceTimersByTime(HOUR_MS);
+      await tt.mutation(internal.agent.crons.update, {
+        accountId: accountId,
+        cronId: cronId,
+        patch: { scheduleExpression: scheduleExpression },
+      });
+
+      await answer(tt, `approval-${cronId}`);
+      await settleScheduled(tt);
+
+      expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+        status: "completed",
+      });
+      expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+        scheduleExpression: scheduleExpression,
+      });
+    }
+    vi.useRealTimers();
   });
 });
 
@@ -775,6 +848,25 @@ async function firstCron(
   return { accountId: accountId, cronId: cron!._id };
 }
 
+async function oneTimeCron(
+  tt: T,
+  accountId: Id<"accounts">,
+): Promise<Id<"crons">> {
+  const [agent] = await tt.run((ctx) => ctx.db.query("agents").collect());
+  const created = (await tt.mutation(internal.agent.crons.create, {
+    accountId: accountId,
+    input: {
+      name: `once-${Date.now()}`,
+      agentId: agent!._id,
+      input: "run once",
+      scheduleExpression: ONE_TIME,
+    },
+  })) as { cronId: string };
+  vi.advanceTimersByTime(1_000);
+
+  return created.cronId as Id<"crons">;
+}
+
 // A run whose own turn paused on the approval `approval-<ingressEventId>`.
 async function pausedRun(
   tt: T,
@@ -897,6 +989,13 @@ async function insertPolling(
       expiresAt: 4_000_000_000,
     }),
   );
+}
+
+// Runs work scheduled now, such as a removal, without reaching a fire days ahead.
+async function settleScheduled(tt: T): Promise<void> {
+  await tt.finishAllScheduledFunctions((): void => {
+    vi.advanceTimersByTime(1_000);
+  });
 }
 
 // A run old enough for the sweep to read.
