@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import { Skeleton } from "@/app/components/ui/skeleton";
-import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
+import { FULL_ROUTE_PREFETCH, inBackground } from "@/app/lib/prefetch";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
@@ -49,17 +49,7 @@ export function ProjectSelector(): React.JSX.Element | null {
       }
     };
 
-    if (typeof window !== "undefined" && window.requestIdleCallback) {
-      const idleId = window.requestIdleCallback(warmTopProjects, {
-        timeout: 1500,
-      });
-
-      return () => window.cancelIdleCallback(idleId);
-    }
-
-    const timeoutId = window.setTimeout(warmTopProjects, 120);
-
-    return () => window.clearTimeout(timeoutId);
+    return inBackground(warmTopProjects);
   }, [projects, prefetchProject, params.projectId]);
 
   // Hold the slot: the header divider beside this is always painted.

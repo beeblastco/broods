@@ -137,7 +137,7 @@ export function MainShell({
     return isLoading ? (
       <>
         <PerfReporter />
-        <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="flex h-dvh w-full items-center justify-center bg-background">
           <p className="text-sm text-muted-foreground">Loading...</p>
         </div>
       </>
@@ -153,7 +153,7 @@ export function MainShell({
             <CopilotProvider>
               <SidebarProvider
                 defaultOpen={defaultSidebarOpen}
-                className="h-screen flex-col"
+                className="h-dvh flex-col"
               >
                 <Header />
                 {onboardingSecret && (

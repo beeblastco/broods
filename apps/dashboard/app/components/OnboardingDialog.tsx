@@ -55,10 +55,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
           <DialogDescription>{descriptions[step]}</DialogDescription>
         </DialogHeader>
 
-        <div
-          key={step}
-          className="min-h-36 min-w-0 animate-in fade-in slide-in-from-right-2 duration-200 motion-reduce:animate-none"
-        >
+        <div key={step} className="min-h-36 min-w-0 motion-panel">
           {step === 0 && (
             <div className="grid gap-3 text-sm leading-relaxed text-muted-foreground">
               <p>

@@ -238,7 +238,11 @@ export function PoliciesPanel({
               aria-label="Policy document"
               className="min-h-64 font-mono text-xs"
             />
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            {error && (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"

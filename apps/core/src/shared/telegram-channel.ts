@@ -22,6 +22,7 @@ import type {
   ChannelQuestionPrompt,
 } from "./channels.ts";
 import {
+  botIdFromToken,
   isAllowedId,
   parseChannelWebhookBody,
   parseQuestionButtonId,
@@ -151,6 +152,7 @@ export function createTelegramChannel(
   options: TelegramChannelOptions = {},
 ): ChannelAdapter {
   const botUsername = normalizeBotUsername(options.botUsername);
+  const botId = botIdFromToken(botToken);
   const transport = new BroodsTelegramAdapter({
     apiUrl: apiUrl,
     botToken: botToken,
@@ -194,6 +196,7 @@ export function createTelegramChannel(
       message,
       transport.parseMessage(message),
       callback.from,
+      botId,
     );
 
     return {
@@ -276,7 +279,7 @@ export function createTelegramChannel(
         parsed,
       );
       const commandToken = telegramCommandToken(message, botUsername);
-      const envelope = telegramEnvelope(message, parsed, message.from);
+      const envelope = telegramEnvelope(message, parsed, message.from, botId);
 
       return {
         kind: runAgent ? "message" : "context",
@@ -562,6 +565,7 @@ function telegramEnvelope(
   message: TelegramMessage,
   parsed: Message,
   from: TelegramMessage["from"],
+  botId: string | undefined,
 ): { source: TelegramSource; identity: ChannelIdentity } {
   return {
     source: {
@@ -575,6 +579,7 @@ function telegramEnvelope(
       fromUsername: from?.username,
     },
     identity: {
+      ...(botId ? { workspaceRef: botId } : {}),
       channelId: String(message.chat.id),
       ...(message.message_thread_id !== undefined
         ? { threadId: String(message.message_thread_id) }

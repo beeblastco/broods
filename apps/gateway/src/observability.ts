@@ -200,7 +200,7 @@ export async function relayNatsMessages(
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
           sendObs(socket, { type: "log", entry: entry, seq: msg.seq });
         } else {
-          // Shedding would drop the newest rows, the spans that finish tasks; Loki restores logs.
+          // Shedding drops the newest rows, the spans that finish tasks. A full load restores logs.
           await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",

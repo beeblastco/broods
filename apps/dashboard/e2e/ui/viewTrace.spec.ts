@@ -23,7 +23,7 @@ test("View trace opens Tracing on the task without sliding the page", async ({
 
   const targetLog = page.getByRole("cell", { name: `run ${TARGET_TASK}` });
   await targetLog.waitFor();
-  await page.getByRole("textbox", { name: "Search" }).fill("run");
+  await page.getByRole("searchbox", { name: "Search" }).fill("run");
   await expect(page).toHaveURL(/q=run/);
   await targetLog.click();
   expect(await shiftedOutsidePanels(page)).toEqual([]);
@@ -45,7 +45,7 @@ test("a Tracing link opens its search, range and task, and ignores a bad param",
     `/ui-gallery?tab=tracing&q=task&range=30d&trace=${traceId(5)}&from=abc`,
   );
 
-  await expect(page.getByRole("textbox", { name: "Search" })).toHaveValue(
+  await expect(page.getByRole("searchbox", { name: "Search" })).toHaveValue(
     "task",
   );
   await expect(
@@ -70,7 +70,7 @@ test("a log line the search hides drops its strip marker and panel", async ({
   await expect(marker).toHaveCount(1);
   await expect(page.getByRole("button", { name: "View trace" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Search" }).fill("level:error ");
+  await page.getByRole("searchbox", { name: "Search" }).fill("level:error ");
   await expect(page.getByRole("cell", { name: "run 13" })).toHaveCount(0);
   await expect(marker).toHaveCount(0);
   await expect(page.getByRole("button", { name: "View trace" })).toHaveCount(0);

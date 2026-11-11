@@ -235,6 +235,22 @@ describe("transcription model resolution", () => {
     });
   });
 
+  it("transcribes on a speech-to-text only provider", () => {
+    const resolved = resolveTranscriptionModel({
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      transcription: { provider: "fishaudio" },
+      provider: {
+        anthropic: { apiKey: "sk-test" },
+        fishaudio: { apiKey: "sk-test" },
+      },
+    });
+
+    expect("model" in resolved && resolved.model).toMatchObject({
+      provider: "fish-audio.transcription",
+      modelId: "transcribe-1",
+    });
+  });
+
   it("names the missing credentials of the transcription provider", () => {
     expect(
       resolveTranscriptionModel({
