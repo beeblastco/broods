@@ -159,6 +159,30 @@ await client.run(api.agents.myAgent, {
 
 Every status core returns also carries the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
 
+### Errors
+
+A refused request throws `BroodsApiError` with the server's error as fields. Branch on `code`, which stays stable across releases.
+
+| Field           | Description                                                    |
+| --------------- | -------------------------------------------------------------- |
+| `status`        | HTTP status                                                    |
+| `code`          | Stable error code, such as `user_token_required`               |
+| `type`          | Error class, such as `permission_error`                        |
+| `serverMessage` | The server's message, or the raw body when it sent no envelope |
+| `body`          | The raw response body                                          |
+
+```ts
+import { BroodsApiError } from "broods";
+
+try {
+  await client.run(api.agents.myAgent, { input: "Hello" });
+} catch (error) {
+  if (error instanceof BroodsApiError && error.code === "user_token_required") {
+    // sign a user token and retry
+  }
+}
+```
+
 ### Busy conversations
 
 A `stream` call that lands on a busy conversation and is queued instead of streamed throws `IngressAcceptedError`. Its `accepted` field holds the run id, so you can poll it:
@@ -282,7 +306,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 Behavior shared by every method:
 
 - `get*` returns `null` on 404 and `delete*` returns `false`, so upserts need no try/catch.
-- Other failures throw `BroodsAccountApiError` with the HTTP `status` and response body.
+- Other failures throw `BroodsAccountApiError`, a `BroodsApiError` (see [Errors](#errors)).
 - Updates deep-merge `config` into the stored config. A `null` value deletes a key.
 - Secrets inside configs are encrypted at rest and come back as `********`. Sending `********` back keeps the stored value.
 

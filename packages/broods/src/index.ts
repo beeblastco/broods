@@ -3,6 +3,7 @@ export * from "./run-input.ts";
 export * from "./stream.ts";
 export * from "./websocket-contracts.ts";
 export * from "./observability-contracts.ts";
+export { BroodsApiError } from "./api-error.ts";
 export * from "./client.ts";
 export * from "./user-token.ts";
 export * from "./account.ts";

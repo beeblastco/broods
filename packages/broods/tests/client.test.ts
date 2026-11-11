@@ -563,3 +563,31 @@ test("run stops reading when its signal aborts", async (): Promise<void> => {
     server.stop(true);
   }
 });
+
+test("a refused run throws the server's status, code and message as fields", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        {
+          error: {
+            message: "This agent needs a user token.",
+            type: "permission_error",
+            code: "user_token_required",
+          },
+        },
+        { status: 403 },
+      ),
+  });
+
+  await expect(
+    client.run({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toMatchObject({
+    name: "BroodsApiError",
+    message: "Run failed: 403 This agent needs a user token.",
+    status: 403,
+    code: "user_token_required",
+    type: "permission_error",
+    serverMessage: "This agent needs a user token.",
+  });
+});

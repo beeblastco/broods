@@ -57,12 +57,30 @@ test("get/update return null on 404 so callers can upsert", async (): Promise<vo
   expect(await client.updateAgent("agent_missing", { config: {} })).toBeNull();
 });
 
-test("non-2xx non-404 responses throw BroodsAccountApiError with status", async (): Promise<void> => {
+test("non-2xx non-404 responses throw BroodsAccountApiError with status and code", async (): Promise<void> => {
   const { client } = mockClient([
-    { status: 401, body: { error: "Unauthorized" } },
+    {
+      status: 401,
+      body: {
+        error: {
+          message: "Invalid token",
+          type: "authentication_error",
+          code: "invalid_token",
+        },
+      },
+    },
   ]);
+  const error = await client
+    .listCrons()
+    .catch((caught: unknown): unknown => caught);
 
-  await expect(client.listCrons()).rejects.toThrow(BroodsAccountApiError);
+  expect(error).toBeInstanceOf(BroodsAccountApiError);
+  expect(error).toMatchObject({
+    message: "GET /v1/crons failed: 401 Invalid token",
+    status: 401,
+    code: "invalid_token",
+    serverMessage: "Invalid token",
+  });
 });
 
 test("createAgent posts JSON and unwraps the created record", async (): Promise<void> => {

@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
   resolveRunEvents,
@@ -268,8 +269,10 @@ export class BroodsClient {
 
     const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
-      throw new Error(
-        `Run failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        "Run failed",
+        response.status,
+        await response.text(),
       );
     if (response.status === 202) {
       throw new IngressAcceptedError(
@@ -356,8 +359,10 @@ export class BroodsClient {
 
     if (response.status === 404) return { status: "not_found" };
     if (!response.ok)
-      throw new Error(
-        `Status check failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        "Status check failed",
+        response.status,
+        await response.text(),
       );
 
     return (await response.json()) as AsyncStatus;
@@ -428,6 +433,12 @@ export class BroodsClient {
       body: JSON.stringify(body),
       signal: signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `${label} failed`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `${label} failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,

@@ -733,15 +733,9 @@ async function login(args: string[]): Promise<void> {
 }
 
 function apiErrorMessage(error: unknown): string {
-  if (!(error instanceof BroodsAccountApiError))
-    return error instanceof Error ? error.message : String(error);
-  try {
-    const body = JSON.parse(error.body) as { error?: { message?: string } };
+  if (error instanceof BroodsAccountApiError) return error.serverMessage;
 
-    return body.error?.message ?? error.message;
-  } catch {
-    return error.message;
-  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function connectCommand(args: string[]): Promise<void> {
