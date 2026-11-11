@@ -451,6 +451,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "agent",
   "harness",
   "model",
+  "transcription",
   "provider",
   "session",
   "hooks",
