@@ -317,7 +317,7 @@ test("a --region with no value fails rather than falling back", async (): Promis
   expect(backend.regions).toEqual([]);
 });
 
-test("dev lists every resource a confirmed prune deletes, earlier-declined ones included", async (): Promise<void> => {
+test("dev asks only about resources not declined before, and prunes none without a yes", async (): Promise<void> => {
   const cwd = await projectDir();
   const stale = ["old-a", "old-b"].map(
     (name): { kind: string; name: string; config: object } => ({
@@ -326,18 +326,25 @@ test("dev lists every resource a confirmed prune deletes, earlier-declined ones 
       config: {},
     }),
   );
+  const prunes: unknown[] = [];
   const server = Bun.serve({
     port: 0,
-    fetch: async (request): Promise<Response> =>
-      Response.json({
-        manifest:
-          request.method === "GET"
-            ? { version: 1, project: "demo-app", stage: "x", resources: stale }
-            : ((await request.json()) as { manifest: unknown }).manifest,
+    fetch: async (request): Promise<Response> => {
+      const body =
+        request.method === "PUT"
+          ? ((await request.json()) as { manifest: unknown; prune: unknown })
+          : null;
+      if (body) prunes.push(body.prune);
+
+      return Response.json({
+        manifest: body
+          ? body.manifest
+          : { version: 1, project: "demo-app", stage: "x", resources: stale },
         revision: 1,
         ids: { agents: { support: "agent_1" } },
         deployment: null,
-      }),
+      });
+    },
   });
   servers.push(server);
   const declinedFile = join(cwd, "declined.txt");
@@ -355,8 +362,10 @@ test("dev lists every resource a confirmed prune deletes, earlier-declined ones 
     ?.split("kept remotely")[0];
 
   expect(result.exitCode).toBe(0);
-  expect(listed).toContain("old-a");
   expect(listed).toContain("old-b");
+  expect(listed).not.toContain("old-a");
+  expect(result.output).toContain("agent:old-a, agent:old-b");
+  expect(prunes).toEqual([false]);
 });
 
 test("dev --once compiles the project once", async (): Promise<void> => {

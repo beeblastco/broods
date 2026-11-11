@@ -3,6 +3,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
 import {
   accountCipherForWrite,
   hasEncryptionSecret,
@@ -224,7 +225,10 @@ export const saveLayout = mutation({
       "admin",
     );
     if (!project) {
-      throw new Error("The canvas can only be changed by an org admin.");
+      throw new ClientError(
+        "The canvas can only be changed by an org admin.",
+        "forbidden",
+      );
     }
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");

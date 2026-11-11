@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { action, type ActionCtx } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 
 export const createSnapshot = action({
@@ -196,7 +197,10 @@ async function callLifecycle(
     requiredRole: "admin",
   });
   if (!account) {
-    throw new Error("Sandboxes can only be controlled by an org admin.");
+    throw new ClientError(
+      "Sandboxes can only be controlled by an org admin.",
+      "forbidden",
+    );
   }
   const controllable = await ctx.runQuery(
     internal.sandbox.instances.isControllable,

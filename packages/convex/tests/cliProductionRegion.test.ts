@@ -98,6 +98,8 @@ describe("production region on an automated deploy", () => {
     await seedAccount(t);
     await t.mutation(internal.cli.sync.setEnvBySecretHash, {
       secretHash: SECRET_HASH,
+      actorKind: "cli",
+      actorId: "auth_test",
       project: "gdpr-app",
       stage: "production",
       name: "API_KEY",

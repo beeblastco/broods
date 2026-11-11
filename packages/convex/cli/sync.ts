@@ -34,6 +34,7 @@ import {
   envName,
   isExternalResourceKind,
   manifestRevision,
+  prunes,
   deploymentRegionToPin,
   resourceName,
   releaseManifestSync,
@@ -76,7 +77,10 @@ import {
   assertEnvironmentVariableUnreferenced,
   loadEnvironmentVariableValues,
 } from "../model/environmentValues";
-import { upsertEnvironmentVariable } from "../model/environmentWrites";
+import {
+  recordEnvironmentVariableAudit,
+  upsertEnvironmentVariable,
+} from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
@@ -181,7 +185,10 @@ export const deleteTargetsBySecretHash = internalQuery({
     project: v.string(),
     stage: v.string(),
     target: v.union(
-      v.object({ resources: v.array(resourceValidator) }),
+      v.object({
+        resources: v.array(resourceValidator),
+        pruneOnly: v.optional(v.array(v.string())),
+      }),
       v.object({
         kind: v.union(v.literal("workspace"), v.literal("sandbox")),
         name: v.string(),
@@ -209,11 +216,13 @@ export const deleteTargetsBySecretHash = internalQuery({
         ctx,
         stageId,
         target.resources,
+        target.pruneOnly,
       );
       workspaces = await undeclaredWorkspaceConfigs(
         ctx,
         stageId,
         target.resources,
+        target.pruneOnly,
       );
     } else if (target.kind === "sandbox") {
       const sandbox = await sandboxConfigByName(
@@ -651,10 +660,11 @@ export const pruneSandboxesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     manifest: manifestValidator,
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args): Promise<string[]> => {
-    const { secretHash, manifest } = args;
+    const { secretHash, manifest, pruneOnly } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(
@@ -667,11 +677,17 @@ export const pruneSandboxesBySecretHash = internalMutation({
       throw new ClientError("Project/stage not found", "not_found");
     const { projectDoc, stageDoc } = resolved;
 
-    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+    await pruneWorkspaceResources(
+      ctx,
+      stageDoc._id,
+      manifest.resources,
+      pruneOnly,
+    );
     const sandboxes = await pruneSandboxResources(
       ctx,
       stageDoc._id,
       manifest.resources,
+      pruneOnly,
     );
     await touchProject(ctx, projectDoc);
 
@@ -691,6 +707,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       mcp: v.record(v.string(), v.string()),
     }),
     prune: v.optional(v.boolean()),
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -745,7 +762,10 @@ export const recordExternalResourcesBySecretHash = internalMutation({
 
     if (args.prune === true) {
       for (const resource of existing) {
-        if (!desiredKeys.has(`${resource.kind}:${resource.name}`))
+        if (
+          !desiredKeys.has(`${resource.kind}:${resource.name}`) &&
+          prunes(args.pruneOnly, resource.kind, resource.name)
+        )
           await ctx.db.delete(resource._id);
       }
     }
@@ -760,6 +780,8 @@ export const removeEnvBySecretHash = internalMutation({
     project: v.string(),
     stage: v.string(),
     name: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.object({ removed: v.boolean() }),
   handler: async (ctx, args): Promise<{ removed: boolean }> => {
@@ -799,6 +821,18 @@ export const removeEnvBySecretHash = internalMutation({
       resolved.stageDoc._id,
       normalizedName,
       undefined,
+    );
+    await recordEnvironmentVariableAudit(
+      ctx,
+      { kind: args.actorKind, id: args.actorId },
+      {
+        projectId: resolved.projectDoc._id,
+        stageId: resolved.stageDoc._id,
+        variableId: existing._id,
+        action: "deleted",
+        name: normalizedName,
+        summary: "Environment variable deleted",
+      },
     );
 
     return { removed: true };
@@ -935,6 +969,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: v.string(),
       scoped: v.boolean(),
       deployKeyId: v.optional(v.id("deployKeys")),
+      lastUsedAt: v.optional(v.number()),
     }),
   ),
   handler: async (
@@ -945,6 +980,7 @@ export const resolveCliAuth = internalQuery({
     secretHash: string;
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
+    lastUsedAt?: number;
   } | null> => {
     const { tokenHash, keyKind, project, stage } = args;
 
@@ -979,6 +1015,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: keyAccount.secretHash,
       scoped: true,
       deployKeyId: deployKey._id,
+      lastUsedAt: deployKey.lastUsedAt,
     };
   },
 });
@@ -990,6 +1027,8 @@ export const setEnvBySecretHash = internalMutation({
     stage: v.string(),
     name: v.string(),
     value: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -999,12 +1038,26 @@ export const setEnvBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
-    await upsertEnvironmentVariable(ctx, {
+    const written = await upsertEnvironmentVariable(ctx, {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
       name: name,
       value: value,
     });
+    if (written.change !== "unchanged") {
+      await recordEnvironmentVariableAudit(
+        ctx,
+        { kind: args.actorKind, id: args.actorId },
+        {
+          projectId: projectDoc._id,
+          stageId: stageDoc._id,
+          variableId: written.id,
+          action: written.change,
+          name: name,
+          summary: `Environment variable ${written.change}`,
+        },
+      );
+    }
 
     return null;
   },
@@ -1046,6 +1099,7 @@ export const syncManifestBySecretHash = internalMutation({
     secretHash: v.string(),
     manifest: manifestValidator,
     prune: v.optional(v.boolean()),
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.object({
     manifest: v.any(),
@@ -1053,7 +1107,7 @@ export const syncManifestBySecretHash = internalMutation({
     warnings: warningsValidator,
   }),
   handler: async (ctx, args) => {
-    const { secretHash, manifest, prune } = args;
+    const { secretHash, manifest, prune, pruneOnly } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
@@ -1130,9 +1184,20 @@ export const syncManifestBySecretHash = internalMutation({
         projectDoc._id,
         stageDoc._id,
         manifest.resources,
+        pruneOnly,
       );
-      await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
-      await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
+      await pruneChannelRecordResources(
+        ctx,
+        stageDoc._id,
+        manifest.resources,
+        pruneOnly,
+      );
+      await prunePolicyResources(
+        ctx,
+        stageDoc._id,
+        manifest.resources,
+        pruneOnly,
+      );
     }
 
     await syncCanvasLayoutForManifest(ctx, {
