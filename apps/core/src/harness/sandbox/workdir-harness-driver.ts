@@ -15,12 +15,13 @@ import type { Sandbox } from "@mv37/workdir";
 import { createSandboxExecutor } from "./index.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import {
+  HARNESS_FILE_MAX_BYTES,
   HarnessShellProcess,
   type HarnessShellExecutor,
-  readHarnessStream,
 } from "./harness-shell-process.ts";
 import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
+import { SandboxFileTooLargeError } from "../../shared/errors.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { configString, shellQuote, stringRecord } from "./utils.ts";
 import type { WorkdirHarnessReservation } from "./workdir-executor.ts";
@@ -240,13 +241,8 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   }> {
     options.abortSignal?.throwIfAborted();
     const process = await this.spawnCommand(options);
-    const [stdout, stderr, result] = await Promise.all([
-      readHarnessStream(process.stdout),
-      readHarnessStream(process.stderr),
-      process.wait(),
-    ]);
 
-    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    return process.collect();
   }
 
   async spawnCommand(
@@ -267,14 +263,26 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   ): Promise<Uint8Array | null> {
     options.abortSignal?.throwIfAborted();
     const path = shellQuote(options.path);
+    const max = HARNESS_FILE_MAX_BYTES;
     const result = await this.#sandbox.exec(
-      `if [ -f ${path} ]; then base64 < ${path} | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
+      `if [ -f ${path} ]; then s=$(stat -L -c %s ${path}); if [ "$s" -gt ${max} ]; then echo "$s"; exit 46; fi; head -c ${max + 1} ${path} | base64 | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
     );
     options.abortSignal?.throwIfAborted();
     if (result.exit_code === 44) return null;
+    if (result.exit_code === 46) {
+      throw new SandboxFileTooLargeError(
+        options.path,
+        Number(result.stdout.trim()),
+        max,
+      );
+    }
     if (result.exit_code !== 0) throw workdirError("read file", result);
+    const bytes = new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
+    if (bytes.byteLength > max) {
+      throw new Error(`${options.path} changed while it was being read`);
+    }
 
-    return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
+    return bytes;
   }
 
   async writeFile(options: BroodsSandboxWriteFileOptions): Promise<void> {
