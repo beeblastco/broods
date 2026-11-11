@@ -13,6 +13,7 @@ import { assertStageName } from "../lib/slug";
 import { cliLoginTokenHash, resolveActiveCliToken } from "./auth";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
+import { orgIdOf } from "../model/ownership/org";
 import { byDefaultThenName } from "../model/defaultStage";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import {
@@ -423,7 +424,7 @@ async function projectForAccount(
   const account = await ctx.db.get(accountId);
   if (!account || account.status !== "active") return null;
 
-  return await resolveProject(ctx, account, project);
+  return await resolveProject(ctx, orgIdOf(ctx, account), project);
 }
 
 async function summarize(

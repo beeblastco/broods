@@ -25,6 +25,13 @@ export interface ObservabilitySubscribeOptions {
   keepReconnecting?: boolean;
 }
 
+/** `agentId` is set when the gateway searched only that agent's traces. */
+export interface BackfillResult<T> {
+  rows: T[];
+  error?: string;
+  agentId?: string;
+}
+
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -295,10 +302,17 @@ export async function fetchObservabilityLogs(
 export async function fetchObservabilitySpans(
   options: ObservabilityClientOptions,
   limit: number,
-): Promise<{ rows: ObservabilitySpanRow[]; error?: string }> {
+  agentId?: string,
+): Promise<BackfillResult<ObservabilitySpanRow>> {
   return await requestBackfill<ObservabilitySpanRow>(
     options,
-    { type: "subscribe", stream: "traces", backfill: limit, historyOnly: true },
+    {
+      type: "subscribe",
+      stream: "traces",
+      backfill: limit,
+      historyOnly: true,
+      ...(agentId ? { agentId: agentId } : {}),
+    },
     "traces",
   );
 }
@@ -307,15 +321,16 @@ async function requestBackfill<T>(
   options: ObservabilityClientOptions,
   message: ObservabilityClientMessage,
   stream: "logs" | "traces",
-): Promise<{ rows: T[]; error?: string }> {
+): Promise<BackfillResult<T>> {
   const { socket, url } = openObservabilitySocket(
     options,
     await options.credential(),
   );
 
-  return new Promise<{ rows: T[]; error?: string }>((resolve, reject): void => {
+  return new Promise<BackfillResult<T>>((resolve, reject): void => {
     let settled = false;
     const rows: T[] = [];
+    let agentId: string | undefined;
     const settle = (outcome: () => void): void => {
       if (settled) return;
       settled = true;
@@ -340,6 +355,8 @@ async function requestBackfill<T>(
       const msg = parseServerMessage(event.data);
       if (msg?.type === "error") {
         fail(new Error(`Observability gateway error: ${msg.error}`));
+      } else if (msg?.type === "ready") {
+        agentId = msg.agentId;
       } else if (msg?.type === "backfill" && msg.stream === stream) {
         rows.push(...(msg.entries as T[]));
         clearTimeout(timer);
@@ -347,7 +364,11 @@ async function requestBackfill<T>(
         const { error } = msg;
         if (!msg.more)
           settle((): void =>
-            resolve({ rows: rows, ...(error ? { error: error } : {}) }),
+            resolve({
+              rows: rows,
+              ...(error ? { error: error } : {}),
+              ...(agentId ? { agentId: agentId } : {}),
+            }),
           );
       }
     };
