@@ -296,6 +296,18 @@ async function relay(cb: () => void): Promise<void> { await null; cb(); }
 export function hand(box: { sent: boolean }, cb: () => void): Promise<void> { return relay(cb); }
 `;
 
+const CAP_MODULE = `${DIR}/cap.ts`;
+// `run` is traced 100 times at most; a later call must not spill its private method's effects.
+const CAP_TEXT = `${PREFIX}
+class Worker {
+  async #inner(x: number): Promise<number> { await null; return f(x); }
+  async run(x: number): Promise<number> { return this.#inner(x); }
+}
+const worker = new Worker();
+export async function fill(count: number): Promise<void> { for (let i = 0; i < count; i += 1) await worker.run(i); }
+export async function viaCaller(x: number): Promise<number> { return worker.run(x); }
+`;
+
 describe("instrumentation keeps behaviour", () => {
   beforeAll(async () => {
     mkdirSync(TRACES, { recursive: true });
@@ -315,6 +327,11 @@ describe("instrumentation keeps behaviour", () => {
             (name) => `${LATE_MODULE}#${name}`,
           ),
         )
+        .concat(
+          ["Worker.run", "Worker.#inner", "viaCaller"].map(
+            (name) => `${CAP_MODULE}#${name}`,
+          ),
+        )
         .join("\n"),
     );
     process.env["SPEC_CORPUS"] = join(ROOT, DIR, "corpus");
@@ -326,6 +343,7 @@ describe("instrumentation keeps behaviour", () => {
       writeFileSync(join(ROOT, tracedName(index)), text);
     });
     writeFileSync(join(ROOT, LATE_MODULE), LATE_TEXT);
+    writeFileSync(join(ROOT, CAP_MODULE), CAP_TEXT);
     await import("./record-preload.ts");
   });
 
@@ -475,6 +493,23 @@ describe("instrumentation keeps behaviour", () => {
         after: { sent: true },
       },
     ]);
+  });
+
+  test("a callee past its trace limit leaves nothing in its caller's trace", async () => {
+    const module = (await import(join(ROOT, CAP_MODULE))) as {
+      fill: (count: number) => Promise<void>;
+      viaCaller: (x: number) => Promise<number>;
+    };
+    await module.fill(100);
+    expect(await module.viaCaller(500)).toBe(500);
+    const file = join(
+      TRACES,
+      `${encodeURIComponent(`${CAP_MODULE}#viaCaller`)}.jsonl`,
+    );
+    const call = JSON.parse(
+      readFileSync(file, "utf8").split("\n")[0] ?? "",
+    ) as { effects: { fn: string }[] };
+    expect(call.effects.map((effect) => effect.fn)).toEqual(["worker.run"]);
   });
 
   // Each callee window as [counter before, counter after, registry after].

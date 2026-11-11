@@ -181,7 +181,7 @@ const seen = new Map<string, Set<number | bigint>>();
 const traced = new Map<string, Set<number | bigint>>();
 const counts = new Map<string, Record<string, number>>();
 const sourceOf = new WeakMap<object, string>();
-const frames = new AsyncLocalStorage<Frame>();
+const frames = new AsyncLocalStorage<Frame | undefined>();
 // oxlint-disable-next-line typescript/unbound-method -- kept before tests can patch it
 const promiseThen = Promise.prototype.then;
 const settledValues = new WeakMap<Promise<unknown>, unknown>();
@@ -301,7 +301,8 @@ function observe(
   };
   let result: unknown;
   try {
-    result = frame ? frames.run(frame, run) : run();
+    // Past the trace limit there is no frame: a private method must not inherit the caller's.
+    result = TRACES ? frames.run(frame, run) : run();
   } catch (error) {
     finish(
       { threw: encodeText(error), sync: true },
