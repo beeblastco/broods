@@ -641,8 +641,33 @@
   {
     "patch": false,
     "value": {
-      "model": {
-        "transcriptionModelId": 42
+      "transcription": {
+        "modelId": 42
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "transcription": {
+        "provider": "openai",
+        "modelId": "whisper-1"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "transcription": {
+        "provider": "nope"
+      }
+    }
+  },
+  {
+    "patch": false,
+    "value": {
+      "transcription": {
+        "language": "en"
       }
     }
   },

@@ -531,6 +531,7 @@ export declare const api: {
             skills?: Record<string, any> | null;
             subagent?: Record<string, any> | null;
             tools?: Record<string, Record<string, any>> | null;
+            transcription?: { modelId?: string; provider?: string } | null;
             workspaces?: Array<Record<string, any>> | null;
           };
           managedBy?: "cli" | "dashboard" | "api";
@@ -634,6 +635,7 @@ export declare const api: {
             skills?: Record<string, any> | null;
             subagent?: Record<string, any> | null;
             tools?: Record<string, Record<string, any>> | null;
+            transcription?: { modelId?: string; provider?: string } | null;
             workspaces?: Array<Record<string, any>> | null;
           };
           maxTokens?: number;

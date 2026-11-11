@@ -50,7 +50,7 @@ def modelOutputFromModelConfig (call : Json) : Prog Json := do
     return undef
   Prog.effect "createModelOutput" [output]
 
-/-- The transcription model each provider uses unless `transcriptionModelId` says otherwise
+/-- The transcription model each provider uses unless `transcription.modelId` says otherwise
 (`PROVIDER_TRANSCRIPTION`). -/
 private def defaultTranscriptionModel (provider : String) : Option String :=
   match provider with
@@ -59,24 +59,32 @@ private def defaultTranscriptionModel (provider : String) : Option String :=
   | "openai" => some "whisper-1"
   | _ => none
 
-/-- `resolveTranscriptionModel`: a provider with a transcription model builds it, and any failure
-means the agent has none. -/
+/-- `resolveTranscriptionModel`: `config.transcription` names the provider and model, each falling
+back to the agent's own provider and that provider's default. The answer is the model, or the
+reason there is none. -/
 def resolveTranscriptionModel (call : Json) : Prog Json := do
   let config := Twin.callArg call 0
-  let model := field config "model"
-  let provider := field model "provider"
+  let transcription := field config "transcription"
+  let chosen := field transcription "provider"
+  let provider := if nullish chosen then field (field config "model") "provider" else chosen
+  let name := if nullish provider then "this provider" else text provider
+  let noModel := Json.mkObj [("reason", toJson s!"{name} has no transcription model")]
+  if nullish provider then return noModel
   match defaultTranscriptionModel (text provider) with
-  | none => return undef
+  | none => return noModel
   | some fallback =>
     Prog.catchFail
       (do
         let settings ← Prog.effect "requireProviderSettings" [config, provider]
         let withFetch ← Prog.effect "withModelFetch" [settings]
         let _ ← Prog.effect "source.factory" [withFetch]
-        let configured := field model "transcriptionModelId"
-        Prog.effect "provider.transcription"
-          [if nullish configured then toJson fallback else configured])
-      (fun _ => pure undef)
+        let configured := field transcription "modelId"
+        let model ← Prog.effect "provider.transcription"
+          [if nullish configured then toJson fallback else configured]
+        return Json.mkObj [("model", model)])
+      (fun error => do
+        let reason ← Prog.effect "toErrorMessage" [error]
+        return Json.mkObj [("reason", reason)])
 
 /-- `resolveOpenAICompatibleModel`: a compatible client for a custom endpoint, wrapped in the
 middleware stack, the tool image move built for this endpoint and model. -/
