@@ -424,7 +424,10 @@ export const resolveUserLogin = internalQuery({
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
     // Never the dashboard's active org: switching it there must not repoint a connected client.
     const orgs = await administeredOrgs(ctx, authId);
-    const picked = org ? orgs.filter(({ slug }) => slug === org) : orgs;
+    const named = org ? orgs.filter(({ slug }) => slug === org) : orgs;
+    // Only creating an org sets ownerAuthId: being added to another org never makes this ambiguous.
+    const created = named.filter(({ ownerAuthId }) => ownerAuthId === authId);
+    const picked = !org && created.length === 1 ? created : named;
     if (org && picked.length === 0) {
       return {
         refused: `You are not an owner or admin of an organization with the slug ${org}.`,

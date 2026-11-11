@@ -225,13 +225,14 @@ describe("an AuthKit user at /mcp", () => {
   async function seedOrg(
     t: T,
     slug: string,
-    members: Record<string, "owner" | "member">,
+    members: Record<string, "owner" | "admin" | "member">,
+    ownerAuthId: string = AUTH_ID,
   ): Promise<Id<"accounts">> {
     return await t.run(async (ctx) => {
       const orgId = await ctx.db.insert("orgs", {
         name: slug,
         slug: slug,
-        ownerAuthId: AUTH_ID,
+        ownerAuthId: ownerAuthId,
         plan: "free",
         createdAt: 1,
       });
@@ -298,5 +299,24 @@ describe("an AuthKit user at /mcp", () => {
       refused:
         "You are not an owner or admin of an organization with the slug initech.",
     });
+  });
+
+  test("being added as admin elsewhere keeps an owner signed in to the org they created", async () => {
+    const t = loginTest();
+    const home = await seedOrg(
+      t,
+      "home",
+      { auth_victim: "owner" },
+      "auth_victim",
+    );
+    const stranger = await seedOrg(t, "stranger", {
+      [AUTH_ID]: "owner",
+      auth_victim: "admin",
+    });
+
+    const unnamed = await signIn(t, "auth_victim");
+    expect("account" in unnamed && unnamed.account._id).toBe(home);
+    const named = await signIn(t, "auth_victim", "stranger");
+    expect("account" in named && named.account._id).toBe(stranger);
   });
 });
