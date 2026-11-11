@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Sandbox } from "@mv37/workdir";
 import {
   WorkdirHarnessDriver,
   type WorkdirHarnessDriverOptions,
 } from "../src/harness/sandbox/workdir-harness-driver.ts";
+import {
+  HARNESS_FILE_MAX_BYTES,
+  HARNESS_OUTPUT_MAX_BYTES,
+} from "../src/harness/sandbox/harness-shell-process.ts";
+import {
+  SandboxFileTooLargeError,
+  SandboxOutputTooLargeError,
+} from "../src/shared/errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -66,6 +77,88 @@ describe("WorkdirHarnessDriver", () => {
     expect(executor.releases).toEqual([
       { reservationKey: "acct:agent:harness" },
     ]);
+  });
+
+  test("refuses a symlinked file over the harness read cap before buffering it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workdir-harness-"));
+    try {
+      const target = join(dir, "huge.bin");
+      await writeFile(target, "");
+      await truncate(target, HARNESS_FILE_MAX_BYTES + 1);
+      await symlink(target, join(dir, "link.bin"));
+      const fake = fakeWorkdir({ realBashUnder: dir });
+      const driver = new WorkdirHarnessDriver(
+        driverOptions(),
+        fakeExecutor(fake.sandbox, true).value as never,
+      );
+      const { session } = await driver.createSession({
+        identity: "bootstrap-v1",
+      });
+
+      const read = session.readFile({ path: join(dir, "link.bin") });
+
+      await expect(read).rejects.toBeInstanceOf(SandboxFileTooLargeError);
+      await expect(read).rejects.toThrow(
+        `is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns a multi-megabyte find listing whole, so every match parses", async () => {
+    const noise = Array.from(
+      { length: 40_000 },
+      (_, i) => `/workspace/node_modules/pkg-${i}/dist/index.js`,
+    );
+    const matches = Array.from(
+      { length: 175 },
+      (_, i) => `/workspace/apps/core/src/module-${i}.ts`,
+    );
+    const listing = `${[...noise, ...matches].join("\n")}\n`;
+    const fake = fakeWorkdir({ processStdout: encoder.encode(listing) });
+    const driver = new WorkdirHarnessDriver(
+      driverOptions(),
+      fakeExecutor(fake.sandbox, true).value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    const glob = new Bun.Glob("/workspace/apps/core/src/**/*.ts");
+
+    const { stdout } = await session.runCommand({
+      command: "find /workspace -type f -print",
+    });
+
+    expect(listing.length).toBeGreaterThan(1024 * 1024);
+    expect(stdout).toBe(listing);
+    expect(stdout.split("\n").filter((path) => glob.match(path))).toEqual(
+      matches,
+    );
+  });
+
+  test("kills a still-running command past the output cap and stops polling it", async () => {
+    const fake = fakeWorkdir({
+      processRunsUntilKilled: true,
+      processStdout: new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
+    });
+    const driver = new WorkdirHarnessDriver(
+      driverOptions(),
+      fakeExecutor(fake.sandbox, true).value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+
+    const run = session.runCommand({ command: "cat big.bin" });
+
+    await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
+    expect(fake.killCalls).toBe(1);
+    expect(fake.runningProcesses).toBe(0);
+    await expect(run).rejects.toThrow("stdout is over the 16 MiB");
+    const execCalls = fake.execCalls;
+    await Bun.sleep(200);
+    expect(fake.execCalls).toBe(execCalls);
   });
 
   test("leaves a shared machine running when one session ends", async () => {
@@ -336,12 +429,15 @@ function fakeWorkdir(
     processRunsUntilKilled?: boolean;
     processStdout?: Uint8Array;
     onLaunch?: () => void;
+    realBashUnder?: string;
   } = {},
 ): {
   sandbox: Sandbox;
   launchCommands: string[];
   launchEnvs: (Record<string, string> | undefined)[];
   readonly killCalls: number;
+  readonly execCalls: number;
+  readonly runningProcesses: number;
 } {
   const files = new Map<string, Uint8Array>();
   const temporaryFiles = new Map<string, string>();
@@ -357,6 +453,7 @@ function fakeWorkdir(
   const launchEnvs: Array<Record<string, string> | undefined> = [];
   const launchCommands: string[] = [];
   let killCalls = 0;
+  let execCalls = 0;
 
   const sandbox = {
     id: "workdir-1",
@@ -364,6 +461,16 @@ function fakeWorkdir(
       command: string,
       execOptions?: { env?: Record<string, string> },
     ) {
+      execCalls += 1;
+      if (options.realBashUnder && command.includes(options.realBashUnder)) {
+        const run = Bun.spawnSync(["bash", "-c", command]);
+
+        return result(
+          run.stdout.toString(),
+          run.exitCode,
+          run.stderr.toString(),
+        );
+      }
       const processRoot = command.match(
         /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
       )?.[1];
@@ -417,13 +524,12 @@ function fakeWorkdir(
         );
       }
 
-      const readPath = command.match(/base64 < '([^']+)'/)?.[1];
-      if (readPath) {
-        const content = files.get(readPath);
+      const read = command.match(/head -c \d+ '([^']+)' \| base64/);
+      if (read) {
+        const content = files.get(read[1]!);
+        if (content === undefined) return result("", 44);
 
-        return content === undefined
-          ? result("", 44)
-          : result(Buffer.from(content).toString("base64"));
+        return result(Buffer.from(content).toString("base64"));
       }
 
       const write = command.match(/base64 -d '([^']+)' > '([^']+)'/);
@@ -451,6 +557,13 @@ function fakeWorkdir(
     launchEnvs: launchEnvs,
     get killCalls() {
       return killCalls;
+    },
+    get execCalls() {
+      return execCalls;
+    },
+    get runningProcesses() {
+      return [...processes.values()].filter((process) => process.running)
+        .length;
     },
   };
 }

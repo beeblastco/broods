@@ -799,41 +799,80 @@ describe("streamed runs", (): void => {
     spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
       null,
     );
-    // A was still open; someone answered B a moment earlier.
+    // A was still open; someone answered B a moment earlier, until `bOpen`.
+    let bOpen = false;
     spyOn(
       asyncToolResult,
       "settleAsyncToolResultFromCallback",
     ).mockImplementation(
       async ({ resultId }): Promise<AsyncToolResultRecord | null> =>
-        resultId === "async_tool_a"
+        resultId === "async_tool_a" || bOpen
           ? { ...question(resultId), status: "completed" }
           : null,
     );
 
-    const response = await handler(
-      coreRequest(
-        "POST",
-        "/v1/runs",
-        { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
-        {
-          agentId: "agent_1",
-          eventId: "answer-1",
-          conversationKey: "conversation-1",
-          answers: [
-            { statusId: "async_tool_a", answers: { q: ["yes"] } },
-            { statusId: "async_tool_b", answers: { q: ["no"] } },
-          ],
-        },
-      ),
-    );
+    const answer = async (): Promise<Response> =>
+      handler(
+        coreRequest(
+          "POST",
+          "/v1/runs",
+          { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
+          {
+            agentId: "agent_1",
+            eventId: "answer-1",
+            conversationKey: "conversation-1",
+            answers: [
+              { statusId: "async_tool_a", answers: { q: ["yes"] } },
+              { statusId: "async_tool_b", answers: { q: ["no"] } },
+            ],
+          },
+        ),
+      );
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      const admit = spyOn(ingress, "acceptIngress").mockResolvedValue({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const admitted = await answer();
+      // A full queue admits nothing, so there is no run to name.
+      admit.mockResolvedValue({ outcome: "capacity" });
+      const refused = await answer();
 
-    expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({
-      status: "accepted",
-      resultId: "async_tool_a",
-      alreadyAnswered: ["async_tool_b"],
-    });
+      expect(admit).toHaveBeenCalledTimes(2);
+      expect(admitted.status).toBe(202);
+      expect(await admitted.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_a",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+        alreadyAnswered: ["async_tool_b"],
+      });
+      expect(refused.status).toBe(202);
+      const refusedBody = (await refused.json()) as Record<string, unknown>;
+      expect(refusedBody).toMatchObject({ status: "accepted", invoked: false });
+      expect(refusedBody).not.toHaveProperty("runId");
+      expect(refusedBody).not.toHaveProperty("statusUrl");
+
+      // Both open: A starts a turn, then B's resume finds the queue full.
+      bOpen = true;
+      admit.mockResolvedValueOnce({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const mixed = await answer();
+
+      expect(await mixed.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_b",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+      });
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
   });
 
   it("gives back the per-minute run count of an answer request that resumed nothing", async (): Promise<void> => {

@@ -153,7 +153,7 @@ const accounts: Storage["accounts"] = {
     return accountFromConvex(doc);
   },
   getBySecretHash: async function (secretHash) {
-    const doc = await adminQuery(internal.account.accounts.getBySecretHash, {
+    const doc = await adminQuery(internal.runtimeLookups.accountBySecretHash, {
       secretHash: secretHash,
     });
 
@@ -212,7 +212,7 @@ const accounts: Storage["accounts"] = {
 
 const agents: Storage["agents"] = {
   getById: async function (accountId, agentId) {
-    const doc = await adminQuery(internal.agent.agents.getById, {
+    const doc = await adminQuery(internal.runtimeLookups.agentById, {
       accountId: accountId,
       agentId: agentId,
     });
@@ -548,7 +548,7 @@ const channelRecords: Storage["channelRecords"] = {
 
 const sandboxConfigs: Storage["sandboxConfigs"] = {
   getById: async function (accountId, sandboxId) {
-    const doc = await adminQuery(internal.sandbox.configs.getById, {
+    const doc = await adminQuery(internal.runtimeLookups.sandboxConfigById, {
       accountId: accountId,
       sandboxId: sandboxId,
     });

@@ -20,14 +20,9 @@ import {
   agentsInStage,
   resourceStageScope,
 } from "../model/projectScope";
-import { agentsFields, paginationCursorFields } from "../schema";
+import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-
-const agentDoc = v.object({
-  ...agentsFields,
-  _id: v.id("agents"),
-  _creationTime: v.number(),
-});
+import { agentDoc } from "../model/agentDoc";
 
 const foreignAgentLink = v.object({
   configId: v.id("agentConfigs"),
@@ -99,7 +94,7 @@ export const create = internalMutation({
   },
 });
 
-// `v.string()`, not `v.id`: an unknown id resolves to null instead of failing validation.
+// Core pods built before runtimeLookups.ts still call this until they roll.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),

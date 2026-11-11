@@ -1,10 +1,15 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
+import { SandboxOutputTooLargeError } from "../../shared/errors.ts";
 import { shellQuote } from "./utils.ts";
 
 // Base64 grows a chunk to 240 KB, under the 256 KB of stdout one MicroVM exec returns.
 const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
+// Core buffers a whole file per harness read, and its pod has 1 GiB for every run.
+export const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
+// Caps one stream of one harness command in core; nothing bounds parallel commands together.
+export const HARNESS_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface HarnessShellExecutor {
   exec(
@@ -29,7 +34,7 @@ export async function readFileChunk(
 ): Promise<{ bytes: Uint8Array; stamp: string } | null> {
   const q = shellQuote(path);
   const result = await executor.exec(
-    `if [ -f ${q} ]; then stat -c '%s %i %z' ${q}; tail -c +${offset + 1} ${q} | head -c ${FILE_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${q} ]; then exit 44; else exit 45; fi`,
+    `if [ -f ${q} ]; then stat -L -c '%s %i %z' ${q}; tail -c +${offset + 1} ${q} | head -c ${FILE_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${q} ]; then exit 44; else exit 45; fi`,
     abortSignal ? { abortSignal: abortSignal } : undefined,
   );
   if (result.exitCode === 44) return null;
@@ -128,6 +133,31 @@ export class HarnessShellProcess {
     return process;
   }
 
+  /** Reads both streams whole; on a failure it kills, awaits the kill unless aborted, throws. */
+  async collect(): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }> {
+    try {
+      const [stdout, stderr, result] = await Promise.all([
+        readHarnessStream(this.stdout, "stdout"),
+        readHarnessStream(this.stderr, "stderr"),
+        this.wait(),
+      ]);
+
+      return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    } catch (error) {
+      const cleanup = this.kill()
+        .then(() => this.wait())
+        .catch(() => {});
+      await raceWithAbort(cleanup, this.#abortSignal, () => this.kill()).catch(
+        () => {},
+      );
+      throw error;
+    }
+  }
+
   wait(): Promise<{ exitCode: number }> {
     this.#waitPromise ??= raceWithAbort(
       this.#waitForExit(),
@@ -212,30 +242,31 @@ export class HarnessShellProcess {
   }
 }
 
+/** Reads a command's stream whole; past HARNESS_OUTPUT_MAX_BYTES it fails, never returns a part. */
 export async function readHarnessStream(
   stream: ReadableStream<Uint8Array>,
+  name: "stdout" | "stderr",
 ): Promise<string> {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let text = "";
   let total = 0;
   try {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      chunks.push(value);
       total += value.byteLength;
+      if (total > HARNESS_OUTPUT_MAX_BYTES) {
+        await reader.cancel();
+        throw new SandboxOutputTooLargeError(name, HARNESS_OUTPUT_MAX_BYTES);
+      }
+      text += decoder.decode(value, { stream: true });
     }
   } finally {
     reader.releaseLock();
   }
-  const content = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    content.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
 
-  return new TextDecoder().decode(content);
+  return text + decoder.decode();
 }
 
 function delay(ms: number): Promise<void> {
