@@ -480,14 +480,16 @@ export const removeRule = mutation({
       document: document,
       updatedAt: Date.now(),
     });
-    await recordAccessAudit(
-      ctx,
-      caller,
-      "updated",
-      { kind: "policy", id: policy._id, name: policy.name },
-      "Policy rule removed",
-      { rule: dropped },
-    );
+    if (dropped) {
+      await recordAccessAudit(
+        ctx,
+        caller,
+        "updated",
+        { kind: "policy", id: policy._id, name: policy.name },
+        "Policy rule removed",
+        { rule: dropped },
+      );
+    }
 
     return null;
   },
