@@ -82,7 +82,11 @@ describe("twilio channel adapter", () => {
         conversationKey: "twilio:%2B15550001111:%2B15551234567",
         channelName: "twilio",
         content: "hello twilio",
-        identity: { channelId: "+15551234567", userId: "+15551234567" },
+        identity: {
+          workspaceRef: "+15550001111",
+          channelId: "+15551234567",
+          userId: "+15551234567",
+        },
         source: {
           from: "+15551234567",
           messageSid: "SM00000000000000000000000000000001",

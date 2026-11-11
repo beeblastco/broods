@@ -6522,14 +6522,27 @@ export declare const internal: {
         { authId: string },
         Array<Id<"accounts">>
       >;
+      release: FunctionReference<
+        "mutation",
+        "internal",
+        { authId: string },
+        null
+      >;
       scheduleRetry: FunctionReference<
         "mutation",
         "internal",
         { authId: string },
         null | number
       >;
+      sweep: FunctionReference<"mutation", "internal", {}, null>;
     };
     workosUserDeletionCleanup: {
+      deleteIdentity: FunctionReference<
+        "action",
+        "internal",
+        { authId: string },
+        null
+      >;
       run: FunctionReference<"action", "internal", { authId: string }, null>;
     };
   };
@@ -8898,6 +8911,14 @@ export declare const internal: {
         toolCallCount: number;
         totalTokens: number;
       },
+      null
+    >;
+  };
+  user: {
+    cancelAccountDeletion: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string },
       null
     >;
   };

@@ -9,7 +9,18 @@ import {
   compileProject,
   type SkillManifestConfig,
 } from "../src/manifest.ts";
-import { defineSandbox, env, type ChannelType } from "../src/resources.ts";
+import {
+  defineSandbox,
+  defineTelegramChannel,
+  defineTelegramConnection,
+  defineTwilioChannel,
+  defineTwilioConnection,
+  defineWhatsAppChannel,
+  defineWhatsAppConnection,
+  env,
+  type ChannelResource,
+  type ChannelType,
+} from "../src/resources.ts";
 import { diffManifests } from "../src/sync.ts";
 
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
@@ -2939,3 +2950,70 @@ export const support = defineAgent({
 
   return cwd;
 }
+
+test("a 1:1 channel record is tied to a number or bot only when it names one", (): void => {
+  const whatsapp = defineWhatsAppConnection({
+    accessToken: env("WA_TOKEN"),
+    appSecret: env("WA_SECRET"),
+    phoneNumberId: "106540352242922",
+    verifyToken: env("WA_VERIFY"),
+  });
+  const twilio = defineTwilioConnection({
+    accountSid: env("TWILIO_SID"),
+    authToken: env("TWILIO_TOKEN"),
+    phoneNumber: "+15550001111",
+  });
+  const telegram = defineTelegramConnection({
+    botToken: env("TG_TOKEN"),
+    webhookSecret: env("TG_SECRET"),
+  });
+
+  expect(
+    defineWhatsAppChannel({ name: "wa", connection: whatsapp, waId: "1555" })
+      .config.workspaceRef,
+  ).toBeUndefined();
+  expect(
+    defineTwilioChannel({ name: "sms", connection: twilio, from: "+1555" })
+      .config.workspaceRef,
+  ).toBeUndefined();
+  expect(
+    defineWhatsAppChannel({
+      name: "wa",
+      connection: whatsapp,
+      waId: "1555",
+      phoneNumberId: "106540352242922",
+    }).config.workspaceRef,
+  ).toBe("106540352242922");
+  expect(
+    defineTwilioChannel({
+      name: "sms",
+      connection: twilio,
+      from: "+1555",
+      phoneNumber: "+15550001111",
+    }).config.workspaceRef,
+  ).toBe("+15550001111");
+  expect(
+    defineTelegramChannel({
+      name: "tg",
+      connection: telegram,
+      chatId: "123",
+      botId: "5550001",
+    }).config.workspaceRef,
+  ).toBe("5550001");
+});
+
+test("a channel tie written as a ${NAME} placeholder is refused, since records match as stored", (): void => {
+  const telegram = defineTelegramConnection({
+    botToken: env("TG_TOKEN"),
+    webhookSecret: env("TG_SECRET"),
+  });
+
+  expect((): ChannelResource<"tg"> =>
+    defineTelegramChannel({
+      name: "tg",
+      connection: telegram,
+      chatId: "123",
+      botId: "${TG_BOT_ID}",
+    }),
+  ).toThrow('Channel "tg" must name its team, guild, number or bot literally');
+});

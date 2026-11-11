@@ -49,6 +49,13 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+// The dashboard promises deletion 7 days after the request; an hour late is within that.
+crons.interval(
+  "sweep due account deletions",
+  { hours: 1 },
+  internal.org.workosUserDeletion.sweep,
+  {},
+);
 // Expiry is checked inline on every session resolve; this only bounds growth.
 crons.interval(
   "prune role sessions",

@@ -167,7 +167,11 @@ export function createTwilioChannel(
           ...(parsed.attachments.length > 0
             ? { attachments: parsed.attachments }
             : {}),
-          identity: { channelId: payload.from, userId: payload.from },
+          identity: {
+            workspaceRef: payload.to,
+            channelId: payload.from,
+            userId: payload.from,
+          },
           source: { ...source },
         },
       };
