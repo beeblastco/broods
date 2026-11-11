@@ -1,0 +1,2 @@
+# SHA-256 of the made-up test key "tenant-key", a workdir terminal token test vector.
+6268958f90451dde1c6ae74fb8eac385ae2809cd:apps/core/tests/account-manage-sandbox-workspace.test.ts:generic-api-key:33

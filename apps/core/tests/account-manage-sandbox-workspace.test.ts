@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { coreRequest, requestBodyText, responseJson } from "./helpers/http.ts";
@@ -29,9 +30,10 @@ import {
 } from "../../cloudflare-sandbox/src/terminal-token.ts";
 
 const ACCOUNT_ID = "acct_test";
-// SHA-256 hex of "tenant-key", the form the workdir host stores and keys terminal tokens with.
-const WORKDIR_KEY_HASH =
-  "5c3c107fd162b818601ac73cf4ac41d98bcf1c4c77f844a1f7877cbb7ee8bcdd";
+// The form the workdir host stores a key in and keys terminal tokens with.
+const WORKDIR_KEY_HASH = createHash("sha256")
+  .update("tenant-key")
+  .digest("hex");
 const AUTH = { authorization: "Bearer bask_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 const ORIGINAL_ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET;
