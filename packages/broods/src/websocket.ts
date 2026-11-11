@@ -1,5 +1,6 @@
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { USER_TOKEN_SUBPROTOCOL_PREFIX } from "../../convex/model/userToken.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
@@ -227,7 +228,7 @@ export class BroodsWebSocketClient {
           finish();
           break;
         case "error":
-          fail(new Error(formatWireError(effective.error)));
+          fail(wireError(effective));
           break;
       }
     };
@@ -322,7 +323,7 @@ export class BroodsWebSocketClient {
       }
       if (effective.type === "error") {
         close(1000, "websocket error");
-        handlers.onError?.(new Error(formatWireError(effective.error)));
+        handlers.onError?.(wireError(effective));
       }
     };
     // The abnormal close that follows a socket error is reported once, here.
@@ -465,6 +466,21 @@ function formatWireError(error: unknown): string {
   return error === undefined
     ? "WebSocket stream error."
     : JSON.stringify(error);
+}
+
+// The gateway adds core's HTTP status, and its code, when core refused the run before it started.
+function wireError(frame: {
+  type: string;
+  error?: unknown;
+  status?: unknown;
+}): Error {
+  return typeof frame.status === "number"
+    ? new BroodsApiError(
+        `Run failed: ${frame.status}`,
+        frame.status,
+        JSON.stringify(frame),
+      )
+    : new Error(formatWireError(frame.error));
 }
 
 function normalizeWebSocketServiceUrl(value: string): string {
