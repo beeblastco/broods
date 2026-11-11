@@ -36,7 +36,9 @@ export function ObservabilityKeyPrompt({
       </Button>
 
       {error ? (
-        <p className="max-w-sm text-xs text-destructive">{error}</p>
+        <p role="alert" className="max-w-sm text-xs text-destructive">
+          {error}
+        </p>
       ) : null}
     </div>
   );

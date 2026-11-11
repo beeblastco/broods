@@ -38,6 +38,14 @@ export const ACCOUNT_MODEL_PROVIDER_NAMES = [
 export type AccountModelProviderName =
   (typeof ACCOUNT_MODEL_PROVIDER_NAMES)[number];
 
+// Every key of `config.provider`: the chat providers, then the speech-to-text only ones.
+export const AGENT_PROVIDER_NAMES = [
+  ...ACCOUNT_MODEL_PROVIDER_NAMES,
+  "fishaudio",
+] as const;
+
+export type AgentProviderName = (typeof AGENT_PROVIDER_NAMES)[number];
+
 export interface ModelProviderMeta {
   label: string;
   modelPlaceholder: string;
@@ -114,6 +122,10 @@ export function isAccountModelProviderName(
   value: string,
 ): value is AccountModelProviderName {
   return Object.hasOwn(MODEL_PROVIDERS, value);
+}
+
+export function isAgentProviderName(value: string): value is AgentProviderName {
+  return (AGENT_PROVIDER_NAMES as readonly string[]).includes(value);
 }
 
 export function providerApiKeyEnvName(

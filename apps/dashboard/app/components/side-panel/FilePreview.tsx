@@ -1,5 +1,6 @@
 "use client";
 
+import { CopyButton } from "@/app/components/CopyButton";
 import type { CodeLanguage } from "@/app/components/side-panel/CodeEditor";
 import type { FileRecord } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { IconTooltip } from "@/app/components/IconTooltip";
@@ -7,9 +8,10 @@ import { MARKDOWN_IMAGE_COMPONENTS } from "@/app/components/MarkdownImage";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
 import { cn } from "@/app/lib/utils";
-import { Check, Copy, Download, X } from "lucide-react";
+import { SCROLL_NEAREST } from "@/app/lib/scrollNearest";
+import { Download, X } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Heavy (CodeMirror; Streamdown's Shiki and Mermaid), so they load once a file is opened.
 const CodeEditor = dynamic(
@@ -160,13 +162,39 @@ export function FilePreview({
   fileUrl: (file: FileRecord) => Promise<string>;
 }): React.JSX.Element {
   const active = tabs.find((tab) => tab.file.path === activePath)?.file;
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- DOM scroll of the tab row
+  useEffect(() => {
+    listRef.current
+      ?.querySelector('[aria-selected="true"]')
+      ?.scrollIntoView(SCROLL_NEAREST);
+  }, [activePath]);
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const index = tabs.findIndex((tab) => tab.file.path === activePath);
+    const next = tabStep(event.key, index, tabs.length);
+    if (next === null) return;
+    event.preventDefault();
+    const target = tabs[next]?.file.path;
+    if (target !== undefined) {
+      listRef.current
+        ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+        [next]?.focus();
+      onActivate(target);
+    }
+    const closing = event.key === "Delete" || event.key === "Backspace";
+    if (closing && activePath !== null) onClose(activePath);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
+        ref={listRef}
         role="tablist"
         aria-label="Open files"
         className="flex shrink-0 overflow-x-auto border-b border-border"
+        onKeyDown={onKeyDown}
       >
         {tabs.map(({ file, pinned }) => {
           const isActive = file.path === activePath;
@@ -175,15 +203,17 @@ export function FilePreview({
             <div
               key={file.path}
               className={cn(
-                "group flex shrink-0 items-center border-r border-border",
+                "group relative flex shrink-0 items-center border-r border-border",
                 isActive
-                  ? "bg-background text-foreground"
+                  ? "bg-background text-foreground after:absolute after:inset-x-0 after:bottom-0 after:border-b-2 after:border-foreground"
                   : "bg-muted/30 text-muted-foreground",
               )}
             >
               <button
+                type="button"
                 role="tab"
                 aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
                 data-pinned={pinned || undefined}
                 title={
                   pinned
@@ -191,7 +221,7 @@ export function FilePreview({
                     : `${file.path} (double-click to keep open)`
                 }
                 className={cn(
-                  "cursor-pointer py-1.5 pr-1 pl-2.5 font-mono text-2xs outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
+                  "cursor-pointer py-1.5 pr-1 pl-2.5 font-mono text-2xs outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset",
                   !pinned && "italic",
                 )}
                 onClick={() => onActivate(file.path)}
@@ -200,6 +230,8 @@ export function FilePreview({
                 {file.name}
               </button>
               <button
+                type="button"
+                tabIndex={-1}
                 aria-label={`Close ${file.name}`}
                 className="mr-1 flex size-4 cursor-pointer items-center justify-center rounded-sm opacity-60 hover:bg-muted hover:opacity-100"
                 onClick={() => onClose(file.path)}
@@ -236,7 +268,6 @@ function FileBody({
   const [loadedFile] = useState(file);
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [view, setView] = useState<"preview" | "source">("preview");
-  const [copied, setCopied] = useState(false);
   const extension = extensionOf(file.name);
   const isMarkdown = MARKDOWN_EXTENSIONS.has(extension);
 
@@ -269,14 +300,6 @@ function FileBody({
 
   const download = (): void => {
     void fileUrl(file).then((url) => window.open(url, "_blank", "noopener"));
-  };
-
-  const copy = (): void => {
-    if (text === null) return;
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    });
   };
 
   return (
@@ -314,20 +337,7 @@ function FileBody({
           </div>
         )}
         {text !== null && !isBinary && (
-          <IconTooltip label={copied ? "Copied" : "Copy contents"}>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="cursor-pointer"
-              onClick={copy}
-            >
-              {copied ? (
-                <Check className="size-3.5" />
-              ) : (
-                <Copy className="size-3.5" />
-              )}
-            </Button>
-          </IconTooltip>
+          <CopyButton value={text} label="contents" />
         )}
         <IconTooltip label={`Download ${file.name}`}>
           <Button
@@ -378,7 +388,11 @@ function PreviewContent({
     return <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>;
   }
   if (state.status === "failed") {
-    return <p className="px-3 py-2 text-xs text-destructive">{state.error}</p>;
+    return (
+      <p role="alert" className="px-3 py-2 text-xs text-destructive">
+        {state.error}
+      </p>
+    );
   }
   if (state.content.kind === "image") {
     return (
@@ -468,4 +482,17 @@ function previewKind(file: FileRecord): PreviewKind {
   if (BINARY_EXTENSIONS.has(extension)) return "binary";
 
   return "text";
+}
+
+function tabStep(key: string, index: number, count: number): number | null {
+  if (key === "ArrowLeft") return (index - 1 + count) % count;
+  if (key === "ArrowRight") return (index + 1) % count;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  // Closing hands focus to the right neighbour, or the left one at the end.
+  if (key === "Delete" || key === "Backspace") {
+    return index + 1 < count ? index + 1 : index - 1;
+  }
+
+  return null;
 }

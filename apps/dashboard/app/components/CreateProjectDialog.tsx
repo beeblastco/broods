@@ -258,7 +258,11 @@ export function CreateProjectDialog({
                 onPrivateChange={setIsPrivate}
               />
             )}
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {error ? (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button

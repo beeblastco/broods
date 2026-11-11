@@ -1217,7 +1217,7 @@ function assertConversationScope(
   if (accountIdFromKey(conversationKey) !== accountId) {
     throw new Error("Runtime conversation does not belong to accountId");
   }
-  if (!conversationKey.includes(`:agent:${agentId}:`)) {
+  if (!conversationKey.startsWith(`acct:${accountId}:agent:${agentId}:`)) {
     throw new Error("Runtime conversation does not belong to agentId");
   }
 }

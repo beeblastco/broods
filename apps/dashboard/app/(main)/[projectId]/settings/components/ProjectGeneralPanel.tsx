@@ -112,7 +112,11 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
         </div>
 
         <div className="flex items-center justify-between gap-4">
-          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+          {saveError && (
+            <p role="alert" className="text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
           {canWrite && (
             <Button
               size="sm"

@@ -25,7 +25,7 @@ import { LOG_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { memo, useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import {
   emptyStreamMessage,
   ObservabilityToolbar,
@@ -119,9 +119,18 @@ export function MonitoringPanel({
       }),
     );
 
-  const query = useMemo(() => parseQuery(filter, LOG_QUERY_FIELDS), [filter]);
-  const wantsDebug = query.fields.some(
-    ({ field, value }) => field === "level" && value === "debug",
+  // The stream's level follows each keystroke; the 2,000-line filter trails it.
+  const wantsDebug = useMemo(
+    () =>
+      parseQuery(filter, LOG_QUERY_FIELDS).fields.some(
+        ({ field, value }) => field === "level" && value === "debug",
+      ),
+    [filter],
+  );
+  const deferredFilter = useDeferredValue(filter);
+  const query = useMemo(
+    () => parseQuery(deferredFilter, LOG_QUERY_FIELDS),
+    [deferredFilter],
   );
 
   const { entries, status, history, error, refresh } = useObservabilityStream({
@@ -354,16 +363,16 @@ function matchesLogQuery(
   );
 }
 
+// `json` is the parsed value, so only the selected line pays for pretty-printing it.
 function parseLogMessage(raw: string): {
   summary: string;
-  pretty: string;
+  json?: unknown;
   eventType?: string;
 } {
   const trimmed = raw.trim();
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     try {
       const parsed = JSON.parse(trimmed);
-      const pretty = JSON.stringify(parsed, null, 2);
       const summary =
         (typeof parsed?.message === "string" && parsed.message) ||
         (typeof parsed?.error === "string" && parsed.error) ||
@@ -372,11 +381,11 @@ function parseLogMessage(raw: string): {
       const eventType =
         typeof parsed?.eventType === "string" ? parsed.eventType : undefined;
 
-      return { summary: summary, pretty: pretty, eventType: eventType };
+      return { summary: summary, json: parsed, eventType: eventType };
     } catch {}
   }
 
-  return { summary: trimmed.slice(0, 200), pretty: trimmed };
+  return { summary: trimmed.slice(0, 200) };
 }
 
 function shortFunctionName(name: string): string {
@@ -395,15 +404,21 @@ function LogDetails({
 }: {
   entry: ObservabilityLogEntry;
 }): React.JSX.Element {
-  const parsed = useMemo(() => parseLogMessage(entry.message), [entry.message]);
+  const pretty = useMemo(() => {
+    const { json } = parseLogMessage(entry.message);
+
+    return json === undefined
+      ? entry.message.trim()
+      : JSON.stringify(json, null, 2);
+  }, [entry.message]);
   const rows = detailRows(entry);
 
   return (
     <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
       <DetailPayload
         label="Message"
-        summary={`${parsed.pretty.length.toLocaleString()} chars`}
-        value={parsed.pretty}
+        summary={`${pretty.length.toLocaleString()} chars`}
+        value={pretty}
       />
       <DetailFields
         label="Details"

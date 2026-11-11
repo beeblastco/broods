@@ -5,7 +5,7 @@ import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Check } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
 const EMPTY_DEFAULT = "{}";
@@ -33,6 +33,7 @@ export function BranchEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncedSource, setSyncedSource] = useState(serialized);
+  const errorId = useId();
 
   if (serialized !== syncedSource) {
     setSyncedSource(serialized);
@@ -78,11 +79,18 @@ export function BranchEditor({
           setSaved(false);
         }}
         spellCheck={false}
+        aria-label={title}
+        aria-invalid={error !== null}
+        aria-describedby={error !== null ? errorId : undefined}
         rows={8}
         className="min-h-32 resize-y"
         readOnly={!canWrite}
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p id={errorId} role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         {canWrite && (
           <Button

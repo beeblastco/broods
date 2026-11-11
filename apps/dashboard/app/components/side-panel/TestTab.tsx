@@ -245,7 +245,11 @@ function ChatWindow({
         {awaitingAnswer && (
           <QuestionCard prompts={pendingQuestions} onAnswer={answerQuestions} />
         )}
-        {error && <p className="text-xs text-destructive">{error.message}</p>}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error.message}
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSubmit} className="shrink-0 p-3">

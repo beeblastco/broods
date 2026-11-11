@@ -1205,7 +1205,7 @@ paths:
         "204":
           description: Login revoked
         "401":
-          description: Not a `bcli_` login, unknown, or already revoked
+          description: Not a `bcli_` login, unknown, lent to an agent, or already revoked
           content:
             application/json:
               schema:
@@ -4585,7 +4585,7 @@ components:
         statusUrl:
           type: string
           format: uri
-          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
 
     AnswersAccepted:
       type: object
@@ -4605,6 +4605,13 @@ components:
         eventId:
           type: string
           description: Event id of the resumed turn. Present when it resumed.
+        runId:
+          type: string
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last turn an answer started or queued.
+        statusUrl:
+          type: string
+          format: uri
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
@@ -5551,7 +5558,7 @@ components:
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
         workspaceRef:
           type: string
-          description: Team or guild the place sits in, when the provider has one.
+          description: What the place sits in, so a message from another one skips the record. Slack or Teams team id, Discord guild id, GitHub owner, Linear organization id, Pancake or Messenger page id, Instagram account id, WhatsApp phone number id, Twilio receiving number in E.164, Telegram or Zalo bot id (the digits before ":" in the bot token). Unset, the record applies on every one.
         name:
           type: string
         description:
@@ -5568,6 +5575,7 @@ components:
           type: [string, "null"]
         workspaceRef:
           type: [string, "null"]
+          description: The team, page, number or bot the record is tied to, as on create. null removes the tie, so the record applies on every one.
         config:
           $ref: "#/components/schemas/ChannelRecordConfig"
         status:
@@ -5857,6 +5865,7 @@ components:
           - deepinfra
           - deepseek
           - fireworks
+          - fishaudio
           - google
           - groq
           - huggingface
@@ -5999,13 +6008,14 @@ components:
           description: >-
             Provider that transcribes, with its credentials from the matching
             `provider` entry. Defaults to `model.provider`. OpenAI, Groq and
-            Mistral ship speech-to-text.
+            Mistral ship speech-to-text, and so does `fishaudio`, which is
+            valid only here and as a `provider` key.
         modelId:
           type: string
           description: >-
             Speech-to-text model. Defaults to the widest-container model the
             provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
-            Groq, `voxtral-mini-latest` on Mistral).
+            Groq, `voxtral-mini-latest` on Mistral, `transcribe-1` on Fish Audio).
 
     ModelConfig:
       type: object
@@ -6333,7 +6343,8 @@ components:
             Storage id returned by POSTing the module source to an upload URL
             from `POST /v1/mcp/uploads`; the large-bundle alternative to
             `bundle`. Requires `sha256`. Exactly one of url, bundle or
-            bundleStorageId connects the server.
+            bundleStorageId connects the server. An id another resource
+            already holds answers 400 and is left untouched.
         sha256:
           type: string
           description: >-

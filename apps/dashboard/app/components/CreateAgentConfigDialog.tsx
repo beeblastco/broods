@@ -27,7 +27,9 @@ import {
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
+import { useSubmit } from "@/app/hooks/useSubmit";
 import { analytics } from "@/app/lib/analytics";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { useRef, useState } from "react";
 
 type AgentProvider = AccountModelProviderName;
@@ -63,7 +65,7 @@ export function CreateAgentConfigDialog({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [description, setDescription] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
+  const { pending, error, reset, run } = useSubmit();
   const keyVariable = providerApiKeyEnvName(provider);
   const nameInput = useRef<HTMLInputElement>(null);
 
@@ -74,7 +76,7 @@ export function CreateAgentConfigDialog({
     setCustomBaseUrl("");
     setDescription("");
     setSystemPrompt("");
-    setIsCreating(false);
+    reset();
   }
 
   function handleClose(): void {
@@ -83,11 +85,16 @@ export function CreateAgentConfigDialog({
   }
 
   async function handleCreate(): Promise<void> {
-    if (!name.trim() || !modelId.trim() || !stageId) return;
+    if (
+      !name.trim() ||
+      !modelId.trim() ||
+      !stageId ||
+      (provider === "custom" && !customBaseUrl.trim())
+    )
+      return;
 
-    setIsCreating(true);
-    try {
-      await createAgentConfig({
+    const created = await run(() =>
+      createAgentConfig({
         projectId: projectId,
         stageId: stageId,
         name: name.trim(),
@@ -97,20 +104,19 @@ export function CreateAgentConfigDialog({
         description: description.trim() || undefined,
         systemPrompt: systemPrompt.trim() || undefined,
         position: initialCanvasPosition ?? undefined,
-      });
+      }),
+    );
+    if (!created) return;
 
-      void analytics.then((posthog): void => {
-        posthog.capture("agent_config_created", {
-          provider: provider,
-          has_custom_base_url: provider === "custom",
-          has_description: Boolean(description.trim()),
-          has_system_prompt: Boolean(systemPrompt.trim()),
-        });
+    void analytics.then((posthog): void => {
+      posthog.capture("agent_config_created", {
+        provider: provider,
+        has_custom_base_url: provider === "custom",
+        has_description: Boolean(description.trim()),
+        has_system_prompt: Boolean(systemPrompt.trim()),
       });
-      handleClose();
-    } finally {
-      setIsCreating(false);
-    }
+    });
+    handleClose();
   }
 
   return (
@@ -138,10 +144,17 @@ export function CreateAgentConfigDialog({
         >
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="agent-name">Name</Label>
+              <Label htmlFor="agent-name">
+                Name{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 ref={nameInput}
                 id="agent-name"
+                required={true}
+                pattern={NOT_BLANK}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="My Agent"
@@ -180,9 +193,19 @@ export function CreateAgentConfigDialog({
               </p>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="agent-model">Model ID</Label>
+              <Label htmlFor="agent-model">
+                Model ID{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
               <Input
                 id="agent-model"
+                required={true}
+                pattern={NOT_BLANK}
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
                 value={modelId}
                 onChange={(event) => setModelId(event.target.value)}
                 placeholder={
@@ -193,9 +216,16 @@ export function CreateAgentConfigDialog({
             </div>
             {provider === "custom" && (
               <div className="grid gap-2">
-                <Label htmlFor="agent-base-url">Base URL</Label>
+                <Label htmlFor="agent-base-url">
+                  Base URL{" "}
+                  <span aria-hidden="true" className="text-destructive">
+                    *
+                  </span>
+                </Label>
                 <Input
                   id="agent-base-url"
+                  type="url"
+                  required={true}
                   value={customBaseUrl}
                   onChange={(event) => setCustomBaseUrl(event.target.value)}
                   placeholder="https://api.example.com/v1"
@@ -224,6 +254,11 @@ export function CreateAgentConfigDialog({
                 placeholder="You are a helpful assistant..."
               />
             </div>
+            {error ? (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={handleClose}>
@@ -231,15 +266,12 @@ export function CreateAgentConfigDialog({
             </Button>
             <Button
               type="submit"
-              disabled={
-                !name.trim() ||
-                !modelId.trim() ||
-                !stageId ||
-                (provider === "custom" && !customBaseUrl.trim()) ||
-                isCreating
+              disabled={!stageId || pending}
+              className={
+                !stageId || pending ? "cursor-not-allowed" : "cursor-pointer"
               }
             >
-              {isCreating ? "Creating..." : "Create"}
+              {pending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
         </form>

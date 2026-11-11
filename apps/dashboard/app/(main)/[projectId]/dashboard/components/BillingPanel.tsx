@@ -212,7 +212,9 @@ export function BillingPanel({ projectId }: Props): React.JSX.Element {
           }
         />
         {actionError && (
-          <p className="text-sm text-destructive">{actionError}</p>
+          <p role="alert" className="text-sm text-destructive">
+            {actionError}
+          </p>
         )}
       </Section>
 
@@ -269,32 +271,34 @@ function PlanTable({
 }): React.JSX.Element {
   return (
     <>
-      <Table className="hidden sm:table">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Limit</TableHead>
-            {PLANS.map((plan) => (
-              <TableHead key={plan} className="text-right">
-                <PlanName plan={plan} current={current} status={status} />
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {LIMIT_ROWS.map((row) => (
-            <TableRow key={row.key}>
-              <TableCell>
-                <ResourceLabel row={row} />
-              </TableCell>
+      <div className="hidden sm:block">
+        <Table regionLabel="Plan limits">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Limit</TableHead>
               {PLANS.map((plan) => (
-                <TableCell key={plan} className="text-right">
-                  <LimitValue row={row} plan={plan} current={current} />
-                </TableCell>
+                <TableHead key={plan} className="text-right">
+                  <PlanName plan={plan} current={current} status={status} />
+                </TableHead>
               ))}
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {LIMIT_ROWS.map((row) => (
+              <TableRow key={row.key}>
+                <TableCell>
+                  <ResourceLabel row={row} />
+                </TableCell>
+                {PLANS.map((plan) => (
+                  <TableCell key={plan} className="text-right">
+                    <LimitValue row={row} plan={plan} current={current} />
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
       <div className="grid divide-y divide-border text-sm sm:hidden">
         {PLANS.map((plan) => (
           <div key={plan}>

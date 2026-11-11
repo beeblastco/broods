@@ -645,15 +645,17 @@ export function CopilotProvider({
           };
           if (session) {
             const { onFolder } = await import("@/app/lib/dockSource");
-            return await onFolder(() =>
-              askAgent(
-                replyId,
-                trimmed,
-                context,
-                { ...facts, codeNodes: codeNodes },
-                session,
-                controller,
-              ),
+            return await onFolder(
+              () =>
+                askAgent(
+                  replyId,
+                  trimmed,
+                  context,
+                  { ...facts, codeNodes: codeNodes },
+                  session,
+                  controller,
+                ),
+              controller.signal,
             );
           }
 
@@ -930,15 +932,16 @@ export function CopilotProvider({
         return;
       // The agent's folder keeps the edit, so the next ask would propose the file again.
       void import("@/app/lib/dockSource")
-        .then(({ onFolder, revertPaths }) =>
-          onFolder(async (): Promise<void> => {
-            const session = await dockSession();
-            const seeded = folder.current;
-            if (!session || seeded?.stageId !== currentStageId) return;
-            await revertPaths(session, conversationKey, seeded.seed.files, [
-              path,
-            ]);
-          }),
+        .then(({ revertPaths }) =>
+          revertPaths(
+            dockSession,
+            conversationKey,
+            () =>
+              folder.current?.stageId === currentStageId
+                ? folder.current.seed.files
+                : undefined,
+            [path],
+          ),
         )
         .catch((error: unknown): void =>
           note(`Could not drop ${path}: ${toErrorMessage(error)}`),

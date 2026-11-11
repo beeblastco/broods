@@ -242,7 +242,9 @@ export function McpTab({
       </div>
 
       {saveState.kind === "failed" && (
-        <p className="text-xs text-destructive">{saveState.message}</p>
+        <p role="alert" className="text-xs text-destructive">
+          {saveState.message}
+        </p>
       )}
 
       <div className="flex items-center gap-2" data-save-state={saveState.kind}>

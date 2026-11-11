@@ -55,6 +55,7 @@ describe("whatsapp channel adapter", () => {
         channelName: "whatsapp",
         content: "hello whatsapp",
         identity: {
+          workspaceRef: "106540352242922",
           channelId: "15551234567",
           userId: "15551234567",
           userName: "Ada",
@@ -68,6 +69,14 @@ describe("whatsapp channel adapter", () => {
         },
       },
     });
+  });
+
+  it("ties the turn to the number that received it, so a record for another number skips it", async (): Promise<void> => {
+    const body = JSON.stringify(textWebhook("hello"));
+    const parsed = await channel().parse(delivery(body, sign(body)));
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.identity?.workspaceRef).toBe("106540352242922");
   });
 
   it("finds the message behind a status-only change for the same number", async (): Promise<void> => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import {
   conversationReplaySnapshot,
@@ -6,6 +6,18 @@ import {
   streamResponseSubject,
   subjectToken,
 } from "../src/shared/nats.ts";
+
+const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
+
+beforeAll((): void => {
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
+});
+
+afterAll((): void => {
+  if (originalEnvironment === undefined)
+    delete process.env.DEPLOYMENT_ENVIRONMENT;
+  else process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
+});
 
 describe("nats subject scheme", () => {
   it("encodes a conversationKey into a single NATS-safe subject token", () => {
@@ -20,7 +32,7 @@ describe("nats subject scheme", () => {
     const first = streamResponseSubject("acct1", "agent1", "conv-1");
     const second = streamResponseSubject("acct1", "agent1", "conv-1");
     expect(first).toBe(second);
-    expect(first.startsWith("v1.acct1.agent1.ws.response.")).toBe(true);
+    expect(first.startsWith("test.v1.acct1.agent1.ws.response.")).toBe(true);
   });
 
   it("isolates subagent subjects by account, agent, and conversation", () => {
@@ -53,18 +65,19 @@ describe("nats subject scheme", () => {
 
     expect(
       streamResponseSubject("acct1", agentId, "conv-1").split("."),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
   });
 
-  it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
+  it("produces exactly seven tokens so it matches the stream wildcard test.v1.*.*.ws.response.*", () => {
     const subject = streamResponseSubject(
       "acct1",
       "agent1",
       "conv with spaces.and.dots",
     );
     const tokens = subject.split(".");
-    expect(tokens).toHaveLength(6);
-    expect(tokens.slice(0, 5)).toEqual([
+    expect(tokens).toHaveLength(7);
+    expect(tokens.slice(0, 6)).toEqual([
+      "test",
       "v1",
       "acct1",
       "agent1",

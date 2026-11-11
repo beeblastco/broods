@@ -15,13 +15,7 @@ import {
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
-import { useTheme } from "next-themes";
 import { useState } from "react";
-
-export const AGENT_EDGE_STROKE: Record<"dark" | "light", string> = {
-  dark: "rgba(255,255,255,0.4)",
-  light: "rgba(0,0,0,0.35)",
-};
 
 const ARROW_ID_PREFIX = "deletable-arrow";
 
@@ -41,8 +35,6 @@ export function DeletableEdge({
 }: EdgeProps<Edge<AgentEdgeData>>): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const [lineHovered, setLineHovered] = useState(false);
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
 
   const codeManaged = useCodeManagedEdge(id, source, target);
 
@@ -64,7 +56,6 @@ export function DeletableEdge({
 
   const locked = deletable === false || codeManaged;
   const deleteHover = hovered && !locked;
-  const arrowColor = isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (
@@ -83,8 +74,7 @@ export function DeletableEdge({
         >
           <path
             d="M -10,-4 L 0,0 L -10,4 Z"
-            fill={arrowColor}
-            className={deleteHover ? "fill-destructive/90" : undefined}
+            className={deleteHover ? "fill-destructive/90" : "fill-canvas-edge"}
           />
         </marker>
       </defs>
