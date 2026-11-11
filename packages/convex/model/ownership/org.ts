@@ -93,3 +93,24 @@ export async function requireOrgMember(
 
   return membership;
 }
+
+// `purgeUser` keeps these, still billed to and owned by the deleted user, so deletion waits.
+export async function sharedOwnedOrgs(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+): Promise<Doc<"orgs">[]> {
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.authId))
+    .collect();
+  const shared: Doc<"orgs">[] = [];
+  for (const org of owned) {
+    const members = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
+      .collect();
+    if (members.some((member) => member.userId !== user._id)) shared.push(org);
+  }
+
+  return shared;
+}

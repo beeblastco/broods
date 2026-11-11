@@ -12,7 +12,12 @@ import {
   type OrgRole,
 } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
-import { orgsFields, projectsFields, stagesFields } from "./schema";
+import {
+  orgMembersFields,
+  orgsFields,
+  projectsFields,
+  stagesFields,
+} from "./schema";
 
 export const orgDoc = v.object({
   ...orgsFields,
@@ -20,11 +25,7 @@ export const orgDoc = v.object({
   _creationTime: v.number(),
 });
 
-const orgRoleValidator = v.union(
-  v.literal("owner"),
-  v.literal("admin"),
-  v.literal("member"),
-);
+const orgRoleValidator = orgMembersFields.role;
 
 const projectDoc = v.object({
   ...projectsFields,

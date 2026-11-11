@@ -1,7 +1,7 @@
 // Plain helpers, not Convex functions, so no mutation calls another mutation.
 
 import type { Doc, Id, TableNames } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
 import { deleteRunWaits, unregisterSchedule } from "./cronSchedules";
@@ -373,27 +373,6 @@ export async function purgeOrg(
   // for their other orgs (model/orgBilling.ts).
   await releaseSeat(ctx, orgId);
   await ctx.db.delete(orgId);
-}
-
-// `purgeUser` keeps these, still billed to and owned by the deleted user, so deletion waits.
-export async function sharedOwnedOrgs(
-  ctx: QueryCtx,
-  user: Doc<"users">,
-): Promise<Doc<"orgs">[]> {
-  const owned = await ctx.db
-    .query("orgs")
-    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.authId))
-    .collect();
-  const shared: Doc<"orgs">[] = [];
-  for (const org of owned) {
-    const members = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
-      .collect();
-    if (members.some((member) => member.userId !== user._id)) shared.push(org);
-  }
-
-  return shared;
 }
 
 // Purges only orgs the user solely owns; shared orgs keep going without ownership transfer.

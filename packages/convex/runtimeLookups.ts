@@ -1,6 +1,6 @@
 // Every agent turn and config-plane request reads these, and Convex loads a file's whole
 // import graph per call: import only the schema here.
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalQuery, type QueryCtx } from "./_generated/server";
 import { accountDoc } from "./model/accountDoc";
@@ -16,6 +16,14 @@ export const agentDeploymentScopeValidator = v.object({
   endpointId: v.string(),
   projectSlug: v.string(),
   stageSlug: v.string(),
+});
+
+const deploymentPrincipal = v.object({
+  ...agentDeploymentScopeValidator.fields,
+  account: accountDoc,
+  userTokenSecret: v.optional(
+    v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
+  ),
 });
 
 export const policyDoc = v.object({
@@ -57,17 +65,11 @@ export const agentById = internalQuery({
 export const deploymentByApiKeyHash = internalQuery({
   args: { apiKeyHash: v.string() },
   // The signing secret stays sealed: core opens it only when a request carries a user token.
-  returns: v.union(
-    v.object({
-      ...agentDeploymentScopeValidator.fields,
-      account: accountDoc,
-      userTokenSecret: v.optional(
-        v.object({ ciphertext: v.string(), iv: v.string(), tag: v.string() }),
-      ),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, { apiKeyHash }) => {
+  returns: v.union(deploymentPrincipal, v.null()),
+  handler: async (
+    ctx,
+    { apiKeyHash },
+  ): Promise<Infer<typeof deploymentPrincipal> | null> => {
     const deployment = await ctx.db
       .query("agentDeployments")
       .withIndex("by_apiKeyHash", (q) => q.eq("apiKeyHash", apiKeyHash))
@@ -122,7 +124,10 @@ export const policyById = internalQuery({
 export const roleSessionByTokenHash = internalQuery({
   args: { tokenHash: v.string() },
   returns: v.union(rolePrincipalValidator, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof rolePrincipalValidator> | null> => {
     const session = await ctx.db
       .query("roleSessions")
       .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
