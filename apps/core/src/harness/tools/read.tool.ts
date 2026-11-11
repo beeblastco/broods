@@ -9,6 +9,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { S3ObjectTooLargeError } from "../../shared/errors.ts";
 import { contentTypeForPath } from "../../shared/media-types.ts";
 import { acceptsNativeMedia } from "../channel-media.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -126,7 +127,15 @@ async function spokenContents(
     return null;
   }
   // Unreadable: the line reader reports the missing file in the agent's usual words.
-  const bytes = await workspaceMediaBytes(ws, rel).catch(() => undefined);
+  const bytes = await workspaceMediaBytes(ws, rel).catch(
+    (cause: unknown): undefined => {
+      if (cause instanceof S3ObjectTooLargeError) {
+        toolError(
+          `Error: ${rel} is over the ${cause.maxBytes / 1024 / 1024} MB of audio the read tool transcribes`,
+        );
+      }
+    },
+  );
   if (!bytes) {
     return null;
   }
