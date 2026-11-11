@@ -301,7 +301,25 @@ export class BroodsWebSocketClient {
       if (closed) return;
       handlers.onMessage?.(effective);
       if (closed) return;
-      if (effective.type === "done") handlers.onDone?.();
+      if (effective.type === "done") {
+        close(1000, "done");
+        handlers.onDone?.();
+      }
+      if (effective.type === "replay_unavailable") {
+        const unavailable = effective as Extract<
+          WebSocketServerMessage,
+          { type: "replay_unavailable" }
+        >;
+        close(1000, "replay unavailable");
+        handlers.onError?.(
+          new Error(
+            `Cannot replay ${unavailable.eventId}: the run is ${unavailable.status}.` +
+              (unavailable.statusUrl
+                ? ` Read it from ${unavailable.statusUrl}.`
+                : ""),
+          ),
+        );
+      }
       if (effective.type === "error") {
         close(1000, "websocket error");
         handlers.onError?.(new Error(formatWireError(effective.error)));
