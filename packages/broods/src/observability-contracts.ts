@@ -10,6 +10,8 @@ const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 export type ObservabilityLogEntry = {
+  /** Core's id for the line: its live copy and its Loki replay share it. */
+  logId?: string;
   ts: number;
   level: LogLevel;
   eventType: string;

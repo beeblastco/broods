@@ -120,3 +120,19 @@ test("a burst keeps the newest 2,000 rows", () => {
   expect(merged[0].message).toBe("line 2499");
   expect(merged.at(-1)?.message).toBe("line 500");
 });
+
+test("lines that only look alike stay apart, and a line's Loki copy folds into its live one", () => {
+  const prefix = `{"level":"info","service":"worker","note":"${"x".repeat(60)}`;
+  const batch = [
+    { ...log("progress .", 1_000), logId: "a" },
+    { ...log("progress .", 1_000), logId: "b" },
+    log(`${prefix}first"}`, 1_000),
+    log(`${prefix}second"}`, 1_000),
+  ];
+  const live = mergeLive([], batch);
+
+  expect(live).toHaveLength(4);
+  expect(
+    mergeLive(live, [{ ...log("progress .", 1_000), logId: "a" }]),
+  ).toHaveLength(4);
+});

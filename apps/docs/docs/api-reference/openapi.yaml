@@ -1056,6 +1056,8 @@ paths:
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
                       attachmentObjectsDeleted: 3
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/accounts/{accountId}/rotate-secret:
     post:
@@ -1177,6 +1179,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteResponse"
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/account/rotate-secret:
     post:
@@ -2307,6 +2311,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Suspended }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -2337,6 +2345,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Running }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
             description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
@@ -2371,6 +2383,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Terminated }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -2402,10 +2418,15 @@ paths:
                 name: { type: string }
       responses:
         "200": { description: "Snapshot active, or building on lambda" }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
           }
+        "404": { description: No reserved instance for this reservation key }
         "409":
           {
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",
@@ -2557,6 +2578,10 @@ paths:
                   token: { type: string }
                   expiresAt: { type: number }
                   websocketPath: { type: string }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
             description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",

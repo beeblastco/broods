@@ -309,7 +309,10 @@ export function lokiLogEntry(
         ? Date.parse(record.time)
         : Number.NaN;
 
+  const logId = optionalString(record.logId, metadata.logId, metadata.log_id);
+
   return {
+    ...(logId ? { logId: logId } : {}),
     ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
     level: level,
     // Matches core's live fallback, so a replayed row dedupes against its live copy.
