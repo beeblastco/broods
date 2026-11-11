@@ -35,6 +35,8 @@ import {
 
 const LABEL = "cloudflare v8 worker";
 const WORKER_OVERHEAD_MS = 15_000;
+// Worker answers after its isolate ran: a store conflict, a disk too large, a runtime failure.
+const RAN_STATUSES: ReadonlySet<number> = new Set([409, 413, 500]);
 // So two commands never start from the same stored files; the Worker's conditional write backs it.
 const runsByReservation = new Map<string, Promise<unknown>>();
 
@@ -155,8 +157,10 @@ export class WorkerSandboxExecutor implements SandboxExecutor {
 
       return result;
     } catch (error) {
-      // Any answer, a 409 included, means the command ran; an unreached Worker ran nothing.
-      if (error instanceof PlatformWorkerError)
+      if (
+        error instanceof PlatformWorkerError &&
+        RAN_STATUSES.has(error.status)
+      )
         this.#meter(Date.now() - startedAt, request.metadata);
       throw error;
     }

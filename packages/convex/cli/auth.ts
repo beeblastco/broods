@@ -497,6 +497,35 @@ export const resolveCliToken = internalMutation({
   },
 });
 
+// `broods logout`: a login revokes itself, so a leaked one stops before its 90 days run out.
+export const revoke = httpAction(async (ctx, req): Promise<Response> => {
+  const tokenHash = await cliLoginTokenHash(req);
+  const revoked =
+    tokenHash !== null &&
+    (await ctx.runMutation(internal.cli.auth.revokeToken, {
+      tokenHash: tokenHash,
+    }));
+
+  return revoked
+    ? new Response(null, { status: 204 })
+    : jsonError(401, "Login is invalid or already revoked");
+});
+
+export const revokeToken = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const token = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    if (!token || token.status !== "active") return false;
+    await ctx.db.patch(token._id, { status: "revoked" });
+
+    return true;
+  },
+});
+
 export const selectOnboardingOrg = internalMutation({
   args: {
     tokenHash: v.string(),

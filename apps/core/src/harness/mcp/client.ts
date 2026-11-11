@@ -1,6 +1,7 @@
 // One stateless client per operation. 2026-07-28 when the server has it, else the older handshake.
 // A "machine" row never dials: the user's daemon or a lambda VM runs the client and core relays.
 
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   Client,
   isCallToolResult,
@@ -310,7 +311,7 @@ export function mcpConnection(
   );
   for (const [name, value] of Object.entries(headers)) {
     if (ENV_PLACEHOLDER_PATTERN.test(value)) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${record.serverId} header ${name} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
       );
     }
@@ -319,7 +320,7 @@ export function mcpConnection(
   if (oauth) {
     const authorization = authorizationHeaderName(headers);
     if (authorization !== undefined) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${record.serverId} sets both an ${authorization} header and oauth; oauth mints that header itself`,
       );
     }
@@ -631,12 +632,12 @@ function resolveOauth(
   ): string => {
     const value = merged[field];
     if (value === undefined || value === "") {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${record.serverId} oauth is missing ${field}`,
       );
     }
     if (ENV_PLACEHOLDER_PATTERN.test(value)) {
-      throw new Error(
+      throw new ClientError(
         `config.mcp.${record.serverId} oauth ${field} still carries a \${NAME} ref; set it in the agent config so it resolves at sync`,
       );
     }

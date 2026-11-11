@@ -60,6 +60,7 @@ beforeAll(async (): Promise<void> => {
           return new Response("public-ok");
         }
         bundleFetches++;
+        if (request.url.includes("/hung/")) await new Promise((): void => {});
 
         return new Response(
           request.url.includes(BROKEN_SHA256) ? BROKEN_SOURCE : TENANT_SOURCE,
@@ -139,6 +140,17 @@ it("answers 422 before running anything when the bundle does not match its sha25
   expect(response.headers.get("x-broods-nothing-ran")).toBe("1");
   expect(await response.text()).toContain("sha256");
 });
+
+it("answers 504, not 422, when the bundle download times out", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-h"),
+    expectedSha256: "1".repeat(64),
+    bundleUrl: `${BUNDLE_ORIGIN}/hung/${"1".repeat(64)}.mjs`,
+  });
+
+  expect(response.status).toBe(504);
+  expect(response.headers.get("x-broods-nothing-ran")).toBe("1");
+}, 20_000);
 
 it("answers 422 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
   const response = await send(batch("acct-c", ["{}"], BROKEN_SHA256));
