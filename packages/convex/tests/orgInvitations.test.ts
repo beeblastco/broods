@@ -292,27 +292,55 @@ describe("invitations", () => {
     expect(await t.query(api.org.invitations.listMine, {})).toEqual([]);
   });
 
-  test("an account whose email changed cannot answer an invitation sent to its old address", async () => {
+  test("an account whose email changed cannot accept an invitation sent to its old address", async () => {
     const t = invitationsTest();
     const { orgA } = await seed(t);
     const invitationId = await invite(t, orgA, "auth_guest@example.com");
     caller.authId = "auth_guest";
     caller.email = "mallory@example.org";
 
-    for (const answer of [
-      api.org.invitations.accept,
-      api.org.invitations.decline,
-    ]) {
-      await expect(
-        t.mutation(answer, { invitationId: invitationId }),
-      ).rejects.toThrow("an address you no longer sign in with");
-    }
+    await expect(
+      t.mutation(api.org.invitations.accept, { invitationId: invitationId }),
+    ).rejects.toThrow("an address you no longer sign in with");
     expect(await memberIds(t, orgA)).not.toContain("auth_guest");
     caller.email = "Auth_Guest@Example.com";
     await t.mutation(api.org.invitations.accept, {
       invitationId: invitationId,
     });
     expect(await memberIds(t, orgA)).toContain("auth_guest");
+  });
+
+  test("an account whose email changed can still decline", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const invitationId = await invite(t, orgA, "auth_guest@example.com");
+    caller.authId = "auth_guest";
+    caller.email = "mallory@example.org";
+
+    await t.mutation(api.org.invitations.decline, {
+      invitationId: invitationId,
+    });
+
+    expect(await t.run((ctx) => ctx.db.get(invitationId))).toBeNull();
+    expect(await memberIds(t, orgA)).not.toContain("auth_guest");
+  });
+
+  test("deleting an account that claimed an invitation it sent itself finishes", async () => {
+    const t = invitationsTest();
+    const { orgA } = await seed(t);
+    const invitationId = await invite(t, orgA, "new@example.com");
+    await t.run(async (ctx) => {
+      const invitation = await ctx.db.get(invitationId);
+      await ctx.db.patch(invitationId, { userId: invitation!.invitedBy });
+    });
+
+    await t.mutation(internal.org.workosUserDeletion.finalize, {
+      authId: "auth_admin",
+    });
+
+    expect(
+      await t.run((ctx) => ctx.db.query("orgInvitations").collect()),
+    ).toEqual([]);
   });
 
   test.each([

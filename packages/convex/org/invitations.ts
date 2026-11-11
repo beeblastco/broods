@@ -194,7 +194,16 @@ export const accept = mutation({
   args: { invitationId: v.id("orgInvitations") },
   returns: v.union(v.null(), v.string()),
   handler: async (ctx, args): Promise<string | null> => {
-    const { caller, invitation } = await ownInvitation(ctx, args.invitationId);
+    const { caller, invitation, email } = await ownInvitation(
+      ctx,
+      args.invitationId,
+    );
+    if (email !== invitation.email) {
+      throw new ClientError(
+        "Sent to an address you no longer sign in with. Ask an admin to revoke it.",
+        "forbidden",
+      );
+    }
     const inviter = await ctx.db.get(invitation.invitedBy);
     const stillGranted =
       inviter &&
@@ -302,11 +311,15 @@ async function dropInvitation(
   });
 }
 
-// Only the invited person answers, signed in with the verified address it was sent to.
+// Only the invited person answers, with a verified email; `email` is the one they sign in with.
 async function ownInvitation(
   ctx: MutationCtx,
   invitationId: Id<"orgInvitations">,
-): Promise<{ caller: Doc<"users">; invitation: Doc<"orgInvitations"> }> {
+): Promise<{
+  caller: Doc<"users">;
+  invitation: Doc<"orgInvitations">;
+  email: string;
+}> {
   const { caller, authUser } = await signedInUser(ctx);
   const invitation = await ctx.db.get(invitationId);
   if (!invitation || invitation.userId !== caller._id) {
@@ -318,12 +331,10 @@ async function ownInvitation(
       "forbidden",
     );
   }
-  if (authUser.email.toLowerCase() !== invitation.email) {
-    throw new ClientError(
-      "Sent to an address you no longer sign in with. Ask an admin to revoke it.",
-      "forbidden",
-    );
-  }
 
-  return { caller: caller, invitation: invitation };
+  return {
+    caller: caller,
+    invitation: invitation,
+    email: authUser.email.toLowerCase(),
+  };
 }

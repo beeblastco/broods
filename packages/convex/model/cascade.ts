@@ -426,7 +426,12 @@ export async function purgeUser(
     (row) => !purgedOrgIds.has(row.orgId),
   );
   for (const row of held) await ctx.db.delete(row._id);
-  await dropInvitations(ctx, sent, ...held.map((row) => row.orgId));
+  // An invitation claimed by its own sender is in both lists.
+  await dropInvitations(
+    ctx,
+    sent.filter((row) => row.userId !== user._id),
+    ...held.map((row) => row.orgId),
+  );
 
   const cliAuthCodes = await ctx.db
     .query("cliAuthCodes")
