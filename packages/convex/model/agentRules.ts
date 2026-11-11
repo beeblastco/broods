@@ -35,6 +35,30 @@ export type { AccountModelProviderName } from "./modelProviders";
 // patch: a partial config checked before its merge; cross-branch rules wait for the merge.
 export type AgentConfigCheckOptions = { patch?: boolean };
 
+// `sandbox` and `policy` are retired keys, kept so the normalizer refuses them by name.
+const RUNTIME_CONFIG_KEYS = [
+  "agent",
+  "harness",
+  "model",
+  "transcription",
+  "policy",
+  "provider",
+  "sandbox",
+  "sandboxes",
+  "workspaces",
+  "session",
+  "hooks",
+  "tools",
+  "mcp",
+  "denyTools",
+  "skills",
+  "subagent",
+  "scheduler",
+  "browser",
+  "policies",
+  "publicAccess",
+  "allowRunOverrides",
+] as const;
 const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 // Input tokens; above every model context window shipped today.
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 10_000_000;
@@ -897,6 +921,17 @@ type AgentRuntimeRefs = Pick<
   "sandboxes" | "workspaces"
 > & { harness?: unknown; sandbox?: unknown };
 
+// The branches a run reads and checks. Channels are not among them: the canvas wires those.
+export function runtimeConfigBranches(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    RUNTIME_CONFIG_KEYS.filter((key): boolean => config[key] !== undefined).map(
+      (key): [string, unknown] => [key, config[key]],
+    ),
+  );
+}
+
 // `schema` is AGENT_CONFIG, or the `z.compile` copy core checks every run with.
 export function normalizeAgentConfig(
   value: unknown,
@@ -999,7 +1034,7 @@ export function assertAgentRuntimeRefs(
   assertRuntimeRefs(parseInput(AGENT_RUNTIME_REFS, config, "config"), options);
 }
 
-// For saves that write a config without `normalizeAgentConfig`: CLI sync and the dashboard.
+// For saves that write a config without `normalizeAgentConfig`: CLI sync and dashboard create.
 export function assertAgentHarnessSupport(
   config: Record<string, unknown>,
 ): void {
