@@ -26,8 +26,8 @@ import {
 } from "esbuild";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "../../convex/model/envRefs.ts";
 import {
-  ACCOUNT_MODEL_PROVIDER_NAMES,
-  isAccountModelProviderName,
+  AGENT_PROVIDER_NAMES,
+  isAgentProviderName,
 } from "../../convex/model/modelProviders.ts";
 import { isWorkersSafeBundle } from "../../convex/model/isolateSafety.ts";
 import {
@@ -1242,9 +1242,9 @@ export function validateProviderConfig(
   for (const [providerName, settings] of Object.entries(
     provider as Record<string, unknown>,
   )) {
-    if (!isAccountModelProviderName(providerName)) {
+    if (!isAgentProviderName(providerName)) {
       throw new Error(
-        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")})`,
+        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${AGENT_PROVIDER_NAMES.join(", ")})`,
       );
     }
     if (

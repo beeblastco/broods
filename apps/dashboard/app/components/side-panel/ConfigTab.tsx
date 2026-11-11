@@ -12,6 +12,7 @@ import { useMemo } from "react";
 export const CONFIG_TAB_BRANCHES = [
   "agent",
   "model",
+  "transcription",
   "provider",
   "session",
 ] as const;
