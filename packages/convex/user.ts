@@ -5,6 +5,8 @@ import { components, internal } from "./_generated/api";
 import { action, internalMutation, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { hexFromBytes } from "./model/accountSecrets";
+import { sharedOwnedOrgs } from "./model/cascade";
+import { ClientError } from "./model/clientError";
 import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
 import { ticketKey } from "./model/stageSessionTicket";
 import { usersFields } from "./schema";
@@ -167,6 +169,14 @@ export const requestAccountDeletion = mutation({
 
     if (!user) {
       throw new Error("User record not found. Please sign in again.");
+    }
+
+    const shared = await sharedOwnedOrgs(ctx, user);
+    if (shared.length > 0) {
+      throw new ClientError(
+        `These organizations you own have other members: ${shared.map((org) => org.name).join(", ")}. Remove the other members or delete the organization first.`,
+        "conflict",
+      );
     }
 
     const scheduledFor = Date.now() + SEVEN_DAYS_MS;

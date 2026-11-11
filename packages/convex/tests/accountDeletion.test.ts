@@ -215,6 +215,78 @@ test("billing is cancelled once the identity is gone, even while core cleanup ke
   ).toEqual(["success"]);
 });
 
+test("an owner of an org with other members cannot request deletion", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const owner = await seedSoleOwner(t, LEAVING);
+  await addMember(t, owner.orgId, STAYING);
+
+  caller.authId = LEAVING;
+  await expect(t.mutation(api.user.requestAccountDeletion, {})).rejects.toThrow(
+    /other members/,
+  );
+});
+
+test("a member who joins after the request keeps the owner's account, and the request is dropped", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const owner = await seedSoleOwner(t, LEAVING);
+  await requestDeletion(t, [LEAVING]);
+  await addMember(t, owner.orgId, STAYING);
+
+  vi.advanceTimersByTime(8 * DAY_MS);
+  await sweep(t);
+
+  expect(deleteUser).not.toHaveBeenCalled();
+  const kept = await t.run(async (ctx) => ctx.db.get(owner.userId));
+  expect(kept?.deletionScheduledFor).toBe(undefined);
+  expect(kept?.workosDeletionRequestedAt).toBe(undefined);
+  expect(await t.run(async (ctx) => ctx.db.get(owner.orgId))).not.toBe(null);
+});
+
+test("skipped shared owners leave the due range, so they cannot starve a later request", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  for (let index = 0; index < 25; index += 1) {
+    const owner = await seedSoleOwner(t, `auth_shared_${index}`);
+    await t.run(async (ctx) =>
+      ctx.db.patch(owner.userId, { deletionScheduledFor: Date.now() }),
+    );
+    await addMember(t, owner.orgId, `auth_member_${index}`);
+  }
+  vi.advanceTimersByTime(1);
+  const leaving = await seedSoleOwner(t, LEAVING);
+  await t.run(async (ctx) =>
+    ctx.db.patch(leaving.userId, { deletionScheduledFor: Date.now() }),
+  );
+
+  vi.advanceTimersByTime(DAY_MS);
+  await sweep(t);
+  vi.advanceTimersByTime(DAY_MS / 24);
+  await sweep(t);
+
+  expect(deleteUser.mock.calls).toEqual([[LEAVING]]);
+  expect(await t.run(async (ctx) => ctx.db.get(leaving.userId))).toBe(null);
+});
+
+async function addMember(
+  t: TestConvex<typeof schema>,
+  orgId: Id<"orgs">,
+  authId: string,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const userId = await ctx.db.insert("users", {
+      authId: authId,
+      email: `${authId}@example.com`,
+      name: authId,
+      plan: "free",
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: userId,
+      role: "admin",
+      createdAt: Date.now(),
+    });
+  });
+}
+
 async function requestDeletion(
   t: TestConvex<typeof schema>,
   authIds: string[],
