@@ -20,6 +20,7 @@ import {
   isOneTimeSchedule,
   normalizeCreateCronInput,
   normalizeUpdateCronInput,
+  translateScheduleExpression,
 } from "../model/cronRules";
 import {
   deleteCron,
@@ -514,9 +515,9 @@ export const settleAnsweredRun = internalMutation({
       }
       await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
     } else {
-      await finishRun(
+      await settleRun(
         ctx,
-        run,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
         args.status === "completed"
           ? { status: "completed", result: args.result ?? null }
           : { status: "failed", error: args.error ?? DEAD_RUN_ERROR },
@@ -547,7 +548,11 @@ export const sweepDeadRuns = internalMutation({
     for (const run of page.page) {
       const outcome = await deadRunOutcome(ctx, run, now);
       if (outcome === null) continue;
-      await finishRun(ctx, run, outcome);
+      await settleRun(
+        ctx,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
+        outcome,
+      );
       settled += 1;
     }
     if (!page.isDone) {
@@ -736,26 +741,20 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
-async function finishRun(
-  ctx: MutationCtx,
-  run: Doc<"cronRuns">,
-  outcome: RunOutcome,
-): Promise<void> {
-  await settleRun(
-    ctx,
-    { accountId: run.accountId, cronId: run.cronId, runId: run._id },
-    outcome,
-  );
-  if (run.oneShot) {
-    await ctx.scheduler.runAfter(0, internal.agent.crons.remove, {
-      accountId: run.accountId,
-      cronId: run.cronId,
-    });
-  }
-}
-
 function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
+}
+
+// A reschedule to a new at(...) must name a future time, so a time before the run is the one
+// that fired it; pausing keeps that time.
+function isSpentOneShot(cron: Doc<"crons">, run: Doc<"cronRuns">): boolean {
+  if (!run.oneShot) return false;
+  const schedule = translateScheduleExpression(
+    cron.scheduleExpression,
+    cron.timezone,
+  );
+
+  return schedule.kind === "at" && schedule.timestamp <= run.startedAt;
 }
 
 async function runWaitingOn(
@@ -812,6 +811,9 @@ async function settleRun(
       lastError: outcome.status === "failed" ? outcome.error : undefined,
       updatedAt: now,
     });
+  }
+  if (cron && isSpentOneShot(cron, run)) {
+    await deleteCron(ctx, cron);
   }
 
   return null;

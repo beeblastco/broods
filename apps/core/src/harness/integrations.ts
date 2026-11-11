@@ -255,8 +255,7 @@ export interface DirectInboundEvent {
     identity?: ChannelIdentity;
     source: Record<string, unknown>;
   };
-  // `oneShot`: the job is deleted when this run settles; its only scheduled run is spent.
-  cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  cronRun?: { cronId: string; runId: string };
   // Absent on a rebuilt envelope: nothing is guessed.
   principalChain?: PrincipalLink[];
   // The user token's credential: in memory only, never on an envelope, ledger row or log.
