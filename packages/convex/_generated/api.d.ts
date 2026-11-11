@@ -5327,7 +5327,8 @@ export declare const internal: {
         "internal",
         {
           accountId: Id<"accounts">;
-          projectId: Id<"projects">;
+          project: string;
+          secretHash: string;
           skills: Array<{
             files: Array<{
               contentType?: string;
@@ -5337,6 +5338,7 @@ export declare const internal: {
             }>;
             name: string;
           }>;
+          stage: string;
         },
         Array<string>
       >;
@@ -6258,15 +6260,19 @@ export declare const internal: {
         },
         null
       >;
-      skillNodeFilesMatch: FunctionReference<
+      staleSkillNodes: FunctionReference<
         "query",
         "internal",
         {
-          files: Array<{ path: string; sha256: string }>;
-          projectId: Id<"projects">;
-          skillName: string;
+          project: string;
+          secretHash: string;
+          skills: Array<{
+            files: Array<{ path: string; sha256: string }>;
+            name: string;
+          }>;
+          stage: string;
         },
-        boolean
+        Array<string>
       >;
       syncManifestBySecretHash: FunctionReference<
         "mutation",

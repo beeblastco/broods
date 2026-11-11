@@ -158,9 +158,8 @@ def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind
 /-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
 large MCP bundle or skill is uploaded and replaced by its storage handle; its
 `sha256` stays. A large skill the stage already `held` with the same snapshot is
-sent with neither bytes nor handle. The server keeps its stored copy only when the
-account still holds exactly those files; otherwise it refuses before any write and
-the CLI sends again with `held` false, so `held` stays a free predicate. -/
+sent with neither bytes nor handle; `refused` and `putManifest` model the server's
+check of that claim and the CLI's one retry. -/
 def upload (large : Nat → Bool) (held : Resource → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
   | .mcp, some b =>
@@ -184,6 +183,30 @@ snapshot of the uploaded config, every other kind through `normalize`. -/
 def storeReal (large : Nat → Bool) (held : Resource → Bool) (normalize : Resource → Resource)
     (r : Resource) : Resource :=
   if r.kind.external then storeExternal (upload large held r) else normalize r
+
+/-- The held check before `handleManifestSync` claims a revision: the keys of large
+skills sent held whose files the account does not hold (`holds`), which the 409
+`skill_upload_required` names in `skills`. -/
+def refused (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    List (Kind × Nat) :=
+  (m.filter fun r => r.kind == .skill && r.config.bundle.any large && held r && !holds r).map
+    (·.key)
+
+/-- The retry's `held`: every skill the refusal named is uploaded, the rest unchanged. -/
+def retryHeld (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    Resource → Bool :=
+  fun r => held r && !(refused large held holds m).contains r.key
+
+/-- `BroodsSyncClient.putManifest`: send; on a refusal, send once more with the named
+skills uploaded. A refusal writes nothing, so the retry meets the same state and the
+same `holds`; a second refusal fails the sync (`none`). -/
+def putManifest (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) :
+    Option State :=
+  let send := fun (held : Resource → Bool) =>
+    if refused large held holds m = [] then some (sync (storeReal large held normalize) m prune s)
+    else none
+  (send held).orElse fun _ => send (retryHeld large held holds m)
 
 /-! ## Lemmas -/
 
@@ -386,6 +409,30 @@ theorem sync_converges_real (large : Nat → Bool) (held : Resource → Bool)
     · exact storeExternal_snapshot large held r (by assumption)
     · exact hround r (by simpa using ‹¬r.kind.external = true›)
 
+/-- The retry is never refused: it holds back only skills the account holds. -/
+theorem refused_retry (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    refused large (retryHeld large held holds m) holds m = [] := by
+  simp only [refused, retryHeld, List.map_eq_nil_iff, List.filter_eq_nil_iff]
+  intro r hr
+  by_cases hc : (r.kind == .skill && r.config.bundle.any large && held r && !holds r) = true
+  · have : r.key ∈ (m.filter fun r => r.kind == .skill && r.config.bundle.any large &&
+        held r && !holds r).map (·.key) := List.mem_map_of_mem (List.mem_filter.mpr ⟨hr, hc⟩)
+    simp_all
+  · simp_all
+
+/-- So the sync with its one retry always lands, and converges as one sync does. -/
+theorem putManifest_converges (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource)
+    (hkey : ∀ r, (normalize r).key = r.key)
+    (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
+    {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
+    ∃ s', putManifest large held holds normalize m prune s = some s' ∧
+      (∀ e ∈ diff m (read s'), e.op = .delete) ∧ (prune = true → diff m (read s') = []) := by
+  by_cases h : refused large held holds m = []
+  · exact ⟨_, by simp [putManifest, h], sync_converges_real large held normalize hkey hround hu prune s⟩
+  · exact ⟨_, by simp [putManifest, h, refused_retry],
+      sync_converges_real large (retryHeld large held holds m) normalize hkey hround hu prune s⟩
+
 /-- A prune list deletes nothing it does not name: a row the sync without prune
 keeps survives unless the list names its key. -/
 theorem syncOnly_keeps_unnamed {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
@@ -423,6 +470,18 @@ example :
       upload (· > 10) (fun _ => true) r = ⟨.skill, 1, ⟨0, none, none⟩⟩ ∧
       diff [r] (read (sync (storeReal (· > 10) (fun _ => false) id) [r] true [])) = [] ∧
       diff [r] (read (sync (storeReal (· > 10) (fun _ => true) id) [r] true [])) = [] := by
+  decide
+
+/-- Another stage replaced held skill `a`: the first send is refused naming only `a`,
+the retry uploads `a`, still sends `b` held, and lands. -/
+example :
+    let a : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    let b : Resource := ⟨.skill, 2, ⟨0, some 43, none⟩⟩
+    let holds := fun (r : Resource) => r.key == b.key
+    refused (· > 10) (fun _ => true) holds [a, b] = [a.key] ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] a = false ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] b = true ∧
+      (putManifest (· > 10) (fun _ => true) holds id [a, b] true []).isSome := by
   decide
 
 /-- An edited hosted MCP or hook bundle carries a new `sha256`, so the diff shows it. -/

@@ -7,23 +7,35 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
-import { MAX_SKILL_BUNDLE_BYTES } from "../model/skillLimits";
+import {
+  MAX_CLI_SKILL_SYNC_BYTES,
+  MAX_SKILL_BUNDLE_BYTES,
+} from "../model/skillLimits";
 import schema from "../schema";
 
 // The skills bucket, in memory: key -> body and user metadata.
-const { bucket, writes } = vi.hoisted(() => ({
+const { bucket, writes, failPrefixDelete } = vi.hoisted(() => ({
   bucket: new Map<
     string,
     { body: Uint8Array; metadata: Record<string, string> | undefined }
   >(),
   writes: { count: 0 },
+  failPrefixDelete: { on: false },
 }));
 
 vi.mock("../model/s3", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../model/s3")>()),
+  deleteS3Object: async (_bucket: string, key: string): Promise<void> => {
+    bucket.delete(key);
+  },
+  // When failing, it removes every file but SKILL.md and then throws, as S3 can part way.
   deleteS3Prefix: async (_bucket: string, prefix: string): Promise<number> => {
     const keys = [...bucket.keys()].filter((key) => key.startsWith(prefix));
-    for (const key of keys) bucket.delete(key);
+    for (const key of keys) {
+      if (!failPrefixDelete.on || !key.endsWith("/SKILL.md"))
+        bucket.delete(key);
+    }
+    if (failPrefixDelete.on) throw new Error("S3 delete failed part way");
 
     return keys.length;
   },
@@ -52,6 +64,9 @@ vi.mock("../model/s3", async (importOriginal) => ({
 }));
 
 const modules = import.meta.glob("../**/*.ts");
+// By path, untyped here: the CLI's sources do not typecheck under this package's config.
+const CLI_SYNC_MODULE = new URL("../../broods/src/sync.ts", import.meta.url)
+  .href;
 
 const PROJECT = "skill-upload";
 const SECRET = "bask_secret_skill_upload";
@@ -61,6 +76,25 @@ const DEV_NOTES = "# Notes from dev\n";
 
 type T = TestConvex<typeof schema>;
 type File = { path: string; text: string };
+type Manifest = {
+  version: 1;
+  project: string;
+  stage: string;
+  resources: unknown[];
+};
+// The slice of `BroodsSyncClient` that `broods dev` and `broods deploy` drive.
+interface SyncClient {
+  getManifest(
+    project: string,
+    stage: string,
+  ): Promise<{ revision: number } | null>;
+  putManifest(
+    manifest: Manifest,
+    prune: boolean,
+    rotateRuntimeKey?: boolean,
+    revision?: number,
+  ): Promise<unknown>;
+}
 
 const t = (): T => {
   const tt = convexTest(schema, modules);
@@ -77,6 +111,7 @@ afterEach((): void => {
   vi.unstubAllEnvs();
   bucket.clear();
   writes.count = 0;
+  failPrefixDelete.on = false;
 });
 
 test("a filesStorageId another row owns is refused before any read, and kept", async (): Promise<void> => {
@@ -139,6 +174,104 @@ test("an unchanged re-sync is refused once another stage overwrote the account s
 
   await upload("production", prod);
   expect(notes()).toBe(PROD_NOTES);
+});
+
+test("broods dev sends its revision again after the server refused a held skill", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const uploads = { count: 0 };
+  const dev = await cliClient(tt, uploads);
+  const devFiles = largeSkillFiles(DEV_NOTES);
+  const devSync = async (): Promise<unknown> => {
+    const remote = await dev.getManifest(PROJECT, "development");
+
+    return await dev.putManifest(
+      cliManifest("development", devFiles),
+      true,
+      false,
+      remote === null ? 0 : remote.revision,
+    );
+  };
+
+  await devSync();
+  await (
+    await cliClient(tt, uploads)
+  ).putManifest(cliManifest("production", largeSkillFiles(PROD_NOTES)), true);
+  expect(notes()).toBe(PROD_NOTES);
+  expect(uploads.count).toBe(2);
+
+  await devSync();
+  expect(uploads.count).toBe(3);
+  expect(notes()).toBe(DEV_NOTES);
+  await devSync();
+  expect(uploads.count).toBe(3);
+});
+
+test("a delete that failed part way leaves the skill unheld", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const files = skillFiles(PROD_NOTES);
+  const sync = async (synced: File[]): Promise<Response> =>
+    await putSkill(tt, "development", synced, {
+      filesStorageId: await store(tt, synced),
+    });
+  expect((await sync(files)).status).toBe(200);
+  failPrefixDelete.on = true;
+  expect((await sync(skillFiles(DEV_NOTES))).status).toBe(500);
+  failPrefixDelete.on = false;
+  expect(notes()).toBeUndefined();
+
+  expect((await putSkill(tt, "development", files, {})).status).toBe(409);
+});
+
+test("two skills naming one blob are refused, and the stage stays free", async (): Promise<void> => {
+  const tt = t();
+  await seedAccount(tt);
+  const files = skillFiles(PROD_NOTES);
+  const blob = await store(tt, files);
+  const declared = {
+    source: "files",
+    path: "skills/docs",
+    files: files.map((file) => ({
+      path: file.path,
+      size: Buffer.byteLength(file.text),
+      sha256: sha(Buffer.from(file.text)),
+    })),
+    filesStorageId: blob,
+  };
+  const response = await tt.fetch(
+    `/v1/account/projects/${PROJECT}/stages/development/manifest`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${SECRET}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        manifest: {
+          version: 1,
+          project: PROJECT,
+          stage: "development",
+          resources: ["docs", "docs-copy"].map((name) => ({
+            kind: "skill",
+            name: name,
+            config: declared,
+          })),
+        },
+        prune: true,
+      }),
+    },
+  );
+  expect(response.status).toBe(400);
+  expect(await response.text()).toContain("used by another skill");
+
+  expect(
+    (
+      await putSkill(tt, "development", files, {
+        filesStorageId: await store(tt, files),
+      })
+    ).status,
+  ).toBe(200);
 });
 
 test("an unchanged re-sync is refused when the project's canvas files are stale", async (): Promise<void> => {
@@ -234,6 +367,67 @@ function notes(): string | undefined {
   )?.[1];
 
   return object ? new TextDecoder().decode(object.body) : undefined;
+}
+
+// A real `BroodsSyncClient` against the test backend; storage uploads land in its file storage.
+async function cliClient(
+  tt: T,
+  uploads: { count: number },
+): Promise<SyncClient> {
+  const { BroodsSyncClient } = (await import(
+    /* @vite-ignore */ CLI_SYNC_MODULE
+  )) as {
+    BroodsSyncClient: new (options: {
+      baseUrl: string;
+      token: string;
+      fetch: (input: string, init?: RequestInit) => Promise<Response>;
+    }) => SyncClient;
+  };
+
+  return new BroodsSyncClient({
+    baseUrl: "https://convex.test",
+    token: SECRET,
+    fetch: async (input, init): Promise<Response> => {
+      const url = new URL(input);
+      if (url.pathname !== "/api/storage/upload") {
+        return await tt.fetch(`${url.pathname}${url.search}`, init);
+      }
+      uploads.count += 1;
+      const body = new Blob([init?.body as Uint8Array<ArrayBuffer>]);
+
+      return Response.json({
+        storageId: await tt.run(
+          async (ctx): Promise<Id<"_storage">> => await ctx.storage.store(body),
+        ),
+      });
+    },
+  });
+}
+
+// The manifest `broods dev` compiles for one skill: files declared and sent base64.
+function cliManifest(stage: string, files: File[]): Manifest {
+  return {
+    version: 1,
+    project: PROJECT,
+    stage: stage,
+    resources: [
+      {
+        kind: "skill",
+        name: "docs",
+        config: {
+          source: "files",
+          path: "skills/docs",
+          files: files.map((file) => ({
+            path: file.path,
+            size: Buffer.byteLength(file.text),
+            sha256: sha(Buffer.from(file.text)),
+            contentBase64: Buffer.from(file.text).toString("base64"),
+            contentType: "text/markdown",
+          })),
+        },
+      },
+    ],
+  };
 }
 
 async function putDeclared(
@@ -334,6 +528,14 @@ async function seedAccount(tt: T): Promise<void> {
 
 function sha(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+// Past the CLI's 4 MiB inline budget, so the CLI uploads it or sends it held.
+function largeSkillFiles(notesText: string): File[] {
+  return [
+    ...skillFiles(notesText),
+    { path: "big.md", text: "x".repeat(MAX_CLI_SKILL_SYNC_BYTES) },
+  ];
 }
 
 function skillFiles(notesText: string): File[] {

@@ -81,6 +81,12 @@ def putAt (store : Resource → Resource) (m : Manifest) (prune : Bool)
     apply store (.release (s.rev + 1)) (run store (put m prune) claimed)
   else s
 
+/-- A PUT with large skills sent held: the held check runs before the claim, so a PUT
+it refuses (`refusedKeys`, the 409's `skills`) leaves the server as it was. -/
+def putCheckedAt (store : Resource → Resource) (refusedKeys : List (Kind × Nat))
+    (m : Manifest) (prune : Bool) (expected : Option Nat) (s : Server) : Server :=
+  if refusedKeys = [] then putAt store m prune expected s else s
+
 /-- `GET /manifest`. -/
 def readAll (s : Server) : Manifest := read s.ext ++ read s.main
 
@@ -173,6 +179,14 @@ theorem busy_put_noop (m : Manifest) (prune : Bool) (s : Server) (e : Option Nat
     (h : s.active.isNone = false) : putAt store m prune e s = s := by
   simp [putAt, claims, h]
 
+/-- `broods dev` resends the revision it read after a refusal, and the retry is
+admitted exactly when the refused PUT would have been. -/
+theorem refused_put_keeps_revision (ks : List (Kind × Nat)) (m : Manifest) (prune : Bool)
+    (s : Server) (e : Option Nat) (hks : ks ≠ []) :
+    putCheckedAt store [] m prune e (putCheckedAt store ks m prune e s) =
+      putAt store m prune e s := by
+  simp [putCheckedAt, hks]
+
 /-- An older action's cleanup cannot release a newer claim. -/
 theorem stale_release_noop (s : Server) (r : Nat) (h : s.active ≠ some r) :
     apply store (.release r) s = s := by
@@ -202,6 +216,17 @@ example :
     let a := putAt id [⟨.agent, 1, ⟨7, none, none⟩⟩] false (some 0) ⟨[], [], 0, none⟩
     let b := putAt id [⟨.agent, 2, ⟨7, none, none⟩⟩] false (some 0) a
     readAll b = [⟨.agent, 1, ⟨7, none, none⟩⟩] ∧ b.active = none := by
+  decide
+
+/-- After a refused held skill, the retry with the same revision lands. Had the refused
+PUT claimed its revision first, as it once did, every retry would be stale. -/
+example :
+    let m : Manifest := [⟨.agent, 1, ⟨7, none, none⟩⟩]
+    let s : Server := ⟨[], [], 3, none⟩
+    let claimedFirst := apply id (.release 4) (apply id (.claim (some 3)) s)
+    readAll (putCheckedAt id [] m false (some 3) (putCheckedAt id [(.skill, 1)] m false (some 3) s))
+        = m ∧
+      putAt id m false (some 3) claimedFirst = claimedFirst := by
   decide
 
 /-- A later deploy can replace A once its claim has been released. -/

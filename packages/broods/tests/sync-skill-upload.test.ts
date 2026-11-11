@@ -99,9 +99,9 @@ test("a 6 MiB skill syncs through one upload, and an unchanged one re-syncs with
   expect((held as CliManifest | null)?.resources).toEqual(inline.resources);
 });
 
-test("a skill the server says it does not hold is uploaded and sent once more, once", async (): Promise<void> => {
+test("only the skills the server says it does not hold are uploaded, and sent once more, once", async (): Promise<void> => {
   const { manifest } = await compileProject({
-    cwd: await skillProject(),
+    cwd: await skillProject(["big", "wide"]),
     command: "dev",
   });
   const sent: string[] = [];
@@ -132,10 +132,13 @@ test("a skill the server says it does not hold is uploaded and sent once more, o
                 message: "The account does not hold the files of skill big",
                 code: "skill_upload_required",
               },
+              skills: ["big"],
             },
             { status: 409 },
           );
         }
+        const wide = body.manifest.resources[2]?.config as SkillConfig;
+        expect(wide.filesStorageId).toBeUndefined();
 
         return Response.json({ manifest: body.manifest, ids: {} });
       },
@@ -186,7 +189,7 @@ test("an exhausted upload quota names the skill and when to retry", async (): Pr
   );
 });
 
-async function skillProject(): Promise<string> {
+async function skillProject(large = ["big"]): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "broods-skill-upload-"));
   tempDirs.push(cwd);
   await mkdir(join(cwd, "broods"), { recursive: true });
@@ -201,18 +204,21 @@ export default defineBroods({ project: "skills-app", stages: { dev: "development
     `import { defineSkill } from "${RESOURCES_MODULE}";
 export const big = defineSkill({ name: "big", path: "skills/big" });
 export const small = defineSkill({ name: "small", path: "skills/small" });
+export const wide = defineSkill({ name: "wide", path: "skills/wide" });
 `,
   );
-  for (const name of ["big", "small"]) {
+  for (const name of ["big", "small", "wide"]) {
     const root = join(cwd, "broods", "skills", name);
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "SKILL.md"), `# ${name}\n`);
   }
-  for (const part of ["a", "b"]) {
-    await writeFile(
-      join(cwd, "broods", "skills", "big", `${part}.txt`),
-      Buffer.alloc(3 * MIB, part),
-    );
+  for (const name of large) {
+    for (const part of ["a", "b"]) {
+      await writeFile(
+        join(cwd, "broods", "skills", name, `${part}.txt`),
+        Buffer.alloc(3 * MIB, part),
+      );
+    }
   }
 
   return cwd;

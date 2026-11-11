@@ -34,6 +34,7 @@ import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
 import { uploadQuotaResponse, type UploadKind } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { apiErrorBody } from "../model/apiError";
 import { ClientError } from "../model/clientError";
 import { parseInput, skillFileDeclarations } from "../model/inputSchema";
 import { MAX_SKILL_BUNDLE_BYTES } from "../model/skillLimits";
@@ -109,13 +110,16 @@ type StageRef = { secretHash: string; project: string; stage: string };
 // `kind:name` another stage manages: skills and hooks are account-wide rows keyed by name.
 type ForeignExternalResources = ReadonlySet<string>;
 
+type DeclaredSkillFiles = z.output<typeof skillFileDeclarations>;
+
 // A skill carries inline files, an uploaded blob, or neither when the account already holds it.
 type PreparedExternal = {
   skills: Array<
-    | { name: string; files: unknown[]; held?: true }
+    | { name: string; files: unknown[] }
+    | { name: string; files: DeclaredSkillFiles; held: true }
     | {
         name: string;
-        files: z.output<typeof skillFileDeclarations>;
+        files: DeclaredSkillFiles;
         filesStorageId: Id<"_storage">;
       }
   >;
@@ -599,6 +603,35 @@ async function handleManifestSync(
   );
   const prune = body.prune === true || pruneOnly !== undefined;
   const originalManifest = manifest as CliManifest;
+  const skills = parseSkills(originalManifest);
+  const held = skills.filter((skill) => "held" in skill);
+  // Before the revision is claimed, so the CLI uploads these and sends the same revision again.
+  const stale =
+    held.length > 0
+      ? await ctx.runAction(internal.aws.skills.unheld, {
+          accountId: accountId,
+          secretHash: secretHash,
+          project: route.project,
+          stage: route.stage,
+          skills: held.map((skill) => ({
+            name: skill.name,
+            files: skill.files,
+          })),
+        })
+      : [];
+  if (stale.length > 0) {
+    return json(
+      {
+        ...apiErrorBody(
+          409,
+          `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
+          { code: "skill_upload_required" },
+        ),
+        skills: stale,
+      },
+      409,
+    );
+  }
   const scope = await ctx.runMutation(
     internal.cli.sync.ensureScopeBySecretHash,
     {
@@ -626,7 +659,8 @@ async function handleManifestSync(
       ctx,
       originalManifest,
       foreign,
-      { accountId: accountId, projectId: scope.projectId, claimed: claimed },
+      skills,
+      claimed,
     );
     await validateManifest(ctx, scope, originalManifest);
     const externalIds = await syncExternalResources(
@@ -748,11 +782,12 @@ async function handleManifestSync(
         : {}),
     });
   } finally {
-    for (const storageId of claimed) await ctx.storage.delete(storageId);
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
       stageId: scope.stageId,
       revision: scope.revision,
     });
+    // A blob left behind here is the nightly prune's.
+    await Promise.allSettled(claimed.map((id) => ctx.storage.delete(id)));
   }
 }
 
@@ -1059,73 +1094,63 @@ async function syncHookResources(
   return ids;
 }
 
+function parseSkills(manifest: CliManifest): PreparedExternal["skills"] {
+  const blobs = new Set<string>();
+
+  return manifest.resources
+    .filter((entry) => entry.kind === "skill")
+    .map((resource): PreparedExternal["skills"][number] => {
+      const config = asRecord(resource.config, `skill:${resource.name}`);
+      const files = config.files;
+      if (!Array.isArray(files))
+        throw new ClientError(`skill:${resource.name}.files must be an array`);
+      if (
+        files.some(
+          (entry) =>
+            asRecord(entry, `skill:${resource.name}.files[]`).contentBase64 !==
+            undefined,
+        )
+      ) {
+        for (const entry of files) skillNodeFile(entry, resource.name);
+
+        return { name: resource.name, files: files };
+      }
+      const declared = parseInput(
+        skillFileDeclarations,
+        files,
+        `skill:${resource.name}.files`,
+      );
+      if (config.filesStorageId === undefined) {
+        return { name: resource.name, files: declared, held: true };
+      }
+      const filesStorageId = stringField(
+        config.filesStorageId,
+        `skill:${resource.name}.filesStorageId`,
+      );
+      if (blobs.has(filesStorageId)) {
+        throw new ClientError(
+          `skill:${resource.name}.filesStorageId is used by another skill`,
+        );
+      }
+      blobs.add(filesStorageId);
+
+      return {
+        name: resource.name,
+        files: declared,
+        filesStorageId: filesStorageId as Id<"_storage">,
+      };
+    });
+}
+
 async function prepareExternalResources(
   ctx: ActionCtx,
   manifest: CliManifest,
   foreign: ForeignExternalResources,
-  owner: {
-    accountId: Id<"accounts">;
-    projectId: Id<"projects">;
-    claimed: Array<Id<"_storage">>;
-  },
+  skills: PreparedExternal["skills"],
+  claimed: Array<Id<"_storage">>,
 ): Promise<PreparedExternal> {
-  const skills: PreparedExternal["skills"] = [];
-  const held: Array<{
-    name: string;
-    files: z.output<typeof skillFileDeclarations>;
-  }> = [];
-  for (const resource of manifest.resources.filter(
-    (entry) => entry.kind === "skill",
-  )) {
-    assertNotForeign(foreign, "skill", resource.name);
-    const config = asRecord(resource.config, `skill:${resource.name}`);
-    const files = config.files;
-    if (!Array.isArray(files))
-      throw new ClientError(`skill:${resource.name}.files must be an array`);
-    if (
-      files.some(
-        (entry) =>
-          asRecord(entry, `skill:${resource.name}.files[]`).contentBase64 !==
-          undefined,
-      )
-    ) {
-      for (const entry of files) skillNodeFile(entry, resource.name);
-      skills.push({ name: resource.name, files: files });
-      continue;
-    }
-    const declared = parseInput(
-      skillFileDeclarations,
-      files,
-      `skill:${resource.name}.files`,
-    );
-    if (config.filesStorageId === undefined) {
-      held.push({ name: resource.name, files: declared });
-      skills.push({ name: resource.name, files: declared, held: true });
-      continue;
-    }
-    skills.push({
-      name: resource.name,
-      files: declared,
-      filesStorageId: stringField(
-        config.filesStorageId,
-        `skill:${resource.name}.filesStorageId`,
-      ) as Id<"_storage">,
-    });
-  }
-  // Refused before any claim, so the CLI can resend the blobs it already uploaded.
-  const stale =
-    held.length > 0
-      ? await ctx.runAction(internal.aws.skills.unheld, {
-          accountId: owner.accountId,
-          projectId: owner.projectId,
-          skills: held,
-        })
-      : [];
-  if (stale.length > 0) {
-    throw new ClientError(
-      `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
-      "skill_upload_required",
-    );
+  for (const skill of skills) {
+    assertNotForeign(foreign, "skill", skill.name);
   }
   for (const skill of skills) {
     if (!("filesStorageId" in skill)) continue;
@@ -1133,7 +1158,7 @@ async function prepareExternalResources(
       storageId: skill.filesStorageId,
       maxBytes: MAX_SKILL_BUNDLE_BYTES,
     });
-    owner.claimed.push(skill.filesStorageId);
+    claimed.push(skill.filesStorageId);
   }
   const changed = skills.filter((skill) => !("held" in skill));
   if (changed.length > 0) {

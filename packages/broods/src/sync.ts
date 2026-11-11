@@ -20,6 +20,11 @@ import { StageSessionRefusedError } from "./observability-client.ts";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+// The 409 `skill_upload_required` body: the skills whose files the server does not hold.
+interface SkillUploadRequired {
+  skills: string[];
+}
+
 export interface SyncClientOptions {
   baseUrl: string;
   token: string;
@@ -250,12 +255,23 @@ export class BroodsSyncClient {
       );
     const first = await this.externalizeLargeSkills(bundled);
     let response = await put(first);
-    if (
-      response.status === 409 &&
-      errorEnvelope(await response.clone().text()).code ===
-        "skill_upload_required"
-    ) {
-      response = await put(await this.externalizeLargeSkills(bundled, first));
+    const refusal =
+      response.status === 409 ? await response.clone().text() : "";
+    if (errorEnvelope(refusal).code === "skill_upload_required") {
+      const stale = new Set(
+        (JSON.parse(refusal) as SkillUploadRequired).skills,
+      );
+      response = await put({
+        ...first,
+        resources: await Promise.all(
+          bundled.resources.map(
+            async (resource, index): Promise<CliManifestResource> =>
+              resource.kind === "skill" && stale.has(resource.name)
+                ? await this.uploadSkill(manifest, resource)
+                : (first.resources[index] ?? resource),
+          ),
+        ),
+      });
     }
     await assertOk(response, "Sync manifest failed");
 
@@ -305,63 +321,29 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  // One upload per skill that does not fit inline. A first try skips one this stage last synced
-  // unchanged; the retry after the server refused (`sent`) uploads it and reuses `sent`'s blobs.
+  // One upload per skill that does not fit inline, but for one this stage last synced unchanged.
   private async externalizeLargeSkills(
     manifest: CliManifest,
-    sent?: CliManifest,
   ): Promise<CliManifest> {
     const large = skillsToUpload(manifest.resources);
     if (large.size === 0) return manifest;
-    const remote = sent
-      ? null
-      : await this.getManifest(manifest.project, manifest.stage);
+    const remote = await this.getManifest(manifest.project, manifest.stage);
 
     const resources = await Promise.all(
       manifest.resources.map(async (resource): Promise<CliManifestResource> => {
         if (resource.kind !== "skill" || !large.has(resource.name)) {
           return resource;
         }
-        const config = resource.config as SkillManifestConfig;
-        const files = config.files.map(
-          ({
-            contentBase64: _content,
-            ...file
-          }): Omit<SkillManifestConfig["files"][number], "contentBase64"> =>
-            file,
+        const held = remote?.manifest.resources.find(
+          (entry): boolean =>
+            entry.kind === "skill" && entry.name === resource.name,
         );
-        const same = (entry: CliManifestResource): boolean =>
-          entry.kind === "skill" && entry.name === resource.name;
-        const held = remote?.manifest.resources.find(same);
-        if (
-          held &&
+
+        return held &&
           stableJson(snapshotResource(held)) ===
             stableJson(snapshotResource(resource))
-        ) {
-          return { ...resource, config: { ...config, files: files } };
-        }
-        const sentConfig = sent?.resources.find(same)?.config as
-          | SkillManifestConfig
-          | undefined;
-        const storageId =
-          sentConfig?.filesStorageId ??
-          (await this.upload(
-            manifest.project,
-            manifest.stage,
-            "/skill-uploads",
-            Buffer.concat(
-              config.files.map((file): Buffer =>
-                Buffer.from(file.contentBase64, "base64"),
-              ),
-            ),
-            "application/octet-stream",
-            `skill ${resource.name}`,
-          ));
-
-        return {
-          ...resource,
-          config: { ...config, files: files, filesStorageId: storageId },
-        };
+          ? withoutSkillContent(resource)
+          : await this.uploadSkill(manifest, resource);
       }),
     );
 
@@ -401,6 +383,27 @@ export class BroodsSyncClient {
       throw new Error(`Upload of ${label} failed: response omitted storageId`);
 
     return storageId;
+  }
+
+  private async uploadSkill(
+    manifest: CliManifest,
+    resource: CliManifestResource,
+  ): Promise<CliManifestResource> {
+    const config = resource.config as SkillManifestConfig;
+    const storageId = await this.upload(
+      manifest.project,
+      manifest.stage,
+      "/skill-uploads",
+      Buffer.concat(
+        config.files.map((file): Buffer =>
+          Buffer.from(file.contentBase64, "base64"),
+        ),
+      ),
+      "application/octet-stream",
+      `skill ${resource.name}`,
+    );
+
+    return withoutSkillContent(resource, storageId);
   }
 
   async getRuntimeKey(
@@ -992,4 +995,28 @@ function largeBundleOf(
   if (typeof bundle !== "string") return null;
 
   return Buffer.byteLength(bundle) > INLINE_MCP_BUNDLE_BYTES ? bundle : null;
+}
+
+// Declares a skill's files without their bytes: the account holds them, or `filesStorageId` does.
+function withoutSkillContent(
+  resource: CliManifestResource,
+  filesStorageId?: string,
+): CliManifestResource {
+  const config = resource.config as SkillManifestConfig;
+
+  return {
+    ...resource,
+    config: {
+      ...config,
+      files: config.files.map(
+        ({
+          contentBase64: _content,
+          ...file
+        }): Omit<SkillManifestConfig["files"][number], "contentBase64"> => file,
+      ),
+      ...(filesStorageId !== undefined
+        ? { filesStorageId: filesStorageId }
+        : {}),
+    },
+  };
 }

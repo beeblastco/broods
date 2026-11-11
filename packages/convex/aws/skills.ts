@@ -127,28 +127,38 @@ export const storeUploadedFiles = internalAction({
 export const unheld = internalAction({
   args: {
     accountId: v.id("accounts"),
-    projectId: v.id("projects"),
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
     skills: v.array(v.object({ name: v.string(), files: declaredFiles })),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args): Promise<string[]> => {
-    const stale: string[] = [];
-    for (const skill of args.skills) {
-      const held =
-        (await storedSkillHash(args.accountId, skill.name)) ===
-          contentHash(skill.files) &&
-        (await ctx.runQuery(internal.cli.sync.skillNodeFilesMatch, {
-          projectId: args.projectId,
-          skillName: skill.name,
+    const [hashes, staleNodes] = await Promise.all([
+      Promise.all(
+        args.skills.map((skill) => storedSkillHash(args.accountId, skill.name)),
+      ),
+      ctx.runQuery(internal.cli.sync.staleSkillNodes, {
+        secretHash: args.secretHash,
+        project: args.project,
+        stage: args.stage,
+        skills: args.skills.map((skill) => ({
+          name: skill.name,
           files: skill.files.map(({ path, sha256 }) => ({
             path: path,
             sha256: sha256,
           })),
-        }));
-      if (!held) stale.push(skill.name);
-    }
+        })),
+      }),
+    ]);
 
-    return stale;
+    return args.skills
+      .filter(
+        (skill, index) =>
+          hashes[index] !== contentHash(skill.files) ||
+          staleNodes.includes(skill.name),
+      )
+      .map((skill) => skill.name);
   },
 });
 

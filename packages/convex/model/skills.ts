@@ -9,6 +9,7 @@ import {
   SKILL_FILE,
 } from "./skillRules";
 import {
+  deleteS3Object,
   deleteS3Prefix,
   headS3Object,
   listS3Prefix,
@@ -82,7 +83,7 @@ export function createJsonSkillFiles(
   ];
 }
 
-// SKILL.md goes last and carries `contentHash`, so a write that failed partway is never held.
+// SKILL.md holds `contentHash`: deleted first, written last, so a failed replace is never held.
 export async function createOrReplaceSkill(
   accountId: string,
   input: SkillBundleFile[],
@@ -103,6 +104,7 @@ export async function createOrReplaceSkill(
       },
     );
 
+  await deleteS3Object(skillsBucketName(), `${skillPath}/${SKILL_FILE}`);
   await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
   await Promise.all(
     files.filter((file) => file !== skillFile).map((file) => write(file)),

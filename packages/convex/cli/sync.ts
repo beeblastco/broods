@@ -83,6 +83,7 @@ import {
 } from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
+import { base64UrlToBytes } from "../model/stageSessionTicket";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -900,36 +901,52 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   },
 });
 
-// True when the project's canvas copy of a skill holds exactly these files (hex sha256).
-export const skillNodeFilesMatch = internalQuery({
+// Skills whose canvas copy in the project does not hold exactly these files (hex sha256).
+export const staleSkillNodes = internalQuery({
   args: {
-    projectId: v.id("projects"),
-    skillName: v.string(),
-    files: v.array(v.object({ path: v.string(), sha256: v.string() })),
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    skills: v.array(
+      v.object({
+        name: v.string(),
+        files: v.array(v.object({ path: v.string(), sha256: v.string() })),
+      }),
+    ),
   },
-  returns: v.boolean(),
-  handler: async (ctx, args): Promise<boolean> => {
-    const rows = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q
-          .eq("projectId", args.projectId)
-          .eq("nodeId", canvasNodeId("skill", resourceName(args.skillName))),
+  returns: v.array(v.string()),
+  handler: async (ctx, args): Promise<string[]> => {
+    const account = await accountFromSecretHash(ctx, args.secretHash);
+    const resolved =
+      account &&
+      (await resolveProjectStage(ctx, account, args.project, args.stage));
+    const stale: string[] = [];
+    for (const skill of args.skills) {
+      const rows = resolved
+        ? await ctx.db
+            .query("workspaceFiles")
+            .withIndex("by_projectId_nodeId_and_path", (q) =>
+              q
+                .eq("projectId", resolved.projectDoc._id)
+                .eq("nodeId", canvasNodeId("skill", resourceName(skill.name))),
+            )
+            .collect()
+        : [];
+      const held = new Map<string, string>();
+      for (const row of rows) {
+        const blob = row.storageId && (await ctx.db.system.get(row.storageId));
+        // `_storage` keeps sha256 as base64.
+        if (blob)
+          held.set(row.path, hexFromBytes(base64UrlToBytes(blob.sha256)));
+      }
+      if (
+        rows.length !== skill.files.length ||
+        skill.files.some((file) => held.get(file.path) !== file.sha256)
       )
-      .collect();
-    const held = new Map<string, string>();
-    for (const row of rows) {
-      const blob = row.storageId && (await ctx.db.system.get(row.storageId));
-      if (!blob) continue;
-      // `_storage` keeps sha256 as base64.
-      const digest = Uint8Array.from(atob(blob.sha256), (c) => c.charCodeAt(0));
-      held.set(row.path, hexFromBytes(digest));
+        stale.push(skill.name);
     }
 
-    return (
-      rows.length === args.files.length &&
-      args.files.every((file) => held.get(file.path) === file.sha256)
-    );
+    return stale;
   },
 });
 

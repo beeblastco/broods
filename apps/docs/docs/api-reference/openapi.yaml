@@ -4904,7 +4904,7 @@ components:
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
                 | `read_only_after_logs` | 403 | This dock conversation read logs, so its login may only read. Propose the change. Reloading the page starts a new conversation. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
-                | `skill_upload_required` | 409 | A CLI sync sent a skill without its files, and the account no longer holds them. Upload the skill and retry the sync. |
+                | `skill_upload_required` | 409 | A CLI sync sent a skill without its files, and the account no longer holds them. The body lists those skills in `skills`. Upload them and retry the sync. |
                 | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
                 | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |
                 | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this client address, whatever credentials they carried. A valid credential still authenticates. Retry after `Retry-After`. |
