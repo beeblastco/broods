@@ -64,14 +64,14 @@ describe("owner role changes", () => {
     expect(refusal?.code).toBe("forbidden");
   });
 
-  test("an admin cannot add a new owner", async () => {
+  test("an admin cannot invite a new owner", async () => {
     const t = membersTest();
     const org = await seedOrg(t);
     await seedUser(t, "auth_new", "new@example.com");
     caller.authId = "auth_admin";
 
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: org.orgId,
         email: "new@example.com",
         role: "owner",

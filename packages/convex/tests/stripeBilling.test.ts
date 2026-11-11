@@ -35,7 +35,8 @@ vi.mock("../auth", () => ({
   authKit: {
     getAuthUser: async () => ({
       id: caller.authId,
-      email: caller.authId === AUTH_ID ? "payer@example.com" : null,
+      email: `${caller.authId.replace("auth_", "")}@example.com`,
+      emailVerified: true,
     }),
     registerRoutes: () => undefined,
   },
@@ -730,14 +731,14 @@ describe("seat pool", () => {
     await seedUser(t, "auth_new", "new@example.com");
 
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: payerOrgId,
         email: "new@example.com",
       }),
     ).rejects.toThrow(
       "Payer Org's owner is on Hobby, which has no developer seats",
     );
-    expect(await memberCount(t)).toBe(1);
+    expect(await peopleCount(t)).toBe(1);
   });
 
   test("an owner whose payment is due cannot invite, and is told to fix the payment", async () => {
@@ -752,12 +753,12 @@ describe("seat pool", () => {
     );
 
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: payerOrgId,
         email: "new@example.com",
       }),
     ).rejects.toThrow("Payment for Payer Org's owner's Pro plan is due");
-    expect(await memberCount(t)).toBe(1);
+    expect(await peopleCount(t)).toBe(1);
   });
 
   test("Pro invites 2 developers, then the next one needs a seat", async () => {
@@ -770,26 +771,57 @@ describe("seat pool", () => {
     await sendEvent(t, "customer.subscription.created", subscription("active"));
 
     for (const name of ["second", "third"]) {
-      await t.mutation(api.org.members.add, {
+      await t.mutation(api.org.invitations.create, {
         orgId: payerOrgId,
         email: `${name}@example.com`,
       });
     }
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: payerOrgId,
         email: "fourth@example.com",
       }),
     ).rejects.toThrow("Every developer seat is taken. Add a seat in Billing.");
     stripeCalls.subscriptions.mockImplementation(updateLive);
     const { seats } = await t.action(api.stripe.addSeat, {});
-    await t.mutation(api.org.members.add, {
+    await t.mutation(api.org.invitations.create, {
       orgId: payerOrgId,
       email: "fourth@example.com",
     });
 
     expect(seats).toBe(3);
-    expect(await memberCount(t)).toBe(4);
+    expect(await peopleCount(t)).toBe(4);
+  });
+
+  test("an invitation holds its seat until revoked, and accepting it needs no seat", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const t = billingTest();
+    await seedPayer(t);
+    for (const name of ["second", "third"]) {
+      await seedUser(t, `auth_${name}`, `${name}@example.com`);
+    }
+    await sendEvent(t, "customer.subscription.created", subscription("active"));
+    const invite = (email: string): Promise<Id<"orgInvitations">> =>
+      t.mutation(api.org.invitations.create, {
+        orgId: payerOrgId,
+        email: email,
+      });
+
+    const second = await invite("second@example.com");
+    const waiting = await invite("no-account@example.com");
+    await expect(invite("third@example.com")).rejects.toThrow(
+      "Every developer seat is taken",
+    );
+    caller.authId = "auth_second";
+    await t.mutation(api.org.invitations.accept, { invitationId: second });
+    caller.authId = AUTH_ID;
+    expect(await t.query(api.stripe.getBillingInfo, {})).toMatchObject({
+      developers: 2,
+    });
+    await t.mutation(api.org.invitations.revoke, { invitationId: waiting });
+    await invite("third@example.com");
+
+    expect(await peopleCount(t)).toBe(3);
   });
 
   test("a developer in two of the owner's orgs takes one seat, and joins the second free while the pool is full", async () => {
@@ -799,7 +831,7 @@ describe("seat pool", () => {
     await seedUser(t, "auth_new", "new@example.com");
     const second = await t.mutation(api.org.orgs.create, { name: "Second" });
 
-    await t.mutation(api.org.members.add, {
+    await t.mutation(api.org.invitations.create, {
       orgId: second,
       email: "dev-one@example.com",
     });
@@ -810,14 +842,14 @@ describe("seat pool", () => {
     });
     expect(await t.query(api.stripe.listSeatHolders, {})).toEqual([
       {
-        userId: expect.any(String),
+        id: expect.any(String),
         name: "auth_dev_one",
         orgs: ["Payer Org", "Second"],
       },
-      { userId: expect.any(String), name: "auth_dev_two", orgs: ["Payer Org"] },
+      { id: expect.any(String), name: "auth_dev_two", orgs: ["Payer Org"] },
     ]);
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: second,
         email: "new@example.com",
       }),
@@ -867,7 +899,7 @@ describe("seat pool", () => {
     );
 
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: second,
         email: "dev-one@example.com",
       }),
@@ -879,12 +911,12 @@ describe("seat pool", () => {
     await seedPayer(t);
     await seedUser(t, "auth_new", "new@example.com");
 
-    await t.mutation(api.org.members.add, {
+    await t.mutation(api.org.invitations.create, {
       orgId: payerOrgId,
       email: "new@example.com",
     });
 
-    expect(await memberCount(t)).toBe(2);
+    expect(await peopleCount(t)).toBe(2);
   });
 
   test("Add seat charges the prorated seat at once, then the invite lands", async () => {
@@ -895,7 +927,7 @@ describe("seat pool", () => {
     stripeCalls.subscriptions.mockImplementation(updateLive);
 
     const { seats } = await t.action(api.stripe.addSeat, {});
-    await t.mutation(api.org.members.add, {
+    await t.mutation(api.org.invitations.create, {
       orgId: payerOrgId,
       email: "new@example.com",
     });
@@ -906,7 +938,7 @@ describe("seat pool", () => {
       proration_behavior: "always_invoice",
       payment_behavior: "error_if_incomplete",
     });
-    expect(await memberCount(t)).toBe(4);
+    expect(await peopleCount(t)).toBe(4);
   });
 
   test("Add seat pays for developers kept from Hobby too", async () => {
@@ -956,12 +988,12 @@ describe("seat pool", () => {
     );
 
     await t.action(api.stripe.addSeat, {});
-    await t.mutation(api.org.members.add, {
+    await t.mutation(api.org.invitations.create, {
       orgId: payerOrgId,
       email: "new@example.com",
     });
 
-    expect(await memberCount(t)).toBe(4);
+    expect(await peopleCount(t)).toBe(4);
   });
 
   test("a declined card adds no seat and the invite stays refused", async () => {
@@ -981,7 +1013,7 @@ describe("seat pool", () => {
       "The seat was not added: Your card was declined. Add a card in Manage billing, then try again.",
     );
     await expect(
-      t.mutation(api.org.members.add, {
+      t.mutation(api.org.invitations.create, {
         orgId: payerOrgId,
         email: "new@example.com",
       }),
@@ -1374,14 +1406,19 @@ async function seedIncludedSeatsTaken(
   );
 }
 
-async function memberCount(t: T): Promise<number> {
+// Members and pending invitations: both hold a seat.
+async function peopleCount(t: T): Promise<number> {
   return await t.run(async (ctx) => {
     const members = await ctx.db
       .query("orgMembers")
       .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", payerOrgId))
       .collect();
+    const invitations = await ctx.db
+      .query("orgInvitations")
+      .withIndex("by_orgId_and_email", (q) => q.eq("orgId", payerOrgId))
+      .collect();
 
-    return members.length;
+    return members.length + invitations.length;
   });
 }
 

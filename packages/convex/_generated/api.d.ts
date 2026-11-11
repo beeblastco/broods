@@ -1704,6 +1704,64 @@ export declare const api: {
     >;
   };
   org: {
+    invitations: {
+      accept: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null | string
+      >;
+      create: FunctionReference<
+        "mutation",
+        "public",
+        {
+          email: string;
+          orgId: Id<"orgs">;
+          role?: "owner" | "admin" | "member";
+          roleId?: Id<"orgRoles">;
+        },
+        Id<"orgInvitations">
+      >;
+      decline: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null
+      >;
+      list: FunctionReference<
+        "query",
+        "public",
+        { orgId: Id<"orgs"> },
+        Array<{
+          createdAt: number;
+          email: string;
+          hasAccount: boolean;
+          invitationId: Id<"orgInvitations">;
+          invitedBy?: { avatarUrl?: string; name: string };
+          role: "owner" | "admin" | "member";
+          roleName?: string;
+        }>
+      >;
+      listMine: FunctionReference<
+        "query",
+        "public",
+        {},
+        Array<{
+          invitationId: Id<"orgInvitations">;
+          invitedBy?: { avatarUrl?: string; name: string };
+          orgId: Id<"orgs">;
+          orgName: string;
+          role: "owner" | "admin" | "member";
+          roleName?: string;
+        }>
+      >;
+      revoke: FunctionReference<
+        "mutation",
+        "public",
+        { invitationId: Id<"orgInvitations"> },
+        null
+      >;
+    };
     lifecycle: {
       provision: FunctionReference<
         "action",
@@ -1719,16 +1777,11 @@ export declare const api: {
       >;
     };
     members: {
-      add: FunctionReference<
+      leave: FunctionReference<
         "mutation",
         "public",
-        {
-          email: string;
-          orgId: Id<"orgs">;
-          role?: "owner" | "admin" | "member";
-          roleId?: Id<"orgRoles">;
-        },
-        Id<"orgMembers">
+        { orgId: Id<"orgs"> },
+        null
       >;
       list: FunctionReference<
         "query",
@@ -2297,7 +2350,7 @@ export declare const api: {
       "query",
       "public",
       {},
-      Array<{ name: string; orgs: Array<string>; userId: Id<"users"> }>
+      Array<{ id: string; name: string; orgs: Array<string> }>
     >;
   };
   user: {
@@ -2316,6 +2369,7 @@ export declare const api: {
         avatarUrl?: string;
         deletionScheduledFor?: number;
         email: string;
+        invited?: boolean;
         name: string;
         nameEdited?: boolean;
         plan: "free" | "pro";

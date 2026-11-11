@@ -438,7 +438,7 @@ function SeatsSection({
                 </TableHeader>
                 <TableBody>
                   {rows.map((holder) => (
-                    <TableRow key={holder.userId}>
+                    <TableRow key={holder.id}>
                       <TableCell>{holder.name}</TableCell>
                       <TableCell>
                         <span className="text-muted-foreground">

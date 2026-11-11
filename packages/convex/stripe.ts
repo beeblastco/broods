@@ -195,7 +195,7 @@ export const listSeatHolders = query({
   args: {},
   returns: v.array(
     v.object({
-      userId: v.id("users"),
+      id: v.string(),
       name: v.string(),
       orgs: v.array(v.string()),
     }),
@@ -207,11 +207,15 @@ export const listSeatHolders = query({
     }
     const developers = await developersOf(ctx, user.id);
     const rows = await Promise.all(
-      [...developers].map(async ([userId, orgs]) => ({
-        userId: userId,
-        name: (await ctx.db.get(userId))?.name ?? "(unknown)",
-        orgs: orgs.map((org) => org.name),
-      })),
+      [...developers].map(async ([id, orgs]) => {
+        const userId = ctx.db.normalizeId("users", id);
+
+        return {
+          id: id,
+          name: userId ? ((await ctx.db.get(userId))?.name ?? "(unknown)") : id,
+          orgs: orgs.map((org) => org.name),
+        };
+      }),
     );
 
     return rows.sort((left, right) => left.name.localeCompare(right.name));

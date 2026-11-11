@@ -3,7 +3,7 @@ import { components, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
-import { userByAuthId } from "./ownership/org";
+import { syncInvited, userByAuthId } from "./ownership/org";
 import { isManagedService, PLAN_LIMITS, type Plan } from "./planLimits";
 
 export const PRO_INCLUDED_DEVELOPER_SEATS = 2;
@@ -67,27 +67,46 @@ export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
 }
 
+// Keyed by user id, or by email for an invitation to an address with no account: a pending
+// invitation holds its seat until it is revoked or declined.
 export async function developersOf(
   ctx: QueryCtx,
   ownerAuthId: string,
-): Promise<Map<Id<"users">, Array<Doc<"orgs">>>> {
+): Promise<Map<string, Array<Doc<"orgs">>>> {
   const owner = await userByAuthId(ctx, ownerAuthId);
   const owned = await ctx.db
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
     .collect();
-  const developers = new Map<Id<"users">, Array<Doc<"orgs">>>();
+  const developers = new Map<string, Array<Doc<"orgs">>>();
   for (const org of owned) {
     const members = await ctx.db
       .query("orgMembers")
       .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
       .collect();
-    for (const member of members) {
-      if (member.userId === owner?._id) continue;
-      developers.set(member.userId, [
-        ...(developers.get(member.userId) ?? []),
-        org,
-      ]);
+    const invitations = await ctx.db
+      .query("orgInvitations")
+      .withIndex("by_orgId_and_email", (q) => q.eq("orgId", org._id))
+      .collect();
+    const keys = [
+      ...members.map((member) => member.userId),
+      ...(await Promise.all(
+        invitations.map(
+          async (invitation) =>
+            invitation.userId ??
+            (
+              await ctx.db
+                .query("users")
+                .withIndex("by_email", (q) => q.eq("email", invitation.email))
+                .first()
+            )?._id ??
+            invitation.email,
+        ),
+      )),
+    ];
+    for (const key of keys) {
+      if (key === owner?._id) continue;
+      developers.set(key, [...(developers.get(key) ?? []), org]);
     }
   }
 
@@ -97,7 +116,7 @@ export async function developersOf(
 export async function assertFreeSeat(
   ctx: QueryCtx,
   org: Doc<"orgs">,
-  userId: Id<"users">,
+  developer: string,
 ): Promise<void> {
   if (!isManagedService()) return;
   const subs = await ctx.runQuery(
@@ -106,7 +125,7 @@ export async function assertFreeSeat(
   );
   const seats = seatsOf(subs);
   const developers = await developersOf(ctx, org.ownerAuthId);
-  if (seats > 0 && (developers.has(userId) || developers.size < seats)) {
+  if (seats > 0 && (developers.has(developer) || developers.size < seats)) {
     return;
   }
 
@@ -120,16 +139,36 @@ export async function assertFreeSeat(
   );
 }
 
+// One recount per owner, however many of their orgs changed.
 export async function releaseSeat(
   ctx: MutationCtx,
-  orgId: Id<"orgs">,
+  ...orgIds: Array<Id<"orgs">>
 ): Promise<void> {
   if (!isManagedService()) return;
-  const org = await ctx.db.get(orgId);
-  if (!org) return;
-  await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
-    authId: org.ownerAuthId,
-  });
+  const orgs = await Promise.all(orgIds.map((orgId) => ctx.db.get(orgId)));
+  const owners = new Set(orgs.flatMap((org) => (org ? [org.ownerAuthId] : [])));
+  for (const authId of owners) {
+    await ctx.scheduler.runAfter(0, internal.stripe.syncSeatsInternal, {
+      authId: authId,
+    });
+  }
+}
+
+// Recounts once per owner of the invitations' orgs and of any other orgs that changed with them.
+export async function dropInvitations(
+  ctx: MutationCtx,
+  invitations: Array<Doc<"orgInvitations">>,
+  ...changedOrgIds: Array<Id<"orgs">>
+): Promise<void> {
+  for (const invitation of invitations) {
+    await ctx.db.delete(invitation._id);
+    await syncInvited(ctx, invitation.userId);
+  }
+  await releaseSeat(
+    ctx,
+    ...invitations.map((invitation) => invitation.orgId),
+    ...changedOrgIds,
+  );
 }
 
 export async function assertCanCreateOrg(

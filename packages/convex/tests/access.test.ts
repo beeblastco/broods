@@ -176,7 +176,7 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     }),
   ).rejects.toThrow(/No permission/);
   await expect(
-    t.mutation(api.org.members.add, {
+    t.mutation(api.org.invitations.create, {
       orgId: seeded.orgId,
       email: "owner@example.com",
     }),

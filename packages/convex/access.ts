@@ -699,9 +699,16 @@ export const removeRole = mutation({
       .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", role.orgId))
       .filter((q) => q.eq(q.field("roleId"), role._id))
       .first();
-    if (holder) {
+    const invited = await ctx.db
+      .query("orgInvitations")
+      .withIndex("by_orgId_and_email", (q) => q.eq("orgId", role.orgId))
+      .filter((q) => q.eq(q.field("roleId"), role._id))
+      .first();
+    if (holder || invited) {
       throw new ClientError(
-        "A member holds this role; give them another first",
+        holder
+          ? "A member holds this role; give them another first"
+          : "A pending invitation holds this role; revoke it first",
       );
     }
     await ctx.db.delete(role._id);
