@@ -83,6 +83,30 @@ test("a key reserved again keeps its row on the new machine when the old one's l
   expect({ row: await row(t), meter: await meter(t) }).toEqual(before);
 });
 
+test("a teardown retried under another key removes the machine's row and stops its billing", async () => {
+  vi.useFakeTimers({ now: NOW });
+  const t = releaseTest();
+  const accountId = await seedAccount(t);
+  await reserve(t, accountId, "e2b", "sbx-1");
+  await mirror(t, accountId, "e2b", "sbx-1");
+
+  vi.setSystemTime(NOW + 60_000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "teardown:sbx-1",
+    externalId: "sbx-1",
+  });
+  const billed = await meter(t);
+
+  expect(await row(t)).toBeNull();
+  vi.setSystemTime(NOW + 30 * 60_000);
+  await t.mutation(internal.sandbox.instances.accrueRecent, {
+    now: NOW + 30 * 60_000,
+  });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await meter(t)).toEqual(billed);
+});
+
 test("an ephemeral row needs no reservation", async () => {
   vi.useFakeTimers({ now: NOW });
   const t = releaseTest();

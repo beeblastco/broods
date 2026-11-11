@@ -8,7 +8,9 @@ in `startScheduledAgentRun` (`apps/core/src/harness/handler.ts`). A paused run i
 settled by `settleAnsweredRun` from the turn that answered one of the approval or
 question ids it waits on (`answeredRun`), and `sweepDeadRuns`
 settles a run whose envelope ended without one; both are the same `settle` step.
-A row is `none` once `removeRunsCascade` drained it with its one-time cron.
+The settle that ends a one-time job's run deletes the job in the same transaction
+(`isSpentOneShot`: its current `at(...)` time is at or before the run's start, paused
+or not); core no longer removes it. A row is `none` once `removeRunsCascade` drained it with that cron.
 
 The cron row's `lastStatus` follows `lastRunId`, the run of the latest fire by
 scheduled time (`lastInvokedAt`). `createRun` takes the cron only for a fire at

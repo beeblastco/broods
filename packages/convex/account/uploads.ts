@@ -1,7 +1,11 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
-import { grantUpload, type UploadGrant } from "../model/uploads";
+import {
+  grantUpload,
+  isStorageOwned,
+  type UploadGrant,
+} from "../model/uploads";
 
 const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_SCAN_PAGE = 100;
@@ -36,11 +40,7 @@ export const pruneOrphans = internalMutation({
         reachedCutoff = true;
         break;
       }
-      const referenced = await ctx.db
-        .query("workspaceFiles")
-        .withIndex("by_storageId", (q) => q.eq("storageId", blob._id))
-        .first();
-      if (referenced) continue;
+      if (await isStorageOwned(ctx, blob._id)) continue;
       await ctx.storage.delete(blob._id);
       deleted += 1;
     }

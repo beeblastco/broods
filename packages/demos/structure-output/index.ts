@@ -34,6 +34,11 @@ for await (const chunk of client.stream(api.agents.structuredAssistant, {
         `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
       );
       break;
+    case "structured-output":
+      process.stdout.write(
+        `\n\x1b[33m[Output: ${JSON.stringify(chunk.output, null, 2)}]\x1b[0m\n`,
+      );
+      break;
     case "finish":
       process.stdout.write(
         `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,

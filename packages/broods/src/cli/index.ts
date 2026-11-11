@@ -772,15 +772,14 @@ async function logout(args: string[]): Promise<void> {
 }
 
 function apiErrorMessage(error: unknown): string {
-  if (!(error instanceof BroodsAccountApiError))
-    return error instanceof Error ? error.message : String(error);
-  try {
-    const body = JSON.parse(error.body) as { error?: { message?: string } };
+  // With no envelope the server message is the raw body: keep the method, path and status.
+  if (
+    error instanceof BroodsAccountApiError &&
+    error.serverMessage !== error.body
+  )
+    return error.serverMessage;
 
-    return body.error?.message ?? error.message;
-  } catch {
-    return error.message;
-  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function connectCommand(args: string[]): Promise<void> {

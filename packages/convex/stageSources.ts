@@ -111,8 +111,12 @@ export const drift = query({
 export const latestHash = internalQuery({
   args: { stageId: v.id("stages") },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { stageId }): Promise<string | null> =>
-    (await latestRow(ctx, stageId))?.hash ?? null,
+  handler: async (ctx, { stageId }): Promise<string | null> => {
+    const row = await latestRow(ctx, stageId);
+
+    // A row whose file is gone reads as no source, so the next sync stores the file again.
+    return row && (await ctx.db.system.get(row.storageId)) ? row.hash : null;
+  },
 });
 
 /** The stage's manifest hash when a sync finished at or after `since`, else null. */
@@ -133,8 +137,8 @@ export const syncedSince = internalQuery({
 
 /**
  * Records a sync: the manifest hash it read back, and the source it came from when one rode it.
- * A source equal to the newest revision only moves that revision's hashes; `storageId` is then
- * dropped. Answers the revision the stage's source now is.
+ * A source equal to the newest revision only moves that revision's hashes, and its `storageId`
+ * replaces the revision's file only when that file is gone. Answers the revision the source now is.
  */
 export const recordSync = internalMutation({
   args: {
@@ -169,11 +173,13 @@ export const recordSync = internalMutation({
     const newest = await latestRow(ctx, stageId);
     if (!source) return newest?.revision ?? null;
     if (newest?.hash === source.hash) {
-      if (source.storageId) await ctx.storage.delete(source.storageId);
+      const kept = await ctx.db.system.get(newest.storageId);
+      if (source.storageId && kept) await ctx.storage.delete(source.storageId);
       await ctx.db.patch(newest._id, {
         manifestHash: manifestHash,
         origin: source.origin,
         ...(source.commitSha ? { commitSha: source.commitSha } : {}),
+        ...(source.storageId && !kept ? { storageId: source.storageId } : {}),
       });
 
       return newest.revision;
@@ -295,7 +301,8 @@ async function pruneRevisions(
     )
     .take(100);
   for (const row of stale) {
-    await ctx.storage.delete(row.storageId);
+    if (await ctx.db.system.get(row.storageId))
+      await ctx.storage.delete(row.storageId);
     await ctx.db.delete(row._id);
   }
 }

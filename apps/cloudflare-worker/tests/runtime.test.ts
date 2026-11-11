@@ -84,7 +84,7 @@ it("keeps a reserved sandbox's files between calls and refuses it once released"
   );
   expect(await exists("sb-keep")).toBe(false);
   const gone = await send("sb-keep", { script: "cat src/a.ts", persist: true });
-  expect(gone.status).toBe(409);
+  expect(gone.status).toBe(410);
 });
 
 it("keeps a call that outlives its sandbox's release from storing a disk", async (): Promise<void> => {

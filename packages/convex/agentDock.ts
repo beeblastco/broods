@@ -363,7 +363,9 @@ export const sync = action({
             stageId: args.stageId,
           });
     if (!source)
-      throw new ClientError("This stage has no stored source to sync.");
+      throw new ClientError(
+        "This stage has no stored source to sync. Run `broods deploy` from its folder to store one.",
+      );
     const deployed = await deployFiles(
       ctx,
       authId,
