@@ -686,6 +686,7 @@ async function handleManifestSync(
       result.ids,
       prune,
       pruneOnly,
+      { secretHash: secretHash, project: route.project, stage: route.stage },
     );
     const refreshed = await ctx.runQuery(
       internal.cli.sync.getManifestBySecretHash,
@@ -921,6 +922,7 @@ async function syncCrons(
   ids: GeneratedIds,
   prune: boolean,
   pruneOnly: string[] | undefined,
+  stage: { secretHash: string; project: string; stage: string },
 ): Promise<Record<string, string>> {
   const desired = desiredCrons(manifest, ids.agents ?? {});
   if (desired.length === 0 && prune !== true) return {};
@@ -953,10 +955,16 @@ async function syncCrons(
 
   // Only jobs code declared: an agent's own schedules survive the prune.
   if (prune === true) {
+    // Also the undeclared agents a prune list kept: their declared crons are still ours.
+    const current = await ctx.runQuery(
+      internal.cli.sync.getManifestBySecretHash,
+      stage,
+    );
+    const prunable = new Set<string>(Object.values(current?.ids.agents ?? {}));
     for (const job of existing) {
       if (job.managedBy !== "cli") continue;
       if (
-        !stageAgentIds.has(job.agentId) ||
+        !prunable.has(job.agentId) ||
         kept.has(job._id) ||
         !prunes(pruneOnly, "cron", job.name)
       )

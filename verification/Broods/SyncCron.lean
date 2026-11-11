@@ -7,8 +7,8 @@ Model of how a manifest sync treats crons. `desiredCrons`
 them (`deleteAgentRow` in `packages/convex/model/agentSync.ts`). `syncCrons` then lets
 each job claim the stage cron under its own name, patches it as `managedBy: "cli"`
 (adopting one an agent made under that name), creates the rest, and with prune drops
-the stage agents' unclaimed CLI-managed crons by id. A cron an agent scheduled at
-runtime or the dashboard made survives the prune.
+the stage agents' unclaimed CLI-managed crons by id, an undeclared agent a prune list
+kept included. A cron an agent scheduled at runtime or the dashboard made survives the prune.
 -/
 
 namespace Broods.SyncCron
