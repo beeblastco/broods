@@ -4857,6 +4857,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -4924,6 +4925,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -5940,7 +5942,14 @@ export declare const internal: {
       removeEnvBySecretHash: FunctionReference<
         "mutation",
         "internal",
-        { name: string; project: string; secretHash: string; stage: string },
+        {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
+          name: string;
+          project: string;
+          secretHash: string;
+          stage: string;
+        },
         { removed: boolean }
       >;
       replaceSkillNodeFilesBySecretHash: FunctionReference<
@@ -6014,6 +6023,8 @@ export declare const internal: {
         "mutation",
         "internal",
         {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
           name: string;
           project: string;
           secretHash: string;

@@ -240,6 +240,8 @@ describe("cli sync resolves an mcp server's secret headers per agent", () => {
     const serverId = await seedMcpServer(tt, accountId, TOKEN_HEADER);
     await tt.mutation(internal.cli.sync.setEnvBySecretHash, {
       secretHash: SECRET_HASH,
+      actorKind: "cli",
+      actorId: "auth_test",
       project: PROJECT,
       stage: STAGE,
       name: "SEARCH_TOKEN",
