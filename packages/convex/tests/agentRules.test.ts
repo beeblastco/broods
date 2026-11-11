@@ -349,10 +349,20 @@ describe("agent rules", () => {
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
     expect(() =>
-      normalizeAgentConfig({ model: { transcriptionModelId: 42 } }),
-    ).toThrow("config.model.transcriptionModelId must be a string");
-    expect(() =>
       normalizeAgentConfig({ model: { transcriptionModelId: "whisper-1" } }),
+    ).toThrow(
+      "config.model.transcriptionModelId was renamed to config.transcription.modelId",
+    );
+    expect(() =>
+      normalizeAgentConfig({ transcription: { modelId: 42 } }),
+    ).toThrow("config.transcription.modelId must be a string");
+    expect(() =>
+      normalizeAgentConfig({ transcription: { provider: "nope" } }),
+    ).toThrow("config.transcription.provider must be one of:");
+    expect(() =>
+      normalizeAgentConfig({
+        transcription: { provider: "openai", modelId: "whisper-1" },
+      }),
     ).not.toThrow();
     for (const timeout of [
       60_000,

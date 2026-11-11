@@ -184,7 +184,19 @@ With a workspace attached, each file is saved under `media/` in the default work
 
 ### Voice transcription
 
-Audio the model cannot hear is transcribed on the way in, with the account's own provider credentials. No configuration is needed.
+Audio the model cannot hear is transcribed on the way in. An agent whose chat provider ships speech-to-text needs no configuration. Any other agent names one in `transcription`, with that provider's key in `provider`:
+
+```ts
+export const support = defineAgent({
+  name: "support",
+  provider: {
+    anthropic: { apiKey: env("ANTHROPIC_API_KEY") },
+    openai: { apiKey: env("OPENAI_API_KEY") },
+  },
+  model: { provider: "anthropic", modelId: "claude-haiku-5-5" },
+  transcription: { provider: "openai" },
+});
+```
 
 | Provider       | Default model                                     |
 | -------------- | ------------------------------------------------- |
@@ -193,9 +205,9 @@ Audio the model cannot hear is transcribed on the way in, with the account's own
 | Mistral        | `voxtral-mini-latest`                             |
 | Google, Vertex | none. The recording is sent to the model directly |
 
-Set `model.transcriptionModelId` to use another model on the same provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
+`transcription.provider` defaults to the chat provider, and `transcription.modelId` to the model in the table. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
-A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
+A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, a missing key for the transcription provider, or a provider with no speech-to-text.
 
 ## Shared behavior
 
