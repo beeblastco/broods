@@ -2258,6 +2258,38 @@ export const docs = defineSkill({
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
 });
 
+test("compileProject applies the server's skill limits: 5 MiB per file, no file count cap", async (): Promise<void> => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineSkill } from "${RESOURCES_MODULE}";
+
+export const docs = defineSkill({
+  name: "big-skill",
+  path: "skills/big-skill",
+});
+`,
+  );
+  const skillRoot = join(cwd, "broods", "skills", "big-skill");
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(join(skillRoot, "SKILL.md"), "# Big\n");
+  for (let index = 0; index < 250; index++)
+    await writeFile(join(skillRoot, `note-${index}.txt`), "ok\n");
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const skill = manifest.resources.find(
+    (resource): boolean => resource.kind === "skill",
+  );
+  expect(
+    ((skill?.config as Record<string, unknown>).files as unknown[]).length,
+  ).toBe(251);
+
+  await writeFile(join(skillRoot, "data.txt"), "x".repeat(5 * 1024 * 1024 + 1));
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "Skill bundle file data.txt is too large",
+  );
+});
+
 test("diffManifests reports create, update, and delete operations", (): void => {
   const local = {
     version: 1 as const,

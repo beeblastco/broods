@@ -149,13 +149,13 @@ export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
-// MCP limits copy packages/convex/model/mcp.ts, which is not a leaf module the CLI can import.
-// Change both or the CLI accepts what the config plane rejects.
+// MCP and skill limits copy packages/convex/model/mcp.ts and skills.ts, which the CLI cannot
+// import. Change both or the CLI accepts what the config plane rejects.
 const MAX_BUNDLE_FILE_BYTES = 10_000_000;
 export const MAX_MCP_BUNDLE_BYTES = 50_000_000;
 export const INLINE_MCP_BUNDLE_BYTES = 10_000_000;
-const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
-const MAX_BUNDLE_FILES = 200;
+const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [
   /^\.env(?:\.|$)/i,
@@ -2015,20 +2015,15 @@ async function readBundleFiles(
         if (shouldSkipBundleEntry(entry.name) || isUnsafeBundlePath(rel))
           continue;
         const bytes = await readFile(absolute);
-        if (bytes.byteLength > MAX_BUNDLE_FILE_BYTES) {
+        if (bytes.byteLength > MAX_SKILL_FILE_BYTES) {
           throw new Error(
-            `Skill bundle file ${rel} is too large (${bytes.byteLength} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+            `Skill bundle file ${rel} is too large (${bytes.byteLength} bytes, max ${MAX_SKILL_FILE_BYTES})`,
           );
         }
         totalBytes += bytes.byteLength;
-        if (totalBytes > MAX_BUNDLE_TOTAL_BYTES) {
+        if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
           throw new Error(
-            `Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_BUNDLE_TOTAL_BYTES})`,
-          );
-        }
-        if (files.length >= MAX_BUNDLE_FILES) {
-          throw new Error(
-            `Skill bundle at ${root} has too many files (max ${MAX_BUNDLE_FILES})`,
+            `Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_SKILL_BUNDLE_BYTES})`,
           );
         }
         files.push({

@@ -56,7 +56,7 @@ The `description` decides when the model loads the skill, so write it as a routi
 | Rule        | Value                                                                                                                        |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Name        | Lowercase letters, digits and hyphens, up to 64 characters. Names containing `anthropic`, `claude` or XML tags are rejected. |
-| File size   | 5 MB per file, 30 MB per bundle                                                                                              |
+| File size   | 5 MiB per file, 30 MiB per bundle, any number of files. `broods dev` and `broods deploy` check this before upload            |
 | Frontmatter | Must end within the first 64 KB of `SKILL.md`. A skill whose frontmatter runs past it is left out of the skill list.         |
 | Per agent   | Up to 32 distinct skills in `skills.allowed`. Repeats are dropped. An agent saved before this limit runs with its first 32.  |
 | File types  | Text only, meaning `.css .csv .html .js .json .md .mjs .py .sh .sql .svg .toml .ts .tsx .txt .xml .yaml .yml`                |
