@@ -44,6 +44,7 @@ const RUNTIME_CONFIG_KEYS = [
   "agent",
   "harness",
   "model",
+  "transcription",
   "policy",
   "provider",
   "sandbox",
@@ -80,6 +81,8 @@ export interface AgentConfig {
   agent?: AgentBehaviorConfig;
   harness?: AgentHarnessConfig;
   model?: AgentModelConfig;
+  /** Reads inbound audio; `provider` defaults to `model.provider`. */
+  transcription?: AgentTranscriptionConfig;
   provider?: AgentProviderConfig;
   /** Sandbox record ids. The first is the default for bash, workspaces and a harness. */
   sandboxes?: string[];
@@ -156,6 +159,11 @@ export interface AgentSkillsConfig {
   [key: string]: unknown;
 }
 
+export interface AgentTranscriptionConfig {
+  provider?: AccountModelProviderName;
+  modelId?: string;
+}
+
 export interface AgentSchedulerConfig {
   enabled?: boolean;
   [key: string]: unknown;
@@ -181,7 +189,6 @@ export interface AgentModelConfig
     Partial<Pick<RequestOptions, "maxRetries" | "timeout">> {
   provider?: AccountModelProviderName;
   modelId?: string;
-  transcriptionModelId?: string;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
 }
