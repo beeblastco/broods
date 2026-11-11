@@ -7,7 +7,7 @@ import {
   type StageSourceOrigin,
 } from "./stageSource";
 
-/** Records a sync's manifest hash, storing its source only when the content moved. */
+/** Records a sync's manifest hash, storing its source when it moved or its file is gone. */
 export async function storeStageSync(
   ctx: ActionCtx,
   stageId: Id<"stages">,
