@@ -135,7 +135,8 @@ function coreFolder(initial: readonly DockFile[]): {
         return Response.json({ files: listed });
       }
       files.clear();
-      for (const file of PUT_BODY.parse(JSON.parse(String(init.body))).files)
+      const body = typeof init.body === "string" ? init.body : "";
+      for (const file of PUT_BODY.parse(JSON.parse(body)).files)
         files.set(
           file.path,
           Buffer.from(file.contentBase64, "base64").toString(),
