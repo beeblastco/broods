@@ -50,11 +50,14 @@ test.beforeAll(async () => {
     "org/lifecycle:provision",
     JSON.stringify({ orgId: acmeId }),
   ]);
-  run(owner, "org/members:add", {
-    orgId: acmeId,
-    email: STACK_ADMIN.email,
-    role: "admin",
-  });
+  const invitationId = idOf(
+    run(owner, "org/invitations:create", {
+      orgId: acmeId,
+      email: STACK_ADMIN.email,
+      role: "admin",
+    }),
+  );
+  run(STACK_ADMIN, "org/invitations:accept", { invitationId: invitationId });
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: acmeId });
   acmeProjectId = idOf(run(STACK_ADMIN, "project:create", { name: "robots" }));
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
@@ -192,7 +195,7 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
 }) => {
   fileSubscription(STACK_ADMIN, subId("admin"), 1, "active");
   for (const developer of developers) {
-    run(STACK_ADMIN, "org/members:add", {
+    run(STACK_ADMIN, "org/invitations:create", {
       orgId: adminOrg._id,
       email: developer.email,
       role: "member",
@@ -200,13 +203,13 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
   }
   labId = idOf(run(STACK_ADMIN, "org/orgs:create", { name: LAB }));
   run(STACK_ADMIN, "org/orgs:setActive", { orgId: adminOrg._id });
-  run(STACK_ADMIN, "org/members:add", {
+  run(STACK_ADMIN, "org/invitations:create", {
     orgId: labId,
     email: developers[0].email,
     role: "member",
   });
   expect(() =>
-    run(STACK_ADMIN, "org/members:add", {
+    run(STACK_ADMIN, "org/invitations:create", {
       orgId: labId,
       email: owner.email,
       role: "member",
@@ -256,14 +259,11 @@ test("a Pro owner shares 2 developer seats across their orgs, and adds one once 
     dialog.getByText("Every developer seat is taken."),
   ).toBeVisible();
   await expect(dialog.getByText("€20/month")).toBeVisible();
-  // The invite is checked first, so an email nobody signed in with charges nothing.
-  await dialog.getByLabel("Email").fill(`nobody-${RUN_ID}@broods.local`);
+  // The invite is checked first, so a refused one charges nothing.
+  await dialog.getByLabel("Email").fill(developers[0].email);
   await dialog.getByRole("button", { name: "Pay for seat and invite" }).click();
   await expect(
-    dialog.getByText(
-      "No user with that email. They must sign in once before being added.",
-      { exact: true },
-    ),
+    dialog.getByText("That email already has an invitation", { exact: true }),
   ).toBeVisible();
 });
 
@@ -380,7 +380,7 @@ test("an admin of someone else's org sees its plan and their own seat, never a p
     const dialog = await openInvite(page);
     await expect(dialog.getByTestId("invite-seat-notice")).toHaveCount(0);
     await dialog.getByLabel("Email").fill(developers[0].email);
-    await dialog.getByRole("button", { name: "Add", exact: true }).click();
+    await dialog.getByRole("button", { name: "Invite", exact: true }).click();
     await expect(
       dialog.getByText(
         `Ask ${OWNER.name}, the owner, to add a developer seat in Billing. Someone already on one of their seats joins free. You are never charged.`,

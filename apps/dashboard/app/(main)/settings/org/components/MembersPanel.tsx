@@ -8,7 +8,8 @@ import {
   DataTableHeader,
   DataTableRow,
 } from "@/app/components/DataTable";
-import { DeleteZone } from "@/app/components/DangerZone";
+import { ConfirmDialog } from "@/app/components/ConfirmDialog";
+import { DangerZone, DeleteZone } from "@/app/components/DangerZone";
 import {
   type ControlRow,
   type DetailRow,
@@ -57,6 +58,7 @@ import { formatDay } from "@/app/lib/allowance";
 import { formatDate } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
 import { perMonth, PRO_OFFER } from "@/app/lib/pricing";
+import { parseQuery } from "@/app/lib/queryTokens";
 import type { SortKey } from "@/app/lib/tableState";
 import { parseAsId } from "@/app/lib/urlState";
 import { api } from "@broods/convex/_generated/api";
@@ -67,11 +69,12 @@ import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { ArrowUpRight, ChevronDown, Plus } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryState } from "nuqs";
 import { useState } from "react";
 
 type Member = FunctionReturnType<typeof api.org.members.list>[number];
+type Invitation = FunctionReturnType<typeof api.org.invitations.list>[number];
 type Role = FunctionReturnType<typeof api.access.listRoles>[number];
 type Tier = Member["role"];
 type Column = "name" | "email" | "role" | "joined" | "invitedBy";
@@ -120,6 +123,11 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
   const { can } = usePermissions();
   const canChange = can("members:write");
   const members = useQuery(api.org.members.list, { orgId: org._id });
+  const invitations = useQuery(
+    api.org.invitations.list,
+    canChange ? { orgId: org._id } : "skip",
+  );
+  const me = useQuery(api.user.getCurrent);
   const roles = useQuery(api.access.listRoles, {});
   const [selectedId, setSelectedId] = useQueryState("sel", MEMBER_ID);
   const [inviting, setInviting] = useState(false);
@@ -136,6 +144,15 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
     (member) => member.membershipId === selectedId,
   );
   const options = roleOptions(roles ?? []);
+  const search = parseQuery(list.query, QUERY_FIELDS);
+  const pending = (invitations ?? []).filter(
+    (invitation) =>
+      invitation.email.includes(search.text) &&
+      (search.fields.length === 0 ||
+        search.fields.some(({ field, value }) =>
+          matchesField(invitation, field, value),
+        )),
+  );
   const filters = {
     role: list.filterFor("role", [
       ...new Set(
@@ -185,7 +202,9 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
           selected && (
             <MemberPanel
               key={selected.membershipId}
+              org={org}
               member={selected}
+              self={selected.userId === me?._id}
               options={options}
               canChange={canChange}
               onClose={() => setSelectedId(null)}
@@ -246,6 +265,9 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
         {list.shown.length === 0 && (
           <EmptyState title="No members match the current filters." />
         )}
+        {pending.length > 0 && (
+          <PendingInvitations org={org} invitations={pending} />
+        )}
       </DetailSplit>
       {inviting && (
         <InviteDialog
@@ -260,18 +282,25 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
 }
 
 function MemberPanel({
+  org,
   member,
+  self,
   options,
   canChange,
   onClose,
 }: {
+  org: Doc<"orgs">;
   member: Member;
+  self: boolean;
   options: RoleOption[];
   canChange: boolean;
   onClose: () => void;
 }): React.JSX.Element {
   const updateRole = useMutation(api.org.members.updateRole);
   const remove = useMutation(api.org.members.remove);
+  const leave = useMutation(api.org.members.leave);
+  const router = useRouter();
+  const [leaving, setLeaving] = useState(false);
   const { pending, error, run } = useSubmit();
   const editable = canChange && !member.isOwner;
   const facts: Array<DetailRow | ControlRow> = [
@@ -323,8 +352,15 @@ function MemberPanel({
     );
   }
 
+  async function confirmLeave(): Promise<void> {
+    if (await run(() => leave({ orgId: org._id }))) router.replace("/");
+  }
+
   return (
-    <DetailPanel title={member.name} onClose={onClose}>
+    <DetailPanel
+      title={self ? `${member.name} (you)` : member.name}
+      onClose={onClose}
+    >
       <DetailRows rows={facts} />
       {error && (
         <p role="alert" className="mt-2 text-xs text-destructive">
@@ -332,7 +368,38 @@ function MemberPanel({
         </p>
       )}
 
-      {editable && (
+      {self && (
+        <DangerZone
+          description={
+            member.isOwner
+              ? "The owner cannot leave. Delete the organization in Danger Zone instead."
+              : "You lose access to its projects. An admin can invite you again."
+          }
+        >
+          <Button
+            variant="destructive"
+            size="sm"
+            className={member.isOwner ? "cursor-not-allowed" : "cursor-pointer"}
+            disabled={member.isOwner}
+            title={member.isOwner ? "The owner cannot leave" : undefined}
+            onClick={() => setLeaving(true)}
+          >
+            Leave {org.name}
+          </Button>
+        </DangerZone>
+      )}
+      {leaving && (
+        <ConfirmDialog
+          title={`Leave ${org.name}?`}
+          description="You lose access to its projects right away. An admin can invite you again."
+          verb="Leave"
+          pending={pending}
+          error={error}
+          onConfirm={() => void confirmLeave()}
+          onClose={() => setLeaving(false)}
+        />
+      )}
+      {editable && !self && (
         <DeleteZone
           description="Remove the member from the organization. They keep their account and can be invited again."
           verb="Remove"
@@ -343,6 +410,105 @@ function MemberPanel({
         />
       )}
     </DetailPanel>
+  );
+}
+
+function PendingInvitations({
+  org,
+  invitations,
+}: {
+  org: Doc<"orgs">;
+  invitations: Invitation[];
+}): React.JSX.Element {
+  const revoke = useMutation(api.org.invitations.revoke);
+  const [revoking, setRevoking] = useState<Invitation | null>(null);
+  const { pending, error, run, reset } = useSubmit();
+
+  async function confirmRevoke(invitation: Invitation): Promise<void> {
+    const done = await run(() =>
+      revoke({ invitationId: invitation.invitationId }),
+    );
+    if (done) setRevoking(null);
+  }
+
+  return (
+    <>
+      <h3 className="flex items-center gap-2 border-t border-border px-3 pt-2.5 pb-1.5 text-xs font-medium">
+        Pending invitations
+        <span className="text-muted-foreground">{invitations.length}</span>
+      </h3>
+      <DataTable>
+        <DataTableHeader>
+          <tr>
+            <DataTableHead>Email</DataTableHead>
+            <DataTableHead>Role</DataTableHead>
+            <DataTableHead>Status</DataTableHead>
+            <DataTableHead>Invited by</DataTableHead>
+            <DataTableHead>Sent</DataTableHead>
+            <DataTableHead align="right">
+              <span className="sr-only">Actions</span>
+            </DataTableHead>
+          </tr>
+        </DataTableHeader>
+        <DataTableBody>
+          {invitations.map((invitation) => (
+            <DataTableRow key={invitation.invitationId}>
+              <DataTableCell>{invitation.email}</DataTableCell>
+              <DataTableCell>{roleName(invitation)}</DataTableCell>
+              <DataTableCell>
+                {invitation.hasAccount ? (
+                  <StatusWord tone="warn">waiting</StatusWord>
+                ) : (
+                  <StatusWord tone="ended">
+                    <span
+                      title="They see it after they sign in with this email."
+                      className="cursor-help underline decoration-dotted underline-offset-3"
+                    >
+                      no account yet
+                    </span>
+                  </StatusWord>
+                )}
+              </DataTableCell>
+              <DataTableCell>
+                {invitation.invitedBy ? (
+                  <Who actor={invitation.invitedBy} />
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </DataTableCell>
+              <DataTableCell muted>
+                {formatDate(invitation.createdAt)}
+              </DataTableCell>
+              <DataTableCell align="right">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  tone="destructive"
+                  className="cursor-pointer"
+                  onClick={() => {
+                    reset();
+                    setRevoking(invitation);
+                  }}
+                >
+                  Revoke
+                </Button>
+              </DataTableCell>
+            </DataTableRow>
+          ))}
+        </DataTableBody>
+      </DataTable>
+      {revoking && (
+        <ConfirmDialog
+          title="Revoke invitation"
+          description={`${revoking.email} can no longer join ${org.name} with it. You can invite them again.`}
+          verb="Revoke"
+          pending={pending}
+          error={error}
+          onConfirm={() => void confirmRevoke(revoking)}
+          onClose={() => setRevoking(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -457,7 +623,7 @@ function InviteDialog({
   options: RoleOption[];
   onClose: () => void;
 }): React.JSX.Element {
-  const add = useMutation(api.org.members.add);
+  const create = useMutation(api.org.invitations.create);
   const addSeat = useAction(api.stripe.addSeat);
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
@@ -470,15 +636,15 @@ function InviteDialog({
   async function submit(): Promise<void> {
     const pick = options.find((option) => option.value === role)?.pick;
     if (!email.trim() || !pick) return;
-    const invite = (): Promise<Id<"orgMembers">> =>
-      add({
+    const invite = (): Promise<Id<"orgInvitations">> =>
+      create({
         orgId: org._id,
         email: email.trim(),
         role: pick.tier,
         roleId: pick.roleId,
       });
     let seatTaken = false;
-    // Invite first, so a wrong email or a seat freed meanwhile costs nothing.
+    // Invite first, so a refused invite or a seat freed meanwhile costs nothing.
     const done = await run(async () => {
       try {
         await invite();
@@ -514,7 +680,7 @@ function InviteDialog({
         <DialogHeader>
           <DialogTitle>Invite member</DialogTitle>
           <DialogDescription>
-            The person must have signed in once before.
+            They join when they accept. No email is sent, so tell them.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-2">
@@ -605,8 +771,8 @@ function InviteDialog({
                   ? "Paying…"
                   : "Pay for seat and invite"
                 : pending
-                  ? "Adding…"
-                  : "Add"}
+                  ? "Inviting…"
+                  : "Invite"}
             </Button>
           )}
         </DialogFooter>
@@ -689,12 +855,16 @@ function inviteStep(seats: OrgSeats | undefined, refused: boolean): InviteStep {
   return seats.paid ? "seat" : "billing";
 }
 
-function matchesField(member: Member, _field: Field, value: string): boolean {
-  return roleName(member).toLowerCase() === value;
+function matchesField(
+  row: Member | Invitation,
+  _field: Field,
+  value: string,
+): boolean {
+  return roleName(row).toLowerCase() === value;
 }
 
-function roleName(member: Member): string {
-  return member.roleName ?? TIER_LABEL[member.role];
+function roleName(row: Member | Invitation): string {
+  return row.roleName ?? TIER_LABEL[row.role];
 }
 
 function roleOptions(roles: Role[]): RoleOption[] {

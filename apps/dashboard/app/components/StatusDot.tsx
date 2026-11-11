@@ -60,7 +60,7 @@ export function StatusWord({
   children,
 }: {
   tone: StatusTone;
-  children: string;
+  children: React.ReactNode;
 }): React.JSX.Element {
   return (
     <span className="inline-flex items-center gap-1.5">

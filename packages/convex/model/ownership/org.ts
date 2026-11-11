@@ -47,8 +47,7 @@ export async function getOrgMembership(
   return membership ?? null;
 }
 
-// Falls back to the oldest membership: any org admin can add a user without consent, so a
-// newer one may not be the user's own.
+// Falls back to the oldest membership, most likely the user's own org.
 export async function getActiveOrgForUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
@@ -72,6 +71,23 @@ export async function getActiveOrgForUser(
   const org = await ctx.db.get(oldest.orgId);
 
   return org ?? null;
+}
+
+// The dashboard shell already watches the user row, so the invitation notice costs no extra
+// subscription on every page.
+export async function syncInvited(
+  ctx: MutationCtx,
+  userId: Id<"users"> | undefined,
+): Promise<void> {
+  const user = userId && (await ctx.db.get(userId));
+  if (!user) return;
+  const waiting = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .first();
+  const invited = waiting ? true : undefined;
+  if (user.invited !== invited)
+    await ctx.db.patch(user._id, { invited: invited });
 }
 
 export async function requireOrgMember(

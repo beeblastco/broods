@@ -67,27 +67,34 @@ export function planOf(subs: ReadonlyArray<{ status: string }>): Plan {
   return subs.some((sub) => isPaid(sub.status)) ? "pro" : "free";
 }
 
+// Keyed by user id, or by email for an invitation still waiting on an account: a pending
+// invitation holds its seat until it is revoked or declined.
 export async function developersOf(
   ctx: QueryCtx,
   ownerAuthId: string,
-): Promise<Map<Id<"users">, Array<Doc<"orgs">>>> {
+): Promise<Map<string, Array<Doc<"orgs">>>> {
   const owner = await userByAuthId(ctx, ownerAuthId);
   const owned = await ctx.db
     .query("orgs")
     .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", ownerAuthId))
     .collect();
-  const developers = new Map<Id<"users">, Array<Doc<"orgs">>>();
+  const developers = new Map<string, Array<Doc<"orgs">>>();
   for (const org of owned) {
     const members = await ctx.db
       .query("orgMembers")
       .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
       .collect();
-    for (const member of members) {
-      if (member.userId === owner?._id) continue;
-      developers.set(member.userId, [
-        ...(developers.get(member.userId) ?? []),
-        org,
-      ]);
+    const invitations = await ctx.db
+      .query("orgInvitations")
+      .withIndex("by_orgId_and_email", (q) => q.eq("orgId", org._id))
+      .collect();
+    const keys = [
+      ...members.map((member) => member.userId),
+      ...invitations.map((invitation) => invitation.userId ?? invitation.email),
+    ];
+    for (const key of keys) {
+      if (key === owner?._id) continue;
+      developers.set(key, [...(developers.get(key) ?? []), org]);
     }
   }
 
@@ -97,7 +104,7 @@ export async function developersOf(
 export async function assertFreeSeat(
   ctx: QueryCtx,
   org: Doc<"orgs">,
-  userId: Id<"users">,
+  developer: string,
 ): Promise<void> {
   if (!isManagedService()) return;
   const subs = await ctx.runQuery(
@@ -106,7 +113,7 @@ export async function assertFreeSeat(
   );
   const seats = seatsOf(subs);
   const developers = await developersOf(ctx, org.ownerAuthId);
-  if (seats > 0 && (developers.has(userId) || developers.size < seats)) {
+  if (seats > 0 && (developers.has(developer) || developers.size < seats)) {
     return;
   }
 

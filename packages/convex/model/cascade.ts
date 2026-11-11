@@ -7,6 +7,7 @@ import { deleteStageContents } from "../stage";
 import { deleteRunWaits, unregisterSchedule } from "./cronSchedules";
 import { takeHarnessEntryBatch } from "./harnessSessionEntries";
 import { releaseSeat } from "./orgBilling";
+import { syncInvited } from "./ownership/org";
 import { isManagedService } from "./planLimits";
 import { lockImage } from "./snapshotLocks";
 
@@ -361,6 +362,15 @@ export async function purgeOrg(
     .collect();
   for (const member of members) await ctx.db.delete(member._id);
 
+  const invitations = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_orgId_and_email", (q) => q.eq("orgId", orgId))
+    .collect();
+  for (const invitation of invitations) {
+    await ctx.db.delete(invitation._id);
+    await syncInvited(ctx, invitation.userId);
+  }
+
   const installations = await ctx.db
     .query("githubInstallations")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
@@ -409,10 +419,14 @@ export async function purgeUser(
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
     .collect();
-  for (const membership of memberships) {
-    if (purgedOrgIds.has(membership.orgId)) continue;
-    await ctx.db.delete(membership._id);
-    await releaseSeat(ctx, membership.orgId);
+  const invitations = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .collect();
+  for (const held of [...memberships, ...invitations]) {
+    if (purgedOrgIds.has(held.orgId)) continue;
+    await ctx.db.delete(held._id);
+    await releaseSeat(ctx, held.orgId);
   }
 
   const cliAuthCodes = await ctx.db
