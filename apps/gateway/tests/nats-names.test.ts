@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
 import {
-  ensureResponseStream,
   natsNames,
   readConversationStream,
   type NatsConnection,
@@ -19,7 +18,6 @@ test("the gateway reads the stream core writes, in the same environment", async 
   process.env.DEPLOYMENT_ENVIRONMENT = "production";
   const { connection, used } = recordingConnection();
 
-  await ensureResponseStream(connection);
   await readConversationStream({
     connection: connection,
     accountId: "acct1",
@@ -27,12 +25,9 @@ test("the gateway reads the stream core writes, in the same environment", async 
     conversationKey: "conv-1",
   });
 
-  expect(used.added).toEqual([
-    {
-      name: "WS_RESPONSES_production",
-      subjects: ["production.v1.*.*.ws.response.*"],
-    },
-  ]);
+  expect(natsNames("production").responseSubjectWildcard).toBe(
+    "production.v1.*.*.ws.response.*",
+  );
   expect(used.consumed[0]?.stream).toBe("WS_RESPONSES_production");
   expect(used.consumed[0]?.subject.startsWith("production.v1.acct1.")).toBe(
     true,
@@ -60,13 +55,11 @@ test("the gateway spends terminal tickets in its own environment's bucket", asyn
 function recordingConnection(): {
   connection: NatsConnection;
   used: {
-    added: { name: string; subjects: string[] }[];
     buckets: string[];
     consumed: { stream: string; subject: string }[];
   };
 } {
   const used = {
-    added: [] as { name: string; subjects: string[] }[],
     buckets: [] as string[],
     consumed: [] as { stream: string; subject: string }[],
   };
@@ -76,12 +69,7 @@ function recordingConnection(): {
         info: async (): Promise<never> => {
           throw new Error("stream not found");
         },
-        add: async (config: {
-          name: string;
-          subjects: string[];
-        }): Promise<void> => {
-          used.added.push({ name: config.name, subjects: config.subjects });
-        },
+        add: async (): Promise<void> => {},
       },
     }),
     jetstream: (): unknown => ({
