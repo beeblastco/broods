@@ -14,7 +14,7 @@ private def recordSource : String := "apps/core/src/shared/domain/channel-record
 
 /-- `MODEL_CONFIG_SETTING_KEYS` in `packages/convex/model/agentRules.ts:99`. -/
 def modelSettingKeys : List String :=
-  ["provider", "modelId", "transcriptionModelId", "providerOptions", "output", "maxOutputTokens",
+  ["provider", "modelId", "providerOptions", "output", "maxOutputTokens",
     "temperature", "topP", "topK", "presencePenalty", "frequencyPenalty", "stopSequences", "seed",
     "reasoning", "maxRetries", "timeout"]
 
@@ -73,12 +73,12 @@ inductive ModelCheck where
 issues come in shape order. Unknown keys come after them, in an order this JSON cannot see, so two
 unknown keys stop the model. -/
 def checkModel (root : String) (model : Json) : ModelCheck :=
-  let transcription := field? model "transcriptionModelId"
   let reasoning := field? model "reasoning"
   let providerOptions := field? model "providerOptions"
   let timeout := field? model "timeout"
-  match transcription with
-  | some (.str _) | none =>
+  if (field? model "transcriptionModelId").isSome then
+    .threw s!"{root}.transcriptionModelId was renamed to config.transcription.modelId"
+  else
     let badReasoning := match reasoning with
       | some (.str level) => !reasoningLevels.contains level
       | some _ => true
@@ -97,7 +97,6 @@ def checkModel (root : String) (model : Json) : ModelCheck :=
             .threw s!"{renderPath root ("timeout" :: path)} {message}"
           | (none, true) => checkUnknown
       | some _ => .threw s!"{root}.providerOptions must be an object"
-  | some _ => .threw s!"{root}.transcriptionModelId must be a string"
 where
   checkUnknown : ModelCheck :=
     match (keys model).filter (fun key => !modelSettingKeys.contains key) with
