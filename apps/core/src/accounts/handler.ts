@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { LIVE_TERMINAL_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { isUnreachableError } from "../shared/errors.ts";
 import {
@@ -539,9 +540,15 @@ async function openSandboxTerminal(
     };
   } else {
     const { baseUrl, apiKey } = workdirConnection(context.config);
+    bearerExpiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
+    // The host stores only this hash of the key, so it keys the same token check with it.
     target = {
       url: workdirPtyUrl(baseUrl, externalId),
-      authorization: `Bearer ${apiKey}`,
+      authorization: `Bearer ${await signTerminalToken(
+        createHash("sha256").update(apiKey).digest("hex"),
+        externalId,
+        bearerExpiresAt,
+      )}`,
     };
   }
   const expiresAt = bearerExpiresAt ?? Date.now() + TERMINAL_TICKET_TTL_MS;

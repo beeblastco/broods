@@ -23,9 +23,15 @@ import {
   openTerminalTicket,
   TERMINAL_WEBSOCKET_PATH,
 } from "../src/shared/terminal-ticket.ts";
-import { verifyTerminalToken } from "../../cloudflare-sandbox/src/terminal-token.ts";
+import {
+  signTerminalToken,
+  verifyTerminalToken,
+} from "../../cloudflare-sandbox/src/terminal-token.ts";
 
 const ACCOUNT_ID = "acct_test";
+// SHA-256 hex of "tenant-key", the form the workdir host stores and keys terminal tokens with.
+const WORKDIR_KEY_HASH =
+  "5c3c107fd162b818601ac73cf4ac41d98bcf1c4c77f844a1f7877cbb7ee8bcdd";
 const AUTH = { authorization: "Bearer bask_test" };
 const ORIGINAL_SERVICE_AUTH_SECRET = process.env.SERVICE_AUTH_SECRET;
 const ORIGINAL_ADMIN_ACCOUNT_SECRET = process.env.ADMIN_ACCOUNT_SECRET;
@@ -552,11 +558,38 @@ describe("account-manage sandbox endpoints", () => {
     expect(body.expiresAt).toBeGreaterThan(Date.now());
     expect(body.token).not.toContain("tenant-key");
     expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
-    expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
+    const ticket = openTerminalTicket(body.token, "terminal-secret");
+    expect(ticket).toMatchObject({
       url: "wss://workdir.example.com/v1/sandboxes/sbx_handler/pty",
-      authorization: "Bearer tenant-key",
       accountId: ACCOUNT_ID,
+      expiresAt: body.expiresAt,
     });
+    expect(ticket?.authorization).not.toContain("tenant-key");
+    expect(ticket?.authorization).not.toContain(WORKDIR_KEY_HASH);
+    const bearer = ticket?.authorization.replace(/^Bearer /, "") ?? "";
+    expect(
+      await verifyTerminalToken(
+        WORKDIR_KEY_HASH,
+        bearer,
+        "sbx_handler",
+        Date.now(),
+      ),
+    ).toBe(true);
+    expect(
+      await verifyTerminalToken(
+        WORKDIR_KEY_HASH,
+        bearer,
+        "sbx_other",
+        Date.now(),
+      ),
+    ).toBe(false);
+  });
+
+  // The workdir host asserts this vector too (crates/sandboxd/src/auth.rs).
+  it("signs workdir terminal tokens with the host's shared test vector", async () => {
+    expect(
+      await signTerminalToken(WORKDIR_KEY_HASH, "sbx_handler", 4102444800000),
+    ).toBe("tt1.4102444800000.6Skbp31ryI8i4j9JJotL4ED4JAHrgNEGKNMm8uiopXc");
   });
 
   it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {
