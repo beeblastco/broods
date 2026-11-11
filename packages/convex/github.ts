@@ -26,7 +26,7 @@ import {
   hasDashboardPermission,
   requireDashboardPermission,
 } from "./model/access";
-import { resolveProject } from "./model/projectScope";
+import { slugifyName } from "./lib/slug";
 import { randomToken } from "./model/accountSecrets";
 import { ensureStage } from "./model/cliSync";
 import { deleteStageContents } from "./stage";
@@ -704,7 +704,14 @@ export const unlinkFor = internalMutation({
   args: { authId: v.string(), projectId: v.id("projects") },
   returns: v.null(),
   handler: async (ctx, { authId, projectId }): Promise<null> => {
-    await clearLink(ctx, await requireLinkAccess(ctx, authId, projectId));
+    const project = await requireLinkAccess(ctx, authId, projectId);
+    if (!project.repo) {
+      throw new ClientError(
+        `${project.name} has no linked repository.`,
+        "not_found",
+      );
+    }
+    await clearLink(ctx, project);
 
     return null;
   },
@@ -890,7 +897,14 @@ export const cliProject = internalQuery({
   args: { orgId: v.id("orgs"), slug: v.string() },
   returns: v.union(v.id("projects"), v.null()),
   handler: async (ctx, { orgId, slug }): Promise<Id<"projects"> | null> => {
-    const project = await resolveProject(ctx, orgId, slug);
+    if (!slug.trim()) return null;
+    // Slug only, not resolveProject's order: existing repo links were made under this rule.
+    const project = await ctx.db
+      .query("projects")
+      .withIndex("by_orgId_and_slug", (q) =>
+        q.eq("orgId", orgId).eq("slug", slugifyName(slug)),
+      )
+      .first();
 
     return project?._id ?? null;
   },
