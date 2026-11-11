@@ -5,6 +5,8 @@ import {
 } from "@/app/components/canvas/nodeTemplates";
 import type { SearchItem } from "@/app/lib/paletteSearch";
 import type { ShortcutId } from "@/app/lib/shortcuts";
+import type { api } from "@broods/convex/_generated/api";
+import type { FunctionReturnType } from "convex/server";
 
 export type CopilotTier = "safe" | "approval" | "blocked";
 
@@ -80,12 +82,13 @@ export interface CommitFile {
 /** A commit the user applied, followed until its GitHub deploy finishes. */
 export interface TrackedDeploy {
   branch: string;
-  committedAt: number;
   conclusion?: string;
   /** A failed run's last logged error line. */
   error?: string;
   finishedAt?: number;
   messageId: string;
+  /** The branch's newest GitHub run when the commit landed: only a later run carries it. */
+  priorRunId: number;
   runUrl?: string;
   sha: string;
   state: "deployed" | "deploying" | "failed" | "waiting";
@@ -395,6 +398,29 @@ export function settleVerified(
   }
 
   return settled;
+}
+
+/** A commit's deploy, from the branch's run when that run is its own or started after it. */
+export function trackDeploy(
+  commit: Omit<TrackedDeploy, "runUrl" | "state">,
+  runs: FunctionReturnType<typeof api.github.status>["deploys"] | undefined,
+): TrackedDeploy {
+  const run = runs?.find((deploy) => deploy.branch === commit.branch);
+  if (!run || (run.sha !== commit.sha && run.runId <= commit.priorRunId)) {
+    return { ...commit, state: "waiting" };
+  }
+  if (run.status !== "completed") {
+    return { ...commit, runUrl: run.url, state: "deploying" };
+  }
+
+  return {
+    ...commit,
+    conclusion: run.conclusion,
+    error: run.error,
+    finishedAt: run.updatedAt,
+    runUrl: run.url,
+    state: run.conclusion === "success" ? "deployed" : "failed",
+  };
 }
 
 // A commit's state comes from its GitHub run once one reports.
