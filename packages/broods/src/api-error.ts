@@ -1,5 +1,16 @@
-interface ApiErrorEnvelope {
-  error?: { message?: string; type?: string; code?: string };
+const SSE_DATA = /^data: (.*)$/m;
+
+interface ApiErrorFields {
+  message?: string;
+  type?: string;
+  code?: string;
+}
+
+/** A JSON envelope, or a streamed refusal frame whose `type` names the frame, not the error. */
+interface WireError {
+  error?: string | ApiErrorFields;
+  code?: string;
+  errorType?: string;
 }
 
 /** A refusal from a Broods server. Branch on `code`, which stays stable across releases. */
@@ -27,11 +38,14 @@ export class BroodsApiError extends Error {
   }
 }
 
-export function errorEnvelope(
-  body: string,
-): NonNullable<ApiErrorEnvelope["error"]> {
+export function errorEnvelope(body: string): ApiErrorFields {
   try {
-    return (JSON.parse(body) as ApiErrorEnvelope | null)?.error ?? {};
+    const { error, code, errorType } = JSON.parse(
+      SSE_DATA.exec(body)?.[1] ?? body,
+    ) as WireError;
+    if (typeof error !== "string") return error ?? {};
+
+    return { message: error, code: code, type: errorType };
   } catch {
     return {};
   }

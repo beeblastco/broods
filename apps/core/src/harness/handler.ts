@@ -392,9 +392,14 @@ function routeCoreRequest(
       handleDirectRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleDirectRequest(event))) ??
         queueFullResponse(event.accountId, (): Response =>
-          event.connectionId || event.answers?.length || event.continuation
-            ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
-            : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS),
+          (event.connectionId || event.answers?.length || event.continuation
+            ? errorResponse
+            : errorSseResponse)(
+            503,
+            WORKER_QUEUE_FULL,
+            {},
+            INGRESS_RETRY_HEADERS,
+          ),
         ),
       handleAsyncRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleAsyncRequest(event))) ??

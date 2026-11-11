@@ -776,7 +776,12 @@ async function logout(args: string[]): Promise<void> {
 }
 
 function apiErrorMessage(error: unknown): string {
-  if (error instanceof BroodsAccountApiError) return error.serverMessage;
+  // With no envelope the server message is the raw body: keep the method, path and status.
+  if (
+    error instanceof BroodsAccountApiError &&
+    error.serverMessage !== error.body
+  )
+    return error.serverMessage;
 
   return error instanceof Error ? error.message : String(error);
 }
