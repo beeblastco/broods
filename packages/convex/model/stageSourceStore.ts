@@ -1,8 +1,11 @@
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
-import { stageSourceHash, type StageSource } from "./stageSource";
-import type { StageSourceOrigin } from "./stageSourceOrigins";
+import {
+  stageSourceHash,
+  type StageSource,
+  type StageSourceOrigin,
+} from "./stageSource";
 
 /** Records a sync's manifest hash, storing its source only when the content moved. */
 export async function storeStageSync(

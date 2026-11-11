@@ -10,8 +10,7 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import { STAGE_SOURCE_LIMITS } from "./model/stageSource";
-import { STAGE_SOURCE_ORIGINS } from "./model/stageSourceOrigins";
+import { STAGE_SOURCE_LIMITS, STAGE_SOURCE_ORIGINS } from "./model/stageSource";
 
 // Revert needs the one before; the rest is history nobody reads.
 

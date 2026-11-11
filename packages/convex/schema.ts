@@ -10,7 +10,7 @@ import { CONNECTION_TYPE_NAMES } from "./model/connections";
 import { policyDocumentValidator } from "./model/policyDocument";
 import { principalLinkValidator } from "./model/principal";
 import { SANDBOX_PROVIDERS } from "./model/sandboxProviders";
-import { STAGE_SOURCE_ORIGINS } from "./model/stageSourceOrigins";
+import { STAGE_SOURCE_ORIGINS } from "./model/stageSource";
 import { handbackValidator } from "./model/subagentResults";
 
 export const planValidator = v.union(v.literal("free"), v.literal("pro"));

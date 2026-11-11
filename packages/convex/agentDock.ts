@@ -31,10 +31,10 @@ import {
   STAGE_SOURCE_LIMITS,
   stageSourceHash,
   stageSourceProblem,
-  stageSourceSchema,
   type StageSource,
+  type StageSourceOrigin,
 } from "./model/stageSource";
-import type { StageSourceOrigin } from "./model/stageSourceOrigins";
+import { stageSourceSchema } from "./model/stageSourceSchema";
 import { storeStageSync } from "./model/stageSourceStore";
 import {
   sealUserToken,
