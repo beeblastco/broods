@@ -8,13 +8,15 @@ import {
   type WorkdirHarnessDriverOptions,
 } from "../src/harness/sandbox/workdir-harness-driver.ts";
 import {
+  HARNESS_FILE_MAX_BYTES,
+  HARNESS_OUTPUT_MAX_BYTES,
+} from "../src/harness/sandbox/harness-shell-process.ts";
+import {
   SandboxFileTooLargeError,
   SandboxOutputTooLargeError,
 } from "../src/shared/errors.ts";
 
 const encoder = new TextEncoder();
-const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
-const HARNESS_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 describe("WorkdirHarnessDriver", () => {
   test("maps an existing core reservation to command, file, port, and lifecycle operations", async () => {
@@ -104,7 +106,7 @@ describe("WorkdirHarnessDriver", () => {
     }
   });
 
-  test("returns a find listing over the old 256 KiB cap whole, so every match parses", async () => {
+  test("returns a multi-megabyte find listing whole, so every match parses", async () => {
     const noise = Array.from(
       { length: 40_000 },
       (_, i) => `/workspace/node_modules/pkg-${i}/dist/index.js`,
@@ -135,8 +137,9 @@ describe("WorkdirHarnessDriver", () => {
     );
   });
 
-  test("fails a command whose output is over the output cap", async () => {
+  test("kills a still-running command past the output cap and stops polling it", async () => {
     const fake = fakeWorkdir({
+      processRunsUntilKilled: true,
       processStdout: new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
     });
     const driver = new WorkdirHarnessDriver(
@@ -150,9 +153,12 @@ describe("WorkdirHarnessDriver", () => {
     const run = session.runCommand({ command: "cat big.bin" });
 
     await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
-    await expect(run).rejects.toThrow(
-      `stdout is over the ${HARNESS_OUTPUT_MAX_BYTES} bytes`,
-    );
+    await expect(run).rejects.toThrow("stdout is over the 16 MiB");
+    expect(fake.killCalls).toBe(1);
+    expect(fake.runningProcesses).toBe(0);
+    const execCalls = fake.execCalls;
+    await Bun.sleep(200);
+    expect(fake.execCalls).toBe(execCalls);
   });
 
   test("leaves a shared machine running when one session ends", async () => {
@@ -430,6 +436,8 @@ function fakeWorkdir(
   launchCommands: string[];
   launchEnvs: (Record<string, string> | undefined)[];
   readonly killCalls: number;
+  readonly execCalls: number;
+  readonly runningProcesses: number;
 } {
   const files = new Map<string, Uint8Array>();
   const temporaryFiles = new Map<string, string>();
@@ -445,6 +453,7 @@ function fakeWorkdir(
   const launchEnvs: Array<Record<string, string> | undefined> = [];
   const launchCommands: string[] = [];
   let killCalls = 0;
+  let execCalls = 0;
 
   const sandbox = {
     id: "workdir-1",
@@ -452,6 +461,7 @@ function fakeWorkdir(
       command: string,
       execOptions?: { env?: Record<string, string> },
     ) {
+      execCalls += 1;
       if (options.realBashUnder && command.includes(options.realBashUnder)) {
         const run = Bun.spawnSync(["bash", "-c", command]);
 
@@ -547,6 +557,13 @@ function fakeWorkdir(
     launchEnvs: launchEnvs,
     get killCalls() {
       return killCalls;
+    },
+    get execCalls() {
+      return execCalls;
+    },
+    get runningProcesses() {
+      return [...processes.values()].filter((process) => process.running)
+        .length;
     },
   };
 }

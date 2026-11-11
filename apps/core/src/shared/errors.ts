@@ -49,7 +49,7 @@ export class SandboxOutputTooLargeError extends Error {
     public readonly maxBytes: number,
   ) {
     super(
-      `the command's ${stream} is over the ${maxBytes} bytes a harness can load from one sandbox command; narrow it with a path filter, \`| head -n 1000\` or a count (\`| wc -l\`)`,
+      `the command's ${stream} is over the ${maxBytes / 1024 / 1024} MiB a harness can load from one sandbox command, so it was stopped; search a narrower path or pattern, or pipe a shell command through \`head\``,
     );
   }
 }

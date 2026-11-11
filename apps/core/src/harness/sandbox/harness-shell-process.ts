@@ -8,7 +8,7 @@ const FILE_CHUNK_BYTES = 180 * 1024;
 const PROCESS_POLL_INTERVAL_MS = 25;
 // Core buffers a whole file per harness read, and its pod has 1 GiB for every run.
 export const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
-// Bounds core's memory per stream of a harness command; the harness trims what the model sees.
+// Caps one stream of one harness command in core; nothing bounds parallel commands together.
 export const HARNESS_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
 export interface HarnessShellExecutor {
@@ -131,6 +131,28 @@ export class HarnessShellProcess {
     if (options.abortSignal) void process.wait().catch(() => {});
 
     return process;
+  }
+
+  /** Reads both streams whole; on a failure it kills and awaits the command, then throws. */
+  async collect(): Promise<{
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+  }> {
+    try {
+      const [stdout, stderr, result] = await Promise.all([
+        readHarnessStream(this.stdout, "stdout"),
+        readHarnessStream(this.stderr, "stderr"),
+        this.wait(),
+      ]);
+
+      return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    } catch (error) {
+      await this.kill()
+        .then(() => this.wait())
+        .catch(() => {});
+      throw error;
+    }
   }
 
   wait(): Promise<{ exitCode: number }> {

@@ -18,7 +18,6 @@ import {
   HARNESS_FILE_MAX_BYTES,
   HarnessShellProcess,
   type HarnessShellExecutor,
-  readHarnessStream,
 } from "./harness-shell-process.ts";
 import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
@@ -242,13 +241,8 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   }> {
     options.abortSignal?.throwIfAborted();
     const process = await this.spawnCommand(options);
-    const [stdout, stderr, result] = await Promise.all([
-      readHarnessStream(process.stdout, "stdout"),
-      readHarnessStream(process.stderr, "stderr"),
-      process.wait(),
-    ]);
 
-    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    return process.collect();
   }
 
   async spawnCommand(

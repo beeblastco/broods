@@ -3,9 +3,13 @@ import {
   MicrovmHarnessDriver,
   type MicrovmHarnessDriverOptions,
 } from "../src/harness/sandbox/microvm-harness-driver.ts";
+import {
+  HARNESS_FILE_MAX_BYTES,
+  HARNESS_OUTPUT_MAX_BYTES,
+} from "../src/harness/sandbox/harness-shell-process.ts";
+import { SandboxOutputTooLargeError } from "../src/shared/errors.ts";
 
 const encoder = new TextEncoder();
-const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 describe("MicrovmHarnessDriver", () => {
   test("maps a persistent reservation to command, file, port, and lifecycle operations", async () => {
@@ -128,6 +132,29 @@ describe("MicrovmHarnessDriver", () => {
     expect(executor.chunkReads).toEqual(["/workspace/huge.bin@0"]);
   });
 
+  test("kills a still-running command past the output cap and stops polling it", async () => {
+    const executor = fakeExecutor(true);
+    executor.runProcessesUntilKilled(
+      new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
+    );
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+
+    const run = session.runCommand({ command: "cat big.bin" });
+
+    await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
+    expect(executor.killCalls).toBe(1);
+    expect(executor.runningProcesses).toBe(0);
+    const commandCalls = executor.commandCalls;
+    await Bun.sleep(200);
+    expect(executor.commandCalls).toBe(commandCalls);
+  });
+
   test("refuses to stitch a file that changed between chunks", async () => {
     const executor = fakeExecutor(true);
     const driver = new MicrovmHarnessDriver(
@@ -224,9 +251,17 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   // Bumped on every write, standing in for the inode and change time in a stamp.
   const versions = new Map<Uint8Array, number>();
   let afterChunkRead: (() => void) | undefined;
+  let longRunningStdout: Uint8Array | undefined;
+  let killCalls = 0;
+  let commandCalls = 0;
   const processes = new Map<
     string,
-    { stdout: Uint8Array; stderr: Uint8Array; exitCode: number }
+    {
+      stdout: Uint8Array;
+      stderr: Uint8Array;
+      exitCode: number;
+      running: boolean;
+    }
   >();
 
   return {
@@ -241,6 +276,19 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     files: files,
     onChunkRead: function (callback: () => void): void {
       afterChunkRead = callback;
+    },
+    runProcessesUntilKilled: function (stdout: Uint8Array): void {
+      longRunningStdout = stdout;
+    },
+    get killCalls() {
+      return killCalls;
+    },
+    get commandCalls() {
+      return commandCalls;
+    },
+    get runningProcesses() {
+      return [...processes.values()].filter((process) => process.running)
+        .length;
     },
     value: {
       acquireHarnessReservation: async function (request: unknown) {
@@ -266,6 +314,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         code: string;
         env?: Record<string, string>;
       }) {
+        commandCalls += 1;
         commandReservationKeys.add(request.reservationKey);
         const processRoot = request.code.match(
           /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
@@ -273,10 +322,21 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         if (request.code.includes("setsid bash") && processRoot) {
           launchEnvs.push(request.env);
           processes.set(processRoot, {
-            stdout: encoder.encode("hello\n"),
+            stdout: longRunningStdout ?? encoder.encode("hello\n"),
             stderr: encoder.encode("warning\n"),
             exitCode: 0,
+            running: longRunningStdout !== undefined,
           });
+
+          return result();
+        }
+        if (request.code.includes("kill -TERM") && processRoot) {
+          killCalls += 1;
+          const process = processes.get(processRoot);
+          if (process) {
+            process.running = false;
+            process.exitCode = 143;
+          }
 
           return result();
         }
@@ -303,7 +363,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         if (request.code.includes('echo "done $(cat') && processRoot) {
           const process = processes.get(processRoot);
 
-          return result(process ? `done ${process.exitCode}\n` : "unknown\n");
+          if (!process) return result("unknown\n");
+
+          return result(
+            process.running ? "running\n" : `done ${process.exitCode}\n`,
+          );
         }
 
         const write = request.code.match(

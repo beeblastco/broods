@@ -16,7 +16,6 @@ import {
   HarnessShellProcess,
   type HarnessShellExecutor,
   readFileChunk,
-  readHarnessStream,
 } from "./harness-shell-process.ts";
 import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
@@ -251,13 +250,8 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
   }> {
     options.abortSignal?.throwIfAborted();
     const process = await this.spawnCommand(options);
-    const [stdout, stderr, result] = await Promise.all([
-      readHarnessStream(process.stdout, "stdout"),
-      readHarnessStream(process.stderr, "stderr"),
-      process.wait(),
-    ]);
 
-    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    return process.collect();
   }
 
   async spawnCommand(
