@@ -1462,6 +1462,7 @@ export default defineSchema({
   // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields)
     .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_orgId_and_name_and_slug", ["orgId", "name", "slug"])
     .index("by_repoId", ["repo.repoId"])
     .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
