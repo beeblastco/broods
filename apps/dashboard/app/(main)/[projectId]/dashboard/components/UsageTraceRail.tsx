@@ -205,7 +205,7 @@ function UsageTraceRow({
 
 function Rail({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
-    <div className="max-h-112.5 overflow-y-auto overscroll-contain border-t border-border lg:h-112.5 lg:border-t-0 lg:border-l">
+    <div className="max-h-112.5 overflow-y-auto overscroll-contain border-t border-border @3xl:h-112.5 @3xl:border-t-0 @3xl:border-l">
       {children}
     </div>
   );

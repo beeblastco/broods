@@ -45,10 +45,10 @@ flowchart LR
 Logs and spans carry the same attributes, so a span, its logs and the live stream correlate: `account_id`, `project`, `stage`, `endpoint_id`, `agent_id`, `conversation_key`, `trace_id`. NATS subjects encode the routable part (`src/shared/nats.ts`):
 
 ```text
-v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
+<env>.v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
-The `OBSERVABILITY` stream binds `v1.*.*.*.logs.>` and `v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
+`<env>` is the deployment's `DEPLOYMENT_ENVIRONMENT`, so dev and production never share a subject. The `OBSERVABILITY_<env>` stream binds `<env>.v1.*.*.*.logs.>` and `<env>.v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
 
 ## The observability socket
 
@@ -87,6 +87,10 @@ Each core log line carries a `logId`, so a client drops the Loki copy of a line 
 | Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12                                                                                                      |
 | `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min                                                                                                    |
 | Backpressure        | over 512 KiB unsent: live messages dropped, backfill waits up to 5 s                                                                                                                                   |
+
+`ready` carries `seq`, a cursor for the point the live relay starts after, and each live `log` and `span` carries its own. The cursor is the stream sequence sealed under a key for that stage: the stream is shared by every tenant, so a raw sequence would show its gaps, and with them other tenants' traffic rate. A client that kept its entries reconnects with `{ afterSeq }` in place of `backfill`: the relay starts after that point, so nothing is replayed and no history is read again. The dashboard does this when its history loaded and its cursor is under 30 minutes old (the stream keeps 2 hours); a DEBUG view and a sandbox tail always load in full, since their lines never ride NATS. An `afterSeq` the gateway cannot open or the stream cannot vouch for falls back to the 30 minute replay: one sealed for another stage, one past the stream's last sequence, one whose next entries were already evicted, or any cursor when the stream is under 30 minutes old (it was recreated).
+
+Frames are compressed with `permessage-deflate` when the client offers it, as every browser does: a trace backfill is about a fifth of its JSON on the wire. The terminal and machine relays are sent as they come.
 
 A subscribe with `backfill` always gets a closing `backfill` message, with `error` set when Loki or Tempo failed, so a client can tell an empty stage from a failed query. When the same span arrives from NATS and Tempo, the dashboard keeps the richer or terminal copy, since Tempo truncates large attributes.
 

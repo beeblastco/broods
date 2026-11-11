@@ -78,13 +78,15 @@ export function SearchInput({
       <input
         ref={input}
         id={inputId}
-        type="text"
+        type="search"
+        enterKeyHint="search"
+        spellCheck={false}
         value={text}
         onChange={(event) => emit(chips, event.target.value)}
         onKeyDown={onKeyDown}
         placeholder={chips.length === 0 ? placeholder : ""}
         aria-label="Search"
-        className="min-w-16 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+        className="min-w-16 flex-1 bg-transparent text-foreground focus-visible:outline-hidden placeholder:text-muted-foreground"
       />
     </label>
   );

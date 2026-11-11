@@ -443,7 +443,7 @@ describe("mcp, policy and hook rows", (): void => {
       createdAt: CREATED,
       updatedAt: UPDATED,
     };
-    answer("agent/policies:getById", policy);
+    answer("runtimeLookups:policyById", policy);
     expect(await convexStorage.agentPolicies.getById(ACCOUNT, "pol_1")).toEqual(
       {
         accountId: ACCOUNT,
@@ -455,12 +455,12 @@ describe("mcp, policy and hook rows", (): void => {
         updatedAt: UPDATED_ISO,
       },
     );
-    answer("agent/policies:getById", { ...policy, description: "d" });
+    answer("runtimeLookups:policyById", { ...policy, description: "d" });
     expect(
       (await convexStorage.agentPolicies.getById(ACCOUNT, "pol_1"))
         ?.description,
     ).toBe("d");
-    answer("agent/policies:getById", null);
+    answer("runtimeLookups:policyById", null);
     expect(await convexStorage.agentPolicies.getById(ACCOUNT, "x")).toBeNull();
 
     const hook = {

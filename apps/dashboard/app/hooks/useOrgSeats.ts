@@ -27,7 +27,7 @@ export interface OrgSeats {
 }
 
 export function useOrgSeats(): OrgSeats | undefined {
-  const org = useQuery(api.org.orgs.getActive, {});
+  const org = useQuery(api.dashboardReads.activeOrg, {});
   const user = useQuery(api.user.getCurrent);
   const members = useQuery(
     api.org.members.list,

@@ -43,8 +43,8 @@ import {
   type PolicyCondition,
   type PolicyDocument,
   type PolicyRule,
-} from "./model/policyRules";
-import { getActiveCaller, type ActiveAccount } from "./org/orgs";
+} from "./model/policyDocument";
+import { getActiveCaller, type ActiveAccount } from "./model/activeCaller";
 import { orgMembersFields } from "./schema";
 
 const AGENT_DESCRIPTIONS: Record<

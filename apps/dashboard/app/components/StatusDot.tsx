@@ -45,7 +45,7 @@ export function StatusDot({
     <span
       title={label}
       className={cn(
-        "relative inline-block size-2 shrink-0 rounded-full",
+        "relative inline-block size-2 shrink-0 rounded-full forced-color-adjust-none",
         STATUS_TONE_BG[tone],
         className,
       )}

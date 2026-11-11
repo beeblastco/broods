@@ -29,7 +29,7 @@ import { clientErrorData } from "@broods/convex/model/clientError";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
 export function OrgSwitcher(): React.JSX.Element {
@@ -37,8 +37,8 @@ export function OrgSwitcher(): React.JSX.Element {
   const convex = useConvex();
   const params = useParams<{ projectId?: string }>();
   const orgQueryArgs = useSignedIn() ? {} : "skip";
-  const orgs = useQuery(api.org.orgs.list, orgQueryArgs);
-  const active = useQuery(api.org.orgs.getActive, orgQueryArgs);
+  const orgs = useQuery(api.dashboardReads.orgs, orgQueryArgs);
+  const active = useQuery(api.dashboardReads.activeOrg, orgQueryArgs);
   const currentUser = useQuery(api.user.getCurrent, orgQueryArgs);
   const setActive = useMutation(api.org.orgs.setActive);
   const createOrg = useMutation(api.org.orgs.create);
@@ -50,6 +50,7 @@ export function OrgSwitcher(): React.JSX.Element {
   const [createError, setCreateError] = useState<string | null>(null);
   const [needsPro, setNeedsPro] = useState<string | null>(null);
   const openBilling = useOpenBilling();
+  const createErrorId = useId();
   const hobbyOrg = orgs?.find(
     (org) => org.plan === "free" && org.ownerAuthId === currentUser?.authId,
   );
@@ -58,7 +59,7 @@ export function OrgSwitcher(): React.JSX.Element {
     if (active?._id === orgId) return;
     try {
       await setActive({ orgId: orgId });
-      const projects = await convex.query(api.project.list, {});
+      const projects = await convex.query(api.dashboardReads.projects, {});
       if (projects.length === 0) {
         router.replace("/projects");
       } else if (
@@ -115,7 +116,7 @@ export function OrgSwitcher(): React.JSX.Element {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger className="flex select-none items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground cursor-pointer">
+        <DropdownMenuTrigger className="flex select-none items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-3 focus-visible:ring-ring/50 active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground cursor-pointer">
           <Building2 className="size-3.5 text-muted-foreground" />
           <span className="max-w-40 truncate">{label}</span>
           <ChevronDown className="size-3.5 text-muted-foreground" />
@@ -194,6 +195,8 @@ export function OrgSwitcher(): React.JSX.Element {
               onChange={(e) => setNewName(e.target.value)}
               placeholder="Acme Inc."
               autoComplete="off"
+              aria-invalid={createError !== null}
+              aria-describedby={createError ? createErrorId : undefined}
             />
             {needsPro && (
               <div
@@ -207,7 +210,13 @@ export function OrgSwitcher(): React.JSX.Element {
               </div>
             )}
             {createError && (
-              <p className="text-xs text-destructive">{createError}</p>
+              <p
+                id={createErrorId}
+                role="alert"
+                className="text-xs text-destructive"
+              >
+                {createError}
+              </p>
             )}
           </div>
           <DialogFooter>

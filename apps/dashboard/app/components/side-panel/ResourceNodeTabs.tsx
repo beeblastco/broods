@@ -692,7 +692,8 @@ function ResourceNameFields({
           className="h-8 text-sm"
           onBlur={onSaveName}
           onKeyDown={(event) => {
-            if (event.key === "Enter") onSaveName();
+            if (event.key === "Enter" && !event.nativeEvent.isComposing)
+              onSaveName();
           }}
         />
       </div>
@@ -772,7 +773,8 @@ function TextField({
           if (next !== value) onCommit(next);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Enter" && !event.nativeEvent.isComposing)
+            event.currentTarget.blur();
         }}
       />
     </div>

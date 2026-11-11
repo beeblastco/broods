@@ -12,7 +12,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import {
@@ -31,6 +36,7 @@ import {
   FileText,
   HelpCircle,
   LogOut,
+  Monitor,
   Moon,
   ScrollText,
   Settings,
@@ -43,6 +49,16 @@ import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
 import { analytics } from "@/app/lib/analytics";
 import { useCallback } from "react";
+
+const THEMES: ReadonlyArray<{
+  value: "dark" | "light" | "system";
+  icon: LucideIcon;
+  label: string;
+}> = [
+  { value: "light", icon: Sun, label: "Light" },
+  { value: "dark", icon: Moon, label: "Dark" },
+  { value: "system", icon: Monitor, label: "System" },
+];
 
 const DOC_LINKS: ReadonlyArray<{
   href: string;
@@ -70,11 +86,11 @@ const DOC_LINKS: ReadonlyArray<{
 export function UserMenu(): React.JSX.Element | null {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signOut } = useSession();
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
   const activeOrg = useQuery(
-    api.org.orgs.getActive,
+    api.dashboardReads.activeOrg,
     useSignedIn() ? {} : "skip",
   );
   const warmAccountRoutes = useCallback(
@@ -104,7 +120,7 @@ export function UserMenu(): React.JSX.Element | null {
     .join("")
     .toUpperCase();
   const plan = activeOrg?.plan ?? DEFAULT_PLAN;
-  const isDark = theme === "dark";
+  const ThemeIcon = resolvedTheme === "dark" ? Moon : Sun;
   const upgradeHref =
     params.projectId && !isMaxPlan(plan)
       ? `/${params.projectId}/dashboard?tab=billing`
@@ -162,14 +178,26 @@ export function UserMenu(): React.JSX.Element | null {
               </>
             )}
             <DropdownMenuGroup>
-              <DropdownMenuItem
-                closeOnClick={false}
-                className="cursor-pointer"
-                onClick={() => setTheme(isDark ? "light" : "dark")}
-              >
-                {isDark ? <Sun /> : <Moon />}
-                {isDark ? "Light mode" : "Dark mode"}
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <ThemeIcon />
+                  Theme
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={theme}>
+                    {THEMES.map((item) => (
+                      <DropdownMenuRadioItem
+                        key={item.value}
+                        value={item.value}
+                        onClick={() => setTheme(item.value)}
+                      >
+                        <item.icon />
+                        {item.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem
                 className="cursor-pointer"
                 onClick={() => router.push("/settings/account")}

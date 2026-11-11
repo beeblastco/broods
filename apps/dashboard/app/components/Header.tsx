@@ -30,7 +30,7 @@ export function Header(): React.JSX.Element {
         <BroodsMark className="size-6" />
       </button>
 
-      <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-3 overflow-x-auto">
+      <div className="no-scrollbar fade-inline-end flex min-w-0 flex-1 items-center gap-3 overflow-x-auto">
         <div className="h-4 w-px shrink-0 bg-border" />
         <OrgSwitcher />
         {role === "member" && (

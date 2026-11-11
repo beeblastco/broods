@@ -326,7 +326,11 @@ function MemberPanel({
   return (
     <DetailPanel title={member.name} onClose={onClose}>
       <DetailRows rows={facts} />
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
 
       {editable && (
         <DeleteZone
@@ -559,7 +563,11 @@ function InviteDialog({
           {seats && step !== "invite" && (
             <SeatNotice seats={seats} step={step} />
           )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button

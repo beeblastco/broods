@@ -23,14 +23,21 @@ import { parseOr } from "@broods/convex/model/storedJson";
 import {
   AGENT_CONFIG,
   normalizeAgentConfig,
+  runtimeConfigBranches,
   type AGENT_HARNESS_DEBUG_LEVELS,
   type AGENT_HARNESS_PERMISSION_MODES,
   type AGENT_HARNESS_TYPES,
   type AGENT_LIFECYCLE_EVENT_NAMES,
 } from "@broods/convex/model/agentRules";
-import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+import type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 import type { McpOauth } from "./mcp.ts";
-export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+export type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 
 export const AGENT_MAX_TURN_UNLIMITED = 0;
 export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
@@ -38,30 +45,6 @@ export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "modelId",
   "output",
   "apiKey",
-] as const;
-// `sandbox` and `policy` are retired keys, kept so the normalizer refuses them by name.
-const RUNTIME_CONFIG_KEYS = [
-  "agent",
-  "harness",
-  "model",
-  "transcription",
-  "policy",
-  "provider",
-  "sandbox",
-  "sandboxes",
-  "workspaces",
-  "session",
-  "hooks",
-  "tools",
-  "mcp",
-  "denyTools",
-  "skills",
-  "subagent",
-  "scheduler",
-  "browser",
-  "policies",
-  "publicAccess",
-  "allowRunOverrides",
 ] as const;
 // Core checks every run, so only core pays the ~30 ms compile; Convex and the dashboard interpret.
 export const COMPILED_AGENT_CONFIG = z.compile(AGENT_CONFIG);
@@ -160,7 +143,7 @@ export interface AgentSkillsConfig {
 }
 
 export interface AgentTranscriptionConfig {
-  provider?: AccountModelProviderName;
+  provider?: AgentProviderName;
   modelId?: string;
 }
 
@@ -207,7 +190,7 @@ type AgentModelOutputMetadata = {
 };
 
 export type AgentProviderConfig = Partial<
-  Record<AccountModelProviderName, AgentProviderSettings>
+  Record<AgentProviderName, AgentProviderSettings>
 >;
 
 export interface AgentProviderSettings {
@@ -681,14 +664,8 @@ export function toChannelRuntimeAgentConfig(
 
 // Re-checked so a row written before a rule tightened fails by name.
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
-  const runtimeBranches = Object.fromEntries(
-    RUNTIME_CONFIG_KEYS.filter((key): boolean => config[key] !== undefined).map(
-      (key): [string, unknown] => [key, config[key]],
-    ),
-  );
-
   return normalizeAgentConfig(
-    runtimeBranches,
+    runtimeConfigBranches(config),
     {},
     COMPILED_AGENT_CONFIG,
   ) as AgentConfig;

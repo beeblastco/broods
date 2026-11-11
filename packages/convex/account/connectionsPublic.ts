@@ -4,7 +4,7 @@ import { mutation, query } from "../_generated/server";
 import { authKit } from "../auth";
 import { ClientError } from "../model/clientError";
 import { requireActiveAccount } from "../model/activeAccount";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import { connectionsFields } from "../schema";
 import { statusValidator, type ConnectionStatus } from "./connections";
 

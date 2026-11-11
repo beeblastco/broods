@@ -1260,7 +1260,7 @@ function TreeRow({
         aria-keyshortcuts={canWrite ? "F2 Delete" : undefined}
         className={cn(
           "group flex h-5.5 select-none items-center gap-0 pl-(--indent) pr-1 text-xs",
-          "cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          "cursor-pointer outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           isSelected
             ? "bg-accent text-accent-foreground"
             : "text-foreground/80 hover:bg-muted/50",

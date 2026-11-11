@@ -20,10 +20,10 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const updateOrg = useMutation(api.org.orgs.update).withOptimisticUpdate(
     (localStore, args) => {
-      const active = localStore.getQuery(api.org.orgs.getActive, {});
+      const active = localStore.getQuery(api.dashboardReads.activeOrg, {});
       if (active && active._id === args.orgId && args.name !== undefined) {
         localStore.setQuery(
-          api.org.orgs.getActive,
+          api.dashboardReads.activeOrg,
           {},
           { ...active, name: args.name },
         );
@@ -85,7 +85,11 @@ export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
           <p className="text-xs text-muted-foreground">
             Slug: <code className="font-mono">{org.slug}</code>
           </p>
-          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+          {saveError && (
+            <p role="alert" className="text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
           {saveNotice && (
             <p className="text-xs text-muted-foreground">{saveNotice}</p>
           )}

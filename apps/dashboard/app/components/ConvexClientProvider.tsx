@@ -21,12 +21,19 @@ const convex = new ConvexReactClient(
 export function ConvexClientProvider({
   children,
   initialSession,
+  nonce,
 }: {
   children: ReactNode;
   initialSession: InitialSession;
+  nonce: string | undefined;
 }): React.JSX.Element {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      nonce={nonce}
+    >
       <SessionProvider initial={initialSession}>
         <ConvexProviderWithAuth client={convex} useAuth={useSession}>
           {children}

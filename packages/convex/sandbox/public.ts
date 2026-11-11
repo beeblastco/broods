@@ -193,7 +193,7 @@ async function callLifecycle(
   extra?: Record<string, unknown>,
 ): Promise<unknown> {
   // Sandbox control runs commands and destroys state: admin only.
-  const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+  const account = await ctx.runQuery(api.dashboardReads.activeAccount, {
     requiredRole: "admin",
   });
   if (!account) {
@@ -256,7 +256,7 @@ async function markInstance(
   status: "running" | "suspending",
 ): Promise<void> {
   try {
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+    const account = await ctx.runQuery(api.dashboardReads.activeAccount, {
       requiredRole: "admin",
     });
     if (!account) return;

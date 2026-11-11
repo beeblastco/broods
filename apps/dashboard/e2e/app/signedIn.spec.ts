@@ -63,7 +63,8 @@ test("a cold project load is one document, no server action, no logo fetch @roll
   ).toEqual([]);
 });
 
-test("a page off the canvas subscribes to no palette data until the palette is wanted", async ({
+// @rollout: the stage name reads dashboardReads.stages, which dev has only after the merge.
+test("a page off the canvas subscribes to no palette data until the palette is wanted @rollout", async ({
   page,
 }) => {
   const sent: string[] = [];

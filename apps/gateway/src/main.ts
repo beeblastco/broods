@@ -1,5 +1,6 @@
 import {
   connectNats,
+  natsNames,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
 import {
@@ -40,6 +41,7 @@ import {
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
+import { cursorKey } from "./observability-cursor.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 import { resolveSocketScope } from "./upstream.ts";
 import {
@@ -72,6 +74,7 @@ export interface GatewayConfig {
   authFailureLimiter: RateLimiter;
   coreBaseUrl: string;
   limits: GatewayLimits;
+  natsConnection: () => Promise<NatsConnection>;
   spentTickets: SpentTickets;
   terminalTicketSecrets: string[];
 }
@@ -205,6 +208,14 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               kind: "observability",
               scope: { ...scope, expiresAt: expiresAt },
               token: token,
+              ...(config.terminalTicketSecrets[0]
+                ? {
+                    cursorKey: cursorKey(
+                      config.terminalTicketSecrets[0],
+                      scope,
+                    ),
+                  }
+                : {}),
             };
           } else if (agentWebSocketPath) {
             // Attach never posts through core's run path, so the endpoint check must happen here.
@@ -290,6 +301,9 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       config.limits.maxPayloadBytes,
       MACHINE_MAX_FRAME_BYTES,
     ),
+    // One shared compressor, reset per message: no memory per socket. A send opts in, so the
+    // terminal and machine relays stay raw.
+    perMessageDeflate: true,
     backpressureLimit: config.limits.backpressureBytes,
     closeOnBackpressureLimit: true,
     idleTimeout: config.limits.idleTimeoutSeconds,
@@ -330,7 +344,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         await handleObservabilityMessage(
           socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
           rawMessage,
-          getNatsConnection,
+          config.natsConnection,
         );
 
         return;
@@ -340,7 +354,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         socket as Bun.ServerWebSocket<AgentTestGatewayData>,
         rawMessage,
         config.limits,
-        getNatsConnection,
+        config.natsConnection,
       );
     },
     close: function (socket): void {
@@ -380,12 +394,15 @@ export function gatewayConfigFromEnv(): GatewayConfig {
     ),
     coreBaseUrl: normalizeBaseUrl(process.env.BROODS_CORE_URL ?? ""),
     limits: gatewayLimitsFromEnv(),
+    natsConnection: getNatsConnection,
     spentTickets: natsSpentTickets(getNatsConnection),
     terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
   };
 }
 
 if (import.meta.main) {
+  // A pod missing its environment fails the rollout instead of the first attach.
+  if (process.env.NATS_URL?.trim()) natsNames();
   const config = gatewayConfigFromEnv();
   const gateway = createGateway(config);
   const server = Bun.serve<GatewayData>({
