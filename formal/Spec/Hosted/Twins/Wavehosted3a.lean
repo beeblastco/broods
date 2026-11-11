@@ -785,10 +785,21 @@ private def agentCanvasBadge (call : Json) : Prog Json :=
   let structured := !undef outputFormat &&
     ((Js.arr? (field (Twin.moduleValue call "STRUCTURED_OUTPUT_TYPES") "$set")).getD []).contains
       (field outputFormat "type")
+  let chat := field config "provider"
+  let chosen := field (field extra "transcription") "provider"
+  let transcriber := if Js.isStr chosen then chosen else chat
+  let voice :=
+    if Js.isStr chat && ["google", "vertex"].contains (text chat) then
+      Json.mkObj [("provider", chat), ("native", toJson true)]
+    else if Js.isStr transcriber &&
+        ["fishaudio", "groq", "mistral", "openai"].contains (text transcriber) then
+      Json.mkObj [("provider", transcriber), ("native", toJson false)]
+    else .null
   pure (Json.mkObj
     [("publicAccess", toJson (field extra "publicAccess" == toJson true)),
      ("skills", .arr names.toArray),
-     ("structuredOutput", toJson structured)])
+     ("structuredOutput", toJson structured),
+     ("voice", voice)])
 
 private def assertEnvVarName (call : Json) : Prog Json := do
   let name := text (Twin.callArg call 0)

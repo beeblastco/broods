@@ -13,7 +13,11 @@ import {
 import { findLaterSandboxMount } from "../../../../packages/convex/model/sandboxMounts";
 
 type BadgeConfig = Parameters<typeof agentCanvasBadge>[0];
-type BadgeExpected = { publicAccess: boolean; skills: string[] };
+type BadgeExpected = {
+  publicAccess: boolean;
+  skills: string[];
+  voice?: { provider: string; native: boolean } | null;
+};
 
 const badges: Array<[string, unknown, BadgeExpected]> = [
   ["no extra config", {}, { publicAccess: false, skills: [] }],
@@ -41,6 +45,44 @@ const badges: Array<[string, unknown, BadgeExpected]> = [
     "structured output",
     { outputFormat: { type: "json" } },
     { publicAccess: false, skills: [] },
+  ],
+  [
+    "voice on the transcription provider",
+    {
+      provider: "anthropic",
+      extraConfig: { transcription: { provider: "fishaudio" } },
+    },
+    {
+      publicAccess: false,
+      skills: [],
+      voice: { provider: "fishaudio", native: false },
+    },
+  ],
+  [
+    "voice on a chat provider that transcribes",
+    { provider: "openai" },
+    {
+      publicAccess: false,
+      skills: [],
+      voice: { provider: "openai", native: false },
+    },
+  ],
+  [
+    "voice heard by the chat model",
+    {
+      provider: "google",
+      extraConfig: { transcription: { provider: "openai" } },
+    },
+    {
+      publicAccess: false,
+      skills: [],
+      voice: { provider: "google", native: true },
+    },
+  ],
+  [
+    "no voice",
+    { provider: "anthropic" },
+    { publicAccess: false, skills: [], voice: null },
   ],
   [
     "allowed not a list",
