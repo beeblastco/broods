@@ -197,6 +197,7 @@ function emit(
 ): void {
   const ctx = getObservabilityContext();
   const ts = Date.now();
+  const logId = crypto.randomUUID();
   const service = process.env.SERVICE_NAME ?? "broods-core";
   const secretValues = runSecretValues();
 
@@ -206,6 +207,7 @@ function emit(
     : undefined;
   const entry: Record<string, unknown> = {
     ...redactedData,
+    logId: logId,
     time: new Date(ts).toISOString(),
     level: level,
     message: redactedMessage,
@@ -226,6 +228,7 @@ function emit(
 
   if (level !== "DEBUG" && ctx) {
     const obsEntry: ObservabilityLogEntry = {
+      logId: logId,
       ts: ts,
       level: level as "INFO" | "WARN" | "ERROR",
       eventType: (redactedData?.eventType as string) ?? level.toLowerCase(),

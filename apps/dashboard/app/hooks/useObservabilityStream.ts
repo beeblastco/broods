@@ -363,7 +363,9 @@ export function entryKey(
     return `span:${entry.traceId}:${entry.spanId}`;
   }
 
-  return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+  return entry.logId
+    ? `log:${entry.logId}`
+    : `log:${entry.ts}:${entry.eventType}:${entry.message}`;
 }
 
 export function mergeBackfill<
