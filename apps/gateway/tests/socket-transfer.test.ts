@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { constants, inflateRawSync } from "node:zlib";
 import type {
@@ -42,6 +43,7 @@ const WORDS =
     " ",
   );
 
+type Measurement = { bytes: number; ceiling: number };
 type WireMessage = { opcode: number; text: string };
 type WireClient = {
   close: () => void;
@@ -60,6 +62,7 @@ type ConsumerOptions = {
 const traces = fixtureTraces();
 const logs = fixtureLogs();
 const natsMessages = fixtureNatsMessages();
+const measured: Record<string, Measurement> = {};
 let upstream: ReturnType<typeof Bun.serve>;
 let server: ReturnType<typeof Bun.serve<GatewayData>>;
 let gateway: ReturnType<typeof createGateway>;
@@ -93,6 +96,12 @@ afterAll(async (): Promise<void> => {
   gateway.closeSockets(1000, "test complete");
   await server.stop(true);
   await upstream.stop(true);
+  if (process.env.SOCKET_TRANSFER_OUT) {
+    writeFileSync(
+      process.env.SOCKET_TRANSFER_OUT,
+      `${JSON.stringify(measured, null, 2)}\n`,
+    );
+  }
   for (const [name, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -110,8 +119,12 @@ test("the trace list backfill stays under its byte ceiling", async (): Promise<v
       traces.reduce((total, trace) => total + trace.length, 0) +
         REPLAY_TRACES * traces[0].length,
     );
-    report("trace list, 100 traces", client.wireBytes(), rows);
-    expect(client.wireBytes()).toBeLessThan(LIST_WIRE_BYTES_MAX);
+    report(
+      "trace list, 100 traces",
+      client.wireBytes(),
+      rows,
+      LIST_WIRE_BYTES_MAX,
+    );
   } finally {
     client.close();
   }
@@ -124,8 +137,7 @@ test("opening one trace stays under its byte ceiling", async (): Promise<void> =
     const rows = await readBackfill(client);
 
     expect(rows.length).toBe(traces[0].length);
-    report("one trace by id", client.wireBytes(), rows);
-    expect(client.wireBytes()).toBeLessThan(TRACE_WIRE_BYTES_MAX);
+    report("one trace by id", client.wireBytes(), rows, TRACE_WIRE_BYTES_MAX);
   } finally {
     client.close();
   }
@@ -143,8 +155,12 @@ test("a logs backfill stays under its byte ceiling", async (): Promise<void> => 
     const rows = await readBackfill(client);
 
     expect(rows.length).toBe(LOG_COUNT);
-    report("logs backfill, 200 lines", client.wireBytes(), rows);
-    expect(client.wireBytes()).toBeLessThan(LOGS_WIRE_BYTES_MAX);
+    report(
+      "logs backfill, 200 lines",
+      client.wireBytes(),
+      rows,
+      LOGS_WIRE_BYTES_MAX,
+    );
   } finally {
     client.close();
   }
@@ -173,8 +189,12 @@ test("a streamed chat answer stays under its byte ceiling", async (): Promise<vo
     }
 
     expect(frames.length).toBeGreaterThan(CHAT_DELTAS);
-    report("chat answer, 400 deltas", client.wireBytes(), frames);
-    expect(client.wireBytes()).toBeLessThan(CHAT_WIRE_BYTES_MAX);
+    report(
+      "chat answer, 400 deltas",
+      client.wireBytes(),
+      frames,
+      CHAT_WIRE_BYTES_MAX,
+    );
   } finally {
     client.close();
   }
@@ -206,8 +226,12 @@ test("a reconnect resumes from the last cursor instead of replaying", async (): 
     });
     await Bun.sleep(100);
 
-    report("reconnect, nothing new", second.wireBytes(), []);
-    expect(second.wireBytes()).toBeLessThan(RECONNECT_WIRE_BYTES_MAX);
+    report(
+      "reconnect, nothing new",
+      second.wireBytes(),
+      [],
+      RECONNECT_WIRE_BYTES_MAX,
+    );
   } finally {
     second.close();
   }
@@ -228,7 +252,14 @@ async function readBackfill(client: WireClient): Promise<unknown[]> {
   }
 }
 
-function report(path: string, wireBytes: number, rows: unknown[]): void {
+function report(
+  path: string,
+  wireBytes: number,
+  rows: unknown[],
+  ceiling: number,
+): void {
+  measured[path] = { bytes: wireBytes, ceiling: ceiling };
+  expect(wireBytes).toBeLessThan(ceiling);
   const jsonBytes = Buffer.byteLength(JSON.stringify(rows));
   console.log(
     `socket-transfer | ${path} | wire ${wireBytes} B | rows as JSON ${jsonBytes} B`,
