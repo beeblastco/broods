@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { shellQuote } from "./utils.ts";
+import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
+import { shellQuote, truncateText } from "./utils.ts";
 
 // Base64 grows a chunk to 240 KB, under the 256 KB of stdout one MicroVM exec returns.
 const FILE_CHUNK_BYTES = 180 * 1024;
@@ -31,7 +32,7 @@ export async function readFileChunk(
 ): Promise<{ bytes: Uint8Array; stamp: string } | null> {
   const q = shellQuote(path);
   const result = await executor.exec(
-    `if [ -f ${q} ]; then stat -c '%s %i %z' ${q}; tail -c +${offset + 1} ${q} | head -c ${FILE_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${q} ]; then exit 44; else exit 45; fi`,
+    `if [ -f ${q} ]; then stat -L -c '%s %i %z' ${q}; tail -c +${offset + 1} ${q} | head -c ${FILE_CHUNK_BYTES} | base64 | tr -d '\\n'; elif [ ! -e ${q} ]; then exit 44; else exit 45; fi`,
     abortSignal ? { abortSignal: abortSignal } : undefined,
   );
   if (result.exitCode === 44) return null;
@@ -214,19 +215,22 @@ export class HarnessShellProcess {
   }
 }
 
+/** Keeps the head of a command's output the way workspace exec does, then cancels the stream. */
 export async function readHarnessStream(
   stream: ReadableStream<Uint8Array>,
 ): Promise<string> {
+  const limit = workspaceSandboxLimits().maxOutputLimitBytes;
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
-    for (;;) {
+    while (total <= limit) {
       const { value, done } = await reader.read();
       if (done) break;
       chunks.push(value);
       total += value.byteLength;
     }
+    if (total > limit) await reader.cancel();
   } finally {
     reader.releaseLock();
   }
@@ -237,7 +241,7 @@ export async function readHarnessStream(
     offset += chunk.byteLength;
   }
 
-  return new TextDecoder().decode(content);
+  return truncateText(new TextDecoder().decode(content), limit).value;
 }
 
 function delay(ms: number): Promise<void> {

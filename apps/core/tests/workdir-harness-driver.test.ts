@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Sandbox } from "@mv37/workdir";
 import {
   WorkdirHarnessDriver,
   type WorkdirHarnessDriverOptions,
 } from "../src/harness/sandbox/workdir-harness-driver.ts";
+import { SandboxFileTooLargeError } from "../src/shared/errors.ts";
+import { workspaceSandboxLimits } from "../src/shared/sandbox.ts";
 
 const encoder = new TextEncoder();
 const HARNESS_FILE_MAX_BYTES = 25 * 1024 * 1024;
@@ -69,8 +74,38 @@ describe("WorkdirHarnessDriver", () => {
     ]);
   });
 
-  test("refuses a file over the harness read cap before buffering it", async () => {
-    const fake = fakeWorkdir();
+  test("refuses a symlinked file over the harness read cap before buffering it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "workdir-harness-"));
+    try {
+      const target = join(dir, "huge.bin");
+      await writeFile(target, "");
+      await truncate(target, HARNESS_FILE_MAX_BYTES + 1);
+      await symlink(target, join(dir, "link.bin"));
+      const fake = fakeWorkdir({ realBashUnder: dir });
+      const driver = new WorkdirHarnessDriver(
+        driverOptions(),
+        fakeExecutor(fake.sandbox, true).value as never,
+      );
+      const { session } = await driver.createSession({
+        identity: "bootstrap-v1",
+      });
+
+      const read = session.readFile({ path: join(dir, "link.bin") });
+
+      await expect(read).rejects.toBeInstanceOf(SandboxFileTooLargeError);
+      await expect(read).rejects.toThrow(
+        `is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("returns the head of a command's output past the output limit", async () => {
+    const limit = workspaceSandboxLimits().maxOutputLimitBytes;
+    const fake = fakeWorkdir({
+      processStdout: new Uint8Array(10 * 1024 * 1024).fill(120),
+    });
     const driver = new WorkdirHarnessDriver(
       driverOptions(),
       fakeExecutor(fake.sandbox, true).value as never,
@@ -78,16 +113,10 @@ describe("WorkdirHarnessDriver", () => {
     const { session } = await driver.createSession({
       identity: "bootstrap-v1",
     });
-    await session.writeFile({
-      path: "/workspace/huge.bin",
-      content: new Uint8Array(HARNESS_FILE_MAX_BYTES + 1),
-    });
 
-    const read = session.readFile({ path: "/workspace/huge.bin" });
+    const { stdout } = await session.runCommand({ command: "cat big.bin" });
 
-    await expect(read).rejects.toThrow(
-      `/workspace/huge.bin is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
-    );
+    expect(stdout).toBe(`${"x".repeat(limit)}\n[output truncated]`);
   });
 
   test("leaves a shared machine running when one session ends", async () => {
@@ -358,6 +387,7 @@ function fakeWorkdir(
     processRunsUntilKilled?: boolean;
     processStdout?: Uint8Array;
     onLaunch?: () => void;
+    realBashUnder?: string;
   } = {},
 ): {
   sandbox: Sandbox;
@@ -386,6 +416,15 @@ function fakeWorkdir(
       command: string,
       execOptions?: { env?: Record<string, string> },
     ) {
+      if (options.realBashUnder && command.includes(options.realBashUnder)) {
+        const run = Bun.spawnSync(["bash", "-c", command]);
+
+        return result(
+          run.stdout.toString(),
+          run.exitCode,
+          run.stderr.toString(),
+        );
+      }
       const processRoot = command.match(
         /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
       )?.[1];
@@ -439,16 +478,10 @@ function fakeWorkdir(
         );
       }
 
-      const read =
-        command.match(/head -c (\d+) '([^']+)' \| base64/) ??
-        command.match(/()base64 < '([^']+)'/);
+      const read = command.match(/head -c \d+ '([^']+)' \| base64/);
       if (read) {
-        const content = files.get(read[2]!);
+        const content = files.get(read[1]!);
         if (content === undefined) return result("", 44);
-        const max = Number(read[1]) - 1;
-        if (read[1] && content.byteLength > max) {
-          return result(`${content.byteLength}\n`, 46);
-        }
 
         return result(Buffer.from(content).toString("base64"));
       }

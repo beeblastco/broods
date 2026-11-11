@@ -271,7 +271,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     const path = shellQuote(options.path);
     const max = HARNESS_FILE_MAX_BYTES;
     const result = await this.#sandbox.exec(
-      `if [ -f ${path} ]; then s=$(stat -c %s ${path}); if [ "$s" -gt ${max} ]; then echo "$s"; exit 46; fi; head -c ${max + 1} ${path} | base64 | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
+      `if [ -f ${path} ]; then s=$(stat -L -c %s ${path}); if [ "$s" -gt ${max} ]; then echo "$s"; exit 46; fi; head -c ${max + 1} ${path} | base64 | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
     );
     options.abortSignal?.throwIfAborted();
     if (result.exit_code === 44) return null;

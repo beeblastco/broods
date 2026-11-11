@@ -38,7 +38,7 @@ export class SandboxFileTooLargeError extends Error {
     public readonly maxBytes: number,
   ) {
     super(
-      `${path} is ${bytes} bytes, over the ${maxBytes} bytes a harness reads from a sandbox file; read a part of it with a shell command`,
+      `${path} is ${bytes} bytes, over the ${maxBytes} bytes a harness can load from a sandbox file to read or overwrite it; use a shell command instead`,
     );
   }
 }
