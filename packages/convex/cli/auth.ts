@@ -502,7 +502,10 @@ export const revokeToken = internalMutation({
       .query("cliTokens")
       .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
       .unique();
-    if (!token || token.status !== "active") return false;
+    // No role or account check: a demoted owner or a disabled account can come back.
+    if (!token || token.status !== "active" || token.lentToAgent === true) {
+      return false;
+    }
     await ctx.db.patch(token._id, { status: "revoked" });
 
     return true;
