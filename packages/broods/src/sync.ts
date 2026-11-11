@@ -136,6 +136,7 @@ export interface CliGitHubStatus {
   repo?: CliGitHubLink;
   deploys: Array<{
     branch: string;
+    runId: number;
     sha: string;
     status: string;
     conclusion?: string;

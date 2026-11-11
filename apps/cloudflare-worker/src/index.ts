@@ -13,6 +13,8 @@ const INTERNET_SUBREQUESTS = 50;
 const CODEC_CPU_MS = 5_000;
 // R2 deletes only unconditionally, so an emptied disk stays as an empty object with an etag.
 const EMPTY_DISK = new Uint8Array(0);
+// Release leaves this marker instead of deleting, so a command still running cannot store its disk.
+const RELEASED = { customMetadata: { released: "1" } };
 
 const execRequest: z.ZodType<WorkerExecRequest> = z.object({
   script: z.string().min(1),
@@ -56,12 +58,15 @@ const handler: ExportedHandler<Env> = {
 
       return exec(env, id, body.data);
     }
-    if (!match[2] && request.method === "GET")
+    if (!match[2] && request.method === "GET") {
+      const head = await env.STATE.head(stateKey(id));
+
       return Response.json({
-        exists: (await env.STATE.head(stateKey(id))) !== null,
+        exists: head !== null && !head.customMetadata?.released,
       });
+    }
     if (!match[2] && request.method === "DELETE") {
-      await env.STATE.delete(stateKey(id));
+      await env.STATE.put(stateKey(id), EMPTY_DISK, RELEASED);
 
       return new Response(null, { status: 204 });
     }
@@ -126,6 +131,8 @@ async function readState(
 ): Promise<StoredState | null> {
   const object = await bucket.get(key);
   if (object === null) return null;
+  if (object.customMetadata?.released)
+    throw new StateConflict("the sandbox was released; it runs nothing more");
   const bytes = new Uint8Array(await object.arrayBuffer());
 
   return { bytes: bytes.byteLength === 0 ? null : bytes, etag: object.etag };

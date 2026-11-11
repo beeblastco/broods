@@ -652,15 +652,24 @@ describe("runtime ingress", () => {
           });
         }
 
-        return await ctx.db.insert("cronRuns", {
+        const promptId = prompt === "question" ? "question-1" : "a";
+        const runId = await ctx.db.insert("cronRuns", {
           accountId: accountId,
           cronId: cronId,
           eventId: "paused",
           ingressConversationKey: conversationKey,
+          waitingOn: [promptId],
           conversationKey: "api:cron",
           status: "started",
           startedAt: 1,
         });
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: conversationKey,
+          promptId: promptId,
+          runId: runId,
+        });
+
+        return runId;
       });
       const fence = {
         conversationKey: conversationKey,
@@ -688,6 +697,122 @@ describe("runtime ingress", () => {
         status: "completed",
         result: "approved",
       });
+    });
+  });
+
+  test("an answer ends the cron run that asked, not the newest run of that cron", async () => {
+    vi.useFakeTimers();
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const cronId = await t.run(async (ctx) => {
+      const agentId = await ctx.db.insert("agents", {
+        accountId: accountId,
+        name: "agent",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      return await ctx.db.insert("crons", {
+        accountId: accountId,
+        name: "job",
+        agentId: agentId,
+        events: [],
+        scheduleExpression: "rate(1 minute)",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    const turn = async (
+      eventId: string,
+      result: unknown,
+      answers?: string,
+    ): Promise<void> => {
+      const owner = await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: "reject",
+        }),
+      );
+      if (answers) {
+        await t.run(async (ctx) => {
+          const envelope = await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+            .unique();
+          await ctx.db.patch(envelope!._id, {
+            events: [
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-approval-response",
+                    approvalId: answers,
+                    approved: true,
+                  },
+                ],
+              },
+            ],
+          });
+        });
+      }
+      await t.mutation(internal.runtimeIngress.takeNext, {
+        conversationKey: conversationKey,
+        ownerEventId: eventId,
+        ownerGeneration: owner.ownerGeneration!,
+        leaseTtlMs: 60_000,
+        settle: { status: "completed", result: result },
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    };
+    const fire = async (
+      eventId: string,
+      approvalId: string,
+    ): Promise<Id<"cronRuns">> => {
+      const runId = await t.run(
+        async (ctx) =>
+          await ctx.db.insert("cronRuns", {
+            accountId: accountId,
+            cronId: cronId,
+            eventId: eventId,
+            ingressEventId: eventId,
+            ingressConversationKey: conversationKey,
+            waitingOn: [],
+            conversationKey: "api:cron",
+            status: "started",
+            startedAt: 1,
+          }),
+      );
+      await turn(eventId, {
+        status: "awaiting_approval",
+        approvals: [
+          {
+            approvalId: approvalId,
+            toolCallId: `call-${eventId}`,
+            toolName: "bash",
+            input: {},
+          },
+        ],
+      });
+
+      return runId;
+    };
+
+    const first = await fire("fire-1", "approval-1");
+    const second = await fire("fire-2", "approval-2");
+    await turn("answer-1", "approved the first", "approval-1");
+    vi.useRealTimers();
+
+    expect(await t.run((ctx) => ctx.db.get(first))).toMatchObject({
+      status: "completed",
+      result: "approved the first",
+    });
+    expect(await t.run((ctx) => ctx.db.get(second))).toMatchObject({
+      status: "started",
     });
   });
 

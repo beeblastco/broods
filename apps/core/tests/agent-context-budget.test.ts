@@ -39,8 +39,13 @@ await mock.module("../src/shared/s3.ts", () => ({
   readS3Text: async (): Promise<string> => {
     throw Object.assign(new Error("not found"), { name: "NoSuchKey" });
   },
-  readS3TextHead: async (): Promise<string> =>
-    "---\nname: release-notes\ndescription: Drafts release notes from merged changes.\n---\n",
+  readS3TextHead: async (_bucket: string, key: string): Promise<string> => {
+    if (key.endsWith("/MEMORY.md")) {
+      throw Object.assign(new Error("not found"), { name: "NoSuchKey" });
+    }
+
+    return "---\nname: release-notes\ndescription: Drafts release notes from merged changes.\n---\n";
+  },
 }));
 
 const sandboxes: Record<string, SandboxConfigRecord> = {

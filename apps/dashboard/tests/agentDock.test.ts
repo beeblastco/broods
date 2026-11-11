@@ -14,6 +14,7 @@ import {
   proposedNodes,
   settleApplies,
   settleVerified,
+  trackDeploy,
 } from "../app/lib/copilotActions";
 import { withProposal } from "../app/lib/proposedNodes";
 import { planFromQuery } from "../app/lib/copilotIntent";
@@ -317,6 +318,42 @@ describe("agent dock", () => {
     ).toEqual(["broods/b.ts"]);
   });
 
+  test("a proposal's title and branch come from the steps the user kept", () => {
+    const commit = proposalPlan(
+      {
+        files: [{ content: "a", path: "broods/a.ts" }],
+        message: "Add retry cron",
+        summary: "",
+      },
+      CONTEXT,
+      REPO,
+    );
+    const plan = {
+      actions: [
+        {
+          change: { after: "1", before: "", field: "RETRIES" },
+          label: "Set RETRIES",
+          name: "RETRIES",
+          type: "setEnvVar" as const,
+          value: "1",
+        },
+        ...(commit?.actions ?? []),
+      ],
+      summary: "Retry failed runs",
+    };
+
+    const proposal = dockProposals(
+      [{ id: "m", plan: plan }],
+      new Set([changeKey("m", 1, "broods/a.ts")]),
+      new Set(),
+      {},
+      [],
+    ).get("m");
+
+    expect(proposal?.title).toBe("Set RETRIES");
+    expect(proposal?.branch).toBeUndefined();
+  });
+
   test("a commit follows its GitHub run to deployed or failed, in the chat's words", () => {
     const commit = proposalPlan(
       { files: [{ content: "a", path: "broods/a.ts" }], summary: "" },
@@ -326,7 +363,7 @@ describe("agent dock", () => {
     const messages = [{ id: "m", plan: commit ?? undefined }];
     const deploy = {
       branch: "dev",
-      committedAt: 0,
+      priorRunId: 0,
       messageId: "m",
       runUrl: "https://github.test/run/1",
       sha: "8d7ea8b41c",
@@ -365,6 +402,30 @@ describe("agent dock", () => {
     );
   });
 
+  test("a commit's deploy is its own run or a later one, never the run before it", () => {
+    const commit = {
+      branch: "dev",
+      messageId: "m",
+      priorRunId: 7,
+      sha: "new",
+    };
+    const run = {
+      branch: "dev",
+      conclusion: "success",
+      runId: 7,
+      sha: "old",
+      status: "completed",
+      updatedAt: Date.now() + 60_000,
+      url: "https://github.test/run/7",
+    };
+
+    expect(trackDeploy(commit, [run]).state).toBe("waiting");
+    expect(trackDeploy(commit, [{ ...run, runId: 8 }]).state).toBe("deployed");
+    expect(trackDeploy(commit, [{ ...run, sha: "new" }]).state).toBe(
+      "deployed",
+    );
+  });
+
   test("a finished deploy stays finished when a later push runs on the branch", () => {
     const commit = proposalPlan(
       { files: [{ content: "a", path: "broods/a.ts" }], summary: "" },
@@ -374,7 +435,7 @@ describe("agent dock", () => {
     const messages = [{ id: "m", plan: commit ?? undefined }];
     const run = {
       branch: "dev",
-      committedAt: 0,
+      priorRunId: 0,
       messageId: "m",
       runUrl: "https://github.test/run/1",
       sha: "8d7ea8b41c",

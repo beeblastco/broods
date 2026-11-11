@@ -83,7 +83,9 @@ import {
 } from "@broods/convex/model/sandboxRules";
 import {
   CLIENT_ERROR_STATUS,
+  ClientError,
   clientErrorData,
+  clientErrorResponse,
 } from "@broods/convex/model/clientError";
 import {
   sealTerminalTicket,
@@ -797,9 +799,8 @@ function errorResponseForError(err: unknown): Response {
     return errorResponse(502, err.message);
   }
 
-  return errorResponse(
-    400,
-    err instanceof Error ? err.message : "Invalid request",
+  return (
+    clientErrorResponse(err) ?? errorResponse(500, "Internal server error")
   );
 }
 
@@ -853,10 +854,12 @@ function requireAccountAuth(
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {
-    throw new Error("Admin must use account-specific endpoints");
+    throw new ClientError("Admin must use account-specific endpoints");
   }
   if (auth.viaServiceToken && options.allowServiceToken !== true) {
-    throw new Error("Service token is not allowed for this account endpoint");
+    throw new ClientError(
+      "Service token is not allowed for this account endpoint",
+    );
   }
 
   return auth.account;
