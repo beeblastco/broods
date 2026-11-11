@@ -273,7 +273,7 @@ export class BroodsClient {
     const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
       throw new BroodsApiError(
-        "Run failed",
+        `Run failed: ${response.status}`,
         response.status,
         await response.text(),
       );
@@ -363,7 +363,7 @@ export class BroodsClient {
     if (response.status === 404) return { status: "not_found" };
     if (!response.ok)
       throw new BroodsApiError(
-        "Status check failed",
+        `Status check failed: ${response.status}`,
         response.status,
         await response.text(),
       );
@@ -438,7 +438,7 @@ export class BroodsClient {
     });
     if (!response.ok)
       throw new BroodsApiError(
-        `${label} failed`,
+        `${label} failed: ${response.status}`,
         response.status,
         await response.text(),
       );

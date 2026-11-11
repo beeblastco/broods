@@ -170,7 +170,7 @@ Every status core returns also carries the owning `agentId`, plus `requestedMode
 
 ### Errors
 
-A refused request throws `BroodsApiError` with the server's error as fields. Branch on `code`, which stays stable across releases.
+A refused request throws `BroodsApiError` with the server's error as fields. Branch on `code`, which stays stable across releases. The message reads `Run failed: 403 This agent needs a user token. (user_token_required)`, so code that matched the code in the message text keeps working. `broods/account` exports the class too.
 
 | Field           | Description                                                    |
 | --------------- | -------------------------------------------------------------- |

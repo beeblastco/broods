@@ -37,6 +37,8 @@ import type {
   ConnectionType,
 } from "../../convex/model/connections.ts";
 
+export { BroodsApiError };
+
 // Copy of `DEFAULT_CORE_BASE_URL`: importing client.ts would pull in Node-only code.
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
 const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
@@ -373,7 +375,7 @@ export interface SandboxTerminalTicket {
 
 export class BroodsAccountApiError extends BroodsApiError {
   constructor(method: string, path: string, status: number, body: string) {
-    super(`${method} ${path} failed`, status, body);
+    super(`${method} ${path} failed with ${status}:`, status, body);
     this.name = "BroodsAccountApiError";
   }
 }

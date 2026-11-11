@@ -591,10 +591,25 @@ test("a refused run throws the server's status, code and message as fields", asy
     client.run({ agentId: "agent_1", input: "hello" }),
   ).rejects.toMatchObject({
     name: "BroodsApiError",
-    message: "Run failed: 403 This agent needs a user token.",
+    message:
+      "Run failed: 403 This agent needs a user token. (user_token_required)",
     status: 403,
     code: "user_token_required",
     type: "permission_error",
     serverMessage: "This agent needs a user token.",
   });
+});
+
+test("a refused run keeps the error code in its message for older matchers", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (): Promise<Response> =>
+      Response.json(
+        { error: { message: "No.", code: "user_token_required" } },
+        { status: 403 },
+      ),
+  });
+  await expect(
+    client.run({ agentId: "agent_1", input: "hello" }),
+  ).rejects.toThrow(/Run failed: 403 .*user_token_required/);
 });

@@ -76,7 +76,7 @@ test("non-2xx non-404 responses throw BroodsAccountApiError with status and code
 
   expect(error).toBeInstanceOf(BroodsAccountApiError);
   expect(error).toMatchObject({
-    message: "GET /v1/crons failed: 401 Invalid token",
+    message: "GET /v1/crons failed with 401: Invalid token (invalid_token)",
     status: 401,
     code: "invalid_token",
     serverMessage: "Invalid token",

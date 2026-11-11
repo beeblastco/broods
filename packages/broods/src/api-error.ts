@@ -11,10 +11,13 @@ export class BroodsApiError extends Error {
   readonly serverMessage: string;
   readonly body: string;
 
-  constructor(label: string, status: number, body: string) {
+  // The code stays in the text: callers matched it in the raw body the message used to carry.
+  constructor(prefix: string, status: number, body: string) {
     const envelope = errorEnvelope(body);
     const serverMessage = envelope.message ?? body;
-    super(`${label}: ${status} ${serverMessage}`);
+    super(
+      `${prefix} ${serverMessage}${envelope.code ? ` (${envelope.code})` : ""}`,
+    );
     this.name = "BroodsApiError";
     this.status = status;
     this.code = envelope.code;
