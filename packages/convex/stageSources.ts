@@ -295,7 +295,9 @@ async function pruneRevisions(
     )
     .take(100);
   for (const row of stale) {
-    await ctx.storage.delete(row.storageId);
+    if (await ctx.db.system.get(row.storageId)) {
+      await ctx.storage.delete(row.storageId);
+    }
     await ctx.db.delete(row._id);
   }
 }
