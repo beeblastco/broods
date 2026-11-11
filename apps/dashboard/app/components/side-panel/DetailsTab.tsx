@@ -160,6 +160,14 @@ export function DetailsTab({
   const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(
     readCustomBaseUrl(agentConfig),
   );
+  const storedModel = `${selectedProvider}:${agentConfig?.modelId ?? ""}`;
+  const [syncedModel, setSyncedModel] = useState(storedModel);
+  if (storedModel !== syncedModel) {
+    setSyncedModel(storedModel);
+    setEditProvider(selectedProvider);
+    setEditModelId(agentConfig?.modelId ?? "");
+    setEditCustomBaseUrl(readCustomBaseUrl(agentConfig));
+  }
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const allTools = agentConfig
