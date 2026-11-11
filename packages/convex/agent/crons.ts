@@ -20,6 +20,7 @@ import {
   isOneTimeSchedule,
   normalizeCreateCronInput,
   normalizeUpdateCronInput,
+  translateScheduleExpression,
 } from "../model/cronRules";
 import {
   deleteCron,
@@ -744,17 +745,16 @@ function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
-// A reschedule registers a newer at(...) run, or none: an older one is the run that fired.
-async function isSpentOneShot(
-  ctx: QueryCtx,
-  cron: Doc<"crons">,
-  run: Doc<"cronRuns">,
-): Promise<boolean> {
-  if (!run.oneShot || cron.scheduledRunId === undefined) return false;
-  const registration = await ctx.db.system.get(cron.scheduledRunId);
+// A reschedule to a new at(...) must name a future time, so a time before the run is the one
+// that fired it; pausing keeps that time.
+function isSpentOneShot(cron: Doc<"crons">, run: Doc<"cronRuns">): boolean {
+  if (!run.oneShot) return false;
+  const schedule = translateScheduleExpression(
+    cron.scheduleExpression,
+    cron.timezone,
+  );
 
-  // Convex keeps a finished scheduled function's row for 7 days only.
-  return registration === null || registration._creationTime <= run.startedAt;
+  return schedule.kind === "at" && schedule.timestamp <= run.startedAt;
 }
 
 async function runWaitingOn(
@@ -812,7 +812,7 @@ async function settleRun(
       updatedAt: now,
     });
   }
-  if (cron && (await isSpentOneShot(ctx, cron, run))) {
+  if (cron && isSpentOneShot(cron, run)) {
     await deleteCron(ctx, cron);
   }
 

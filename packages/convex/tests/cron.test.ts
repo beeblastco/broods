@@ -261,15 +261,45 @@ describe("one-time jobs", () => {
     expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
   });
 
+  test("a one-time job paused while its run is open is removed when the run settles", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    const cronId = await oneTimeCron(tt, accountId);
+    const runId = await startRun(tt, accountId, cronId, Date.now());
+    await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { status: "paused" },
+    });
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    const resumed = await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { status: "active" },
+    });
+    await settleScheduled(tt);
+    vi.useRealTimers();
+
+    expect(resumed).toBeNull();
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
+  });
+
   test("a one-time job rescheduled while its run waits on an answer keeps its new schedule", async () => {
     vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
     const tt = t();
     const { accountId } = await seed(tt);
-    for (const scheduleExpression of [
-      "rate(1 day)",
-      "at(2026-01-05T00:00:00)",
-    ]) {
-      const cronId = await oneTimeCron(tt, accountId);
+    for (const [day, scheduleExpression] of [
+      [3, "rate(1 day)"],
+      [10, "at(2026-01-20T00:00:00)"],
+    ] as const) {
+      const cronId = await oneTimeCron(tt, accountId, day);
       const runId = await startRun(tt, accountId, cronId, Date.now());
       await tt.run((ctx) =>
         ctx.db.patch(runId, {
@@ -848,9 +878,11 @@ async function firstCron(
   return { accountId: accountId, cronId: cron!._id };
 }
 
+// Leaves the clock just past the job's at(...) time, so the next run started is its fire.
 async function oneTimeCron(
   tt: T,
   accountId: Id<"accounts">,
+  day: number = 3,
 ): Promise<Id<"crons">> {
   const [agent] = await tt.run((ctx) => ctx.db.query("agents").collect());
   const created = (await tt.mutation(internal.agent.crons.create, {
@@ -859,10 +891,10 @@ async function oneTimeCron(
       name: `once-${Date.now()}`,
       agentId: agent!._id,
       input: "run once",
-      scheduleExpression: ONE_TIME,
+      scheduleExpression: `at(2026-01-${String(day).padStart(2, "0")}T00:00:00)`,
     },
   })) as { cronId: string };
-  vi.advanceTimersByTime(1_000);
+  vi.setSystemTime(Date.UTC(2026, 0, day, 1));
 
   return created.cronId as Id<"crons">;
 }
