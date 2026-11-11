@@ -154,6 +154,7 @@ import {
   refundRun,
   planRefusalResponse,
   planRefusalText,
+  type Admission,
   type PlanRefusal,
 } from "./plan-limits.ts";
 import {
@@ -307,10 +308,7 @@ export async function settleCronRun(
       cronRun.runId,
       outcome.response,
     );
-  } else {
-    return;
   }
-  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
 
 export async function settleFailedIngressAndDrain(
@@ -392,9 +390,14 @@ function routeCoreRequest(
       handleDirectRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleDirectRequest(event))) ??
         queueFullResponse(event.accountId, (): Response =>
-          event.connectionId || event.answers?.length || event.continuation
-            ? errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS)
-            : errorSseResponse(WORKER_QUEUE_FULL, 503, INGRESS_RETRY_HEADERS),
+          (event.connectionId || event.answers?.length || event.continuation
+            ? errorResponse
+            : errorSseResponse)(
+            503,
+            WORKER_QUEUE_FULL,
+            {},
+            INGRESS_RETRY_HEADERS,
+          ),
         ),
       handleAsyncRequest: async (event): Promise<Response> =>
         (await withQueuePlace(() => handleAsyncRequest(event))) ??
@@ -806,6 +809,7 @@ async function resumeConversation(options: {
 
 async function handleDirectAnswers(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const answers = event.answers ?? [];
   const open = await Promise.all(
@@ -818,6 +822,8 @@ async function handleDirectAnswers(
   );
   const missing = open.findIndex((question) => question === undefined);
   if (missing >= 0) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       404,
       `No open question ${answers[missing]!.statusId} on this conversation`,
@@ -834,11 +840,15 @@ async function handleDirectAnswers(
   );
   let last: AsyncToolResultRecord | null = null;
   let outcome: ContinuationOutcome = { kind: "skip" };
+  let resumed = false;
   for (const row of settled) {
     if (!row) continue;
     last = row;
     outcome = await continueAfterAsyncToolSettlement(row);
+    resumed ||=
+      outcome.kind === "ready" && !NO_RUN_OUTCOMES.has(outcome.admission);
   }
+  if (!resumed) refundRun(plan, event.accountId);
   const alreadyAnswered = open
     .filter((_question, index) => settled[index] === null)
     .map((question) => question!.record.resultId);
@@ -907,6 +917,9 @@ async function settleChannelQuestion(
     return false;
   }
   const outcome = await continueAfterAsyncToolSettlement(settled);
+  if (outcome.kind === "skip" || NO_RUN_OUTCOMES.has(outcome.admission)) {
+    refundRun(plan, accountId);
+  }
   logInfo("Question answered", {
     channel: event.channelName,
     conversationKey: event.conversationKey,
@@ -925,12 +938,14 @@ async function handleDirectRequest(
     return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return emptySseResponse();
   }
 
@@ -1143,12 +1158,14 @@ async function handleAsyncRequest(
     return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       400,
       "Request must include at least one user event or tool approval response",
@@ -1199,6 +1216,7 @@ async function handleAsyncRequest(
 // Always 202, whatever `background` said: a live channel session replies in its channel.
 async function handleContinueRequest(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const target = await resolveReentryTarget({
     accountId: event.accountId,
@@ -1209,6 +1227,8 @@ async function handleContinueRequest(
   });
   // A scoped channel key with no live session behind it has nothing to continue.
   if (event.conversationKey !== target.conversationKey) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(404, "Conversation not found", {
       code: "conversation_not_found",
       param: "conversationKey",
@@ -1225,6 +1245,7 @@ async function handleContinueRequest(
     continuation,
     continuationDelivery(continuation),
   );
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (owned) {
     await startOwnedAsyncRun(owned);
   }
@@ -2718,7 +2739,6 @@ async function startScheduledAgentRun(
   event.cronRun = {
     cronId: job.cronId,
     runId: run.runId,
-    ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
   };
   let ownedEvent: DirectInboundEvent | null = null;
   try {
@@ -2737,12 +2757,16 @@ async function startScheduledAgentRun(
   } catch (err) {
     const error =
       err instanceof Error ? err.message : "Failed to start cron async worker";
-    await getStorage().crons.failRun(
-      job.accountId,
-      job.cronId,
-      run.runId,
-      error,
-    );
+    await getStorage()
+      .crons.failRun(job.accountId, job.cronId, run.runId, error)
+      .catch((markErr: unknown): void => {
+        logError("Cron run failure was not recorded", {
+          accountId: job.accountId,
+          cronId: job.cronId,
+          runId: run.runId,
+          error: markErr instanceof Error ? markErr.message : String(markErr),
+        });
+      });
     if (ownedEvent) {
       await recordAsyncRun(ownedEvent, { status: "failed", error: error });
       await failOwnedIngress(ownedEvent, error);

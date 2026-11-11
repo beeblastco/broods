@@ -19,6 +19,7 @@ import {
   type AgentReference,
   type BroodsClient,
 } from "../client.ts";
+import type { AgentStreamPart } from "../stream.ts";
 
 type SendMessagesOptions = Parameters<
   ChatTransport<UIMessage>["sendMessages"]
@@ -246,9 +247,9 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
 async function* queuedAnswer(
   onAccepted: () => void,
   client: BroodsClient,
-  stream: AsyncGenerator<TextStreamPart<ToolSet>>,
+  stream: AsyncGenerator<AgentStreamPart>,
   signal: AbortSignal,
-): AsyncGenerator<TextStreamPart<ToolSet>> {
+): AsyncGenerator<AgentStreamPart> {
   try {
     yield* stream;
   } catch (error) {
@@ -292,7 +293,7 @@ async function* queuedAnswer(
 
 function abortedRead(
   signal: AbortSignal | undefined,
-): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
+): Promise<IteratorResult<AgentStreamPart>> {
   return new Promise((resolve): void => {
     if (!signal) return;
     const done = (): void => resolve({ done: true, value: undefined });
@@ -302,7 +303,7 @@ function abortedRead(
 }
 
 function toReadableStream(
-  stream: AsyncGenerator<TextStreamPart<ToolSet>>,
+  stream: AsyncGenerator<AgentStreamPart>,
   signal: AbortSignal | undefined,
   onAnswered: () => void,
   onClosed: () => void = (): void => {},
@@ -335,7 +336,8 @@ function toReadableStream(
       if (next.done) {
         controller.close();
         onClosed();
-      } else controller.enqueue(next.value);
+      } else if (next.value.type !== "structured-output")
+        controller.enqueue(next.value);
     },
     cancel: (): void => {
       release();

@@ -6,8 +6,9 @@ under the mutations in `packages/convex/runtimeIngress.ts`. Each mutation is a
 Convex transaction, so a run is a sequence of `Step`s. A queued run either runs
 or ends unrun: expired, or completed by the owner's history write that already
 tells the result it resumes. An owner that never started puts its rows back in the
-queue (`releaseOwner` with `requeue`). The polling row written next to it lives in
-`Broods.AsyncResults`.
+queue (`releaseOwner` with `requeue`). A queued row expires only past its
+`queuedDeadline`, which a live owner's renewals keep moving. The polling row written next
+to it lives in `Broods.AsyncResults`.
 -/
 
 namespace Broods.Ingress
@@ -69,7 +70,7 @@ inductive Step where
   | expireQueued
   /-- `expireStaleOwner`. -/
   | expireStaleOwner
-  /-- The `maintain` cron. -/
+  /-- The `maintain` cron: a due queued row still inside its `queuedDeadline` moves to it. -/
   | maintain
 
 /-- `TERMINAL_STATUSES` in `runtimeIngress.ts`. -/
@@ -100,6 +101,14 @@ step's rows and claims nothing. -/
 def boundaryProceeds (c : Coord) (ownerEventId generation now : Nat) : Bool :=
   requireOwner c ownerEventId generation now && c.stopRequestedGeneration != some generation
 
+/-- `QUEUED_GRACE_AFTER_LEASE_MS`. -/
+def queuedGrace : Nat := 120000
+
+/-- `queuedDeadline`: a queued row lives to its own `expiresAt` or the conversation's lease
+end plus the grace, whichever is later. `releaseOwner` and `takeNext` keep the lease end. -/
+def queuedDeadline (c : Coord) (e : Envelope) : Nat :=
+  max e.expiresAt (c.leaseExpiresAt.getD 0 + queuedGrace)
+
 /-- `renewHeldLease`: keeps the lease while more than 9/10 of the TTL remains, else
 extends it to `now + ttl`. Scaled by 10 to stay in `Nat`. -/
 def Coord.renew (c : Coord) (now ttl : Nat) : Coord :=
@@ -114,12 +123,12 @@ def Coord.stepBoundary (c : Coord) (ownerEventId generation now ttl : Nat) : Coo
 /-- The effect of one step on one envelope at time `now`. -/
 def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
   | .promote g to, e =>
-    if e.status == .queued && decide (now < e.expiresAt) then
+    if e.status == .queued && decide (now < queuedDeadline c e) then
       { e with status := .processing, ownerGeneration := some g, appliedToEventId := some to }
     else e
   | .stepBoundary owner g claim, e =>
     if claim && boundaryProceeds c owner g now && e.status == .queued &&
-        decide (now < e.expiresAt) then
+        decide (now < queuedDeadline c e) then
       { e with status := .processing, ownerGeneration := some g, appliedToEventId := some owner }
     else e
   | .settle owner g o, e =>
@@ -141,7 +150,9 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
       { e with status := .queued, ownerGeneration := none, appliedToEventId := none }
     else e
   | .expireQueued, e =>
-    if e.status == .queued && decide (e.expiresAt ≤ now) then { e with status := .expired } else e
+    if e.status == .queued && decide (queuedDeadline c e ≤ now) then
+      { e with status := .expired }
+    else e
   | .expireStaleOwner, e =>
     if c.ownerEventId == some e.eventId && !c.live now && !e.status.terminal then
       { e with status := .expired }
@@ -151,6 +162,8 @@ def step (c : Coord) (now : Nat) : Step → Envelope → Envelope
       if e.status == .processing && c.live now &&
           e.ownerGeneration == some c.ownerGeneration then
         { e with expiresAt := c.leaseExpiresAt.getD e.expiresAt }
+      else if e.status == .queued && decide (now < queuedDeadline c e) then
+        { e with expiresAt := queuedDeadline c e }
       else { e with status := .expired }
     else e
 
@@ -342,6 +355,20 @@ theorem proof_covers {c : Coord} {owner t n L : Nat} {e : Envelope}
     exact ⟨hproof.1, hproof.2.1, by simpa using hn⟩
   exact ⟨hfence, fence_agreement hfence hrun hgen⟩
 
+/-- A queued row is not expired while its conversation's lease plus the grace lasts, however
+long ago its own `expiresAt` passed: neither sweep ends it, and a promotion still takes it. -/
+theorem queued_outlives_lease {c : Coord} {now L : Nat} {e : Envelope}
+    (hq : e.status = .queued) (hlease : c.leaseExpiresAt = some L) (hn : now < L + queuedGrace) :
+    (step c now .maintain e).status = .queued ∧ (step c now .expireQueued e).status = .queued := by
+  have hd : now < queuedDeadline c e := by
+    simp only [queuedDeadline, hlease, Option.getD_some]
+    omega
+  have hd' : ¬ queuedDeadline c e ≤ now := by omega
+  constructor
+  · simp only [step, hq]
+    split <;> simp_all
+  · simp [step, hq, hd']
+
 /-! ## Regression witnesses -/
 
 /-- At `now = leaseExpiresAt` the fence accepts the owner, `maintain` defers its
@@ -393,6 +420,18 @@ example :
     (step c 5 (.insertOwnedEvents 7 1 true) e).status = .completed ∧
       step c 5 (.insertOwnedEvents 7 0 true) e = e ∧
       step c 5 (.insertOwnedEvents 7 1 false) e = e := by
+  decide
+
+/-- A row queued at 1000 s with a 60 s TTL behind an owner renewed to 1900 s: past its TTL,
+`maintain` moves it to the lease end plus the grace and a promotion still takes it; with no
+lease, the same sweep expires it. -/
+example :
+    let c : Coord := ⟨1, some 7, some 1900000, none, false⟩
+    let e : Envelope := ⟨8, .queued, 1060000, none, none, false⟩
+    step c 1300000 .maintain e = { e with expiresAt := 1900000 + queuedGrace } ∧
+      (step c 1300000 (.promote 2 8) e).status = .processing ∧
+      (step { c with leaseExpiresAt := none } 1300000 .maintain e).status = .expired ∧
+      (step c (1900000 + queuedGrace) .expireQueued e).status = .expired := by
   decide
 
 end Broods.Ingress
