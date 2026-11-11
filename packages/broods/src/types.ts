@@ -32,7 +32,7 @@ export interface AnswersAccepted {
   status: "accepted";
   resultId: string;
   eventId?: string;
-  /** For `waitForAsyncStatus`. Set only when a turn started or queued: the last answer's. */
+  /** For `waitForAsyncStatus`. Set only when a turn started or queued: the last such turn. */
   runId?: string;
   statusUrl?: string;
   invoked?: boolean;

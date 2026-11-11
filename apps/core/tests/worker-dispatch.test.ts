@@ -799,13 +799,14 @@ describe("streamed runs", (): void => {
     spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
       null,
     );
-    // A was still open; someone answered B a moment earlier.
+    // A was still open; someone answered B a moment earlier, until `bOpen`.
+    let bOpen = false;
     spyOn(
       asyncToolResult,
       "settleAsyncToolResultFromCallback",
     ).mockImplementation(
       async ({ resultId }): Promise<AsyncToolResultRecord | null> =>
-        resultId === "async_tool_a"
+        resultId === "async_tool_a" || bOpen
           ? { ...question(resultId), status: "completed" }
           : null,
     );
@@ -853,6 +854,22 @@ describe("streamed runs", (): void => {
       expect(refusedBody).toMatchObject({ status: "accepted", invoked: false });
       expect(refusedBody).not.toHaveProperty("runId");
       expect(refusedBody).not.toHaveProperty("statusUrl");
+
+      // Both open: A starts a turn, then B's resume finds the queue full.
+      bOpen = true;
+      admit.mockResolvedValueOnce({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const mixed = await answer();
+
+      expect(await mixed.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_b",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+      });
     } finally {
       delete process.env.PUBLIC_BASE_URL;
     }

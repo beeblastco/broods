@@ -4607,7 +4607,7 @@ components:
           description: Event id of the resumed turn. Present when it resumed.
         runId:
           type: string
-          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last answer's turn only.
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last turn an answer started or queued.
         statusUrl:
           type: string
           format: uri
