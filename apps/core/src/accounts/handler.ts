@@ -21,10 +21,7 @@ import {
   MICROVM_SHELL_AUTH_HEADER,
   microvmShellConnection,
 } from "../harness/sandbox/microvm-executor.ts";
-import {
-  workdirConnection,
-  workdirPtyUrl,
-} from "../harness/sandbox/workdir-executor.ts";
+import { workdirTerminalTarget } from "../harness/sandbox/workdir-executor.ts";
 import {
   queueMirrorRemove,
   queueMirrorWrite,
@@ -482,8 +479,10 @@ async function openSandboxTerminal(
     );
   }
   // The PTY needs a running guest.
+  let gone = false;
   if (context.executor.getInstanceInfo && context.executor.resume) {
     const info = await context.executor.getInstanceInfo(context.ref);
+    gone = info?.state === "terminating";
     if (info?.state === "suspended") {
       await auditedSandboxCall(context, async () => {
         await context.executor.resume?.(context.ref);
@@ -538,11 +537,20 @@ async function openSandboxTerminal(
       )}`,
     };
   } else {
-    const { baseUrl, apiKey } = workdirConnection(context.config);
-    target = {
-      url: workdirPtyUrl(baseUrl, externalId),
-      authorization: `Bearer ${apiKey}`,
-    };
+    // The host mints a token for a deleted sandbox too, and answers 404 for one it forgot.
+    if (gone) {
+      await context.audit("error", {
+        errorMessage: "Sandbox no longer exists on the workdir host",
+      });
+
+      return errorResponse(
+        404,
+        "The sandbox no longer exists on the workdir host",
+      );
+    }
+    target = await auditedSandboxCall(context, () =>
+      workdirTerminalTarget(context.config, externalId),
+    );
   }
   const expiresAt = bearerExpiresAt ?? Date.now() + TERMINAL_TICKET_TTL_MS;
   const token = sealTerminalTicket(

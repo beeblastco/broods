@@ -83,6 +83,10 @@ const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
 const AUTO_STOP_MIN_SECONDS = 30;
 const AUTO_STOP_MAX_SECONDS = 60 * 60;
 
+interface WorkdirPtyToken {
+  token: string;
+}
+
 export interface WorkdirHarnessReservation {
   readonly sandbox: Sandbox;
   readonly isFirstCreate: boolean;
@@ -795,7 +799,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 }
 
-export function workdirConnection(config: SandboxExecutorConfig): {
+function workdirConnection(config: SandboxExecutorConfig): {
   baseUrl: string;
   apiKey: string;
 } {
@@ -823,12 +827,34 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   };
 }
 
-export function workdirPtyUrl(baseUrl: string, externalId: string): string {
-  const url = new URL(baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}/v1/sandboxes/${encodeURIComponent(externalId)}/pty`;
+// The host mints a one-time PTY token, so a terminal ticket never carries the API key.
+export async function workdirTerminalTarget(
+  config: SandboxExecutorConfig,
+  externalId: string,
+): Promise<{ url: string; authorization: string }> {
+  const { baseUrl, apiKey } = workdirConnection(config);
+  const sandboxUrl = `${stripTrailingSlashes(baseUrl)}/v1/sandboxes/${encodeURIComponent(externalId)}`;
+  const response = await fetch(`${sandboxUrl}/pty-token`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}` },
+  });
+  if (response.status === 404 || response.status === 405) {
+    throw new ClientError(
+      "The workdir host does not issue terminal tokens; update the workdir host to open a live terminal",
+      "conflict",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(
+      `workdir terminal token request failed with ${response.status}`,
+    );
+  }
+  const minted = (await response.json()) as WorkdirPtyToken;
 
-  return url.toString();
+  return {
+    url: `${sandboxUrl.replace(/^http/, "ws")}/pty`,
+    authorization: `Bearer ${minted.token}`,
+  };
 }
 
 function workdirClient(config: SandboxExecutorConfig): Client {

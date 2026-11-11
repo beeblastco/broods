@@ -267,13 +267,14 @@ sequenceDiagram
 
 | Provider     | Upstream                                | Credential in the ticket                                      |
 | ------------ | --------------------------------------- | ------------------------------------------------------------- |
-| `sandbox`    | workdir PTY WebSocket                   | workdir API key as bearer                                     |
+| `sandbox`    | workdir PTY WebSocket                   | one-time terminal token the workdir host minted, as bearer    |
 | `lambda`     | MicroVM native shell (`SHELL_INGRESS`)  | `CreateMicrovmShellAuthToken` JWE, 30 min, `X-aws-proxy-auth` |
 | `cloudflare` | bridge `GET /v1/sandboxes/:id/terminal` | terminal token for that sandbox as bearer, ticket TTL         |
 
 - The ticket is AES-256-GCM sealed (`src/shared/terminal-ticket.ts`), so the browser holds only an opaque token. If NATS is down the upgrade answers 502 rather than skip the spend check.
 - A Cloudflare Container that is not running answers 409; a command has to start it first.
 - The Cloudflare terminal token (`apps/cloudflare-sandbox/src/terminal-token.ts`) is an HMAC of the sandbox id and expiry, signed with the bridge API key. The bridge accepts it only on `/terminal` for that sandbox id and until it expires, so the gateway never holds the key that reaches every sandbox.
+- For workdir, core asks the host for a token with `POST /v1/sandboxes/:id/pty-token`, on the same URL and API key as its other calls (an account's own `workdirUrl` and `apiKey` when set). The host keeps the token only in memory and accepts it once, on that sandbox's PTY, for 120 seconds; the ticket keeps its own two-minute life, whatever the host answers. A terminal token lets its holder run commands in that one sandbox for up to two minutes, once. A host without the route answers 404, and the terminal answers 409 saying the workdir host needs updating; core never falls back to the API key.
 
 ## Background jobs
 

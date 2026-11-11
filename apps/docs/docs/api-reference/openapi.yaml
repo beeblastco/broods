@@ -2621,10 +2621,13 @@ paths:
           {
             description: Reservation does not belong to this account or sandbox config,
           }
-        "404": { description: No reserved instance for this reservation key }
+        "404":
+          {
+            description: "No reserved instance for this reservation key, or the workdir host no longer has the sandbox",
+          }
         "409":
           {
-            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, or the Cloudflare Container is not running",
+            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, the Cloudflare Container is not running, or the workdir host is too old to issue terminal tokens",
           }
 
   /v1/workspaces:

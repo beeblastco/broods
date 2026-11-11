@@ -41,6 +41,10 @@ interface FetchCall {
   body: Record<string, unknown> | undefined;
 }
 
+const PTY_TOKEN = "wtt_minted_by_the_host";
+const PTY_TOKEN_EXPIRES_AT = "2099-01-01T00:00:00Z";
+let ptyTokenAuthorizations: string[] = [];
+
 let fetchCalls: FetchCall[] = [];
 const fetchMock = mock(
   async (url: string | URL, init?: RequestInit): Promise<Response> => {
@@ -60,6 +64,16 @@ const fetchMock = mock(
     }
     if (method === "DELETE" && path === "/v1/sandboxes/sbx_handler") {
       return fetchResponse({});
+    }
+    if (method === "POST" && path === "/v1/sandboxes/sbx_handler/pty-token") {
+      ptyTokenAuthorizations.push(
+        new Headers(init?.headers).get("authorization") ?? "",
+      );
+
+      return Response.json({
+        token: PTY_TOKEN,
+        expires_at: PTY_TOKEN_EXPIRES_AT,
+      });
     }
     if (method === "POST" && path === "/v1/sandboxes/sbx_handler/exec") {
       return fetchResponse({
@@ -194,6 +208,7 @@ afterEach(() => {
   else process.env.FILESYSTEM_BUCKET_NAME = ORIGINAL_FILESYSTEM_BUCKET_NAME;
   globalThis.fetch = realFetch;
   fetchCalls = [];
+  ptyTokenAuthorizations = [];
   fetchMock.mockClear();
   getSandboxExternalIdMock.mockClear();
   removeSandboxInstanceMock.mockClear();
@@ -520,7 +535,7 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.status).toBe(200);
   });
 
-  it("mints a sealed terminal ticket that targets the reserved workdir PTY", async () => {
+  it("seals a host-minted workdir PTY token, never the API key, into the terminal ticket", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
     process.env.WORKDIR_URL = "https://workdir.example.com";
@@ -533,14 +548,7 @@ describe("account-manage sandbox endpoints", () => {
       options: { reservationKey: reservationKey },
     });
 
-    const response = await handler(
-      createEvent(
-        "POST",
-        `/v1/sandboxes/${created.sandboxId}/terminal`,
-        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey: reservationKey },
-      ),
-    );
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
 
     expect(response.status).toBe(200);
     const body = (await responseJson(response)) as {
@@ -549,14 +557,103 @@ describe("account-manage sandbox endpoints", () => {
       websocketPath: string;
     };
     expect(body.websocketPath).toBe(TERMINAL_WEBSOCKET_PATH);
+    // The host answers 2099; the ticket keeps its own two minutes.
     expect(body.expiresAt).toBeGreaterThan(Date.now());
-    expect(body.token).not.toContain("tenant-key");
+    expect(body.expiresAt).toBeLessThanOrEqual(Date.now() + 120_000);
     expect(openTerminalTicket(body.token, "service-secret")).toBeNull();
-    expect(openTerminalTicket(body.token, "terminal-secret")).toMatchObject({
+    const ticket = openTerminalTicket(body.token, "terminal-secret");
+    expect(ticket).toMatchObject({
       url: "wss://workdir.example.com/v1/sandboxes/sbx_handler/pty",
-      authorization: "Bearer tenant-key",
+      authorization: `Bearer ${PTY_TOKEN}`,
       accountId: ACCOUNT_ID,
     });
+    expect(JSON.stringify(ticket)).not.toContain("tenant-key");
+    expect(ptyTokenAuthorizations).toEqual(["Bearer tenant-key"]);
+  });
+
+  it("asks an account's own workdir host for the PTY token with its own key", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.WORKDIR_API_KEY = "platform-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: {
+        reservationKey: reservationKey,
+        workdirUrl: "https://own-workdir.example.com",
+        apiKey: "own-key",
+      },
+    });
+
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
+
+    expect(response.status).toBe(200);
+    const { token } = (await responseJson(response)) as { token: string };
+    expect(openTerminalTicket(token, "terminal-secret")).toMatchObject({
+      url: "wss://own-workdir.example.com/v1/sandboxes/sbx_handler/pty",
+      authorization: `Bearer ${PTY_TOKEN}`,
+    });
+    expect(ptyTokenAuthorizations).toEqual(["Bearer own-key"]);
+  });
+
+  it("refuses the terminal with an update hint when the workdir host cannot mint tokens", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = (async (
+      url: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> =>
+      String(url).endsWith("/pty-token")
+        ? Response.json(
+            { error: { code: "not_found", message: "route not found" } },
+            { status: 404 },
+          )
+        : fetchMock(url, init)) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
+
+    expect(response.status).toBe(409);
+    const text = JSON.stringify(await responseJson(response));
+    expect(text).toContain("update the workdir host");
+    expect(text).not.toContain("tenant-key");
+  });
+
+  it("answers 404 and asks for no token when the workdir host no longer has the sandbox", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = (async (
+      url: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> =>
+      new URL(String(url)).pathname === "/v1/sandboxes/sbx_handler" &&
+      (init?.method ?? "GET") === "GET"
+        ? Response.json({ id: "sbx_handler", state: "deleted", image: "base" })
+        : fetchMock(url, init)) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
+
+    expect(response.status).toBe(404);
+    const text = JSON.stringify(await responseJson(response));
+    expect(text).toContain("no longer exists");
+    expect(ptyTokenAuthorizations).toEqual([]);
   });
 
   it("mints a sealed terminal ticket that targets the MicroVM native shell", async () => {
@@ -758,6 +855,20 @@ async function seedSandbox(
     name: "persistent",
     config: config,
   });
+}
+
+function workdirTerminal(
+  sandboxId: string,
+  reservationKey: string,
+): Promise<Response> {
+  return handler(
+    createEvent(
+      "POST",
+      `/v1/sandboxes/${sandboxId}/terminal`,
+      { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+      { reservationKey: reservationKey },
+    ),
+  );
 }
 
 function fetchResponse(payload: unknown, status = 200): Response {
