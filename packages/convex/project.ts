@@ -137,9 +137,6 @@ type HomeTarget = OrgBootstrap & {
   stageId: Id<"stages"> | null;
 };
 
-// Dashboard tabs loaded before this release call these paths until they reload.
-export { projectById as getById, projects as list } from "./dashboardReads";
-
 export const create = mutation({
   args: {
     name: v.string(),

@@ -1826,51 +1826,11 @@ export declare const api: {
         { name: string },
         Id<"orgs">
       >;
-      getActive: FunctionReference<
-        "query",
-        "public",
-        {},
-        {
-          _creationTime: number;
-          _id: Id<"orgs">;
-          createdAt: number;
-          name: string;
-          onboardedAt?: number;
-          ownerAuthId: string;
-          plan: "free" | "pro";
-          slug: string;
-        } | null
-      >;
-      getActiveAccount: FunctionReference<
-        "query",
-        "public",
-        { requiredRole?: "owner" | "admin" | "member" },
-        {
-          accountId: Id<"accounts">;
-          role: "owner" | "admin" | "member";
-          status: "active" | "disabled";
-        } | null
-      >;
       getOrCreate: FunctionReference<
         "mutation",
         "public",
         {},
         { needsProvision: boolean; orgId: Id<"orgs"> }
-      >;
-      list: FunctionReference<
-        "query",
-        "public",
-        {},
-        Array<{
-          _creationTime: number;
-          _id: Id<"orgs">;
-          createdAt: number;
-          name: string;
-          onboardedAt?: number;
-          ownerAuthId: string;
-          plan: "free" | "pro";
-          slug: string;
-        }>
       >;
       remove: FunctionReference<
         "mutation",
@@ -1898,60 +1858,6 @@ export declare const api: {
       "public",
       { description?: string; name: string },
       Id<"projects">
-    >;
-    getById: FunctionReference<
-      "query",
-      "public",
-      { projectId: Id<"projects"> },
-      null | {
-        _creationTime: number;
-        _id: Id<"projects">;
-        authId: string;
-        description?: string;
-        linkClaim?: { expiresAt: number; repoId: number };
-        name: string;
-        orgId: Id<"orgs">;
-        repo?: {
-          deployKeyIds: Array<Id<"deployKeys">>;
-          developmentBranch?: string;
-          fullName: string;
-          installationId: number;
-          productionBranch?: string;
-          protectedSecrets: boolean;
-          repoId: number;
-          rootDirectory: string;
-          setupPullRequestUrl?: string;
-        };
-        slug: string;
-        updatedAt: number;
-      }
-    >;
-    list: FunctionReference<
-      "query",
-      "public",
-      {},
-      Array<{
-        _creationTime: number;
-        _id: Id<"projects">;
-        authId: string;
-        description?: string;
-        linkClaim?: { expiresAt: number; repoId: number };
-        name: string;
-        orgId: Id<"orgs">;
-        repo?: {
-          deployKeyIds: Array<Id<"deployKeys">>;
-          developmentBranch?: string;
-          fullName: string;
-          installationId: number;
-          productionBranch?: string;
-          protectedSecrets: boolean;
-          repoId: number;
-          rootDirectory: string;
-          setupPullRequestUrl?: string;
-        };
-        slug: string;
-        updatedAt: number;
-      }>
     >;
     openHome: FunctionReference<
       "mutation",
@@ -2257,22 +2163,6 @@ export declare const api: {
         sourceStageId: Id<"stages">;
       },
       Id<"stages">
-    >;
-    list: FunctionReference<
-      "query",
-      "public",
-      { projectId: Id<"projects"> },
-      Array<{
-        _creationTime: number;
-        _id: Id<"stages">;
-        authId: string;
-        deploymentRegion?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
-        isDefault: boolean;
-        kind: "development" | "production" | "custom";
-        name: string;
-        projectId: Id<"projects">;
-        updatedAt: number;
-      }>
     >;
     remove: FunctionReference<
       "mutation",
@@ -2630,27 +2520,6 @@ export declare const internal: {
         "query",
         "internal",
         { orgId: string },
-        {
-          _creationTime: number;
-          _id: Id<"accounts">;
-          auditRetentionDays?: number;
-          createdAt: number;
-          description?: string;
-          orgId: string;
-          secretHash: string;
-          secretHint?: string;
-          secretRotatedAt?: number;
-          secretRotatedBy?: Id<"users">;
-          status: "active" | "disabled";
-          storageExternalId?: string;
-          updatedAt: number;
-          username: string;
-        } | null
-      >;
-      getBySecretHash: FunctionReference<
-        "query",
-        "internal",
-        { secretHash: string },
         {
           _creationTime: number;
           _id: Id<"accounts">;
@@ -3947,53 +3816,6 @@ export declare const internal: {
           updatedAt: number;
         } | null
       >;
-      resolveSession: FunctionReference<
-        "query",
-        "internal",
-        { tokenHash: string },
-        {
-          accountId: Id<"accounts">;
-          policy: {
-            mode?: "enforce" | "audit";
-            rules: Array<{
-              actions: Array<string>;
-              conditions?: Array<{
-                attribute: string;
-                operator:
-                  | "equals"
-                  | "notEquals"
-                  | "in"
-                  | "notIn"
-                  | "prefix"
-                  | "contains";
-                value:
-                  | string
-                  | number
-                  | boolean
-                  | Array<string>
-                  | Array<number>
-                  | Array<boolean>;
-              }>;
-              effect: "allow" | "deny";
-              id: string;
-              resources?: {
-                filePaths?: Array<string>;
-                mcpIds?: Array<string>;
-                resourceIds?: Array<string>;
-                skillPaths?: Array<string>;
-                subagentIds?: Array<string>;
-                toolNames?: Array<string>;
-                workspaceIds?: Array<string>;
-                workspaceNames?: Array<string>;
-              };
-            }>;
-            version: 1;
-          };
-          projectId?: Id<"projects">;
-          roleId: string;
-          stageId?: Id<"stages">;
-        } | null
-      >;
       resourceScope: FunctionReference<
         "query",
         "internal",
@@ -4123,27 +3945,6 @@ export declare const internal: {
           sourceEncryptionTag?: string;
         },
         Id<"agents">
-      >;
-      getById: FunctionReference<
-        "query",
-        "internal",
-        { accountId: Id<"accounts">; agentId: string },
-        {
-          _creationTime: number;
-          _id: Id<"agents">;
-          accountId: Id<"accounts">;
-          createdAt: number;
-          description?: string;
-          encryptedConfig?: string;
-          encryptedSourceConfig?: string;
-          encryptionIv?: string;
-          encryptionTag?: string;
-          name: string;
-          requireUserToken?: boolean;
-          sourceEncryptionIv?: string;
-          sourceEncryptionTag?: string;
-          updatedAt: number;
-        } | null
       >;
       getByName: FunctionReference<
         "query",
@@ -4672,36 +4473,6 @@ export declare const internal: {
           stageSlug: string;
         } | null
       >;
-      getByApiKeyHash: FunctionReference<
-        "query",
-        "internal",
-        { apiKeyHash: string },
-        {
-          account: {
-            _creationTime: number;
-            _id: Id<"accounts">;
-            auditRetentionDays?: number;
-            createdAt: number;
-            description?: string;
-            orgId: string;
-            secretHash: string;
-            secretHint?: string;
-            secretRotatedAt?: number;
-            secretRotatedBy?: Id<"users">;
-            status: "active" | "disabled";
-            storageExternalId?: string;
-            updatedAt: number;
-            username: string;
-          };
-          accountId: Id<"accounts">;
-          endpointId: string;
-          projectId: Id<"projects">;
-          projectSlug: string;
-          stageId: Id<"stages">;
-          stageSlug: string;
-          userTokenSecret?: { ciphertext: string; iv: string; tag: string };
-        } | null
-      >;
       touchLastUsed: FunctionReference<
         "mutation",
         "internal",
@@ -4720,62 +4491,6 @@ export declare const internal: {
           name: string;
         },
         Id<"agentPolicies">
-      >;
-      getById: FunctionReference<
-        "query",
-        "internal",
-        { accountId: Id<"accounts">; policyId: string },
-        {
-          _creationTime: number;
-          _id: Id<"agentPolicies">;
-          accountId: Id<"accounts">;
-          createdAt: number;
-          createdBy?: Id<"users">;
-          deletedAt?: number;
-          description?: string;
-          document: {
-            mode?: "enforce" | "audit";
-            rules: Array<{
-              actions: Array<string>;
-              conditions?: Array<{
-                attribute: string;
-                operator:
-                  | "equals"
-                  | "notEquals"
-                  | "in"
-                  | "notIn"
-                  | "prefix"
-                  | "contains";
-                value:
-                  | string
-                  | number
-                  | boolean
-                  | Array<string>
-                  | Array<number>
-                  | Array<boolean>;
-              }>;
-              effect: "allow" | "deny";
-              id: string;
-              resources?: {
-                filePaths?: Array<string>;
-                mcpIds?: Array<string>;
-                resourceIds?: Array<string>;
-                skillPaths?: Array<string>;
-                subagentIds?: Array<string>;
-                toolNames?: Array<string>;
-                workspaceIds?: Array<string>;
-                workspaceNames?: Array<string>;
-              };
-            }>;
-            version: 1;
-          };
-          managedBy?: "cli" | "dashboard" | "api";
-          name: string;
-          projectId?: Id<"projects">;
-          stageId?: Id<"stages">;
-          status: "active" | "deleted";
-          updatedAt: number;
-        } | null
       >;
       list: FunctionReference<
         "query",
@@ -8733,31 +8448,6 @@ export declare const internal: {
           name: string;
         },
         Id<"sandboxConfigs">
-      >;
-      getById: FunctionReference<
-        "query",
-        "internal",
-        { accountId: Id<"accounts">; sandboxId: string },
-        {
-          _creationTime: number;
-          _id: Id<"sandboxConfigs">;
-          accountId: Id<"accounts">;
-          createdAt: number;
-          description?: string;
-          encryptedConfig?: string;
-          encryptedSourceConfig?: string;
-          encryptionIv?: string;
-          encryptionTag?: string;
-          managedBy?: "cli" | "dashboard" | "api";
-          name: string;
-          projectId?: Id<"projects">;
-          runtimeVariables?: Array<{ key: string; value: string }>;
-          snapshotId?: string;
-          sourceEncryptionIv?: string;
-          sourceEncryptionTag?: string;
-          stageId?: Id<"stages">;
-          updatedAt: number;
-        } | null
       >;
       list: FunctionReference<
         "query",

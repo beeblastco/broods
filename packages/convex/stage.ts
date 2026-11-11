@@ -32,9 +32,6 @@ const STAGE_NOT_FOUND = "Stage not found.";
 const STAGE_ADMIN_REQUIRED =
   "Stages can only be created or promoted by an org admin.";
 
-// Dashboard tabs loaded before this release call these paths until they reload.
-export { stages as list } from "./dashboardReads";
-
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
