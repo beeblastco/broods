@@ -8,6 +8,7 @@ import type { ChannelRecord } from "../src/shared/domain/channel-record.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
 import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
 import {
+  getStorage,
   resetStorageForTests,
   setStorageForTests,
   type Storage,
@@ -240,6 +241,32 @@ describe("handleScheduledCron", () => {
     ).toMatchObject({ status: "failed", ownerGeneration: 1 });
   });
 
+  it("releases an owned conversation when marking the cron run failed also fails", async (): Promise<void> => {
+    getStorage().crons.failRun = async function (): Promise<void> {
+      throw new Error("cron store unavailable");
+    };
+    const mutations: [string, Record<string, unknown>][] = [];
+    runtime.mutate = async function (
+      name: string,
+      args: Record<string, unknown>,
+    ) {
+      mutations.push([name, args]);
+      if (name === "acceptIngress") {
+        return { outcome: "owner", ownerGeneration: 1 };
+      }
+      if (name === "createAsyncAgentResult") {
+        throw new Error("result store unavailable");
+      }
+
+      return null;
+    } as never;
+
+    await expect(invokeCron()).rejects.toThrow("result store unavailable");
+    expect(
+      mutations.find(([name]): boolean => name === "settleIngress")?.[1],
+    ).toMatchObject({ status: "failed", ownerGeneration: 1 });
+  });
+
   it("frames the stored instructions with the schedule that fired", async () => {
     await expect(
       invokeCron({ scheduledTime: "2026-08-14T09:00:00Z" }),
@@ -449,19 +476,16 @@ describe("queued envelope without a config ref", () => {
 });
 
 describe("settleCronRun", () => {
-  it("retires a one-time job once its run settles", async () => {
+  it("records the outcome of a run that settled", async () => {
     const { settleCronRun } = await import("../src/harness/handler.ts");
     const completeRun = mock(async function (): Promise<void> {});
-    const remove = mock(async function (): Promise<boolean> {
-      return true;
-    });
     setStorageForTests({
-      crons: { completeRun: completeRun, remove: remove },
+      crons: { completeRun: completeRun },
     } as unknown as Storage);
 
     await settleCronRun(
       "acct_1",
-      { cronId: "cron_1", runId: "run_1", oneShot: true },
+      { cronId: "cron_1", runId: "run_1" },
       { status: "completed", response: "done" },
     );
 
@@ -471,73 +495,22 @@ describe("settleCronRun", () => {
       "run_1",
       "done",
     );
-    expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
-  });
-
-  it("retires a one-time job whose run failed, and keeps a recurring one", async () => {
-    const { settleCronRun } = await import("../src/harness/handler.ts");
-    const failRun = mock(async function (): Promise<void> {});
-    const remove = mock(async function (): Promise<boolean> {
-      return true;
-    });
-    setStorageForTests({
-      crons: { failRun: failRun, remove: remove },
-    } as unknown as Storage);
-
-    await settleCronRun(
-      "acct_1",
-      { cronId: "cron_1", runId: "run_1", oneShot: true },
-      { status: "failed", error: "model refused" },
-    );
-    await settleCronRun(
-      "acct_1",
-      { cronId: "cron_2", runId: "run_2" },
-      { status: "failed", error: "model refused" },
-    );
-
-    expect(failRun).toHaveBeenCalledTimes(2);
-    expect(remove).toHaveBeenCalledTimes(1);
-    expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
   });
 
   it("leaves a paused run open for the turn that answers it", async () => {
     const { settleCronRun } = await import("../src/harness/handler.ts");
     const failRun = mock(async function (): Promise<void> {});
-    const remove = mock(async function (): Promise<boolean> {
-      return true;
-    });
     setStorageForTests({
-      crons: { failRun: failRun, remove: remove },
+      crons: { failRun: failRun },
     } as unknown as Storage);
 
     await settleCronRun(
       "acct_1",
-      { cronId: "cron_1", runId: "run_1", oneShot: true },
+      { cronId: "cron_1", runId: "run_1" },
       { status: "awaiting_approval", approvals: [] },
     );
 
     expect(failRun).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
-  });
-
-  it("keeps the run alive when the cleanup delete fails", async () => {
-    const { settleCronRun } = await import("../src/harness/handler.ts");
-    setStorageForTests({
-      crons: {
-        completeRun: async function (): Promise<void> {},
-        remove: async function (): Promise<boolean> {
-          throw new Error("scheduler unreachable");
-        },
-      },
-    } as unknown as Storage);
-
-    expect(
-      await settleCronRun(
-        "acct_1",
-        { cronId: "cron_1", runId: "run_1", oneShot: true },
-        { status: "completed", response: "done" },
-      ),
-    ).toBeUndefined();
   });
 });
 

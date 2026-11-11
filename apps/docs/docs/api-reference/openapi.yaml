@@ -94,16 +94,10 @@ paths:
                   status:
                     type: string
                     example: ok
-                  activeWebSockets:
-                    type: integer
-                  maxWebSockets:
-                    type: integer
               examples:
                 healthy:
                   value:
                     status: ok
-                    activeWebSockets: 3
-                    maxWebSockets: 1000
 
   /v1/runs:
     post:
@@ -199,13 +193,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or an `answers` entry names a prompt that was already answered (`question_already_answered`). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the only SSE `error` frame (`StreamRefusal`), with the same `code`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation is already processing another turn. Try again when the current turn finishes.","code":"conversation_busy","errorType":"conflict_error"}
         "429":
-          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
+          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After`; on a streamed run it arrives as the only SSE `error` frame (`StreamRefusal`), with the same `code`. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
@@ -213,16 +212,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation ingress queue is at capacity","code":"ingress_capacity","errorType":"rate_limit_error"}
         "503":
-          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile. This POST checks the queue before ingress records anything and before the plan counts the run, and only a full queue answers 503, so a retry after `Retry-After` with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` even while the queue is full, never a 503 it would only retry into. A streamed run gets one SSE `error` frame; a background POST (or `answers`, `continue`) a JSON envelope. A run that passed the check and owns its conversation is never failed for capacity later; it queues. One queued behind another turn of its conversation (status `queued`) can still fail for capacity if the queue is full when that turn ends.
+          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile. This POST checks the queue before ingress records anything and before the plan counts the run, and only a full queue answers 503, so a retry after `Retry-After` with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` even while the queue is full, never a 503 it would only retry into. A streamed run gets one SSE `error` frame (`StreamRefusal`) with the same `code`; a background POST (or `answers`, `continue`) a JSON envelope. A run that passed the check and owns its conversation is never failed for capacity later; it queues. One queued behind another turn of its conversation (status `queued`) can still fail for capacity if the queue is full when that turn ends.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -585,6 +588,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
         "503":
           description: The deployment's run queue is full, as for `POST /v1/runs`
           headers:
@@ -593,8 +599,7 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -1062,6 +1067,8 @@ paths:
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
                       attachmentObjectsDeleted: 3
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/accounts/{accountId}/rotate-secret:
     post:
@@ -1183,6 +1190,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteResponse"
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
+
+  /v1/account/auth/token:
+    delete:
+      tags:
+        - Accounts
+      summary: Revoke own CLI login
+      description: Revokes the `bcli_` login token sent as the bearer. `broods logout` calls it.
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Login revoked
+        "401":
+          description: Not a `bcli_` login, unknown, lent to an agent, or already revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/account/rotate-secret:
     post:
@@ -1944,6 +1971,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
         "503":
           description: The deployment's run queue is full, as for `POST /v1/runs`
           headers:
@@ -1952,8 +1982,7 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
-                format: binary
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -2313,6 +2342,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Suspended }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -2343,6 +2376,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Running }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
             description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
@@ -2377,6 +2414,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Terminated }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -2408,14 +2449,123 @@ paths:
                 name: { type: string }
       responses:
         "200": { description: "Snapshot active, or building on lambda" }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
           }
+        "404": { description: No reserved instance for this reservation key }
         "409":
           {
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",
           }
+
+  /v1/sandboxes/{sandboxId}/exec:
+    post:
+      tags: [Sandboxes]
+      summary: Run a command in a sandbox instance
+      description: Runs `code` in a persistent sandbox reservation and answers its output, as the agent's `bash` tool would. The `reservationKey` must belong to this account and sandbox config. A scoped key or role session needs `sandboxes:write` on the sandbox. The audit row names the calling credential.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey, code]
+              properties:
+                reservationKey: { type: string }
+                code: { type: string, maxLength: 20000 }
+                timeoutSeconds:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `timeout`; a value above the provider's cap uses the default.",
+                  }
+                outputLimitBytes:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `outputLimitBytes`; a value above the provider's cap uses the default.",
+                  }
+      responses:
+        "200":
+          description: The command ran; `ok` is false when it exited non-zero
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  runtime: { type: string }
+                  exitCode: { type: [integer, "null"] }
+                  stdout: { type: string }
+                  stderr: { type: string }
+                  durationMs: { type: number }
+                  truncated: { type: boolean }
+                  provider: { type: string }
+        "400":
+          { description: "`code` is missing or longer than 20,000 characters" }
+        "402":
+          {
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+
+  /v1/sandboxes/{sandboxId}/refresh:
+    post:
+      tags: [Sandboxes]
+      summary: Refresh sandbox instance status
+      description: Asks the provider for the instance's state and writes it to the live-instance registry row. An instance the provider no longer has, or is terminating, is removed from the registry and answers `terminated`. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    {
+                      type: string,
+                      enum: [running, suspended, error, terminated],
+                    }
+                  externalId: { type: string }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support status refresh }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:
@@ -2459,6 +2609,10 @@ paths:
                   token: { type: string }
                   expiresAt: { type: number }
                   websocketPath: { type: string }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
             description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
@@ -4431,14 +4585,16 @@ components:
         statusUrl:
           type: string
           format: uri
-          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
 
     AnswersAccepted:
       type: object
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume.
+        nothing to resume. A prompt that was already answered is skipped
+        when another answer in the same request landed, and listed in
+        `alreadyAnswered`.
       required: [status, resultId]
       properties:
         status:
@@ -4449,9 +4605,21 @@ components:
         eventId:
           type: string
           description: Event id of the resumed turn. Present when it resumed.
+        runId:
+          type: string
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last turn an answer started or queued.
+        statusUrl:
+          type: string
+          format: uri
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
+        alreadyAnswered:
+          type: array
+          items:
+            type: string
+          description: The `statusId`s in this request that were already answered and skipped. Present only when there were any.
 
     IngressStatus:
       type: object
@@ -4754,6 +4922,28 @@ components:
               description: The request field the error is about, when it is about one.
               example: limit
 
+    StreamRefusal:
+      type: object
+      description: The only SSE frame of a streamed run refused before it starts, sent as one `data:` line with a non-2xx status. `error`, `code` and `errorType` match the JSON envelope's `message`, `code` and `type` for the same refusal. A core before this field set sends only `type` and `error`.
+      required:
+        - type
+        - error
+      properties:
+        type:
+          type: string
+          const: error
+        error:
+          type: string
+          description: Human-readable prose. Do not branch on it.
+        code:
+          type: string
+          description: The envelope's `code`. Branch on this.
+          example: conversation_busy
+        errorType:
+          type: string
+          description: The envelope's `type`, renamed because `type` names the frame.
+          example: conflict_error
+
     Account:
       type: object
       properties:
@@ -5004,6 +5194,8 @@ components:
           $ref: "#/components/schemas/ProviderConfig"
         model:
           $ref: "#/components/schemas/ModelConfig"
+        transcription:
+          $ref: "#/components/schemas/TranscriptionConfig"
         agent:
           $ref: "#/components/schemas/AgentRuntimeConfig"
         harness:
@@ -5802,6 +5994,26 @@ components:
           additionalProperties:
             type: string
 
+    TranscriptionConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        Which provider and model turn inbound audio into text. Chat models that
+        hear audio themselves (Google, Vertex) skip transcription.
+      properties:
+        provider:
+          type: string
+          description: >-
+            Provider that transcribes, with its credentials from the matching
+            `provider` entry. Defaults to `model.provider`. OpenAI, Groq and
+            Mistral ship speech-to-text.
+        modelId:
+          type: string
+          description: >-
+            Speech-to-text model. Defaults to the widest-container model the
+            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
+            Groq, `voxtral-mini-latest` on Mistral).
+
     ModelConfig:
       type: object
       description: Controls the Vercel AI SDK `streamText` call. All standard call settings pass through directly, and provider-specific settings use `providerOptions`.
@@ -5815,14 +6027,6 @@ components:
         modelId:
           type: string
           description: Provider-specific model identifier
-        transcriptionModelId:
-          type: string
-          description: >-
-            Speech-to-text model for inbound audio, on the same provider and
-            credentials as `modelId`. Defaults to the widest-container model the
-            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
-            Groq, `voxtral-mini-latest` on Mistral). Providers with no
-            speech-to-text ignore it.
         reasoning:
           type: string
           enum: [provider-default, none, minimal, low, medium, high, xhigh]
@@ -6136,7 +6340,8 @@ components:
             Storage id returned by POSTing the module source to an upload URL
             from `POST /v1/mcp/uploads`; the large-bundle alternative to
             `bundle`. Requires `sha256`. Exactly one of url, bundle or
-            bundleStorageId connects the server.
+            bundleStorageId connects the server. An id another resource
+            already holds answers 400 and is left untouched.
         sha256:
           type: string
           description: >-
@@ -6406,10 +6611,10 @@ components:
               description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
             triggerOnIssueOpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new issues (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new issues (opened, reopened). Defaults to true.
             triggerOnPROpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new pull requests (opened, reopened). Defaults to true.
             trace:
               type: string
               enum: [enabled, disabled]

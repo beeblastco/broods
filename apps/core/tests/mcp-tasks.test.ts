@@ -701,6 +701,7 @@ describe("handleMcpRequest", () => {
           accountId: "acct_1",
           agentId: "agent_1",
           conversationKey: "acct:acct_1:agent:agent_1:api:mcp-1",
+          expectedOwnerEventId: "acct:acct_1:agent:agent_1:api:mcp-1",
         },
       ],
     ]);

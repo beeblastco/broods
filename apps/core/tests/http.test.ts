@@ -33,6 +33,8 @@ describe("assertPublicHttpsUrl", () => {
     const blocked = [
       "https://localhost/hook",
       "https://foo.localhost/hook",
+      "https://localhost./hook",
+      "https://service.local./hook",
       "https://metadata.google.internal/computeMetadata",
       "https://service.local/hook",
       "https://127.0.0.1/hook",

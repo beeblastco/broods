@@ -42,6 +42,7 @@ const CASES: [string, string, Upstream | null][] = [
   ["GET", "/v1/accountx", "core"],
   ["POST", "/v1/account/assume-role", "config"],
   ["POST", "/v1/account/auth/exchange", "config"],
+  ["DELETE", "/v1/account/auth/token", "config"],
   ["PUT", "/v1/account/projects/p/stages/e/manifest", "config"],
   ["GET", "/v1/accounts", "config"],
   ["GET", "/v1/accounts/acct_1", "config"],

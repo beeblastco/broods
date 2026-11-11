@@ -140,6 +140,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "INFO",
+        logId: expect.any(String),
         message: "started",
         requestId: "req-1",
         service: "broods-core",
@@ -148,6 +149,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "WARN",
+        logId: expect.any(String),
         message: "retrying",
         service: "broods-core",
         "service.name": "broods-core",
@@ -155,6 +157,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "ERROR",
+        logId: expect.any(String),
         message: "failed",
         code: 500,
         service: "broods-core",

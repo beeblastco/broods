@@ -1,6 +1,7 @@
 // Edge-safe (`broods/account`): fetch only, no Node built-ins or .env loading, so it runs in
 // Convex actions and Cloudflare Workers as well as Node and Bun.
 
+import { BroodsApiError } from "./api-error.ts";
 import type {
   ChannelPartition,
   AgentConfig,
@@ -35,6 +36,8 @@ import type {
   ConnectionStartResult,
   ConnectionType,
 } from "../../convex/model/connections.ts";
+
+export { BroodsApiError };
 
 // Copy of `DEFAULT_CORE_BASE_URL`: importing client.ts would pull in Node-only code.
 const DEFAULT_ACCOUNT_BASE_URL = "https://gateway.broods.app";
@@ -370,15 +373,10 @@ export interface SandboxTerminalTicket {
   websocketPath: string;
 }
 
-export class BroodsAccountApiError extends Error {
-  readonly status: number;
-  readonly body: string;
-
+export class BroodsAccountApiError extends BroodsApiError {
   constructor(method: string, path: string, status: number, body: string) {
-    super(`${method} ${path} failed with ${status}: ${body}`);
+    super(`${method} ${path} failed with ${status}:`, status, body);
     this.name = "BroodsAccountApiError";
-    this.status = status;
-    this.body = body;
   }
 }
 
@@ -503,11 +501,31 @@ export class BroodsAccountClient {
     options: { agentId?: string; limit?: number; status?: string } = {},
   ): Promise<{ runs: RunSummary[]; incomplete?: string }> {
     const limit = options.limit ?? 20;
+    const backfill = options.status
+      ? MAX_OBSERVABILITY_BACKFILL
+      : Math.min(MAX_OBSERVABILITY_BACKFILL, limit);
     const { fetchObservabilitySpans } = await observabilityClient();
-    const { error, rows } = await fetchObservabilitySpans(
-      await this.openObservabilitySession(scope.project, scope.stage),
-      Math.min(MAX_OBSERVABILITY_BACKFILL, limit),
+    const session = await this.openObservabilitySession(
+      scope.project,
+      scope.stage,
     );
+    let result = await fetchObservabilitySpans(
+      session,
+      backfill,
+      options.agentId,
+    );
+    // No echo: a gateway that predates the agent filter sent every agent's newest traces.
+    if (
+      options.agentId &&
+      result.agentId !== options.agentId &&
+      backfill < MAX_OBSERVABILITY_BACKFILL
+    )
+      result = await fetchObservabilitySpans(
+        session,
+        MAX_OBSERVABILITY_BACKFILL,
+        options.agentId,
+      );
+    const { error, rows } = result;
 
     return {
       runs: runSummaries(rows, { ...options, limit: limit }),

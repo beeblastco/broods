@@ -16,6 +16,9 @@ const BLOCKED_VERBS =
 // A skill needs a source picked on the canvas, so the dock does not add one.
 const ATTACHED_TYPES = ["sandbox", "workspace"] as const;
 
+export const NO_MODEL_REPLY =
+  "I can only run what I can resolve from this project right now. Try a name, `go to <section>`, `pause <cron>`, `add an agent`, or `set KEY to value`.";
+
 const CANVAS_VERB_COMMANDS: Record<string, ShortcutId> = {
   fit: "canvas.fitView",
   tidy: "canvas.tidy",

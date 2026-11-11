@@ -245,7 +245,8 @@ export function createTelegramChannel(
       if (update.callback_query) {
         return parseQuestionClick(update.callback_query, update.update_id);
       }
-      const message = extractInboundMessage(update);
+      // An edit arrives as `edited_message`, left unread: edits never start a run on any channel.
+      const message = update.message;
       if (
         !message ||
         (!telegramMessageText(message) && !hasTelegramMedia(message))
@@ -437,10 +438,6 @@ function addressesTelegramBot(
     mentionsTelegramBot(message, botUsername) ||
     repliesToTelegramBot(message, botUsername)
   );
-}
-
-function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
-  return update.message ?? update.edited_message ?? null;
 }
 
 // Mirrors the Chat SDK's attachment extraction list.

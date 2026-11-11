@@ -112,17 +112,23 @@ export const remove = internalMutation({
     ctx,
     { accountId, reservationKey, externalId },
   ): Promise<null> => {
-    const instance = await ctx.db
-      .query("sandboxInstances")
-      .withIndex("by_reservationKey", (q) =>
-        q.eq("reservationKey", reservationKey),
-      )
-      .unique();
-    if (
-      instance &&
-      instance.accountId === accountId &&
-      (externalId === undefined || instance.externalId === externalId)
-    ) {
+    // A machine kept for the sweeper is torn down under `teardown:<id>`, not its row's key.
+    const instances =
+      externalId === undefined
+        ? [
+            await ctx.db
+              .query("sandboxInstances")
+              .withIndex("by_reservationKey", (q) =>
+                q.eq("reservationKey", reservationKey),
+              )
+              .unique(),
+          ]
+        : await ctx.db
+            .query("sandboxInstances")
+            .withIndex("by_externalId", (q) => q.eq("externalId", externalId))
+            .collect();
+    for (const instance of instances) {
+      if (!instance || instance.accountId !== accountId) continue;
       await accrue(ctx, instance, Date.now());
       await ctx.db.delete(instance._id);
       if (instance.sandboxConfigId) {

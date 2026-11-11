@@ -1,0 +1,2 @@
+kind	name	reason
+opaque	DefaultStreamTextResult	The AI SDK stream result; the twin passes it through and reads only its fullStream getter and identity.

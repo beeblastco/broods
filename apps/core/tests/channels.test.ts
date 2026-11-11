@@ -46,6 +46,33 @@ describe("chunkChannelText", () => {
   it("keeps a surrogate pair whole even when it is wider than the limit", () => {
     expect(chunkChannelText("😀a", 1)).toEqual(["😀", "a"]);
   });
+
+  it("cuts at a newline, then a space, so the trailing trace link stays whole", () => {
+    const trace = "Trace: https://broods.test/?project=p&trace=t";
+    const chunks = chunkChannelText(`${"word ".repeat(30)}\n\n${trace}`, 160);
+
+    expect(chunks).toEqual([`${"word ".repeat(30)}\n\n`, trace]);
+    expect(chunkChannelText("aaaa bbbb cccc", 10)).toEqual([
+      "aaaa bbbb ",
+      "cccc",
+    ]);
+  });
+
+  it("closes a code fence at a cut and reopens it in the next piece", () => {
+    const code = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n");
+    const chunks = chunkChannelText(
+      `Intro\n\`\`\`ts\n${code}\n\`\`\`\nDone`,
+      60,
+      { markdown: true },
+    );
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 60)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split("```").length % 2 === 1)).toBe(
+      true,
+    );
+    expect(chunks[1]!.startsWith("```ts\n")).toBe(true);
+  });
 });
 
 describe("channelAttachmentBytes", () => {

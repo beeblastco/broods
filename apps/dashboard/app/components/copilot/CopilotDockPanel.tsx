@@ -4,6 +4,7 @@ import { BroodsMark } from "@/app/components/BroodsMark";
 import { CopilotPlanCard } from "@/app/components/copilot/CopilotPlanCard";
 import { useCopilot } from "@/app/components/copilot/CopilotProvider";
 import { CopilotTrace } from "@/app/components/copilot/CopilotTrace";
+import { MarkdownImage } from "@/app/components/MarkdownImage";
 import { Button } from "@/app/components/ui/button";
 import {
   InputGroup,
@@ -30,7 +31,7 @@ const EXAMPLES = [
   "pause nightly-digest",
 ] as const;
 
-const MARKDOWN_COMPONENTS: Components = { a: AnswerLink };
+const MARKDOWN_COMPONENTS: Components = { a: AnswerLink, img: MarkdownImage };
 
 export function CopilotDockPanel({
   input,

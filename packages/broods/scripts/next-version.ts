@@ -4,6 +4,16 @@
 
 const PACKAGE_PATH = "packages/broods/package.json";
 const LOCK_PATH = "bun.lock";
+// What ships in the package: the bundled paths check-broods-sdk.yaml watches. Keep both in step.
+const SHIPPED_PATHS = [
+  "packages/broods",
+  "apps/core/src/shared",
+  "apps/core/src/harness/isolate/runner/pinned-fetch.mjs",
+  "packages/convex/model",
+  "packages/convex/cli/types.ts",
+  "packages/convex/schema.ts",
+  "packages/convex/_generated",
+];
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const BREAKING = /^[a-z]+(\([^)]*\))?!:/;
 const FEATURE = /^feat(\([^)]*\))?:/;
@@ -30,7 +40,7 @@ const subjects = git([
   "--format=%s",
   ...(since ? [`${since}..HEAD`] : []),
   "--",
-  "packages/broods",
+  ...SHIPPED_PATHS,
 ])
   .split("\n")
   .filter(Boolean);

@@ -4,7 +4,7 @@ import type { Doc, Id, TableNames } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
-import { unregisterSchedule } from "./cronSchedules";
+import { deleteRunWaits, unregisterSchedule } from "./cronSchedules";
 import { takeHarnessEntryBatch } from "./harnessSessionEntries";
 import { releaseSeat } from "./orgBilling";
 import { isManagedService } from "./planLimits";
@@ -257,7 +257,10 @@ export async function deleteAccountContentsBatch(
     )
     .take(ACCOUNT_DELETE_BATCH_SIZE);
   if (cronRuns.length > 0) {
-    for (const run of cronRuns) await ctx.db.delete(run._id);
+    for (const run of cronRuns) {
+      await deleteRunWaits(ctx, run._id);
+      await ctx.db.delete(run._id);
+    }
 
     return false;
   }

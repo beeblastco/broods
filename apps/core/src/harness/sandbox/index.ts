@@ -9,9 +9,7 @@ import { MicrovmSandboxExecutor } from "./microvm-executor.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
-  SandboxJobHandle,
   SandboxProvider,
-  SandboxRunResult,
 } from "./types.ts";
 import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
@@ -40,35 +38,45 @@ export function createSandboxExecutor(
   const executor = providerExecutor(config);
   const accountId = config.controlPlane?.accountId;
   if (!accountId || config.controlPlane?.ownCredentials) return executor;
-  const run = executor.run.bind(executor);
-  executor.run = async (request): Promise<SandboxRunResult> => {
-    await assertSandboxBudget(accountId);
-
-    return run(request);
-  };
-  const runBackground = executor.runBackground?.bind(executor);
-  if (runBackground) {
-    executor.runBackground = async (request): Promise<SandboxJobHandle> => {
-      await assertSandboxBudget(accountId);
-
-      return runBackground(request);
-    };
+  executor.run = budgeted(accountId, executor.run.bind(executor));
+  if (executor.runBackground) {
+    executor.runBackground = budgeted(
+      accountId,
+      executor.runBackground.bind(executor),
+    );
   }
-  const resume = executor.resume?.bind(executor);
-  if (resume) {
-    executor.resume = async (request): Promise<void> => {
-      await assertSandboxBudget(accountId);
-
-      return resume(request);
-    };
+  if (executor.resume) {
+    executor.resume = budgeted(accountId, executor.resume.bind(executor));
   }
-  const postReserved = executor.postReserved?.bind(executor);
-  if (postReserved) {
-    executor.postReserved = async (request): Promise<unknown> => {
-      await assertSandboxBudget(accountId);
-
-      return postReserved(request);
-    };
+  if (executor.postReserved) {
+    executor.postReserved = budgeted(
+      accountId,
+      executor.postReserved.bind(executor),
+    );
+  }
+  if (executor instanceof MicrovmSandboxExecutor) {
+    executor.acquireHarnessReservation = budgeted(
+      accountId,
+      executor.acquireHarnessReservation.bind(executor),
+    );
+    executor.resumeHarnessReservation = budgeted(
+      accountId,
+      executor.resumeHarnessReservation.bind(executor),
+    );
+    executor.runHarnessCommand = budgeted(
+      accountId,
+      executor.runHarnessCommand.bind(executor),
+    );
+  }
+  if (executor instanceof WorkdirSandboxExecutor) {
+    executor.acquireHarnessReservation = budgeted(
+      accountId,
+      executor.acquireHarnessReservation.bind(executor),
+    );
+    executor.resumeHarnessReservation = budgeted(
+      accountId,
+      executor.resumeHarnessReservation.bind(executor),
+    );
   }
 
   return executor;
@@ -83,4 +91,15 @@ export function providerExecutor(
   }
 
   return EXECUTORS[config.provider](config);
+}
+
+function budgeted<Request, Result>(
+  accountId: string,
+  call: (request: Request) => Promise<Result>,
+): (request: Request) => Promise<Result> {
+  return async (request: Request): Promise<Result> => {
+    await assertSandboxBudget(accountId);
+
+    return call(request);
+  };
 }

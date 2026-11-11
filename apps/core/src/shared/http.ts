@@ -1,5 +1,6 @@
 import { dns } from "bun";
 import { apiErrorBody, type ApiErrorInit } from "@broods/convex/model/apiError";
+import { ClientError } from "@broods/convex/model/clientError";
 export { methodNotAllowed } from "@broods/convex/model/httpJson";
 import {
   isDeniedAddress,
@@ -106,7 +107,7 @@ export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
   try {
     return JSON.parse(request.body);
   } catch (err) {
-    throw new Error(
+    throw new ClientError(
       `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
@@ -118,13 +119,15 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`${label} must be a valid URL`);
+    throw new ClientError(`${label} must be a valid URL`);
   }
   if (url.protocol !== "https:") {
-    throw new Error(`${label} must use https`);
+    throw new ClientError(`${label} must use https`);
   }
   if (isPrivateHostname(url.hostname)) {
-    throw new Error(`${label} must not point to a private or internal address`);
+    throw new ClientError(
+      `${label} must not point to a private or internal address`,
+    );
   }
 
   return url;
@@ -194,7 +197,9 @@ export function resetPublicHostsForTests(): void {
 }
 
 function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  // A trailing DNS dot names the same host: `localhost.` is `localhost`.
+  const bare = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = bare.endsWith(".") ? bare.slice(0, -1) : bare;
   if (
     host === "localhost" ||
     host.endsWith(".localhost") ||

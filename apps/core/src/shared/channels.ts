@@ -12,6 +12,10 @@ export const CHANNEL_REACH_WILDCARD = "*";
 
 const RETRY_REPLY = "Retry";
 
+const CODE_FENCE = "```";
+
+const CODE_FENCE_LINE = /^```.*$/gm;
+
 // At most 53 bytes, under Telegram's 64-byte callback_data cap.
 const QUESTION_BUTTON_PATTERN = /^q:(async_tool_[0-9a-f-]{36}):(\d+):(\d+)$/;
 
@@ -237,27 +241,32 @@ export function channelAttachmentName(
     : `file${attachment.type === "image" ? ".png" : ""}`;
 }
 
-export function chunkChannelText(text: string, limit: number): string[] {
-  if (text.length === 0) {
-    return [""];
+// Cuts at a newline, then a space, in the last half of each window. For markdown, a code fence
+// open at a cut is closed there and reopened in the next piece.
+export function chunkChannelText(
+  text: string,
+  limit: number,
+  options: { markdown?: boolean } = {},
+): string[] {
+  if (text.length <= limit) {
+    return [text];
   }
 
+  const fenced = options.markdown === true && text.includes(CODE_FENCE);
+  const closeRoom = fenced ? CODE_FENCE.length + 1 : 0;
   const chunks: string[] = [];
+  let reopen = "";
   for (let offset = 0; offset < text.length;) {
-    let end = Math.min(offset + limit, text.length);
-    const previousCodeUnit = text.charCodeAt(end - 1);
-    const nextCodeUnit = text.charCodeAt(end);
-    if (
-      end < text.length &&
-      previousCodeUnit >= 0xd800 &&
-      previousCodeUnit <= 0xdbff &&
-      nextCodeUnit >= 0xdc00 &&
-      nextCodeUnit <= 0xdfff
-    ) {
-      // Never split a pair; when it alone is wider than the limit, keep it whole.
-      end = end - 1 > offset ? end - 1 : end + 1;
-    }
-    chunks.push(text.slice(offset, end));
+    const end = chunkEnd(text, offset, limit - reopen.length - closeRoom);
+    const piece = reopen + text.slice(offset, end);
+    const fence =
+      fenced && end < text.length ? openCodeFence(piece) : undefined;
+    chunks.push(
+      fence
+        ? `${piece}${piece.endsWith("\n") ? "" : "\n"}${CODE_FENCE}`
+        : piece,
+    );
+    reopen = fence ? `${fence}\n` : "";
     offset = end;
   }
 
@@ -363,6 +372,46 @@ export function supportsInlineCommands(
   channelName: string | undefined,
 ): boolean {
   return channelName !== undefined && INLINE_COMMAND_CHANNELS.has(channelName);
+}
+
+function chunkEnd(text: string, offset: number, room: number): number {
+  const width = Math.max(room, 1);
+  let end = Math.min(offset + width, text.length);
+  if (end === text.length) {
+    return end;
+  }
+
+  const window = text.slice(offset, end);
+  const newline = window.lastIndexOf("\n");
+  const space = window.lastIndexOf(" ");
+  const boundary =
+    newline >= width / 2 ? newline : space >= width / 2 ? space : -1;
+  if (boundary >= 0) {
+    return offset + boundary + 1;
+  }
+
+  const previousCodeUnit = text.charCodeAt(end - 1);
+  const nextCodeUnit = text.charCodeAt(end);
+  if (
+    previousCodeUnit >= 0xd800 &&
+    previousCodeUnit <= 0xdbff &&
+    nextCodeUnit >= 0xdc00 &&
+    nextCodeUnit <= 0xdfff
+  ) {
+    // Never split a pair; when it alone is wider than the limit, keep it whole.
+    end = end - 1 > offset ? end - 1 : end + 1;
+  }
+
+  return end;
+}
+
+function openCodeFence(text: string): string | undefined {
+  let open: string | undefined;
+  for (const [line] of text.matchAll(CODE_FENCE_LINE)) {
+    open = open ? undefined : line;
+  }
+
+  return open;
 }
 
 function simplifyErrorText(raw: string, commands: boolean): string {

@@ -1,9 +1,11 @@
 import type {
   CliManifest,
+  CliPruneTarget,
   DeploymentRegion,
   GeneratedIds,
   CliManifestResource,
 } from "./contracts.ts";
+import { errorEnvelope } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
 import { snapshotResource } from "../../convex/model/manifestSnapshot.ts";
@@ -136,6 +138,7 @@ export interface CliGitHubStatus {
   repo?: CliGitHubLink;
   deploys: Array<{
     branch: string;
+    runId: number;
     sha: string;
     status: string;
     conclusion?: string;
@@ -179,7 +182,7 @@ export type DiffOperation = "create" | "update" | "delete" | "rename";
 
 export interface DiffEntry {
   operation: DiffOperation;
-  kind: string;
+  kind: CliManifestResource["kind"];
   name: string;
   previousName?: string;
 }
@@ -212,9 +215,10 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
+  /** `prune` true removes every undeclared resource; a list removes only those. */
   async putManifest(
     manifest: CliManifest,
-    prune: boolean,
+    prune: boolean | CliPruneTarget[],
     rotateRuntimeKey = false,
     revision?: number,
     source?: StageSource,
@@ -838,29 +842,6 @@ async function assertOk(response: Response, message: string): Promise<void> {
     response.status === 401 ? "\nRun `broods login` to sign in again." : "";
 
   throw new Error(`${message}: ${response.status} ${reason}${hint}`);
-}
-
-function errorEnvelope(body: string): { message?: string; code?: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return {};
-  }
-  const error =
-    typeof parsed === "object" && parsed !== null && "error" in parsed
-      ? parsed.error
-      : undefined;
-  if (typeof error !== "object" || error === null) return {};
-
-  return {
-    ...("message" in error && typeof error.message === "string"
-      ? { message: error.message }
-      : {}),
-    ...("code" in error && typeof error.code === "string"
-      ? { code: error.code }
-      : {}),
-  };
 }
 
 // A 404 that is not JSON came from the router, not a handler: the server predates the route.

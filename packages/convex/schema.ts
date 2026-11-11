@@ -817,6 +817,7 @@ export const auditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("accountApiKey"),
   v.literal("agent"),
+  v.literal("member"),
   v.literal("skill"),
   v.literal("hook"),
   v.literal("mcp"),
@@ -1281,6 +1282,9 @@ export const cronRunsFields = {
   // The scoped id of the run's envelope; `eventId` is the public one. Absent on older rows.
   ingressEventId: v.optional(v.string()),
   ingressConversationKey: v.optional(v.string()),
+  // While paused: the approval ids or question status ids an answer must name to settle this run.
+  // Absent only on rows created before it existed.
+  waitingOn: v.optional(v.array(v.string())),
   // Fixed at fire time: the job can be rescheduled while this run is still open.
   oneShot: v.optional(v.boolean()),
   conversationKey: v.string(),
@@ -1293,6 +1297,12 @@ export const cronRunsFields = {
   error: v.optional(v.string()),
   startedAt: v.number(),
   completedAt: v.optional(v.number()),
+};
+
+export const cronRunWaitsFields = {
+  conversationKey: v.string(),
+  promptId: v.string(),
+  runId: v.id("cronRuns"),
 };
 
 export const taskUsageFields = {
@@ -1456,14 +1466,14 @@ export default defineSchema({
   // needs newest-first sorts by `updatedAt`.
   projects: defineTable(projectsFields)
     .index("by_orgId_and_slug", ["orgId", "slug"])
+    .index("by_orgId_and_name_and_slug", ["orgId", "name", "slug"])
     .index("by_repoId", ["repo.repoId"])
     .index("by_linkClaimRepoId", ["linkClaim.repoId"]),
   stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   stageSyncs: defineTable(stageSyncsFields).index("by_stageId", ["stageId"]),
-  stageSources: defineTable(stageSourcesFields).index(
-    "by_stageId_and_revision",
-    ["stageId", "revision"],
-  ),
+  stageSources: defineTable(stageSourcesFields)
+    .index("by_stageId_and_revision", ["stageId", "revision"])
+    .index("by_storageId", ["storageId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),
@@ -1482,7 +1492,7 @@ export default defineSchema({
       "status",
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
-    .index("by_endpointId", ["endpointId"])
+    .index("by_accountId_and_endpointId", ["accountId", "endpointId"])
     .index("by_status", ["status"])
     .index("by_accountId_and_status", ["accountId", "status"]),
   channelEndpoints: defineTable(channelEndpointsFields)
@@ -1756,30 +1766,37 @@ export default defineSchema({
     .index("by_ingressConversationKey_and_status", [
       "ingressConversationKey",
       "status",
-    ]),
+    ])
+    .index("by_ingressEventId", ["ingressEventId"]),
+  // One row per id in a paused run's `waitingOn`: Convex can not index an array's items.
+  cronRunWaits: defineTable(cronRunWaitsFields)
+    .index("by_conversationKey_and_promptId", ["conversationKey", "promptId"])
+    .index("by_runId", ["runId"]),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
-    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
-    .index("by_endpointId_and_modelProvider_and_modelId_and_finishedAt", [
+    .index("by_accountId_and_endpointId_and_finishedAt", [
+      "accountId",
+      "endpointId",
+      "finishedAt",
+    ])
+    .index("by_accountId_endpointId_modelProvider_modelId_finishedAt", [
+      "accountId",
       "endpointId",
       "modelProvider",
       "modelId",
       "finishedAt",
     ]),
-  usageRollups: defineTable(usageRollupsFields)
-    .index("by_endpointId_and_grain_and_bucketStart", [
-      "endpointId",
-      "grain",
-      "bucketStart",
-    ])
-    .index("by_accountId_endpointId_grain_bucketStart_modelProvider_modelId", [
+  usageRollups: defineTable(usageRollupsFields).index(
+    "by_accountId_endpointId_grain_bucketStart_modelProvider_modelId",
+    [
       "accountId",
       "endpointId",
       "grain",
       "bucketStart",
       "modelProvider",
       "modelId",
-    ]),
+    ],
+  ),
   usageMeters: defineTable(usageMetersFields).index("by_accountId_and_month", [
     "accountId",
     "month",

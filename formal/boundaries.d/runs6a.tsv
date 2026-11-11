@@ -1,0 +1,6 @@
+kind	name	reason
+external	^queuePlace\.getStore$	AsyncLocalStorage holds the place withQueuePlace set; the twin reads only its held flag and the enqueue arguments it decides are checked.
+external	^recovery\.unref$	Node timer call with no decision; its answer is never read.
+external	^inputs\.(openWork|publish|recordUsage|release|rootAttributes|sandboxCpu\.(typeAttributes|usage)|spans\.closeOrphans|stepTiming\.clear|taskTotals\.(cacheWriteTokens|steps|usage))$	Callbacks the run loop passes to settleRun; their answers are inputs, and every argument settleRun computes for them is checked.
+external	^process\.memoryUsage$	Runtime reading of resident size; only the rss rounding is computed from it.
+external	^root\.span\.(end|recordException|setAttributes|setStatus)$	OpenTelemetry span methods with no answer the twin reads; their arguments are checked.

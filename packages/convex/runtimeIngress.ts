@@ -51,6 +51,9 @@ const EXPIRABLE_STATUSES = ["queued", "processing"] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
 
+// Past a lease's end, so core's 30-second recovery sweep promotes the queue before it expires.
+const QUEUED_GRACE_AFTER_LEASE_MS = 2 * 60 * 1_000;
+
 const RENEW_AFTER_TTL_FRACTION = 0.9;
 
 const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
@@ -630,6 +633,11 @@ export const maintain = internalMutation({
         await ctx.db.patch(row._id, { expiresAt: coordinator.leaseExpiresAt });
         continue;
       }
+      const deadline = queuedDeadline(row, coordinator);
+      if (row.status === "queued" && deadline > now) {
+        await ctx.db.patch(row._id, { expiresAt: deadline });
+        continue;
+      }
       await ctx.db.patch(row._id, {
         ...RELEASED_PAYLOAD,
         status: "expired",
@@ -653,7 +661,6 @@ export const maintain = internalMutation({
       ) {
         await ctx.db.patch(coordinator._id, {
           ownerEventId: undefined,
-          leaseExpiresAt: undefined,
           updatedAt: now,
         });
       }
@@ -734,7 +741,7 @@ export const recoverQueued = internalMutation({
       // The self-heal: reads past the counter, and a short page is the whole queue.
       const rows = await queuedEnvelopes(ctx, coordinator.conversationKey);
       const swept = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-      const live = rows.filter((row) => row.expiresAt > now);
+      const live = rows.filter((row) => queuedDeadline(row, coordinator) > now);
       const queue =
         rows.length < MAX_DRAIN_ENVELOPES
           ? {
@@ -774,6 +781,8 @@ export const releaseOwner = internalMutation({
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
+    // The owner never started: its applied envelopes wait in the queue again, in order.
+    requeue: v.optional(v.boolean()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -785,11 +794,48 @@ export const releaseOwner = internalMutation({
     ) {
       return false;
     }
+    const now = Date.now();
+    const queue = {
+      queuedCount: coordinator.queuedCount,
+      queuedBytes: coordinator.queuedBytes,
+    };
+    const applied =
+      args.requeue === true
+        ? await ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex(
+              "by_conversationKey_and_appliedToEventId_and_sequence",
+              (q) =>
+                q
+                  .eq("conversationKey", args.conversationKey)
+                  .eq("appliedToEventId", args.ownerEventId),
+            )
+            .take(MAX_DRAIN_ENVELOPES)
+        : [];
+    for (const row of applied) {
+      if (
+        row.status !== "processing" ||
+        row.ownerGeneration !== args.ownerGeneration
+      ) {
+        continue;
+      }
+      await ctx.db.patch(row._id, {
+        status: "queued",
+        appliedMode: undefined,
+        appliedToEventId: undefined,
+        applicationId: undefined,
+        ownerGeneration: undefined,
+        updatedAt: now,
+      });
+      queue.queuedCount += 1;
+      queue.queuedBytes += row.sizeBytes;
+    }
     await ctx.db.patch(coordinator._id, {
+      ...queue,
       ownerEventId: undefined,
       stopRequestedGeneration: undefined,
-      leaseExpiresAt: undefined,
-      updatedAt: Date.now(),
+      leaseExpiresAt: now,
+      updatedAt: now,
     });
 
     return true;
@@ -846,7 +892,7 @@ export const settle = internalMutation({
     if (args.events && args.events.length > 0) {
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
-    const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
+    const answered = await promptsOwnerAnswers(ctx, args.ownerEventId);
     const settled = await settleAppliedEnvelopes(ctx, coordinator, args);
     // Only with the owner's own envelope, so polling rows never disagree with it.
     if (args.asyncResult && settled.ownerFinished) {
@@ -854,8 +900,8 @@ export const settle = internalMutation({
         await writeAsyncAgentResult(ctx, eventId, args.asyncResult.outcome);
       }
     }
-    if (answersPrompt && settled.ownerFinished) {
-      await settleAnsweredCronRun(ctx, args.conversationKey, args);
+    if (settled.ownerFinished) {
+      await settleAnsweredCronRun(ctx, args, answered, args);
     }
 
     return settled.count;
@@ -905,6 +951,7 @@ export const stopOwner = internalMutation({
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
+    expectedOwnerEventId: v.optional(v.string()),
     expectedOwnerTaskId: v.optional(v.string()),
   },
   returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
@@ -919,6 +966,8 @@ export const stopOwner = internalMutation({
     if (
       !coordinator ||
       !hasActiveOwner(coordinator, now) ||
+      (args.expectedOwnerEventId !== undefined &&
+        coordinator.ownerEventId !== args.expectedOwnerEventId) ||
       (args.expectedOwnerTaskId !== undefined &&
         coordinator.ownerTaskId !== args.expectedOwnerTaskId)
     ) {
@@ -961,32 +1010,37 @@ export const takeNext = internalMutation({
       coordinator = await insertOwnedEvents(ctx, coordinator, args.events);
     }
     if (args.settle) {
-      const answersPrompt = await ownerAnswersPrompt(ctx, args.ownerEventId);
+      const answered = await promptsOwnerAnswers(ctx, args.ownerEventId);
       const settled = await settleAppliedEnvelopes(ctx, coordinator, {
         ...args,
         ...args.settle,
       });
-      if (answersPrompt && settled.ownerFinished) {
-        await settleAnsweredCronRun(ctx, args.conversationKey, args.settle);
+      if (settled.ownerFinished) {
+        await settleAnsweredCronRun(ctx, args, answered, args.settle);
       }
     }
     const rows = await queuedPage(ctx, coordinator);
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-    const promoted = await promoteQueuedGroup(ctx, {
-      coordinator: coordinator,
-      queue: queue,
-      rows: rows,
-      now: now,
-      leaseTtlMs: args.leaseTtlMs,
-      ownerGeneration: args.ownerGeneration + 1,
-    });
+    // A suspended account starts nothing: its queue waits for `recoverQueued` after reactivation.
+    const account = await ctx.db.get(coordinator.accountId);
+    const promoted =
+      account?.status === "active"
+        ? await promoteQueuedGroup(ctx, {
+            coordinator: coordinator,
+            queue: queue,
+            rows: rows,
+            now: now,
+            leaseTtlMs: args.leaseTtlMs,
+            ownerGeneration: args.ownerGeneration + 1,
+          })
+        : null;
     if (!promoted) {
       await ctx.db.patch(coordinator._id, {
         ...queue,
         ownerEventId: undefined,
         ownerTaskId: undefined,
         stopRequestedGeneration: undefined,
-        leaseExpiresAt: undefined,
+        leaseExpiresAt: now,
         updatedAt: now,
       });
 
@@ -997,50 +1051,79 @@ export const takeNext = internalMutation({
   },
 });
 
-// A retried entry id is skipped, as Pi's session storage contract allows.
-// A paused cron run waits on a person: an approval, or a question its answering turn then asked.
-async function ownerAnswersPrompt(
+// The approval ids or ask_questions status ids the owner's turn answers, which name the paused run.
+async function promptsOwnerAnswers(
   ctx: QueryCtx,
   ownerEventId: string,
-): Promise<boolean> {
+): Promise<string[]> {
   const owner = await ctx.db
     .query("runtimeIngressEnvelopes")
     .withIndex("by_eventId", (q) => q.eq("eventId", ownerEventId))
     .first();
   const toolResult = await asyncToolResultRow(ctx, owner?.toolResultId);
-  if (toolResult) return toolResult.toolName === "ask_questions";
+  if (toolResult) {
+    return toolResult.toolName === "ask_questions" ? [toolResult.resultId] : [];
+  }
   const events = (owner?.events ?? []) as {
     role: string;
-    content: { type: string }[];
+    content: { type: string; approvalId?: string }[];
   }[];
 
-  return events.some(
-    (event) =>
-      event.role === "tool" &&
-      event.content.some((part) => part.type === "tool-approval-response"),
+  return events.flatMap((event) =>
+    event.role === "tool"
+      ? event.content.flatMap((part) =>
+          part.type === "tool-approval-response" && part.approvalId
+            ? [part.approvalId]
+            : [],
+        )
+      : [],
   );
 }
 
 // Scheduled: importing `agent/crons` here would load auth into everything that reads this.
 async function settleAnsweredCronRun(
   ctx: MutationCtx,
-  conversationKey: string,
+  owner: { conversationKey: string; ownerEventId: string },
+  answered: string[],
   settlement: {
     status: "completed" | "failed";
     result?: unknown;
     error?: string;
   },
 ): Promise<void> {
-  const paused = (settlement.result as { status?: string } | undefined)?.status;
-  if (paused === "awaiting_approval" || paused === "awaiting_input") return;
+  const waitingOn = pausedPromptIds(settlement.result);
+  if (answered.length === 0 && waitingOn === undefined) return;
   await ctx.scheduler.runAfter(0, internal.agent.crons.settleAnsweredRun, {
-    conversationKey: conversationKey,
+    conversationKey: owner.conversationKey,
+    ownerEventId: owner.ownerEventId,
+    answered: answered,
+    waitingOn: waitingOn,
     status: settlement.status,
     result: settlement.result,
     error: settlement.error,
   });
 }
 
+// A paused turn settles with its `AsyncAgentOutcome` as the result.
+function pausedPromptIds(result: unknown): string[] | undefined {
+  const paused = result as
+    | {
+        status?: string;
+        approvals?: { approvalId: string }[];
+        questions?: { statusId: string }[];
+      }
+    | undefined;
+  if (paused?.status === "awaiting_approval") {
+    return (paused.approvals ?? []).map((approval) => approval.approvalId);
+  }
+  if (paused?.status === "awaiting_input") {
+    return (paused.questions ?? []).map((question) => question.statusId);
+  }
+
+  return undefined;
+}
+
+// A retried entry id is skipped, as Pi's session storage contract allows.
 async function appendHarnessEntries(
   ctx: MutationCtx,
   options: {
@@ -1134,7 +1217,7 @@ function assertConversationScope(
   if (accountIdFromKey(conversationKey) !== accountId) {
     throw new Error("Runtime conversation does not belong to accountId");
   }
-  if (!conversationKey.includes(`:agent:${agentId}:`)) {
+  if (!conversationKey.startsWith(`acct:${accountId}:agent:${agentId}:`)) {
     throw new Error("Runtime conversation does not belong to agentId");
   }
 }
@@ -1403,7 +1486,7 @@ async function claimSteering(
   }
   const rows = await queuedPage(ctx, coordinator);
   const queue = await expireQueuedEnvelopes(ctx, coordinator, now, rows);
-  const active = rows.filter((row) => row.expiresAt > now);
+  const active = rows.filter((row) => queuedDeadline(row, coordinator) > now);
   const steering = active[0]?.requestedMode === "steer";
   // A steer joins the running turn, so it must come from that turn's sender.
   const owner = steering
@@ -1616,7 +1699,7 @@ async function expireQueuedEnvelopes(
   let expiredCount = 0;
   let expiredBytes = 0;
   for (const row of page) {
-    if (row.expiresAt > now) continue;
+    if (queuedDeadline(row, coordinator) > now) continue;
     expiredCount += 1;
     expiredBytes += row.sizeBytes;
     await ctx.db.patch(row._id, {
@@ -1790,7 +1873,7 @@ async function promoteQueuedGroup(
 ): Promise<Infer<typeof appliedEnvelopeValidator> | null> {
   const { coordinator, queue, now } = options;
   const rows = options.rows ?? (await queuedPage(ctx, coordinator));
-  const active = rows.filter((row) => row.expiresAt > now);
+  const active = rows.filter((row) => queuedDeadline(row, coordinator) > now);
   const first = active[0];
   if (!first) return null;
   // Every queued steer aimed at the same dead run, so their prefix runs as one follow-up.
@@ -1879,6 +1962,17 @@ async function patchQueueCounters(
   await ctx.db.patch(coordinator._id, patch);
 
   return { ...coordinator, ...patch };
+}
+
+// A queued row cannot expire before its conversation's last lease ends, plus the grace.
+function queuedDeadline(
+  row: Doc<"runtimeIngressEnvelopes">,
+  coordinator: Doc<"runtimeConversationCoordinators"> | null,
+): number {
+  return Math.max(
+    row.expiresAt,
+    (coordinator?.leaseExpiresAt ?? 0) + QUEUED_GRACE_AFTER_LEASE_MS,
+  );
 }
 
 async function queuedEnvelopes(

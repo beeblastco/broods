@@ -736,12 +736,7 @@ function isPriorGitHubComment(
 }
 
 function isRelevantAction(action: string | undefined): boolean {
-  return (
-    action === "opened" ||
-    action === "edited" ||
-    action === "reopened" ||
-    action === "created"
-  );
+  return action === "opened" || action === "reopened" || action === "created";
 }
 
 function normalizePrivateKey(value: string): string {
@@ -882,7 +877,7 @@ function parseIssuesEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnIssueOpen === false) {
@@ -993,7 +988,7 @@ function parsePullRequestEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnPROpen === false) {

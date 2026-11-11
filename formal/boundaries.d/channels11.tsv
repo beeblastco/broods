@@ -1,0 +1,14 @@
+kind	name	reason
+external	^transport\.(addReaction|startTyping)$	The Telegram SDK performs the Bot API call; the twin compares the thread, message and emoji it is given.
+external	^discord\.(addReaction|decodeThreadId|encodeThreadId|postMessage|startTyping)$	The Chat SDK Discord adapter encodes thread ids and performs the REST call; the twin compares what it is given.
+external	^github\.addReaction$	The Chat SDK's GitHub adapter calls the REST API to add a reaction; the twin checks the arguments.
+external	^transport\.encodeThreadId$	The Chat SDK adapter encodes a provider thread id; the twin compares the parts it is given.
+external	^webhooks\.verify$	The Linear SDK checks the HMAC and timestamp window; the twin treats a throw as a failed check.
+external	^createHmac\("sha256", options\.appSecret\) \.update(\(req\.body, "utf8"\) \.digest)?$	Node crypto absorbs the exact webhook body and returns the standard SHA-256 digest; the twin compares the secret, body and encoding it is given.
+external	^tokenValidator\(options\.appId\)\.validateAccessToken$	The Bot Framework JWT validator checks the token against Microsoft's keys; the twin treats an empty claim set as a failed check.
+external	^transport\.handleWebhook$	The Chat SDK Google Chat adapter verifies the signed token and answers with a status; the twin reads only the status.
+external	^verifyTwilioRequest$	The Twilio SDK checks the request signature against the auth token; the twin treats its own verification error as a failed check.
+external	^(assertSlackOk|callSlackApi)$	The Chat SDK Slack API client performs the Web API call; the twin compares the method and parameters and treats a not-ok answer as the SDK's error.
+external	^(parseSlackWebhookBody|verifySlackSignature)$	The Chat SDK Slack webhook helpers decode the body and check the HMAC; the twin branches on the kind they return and treats a throw as a failed check.
+external	^formatter\.toResponseUrlText$	The Chat SDK Slack formatter renders markdown for a response URL; the twin compares its input and forwards its text.
+external	^(Card|Image)$	Chat SDK card element constructors; the twin compares the fields it hands them and passes the element on.

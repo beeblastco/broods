@@ -1,0 +1,17 @@
+kind	name	reason
+external	^new ConsoleLogger(\("error"\)\.child)?$	Chat SDK logger construction; the level and scope are compared and the logger is only handed to the adapter.
+external	^new (BroodsTelegramAdapter|BroodsDiscordAdapter|InstagramAdapter)$	Chat SDK adapter construction; every option is compared and the instance is only stored or handed on.
+external	^new JwtValidator$	Bot Framework validator construction; its options are compared and the instance is returned unchanged.
+external	^discord\.encodeThreadId$	Chat SDK id encoding; the guild and channel are compared and the answer is only captured by closures.
+external	^budget\.(remaining|consume|retryAt)$	IdentifyBudget reads a private stamp log; the token is compared and only the answer's truth or time is used.
+external	^setTimeout$	Runtime timer; its delay is compared and the handle is only stored.
+external	^Date\.now$	Wall clock input; the arithmetic on it is modelled.
+external	^publicHostFetch$	Pinned fetch; the URL and options are compared and only the status of the answer is read.
+external	^this\.(telegramFetch|resolveBotToken)$	SDK method on the adapter; arguments are compared and the file path or token it answers is used as given.
+internal	apps/core/src/shared/gchat-channel.ts#googleChatTransport	Its LRU map is too big to record on cache hits; the factory only captures the answer in closures.
+opaque	_ConsoleLogger	Only handed to adapter constructors.
+opaque	JwtValidator	Returned unchanged from the cache or the constructor.
+opaque	GoogleChatAdapter	Only captured by the factory's closures.
+opaque	InstagramAdapter	Only handed to createMetaChannel.
+opaque	FakeWebSocket	Test socket; compared whole to tell the current socket from a stale one.
+opaque	GatewaySocket	The socket under test; twins read only its recorded fields.

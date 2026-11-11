@@ -1,3 +1,4 @@
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   CreateMicrovmAuthTokenCommand,
   CreateMicrovmImageCommand,
@@ -548,7 +549,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ): Promise<SandboxSnapshotResult> {
     const microvmId = await this.#reservedId(request);
     if (!microvmId) {
-      throw new Error("no reserved MicroVM to snapshot for this sandbox");
+      throw new ClientError(
+        "no reserved MicroVM to snapshot for this sandbox",
+        "not_found",
+      );
     }
     const target = await this.#reconnect(microvmId);
     const vm = await this.#client.send(
@@ -702,7 +706,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (pinned) {
       const scope = fallback ? microvmImageScope(fallback) : undefined;
       if (!scope || microvmImageScope(pinned) !== scope) {
-        throw new Error(
+        throw new ClientError(
           "config.snapshot must name a platform MicroVM image in this region",
         );
       }
@@ -1058,7 +1062,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         microvmImageName(image.imageIdentifier),
       );
       if (!registered) {
-        throw new Error("config.snapshot names a snapshot of another account");
+        throw new ClientError(
+          "config.snapshot names a snapshot of another account",
+        );
       }
     }
     // From the runtime env only: an account naming the build role would get its IMDS creds.
@@ -1187,7 +1193,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       (network.allowDomains?.length ?? 0) > 0 ||
       (network.allowCidrs?.length ?? 0) > 0
     ) {
-      throw new Error(
+      throw new ClientError(
         "MicroVM sandbox cannot enforce network.allowDomains or network.allowCidrs; use deny-all or allow-all",
       );
     }
