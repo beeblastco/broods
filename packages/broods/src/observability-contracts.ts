@@ -60,6 +60,9 @@ export type ObservabilitySubscribeMessage = {
   sandboxId?: string;
   // "traces" only: the backfill searches Tempo for this agent's traces alone.
   agentId?: string;
+  // A reconnect's cursor, the last `seq` it saw: the live stream starts after it, not at the
+  // replay window. Sent without `backfill` by a client that kept its entries.
+  afterSeq?: number;
 };
 
 export type ObservabilityUnsubscribeMessage = {
@@ -79,8 +82,13 @@ export type ObservabilityClientMessage =
   | ObservabilityFetchTraceMessage;
 
 // Sent once the live subscription is up; any requested backfill follows it. `agentId` echoes
-// the subscribe's filter, which a gateway that predates it ignores and never echoes.
-export type ObservabilityReadyMessage = { type: "ready"; agentId?: string };
+// the subscribe's filter, which a gateway that predates it ignores and never echoes. `seq` is
+// the cursor the live stream starts after; each live entry then carries its own.
+export type ObservabilityReadyMessage = {
+  type: "ready";
+  agentId?: string;
+  seq?: number;
+};
 
 // Always sent for a requested backfill, failure included. A traces backfill comes in pieces:
 // all but the last carry `more`; the last carries `error` when a query failed.
@@ -95,11 +103,13 @@ export type ObservabilityBackfillMessage = {
 export type ObservabilityLogMessage = {
   type: "log";
   entry: ObservabilityLogEntry;
+  seq?: number;
 };
 
 export type ObservabilitySpanMessage = {
   type: "span";
   entry: ObservabilitySpanRow;
+  seq?: number;
 };
 
 export type ObservabilityErrorMessage = {
@@ -177,6 +187,15 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
   if (
     sandboxId !== undefined &&
     !(stream === "logs" && isSandboxLogId(sandboxId))
+  )
+    return false;
+  const afterSeq = msg["afterSeq"];
+  if (
+    afterSeq !== undefined &&
+    (typeof afterSeq !== "number" ||
+      !Number.isSafeInteger(afterSeq) ||
+      afterSeq < 0 ||
+      sandboxId !== undefined)
   )
     return false;
   const agentId = msg["agentId"];

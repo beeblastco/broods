@@ -1795,6 +1795,27 @@ test("bounds observability backfill requests", () => {
   ).toBe(false);
 });
 
+test("a resume cursor is a whole sequence, and never a sandbox tail's", () => {
+  const resume = { type: "subscribe", stream: "logs" };
+
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 0 })).toBe(true);
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 41 })).toBe(true);
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: -1 })).toBe(false);
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 1.5 })).toBe(
+    false,
+  );
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: "41" })).toBe(
+    false,
+  );
+  expect(
+    isObservabilityClientMessage({
+      ...resume,
+      afterSeq: 41,
+      sandboxId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+    }),
+  ).toBe(false);
+});
+
 test("observability relay skips malformed and below-threshold log messages", async () => {
   const encoder = new TextEncoder();
   const sent: unknown[] = [];
@@ -2303,7 +2324,7 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
     );
 
     const pieces = sent.filter((message) => message.type === "backfill");
-    expect(sent[0]).toEqual({ type: "ready" });
+    expect(sent[0]).toEqual({ type: "ready", seq: 0 });
     expect(pieces.map((piece): unknown => piece.more)).toEqual([
       ...Array.from({ length: 25 }, (): boolean => true),
       undefined,
@@ -2764,7 +2785,7 @@ test("a traces subscribe whose transport fails after it was replaced stays silen
     failFirst?.(new Error("NATS is down"));
     await first;
 
-    expect(sent).toEqual([{ type: "ready" }]);
+    expect(sent).toEqual([{ type: "ready", seq: 0 }]);
   } finally {
     cleanupObservabilitySocket(socket);
   }
@@ -3892,7 +3913,12 @@ function zeroBufferConnection(
         ) => {
           onConsumerOptions?.(options);
 
-          return { consume: consume };
+          return {
+            consume: consume,
+            info: async (): Promise<{ delivered: { stream_seq: number } }> => ({
+              delivered: { stream_seq: (options.opt_start_seq ?? 1) - 1 },
+            }),
+          };
         },
       },
     }),

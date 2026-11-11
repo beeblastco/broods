@@ -69,6 +69,15 @@ const RECONNECT_MAX_DELAY_MS = 60_000;
 // The gateway revoked the stage session: redialling with it only counts auth failures.
 const REVOKED_CLOSE_CODE = 4401;
 const MAX_ENTRIES = 2_000;
+// The gateway's own replay window: a cursor older than this may have aged out of the stream.
+const RESUME_WINDOW_MS = 30 * 60 * 1000;
+
+export interface ResumeCursor {
+  key: string;
+  seq: number;
+  at: number;
+  historyLoaded: boolean;
+}
 
 const STREAM_CACHE = new Map<
   string,
@@ -138,6 +147,7 @@ export function useObservabilityStream(
   const attemptRef = useRef(0);
   const destroyedRef = useRef(false);
   const connectRef = useRef<() => void>(() => {});
+  const cursorRef = useRef<ResumeCursor | null>(null);
 
   const coreEndpoint = resolveCoreEndpoint();
   const wsBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
@@ -187,7 +197,13 @@ export function useObservabilityStream(
     closeSocket();
     clearReconnect();
     setStatus("connecting");
-    setHistory(backfill > 0 ? "loading" : "none");
+    const resumeSeq = resumeSeqFor(
+      cursorRef.current,
+      connKey,
+      minLevel,
+      Date.now(),
+    );
+    if (resumeSeq === undefined) setHistory(backfill > 0 ? "loading" : "none");
     setError(null);
 
     const wsUrl =
@@ -211,7 +227,11 @@ export function useObservabilityStream(
       const subscribeMsg: ObservabilityClientMessage = {
         type: "subscribe",
         stream: stream,
-        ...(backfill > 0 ? { backfill: backfill } : {}),
+        ...(resumeSeq !== undefined
+          ? { afterSeq: resumeSeq }
+          : backfill > 0
+            ? { backfill: backfill }
+            : {}),
         ...(minLevel ? { minLevel: minLevel } : {}),
         ...(sandboxId ? { sandboxId: sandboxId } : {}),
       };
@@ -238,12 +258,24 @@ export function useObservabilityStream(
       if (msg.type === "ready") {
         attemptRef.current = 0;
         setStatus("live");
+        cursorRef.current =
+          msg.seq === undefined
+            ? null
+            : {
+                key: connKey,
+                seq: msg.seq,
+                at: Date.now(),
+                historyLoaded: resumeSeq !== undefined,
+              };
 
         return;
       }
 
       if (msg.type === "backfill") {
-        if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
+        if (!msg.more) {
+          setHistory(msg.error ? "failed" : "loaded");
+          if (cursorRef.current) cursorRef.current.historyLoaded = !msg.error;
+        }
         if (msg.error) setError(msg.error);
         flushLive();
         setEntries((prev) => mergeBackfill(prev, msg.entries));
@@ -254,6 +286,10 @@ export function useObservabilityStream(
       if (msg.type === "log" || msg.type === "span") {
         // A hidden tab runs no frames, so a full queue folds now instead of growing.
         liveRef.current.push(msg.entry);
+        if (msg.seq !== undefined && cursorRef.current) {
+          cursorRef.current.seq = msg.seq;
+          cursorRef.current.at = Date.now();
+        }
         if (liveRef.current.length >= MAX_ENTRIES) flushLive();
         else frameRef.current ??= requestAnimationFrame(flushLive);
 
@@ -329,6 +365,7 @@ export function useObservabilityStream(
   }, [projectSlug, stageSlug, apiKey, connect, clearReconnect, closeSocket]);
 
   const refresh = useCallback(() => {
+    cursorRef.current = null;
     if (projectSlug && stageSlug && apiKey) connect();
   }, [projectSlug, stageSlug, apiKey, connect]);
 
@@ -340,6 +377,7 @@ export function useObservabilityStream(
       traceId: traceId,
     };
     setHistory("loading");
+    if (cursorRef.current) cursorRef.current.historyLoaded = false;
     setError(null);
     socket.send(JSON.stringify(message));
 
@@ -417,6 +455,22 @@ export function reconnectDelay(code: number, attempt: number): number | null {
   if (code === REVOKED_CLOSE_CODE) return null;
 
   return Math.min(RECONNECT_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
+}
+
+/** The cursor a reconnect resumes after, or undefined when it must load history again. */
+export function resumeSeqFor(
+  cursor: ResumeCursor | null,
+  key: string,
+  minLevel: LogLevel | undefined,
+  now: number,
+): number | undefined {
+  // DEBUG lines never ride the live relay, so only a backfill brings the new ones.
+  return cursor?.key === key &&
+    cursor.historyLoaded &&
+    minLevel !== "DEBUG" &&
+    now - cursor.at < RESUME_WINDOW_MS
+    ? cursor.seq
+    : undefined;
 }
 
 function cacheEntries(

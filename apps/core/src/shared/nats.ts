@@ -214,18 +214,30 @@ export async function readObservabilityStream(options: {
   project: string;
   stage: string;
   startTime?: string;
-}): Promise<ConsumerMessages> {
+  afterSequence?: number;
+}): Promise<{ messages: ConsumerMessages; cursor: number }> {
   await ensureObservabilityStream(options.connection);
   const js = options.connection.jetstream();
   const wildcard =
     options.stream === "logs" ? logsSubjectWildcard : tracesSubjectWildcard;
   const subject = wildcard(options.accountId, options.project, options.stage);
+  let startSequence: number | undefined;
+  if (options.afterSequence !== undefined) {
+    const jsm = await jetstreamManagerFor(options.connection);
+    const { state } = await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
+    // A recreated stream never reaches a sequence past its last: that reader would wait forever.
+    if (options.afterSequence <= state.last_seq)
+      startSequence = options.afterSequence + 1;
+  }
   const consumer = await js.consumers.get(OBSERVABILITY_STREAM_NAME, {
     filterSubjects: subject,
-    ...consumerStartPolicy(undefined, options.startTime),
+    ...consumerStartPolicy(startSequence, options.startTime),
   });
+  const messages = await consumer.consume();
+  // The sequence before the first delivery: every later message on the subject is delivered.
+  const { delivered } = await consumer.info(true);
 
-  return consumer.consume();
+  return { messages: messages, cursor: delivered.stream_seq };
 }
 
 export async function flushObservabilityNats(): Promise<void> {

@@ -27,7 +27,7 @@ export type ObservabilityGatewayData = {
   token: string;
 };
 
-type LiveSubscription = { unsubscribe(): void };
+type LiveSubscription = { unsubscribe(): void; cursor?: number };
 type LokiRange = {
   startNs: bigint;
   limit: number;
@@ -177,12 +177,15 @@ export async function handleObservabilityMessage(
     msg.sandboxId,
     msg.historyOnly === true,
     msg.agentId,
+    msg.afterSeq,
   );
 }
 
 export async function relayNatsMessages(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  sub: { [Symbol.asyncIterator](): AsyncIterator<{ data: Uint8Array }> },
+  sub: {
+    [Symbol.asyncIterator](): AsyncIterator<{ data: Uint8Array; seq?: number }>;
+  },
   stream: "logs" | "traces",
   state: Pick<ObservabilitySocketState, "logsMinLevel">,
 ): Promise<void> {
@@ -195,13 +198,14 @@ export async function relayNatsMessages(
         if (stream === "logs") {
           const entry = parsed as ObservabilityLogEntry;
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
-          sendObs(socket, { type: "log", entry: entry });
+          sendObs(socket, { type: "log", entry: entry, seq: msg.seq });
         } else {
           // Shedding would drop the newest rows, the spans that finish tasks; Loki restores logs.
           await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",
             entry: parsed as ObservabilitySpanRow,
+            seq: msg.seq,
           });
         }
       } catch {
@@ -479,6 +483,7 @@ async function handleObservabilitySubscribe(
   sandboxId?: string,
   historyOnly = false,
   agentId?: string,
+  afterSeq?: number,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -516,6 +521,7 @@ async function handleObservabilitySubscribe(
           run,
           liveOnly,
           getNatsConnection,
+          afterSeq,
         );
   if (state.runs[stream] !== run) {
     live?.unsubscribe();
@@ -532,7 +538,11 @@ async function handleObservabilitySubscribe(
   }
   state.subs[stream] = live;
 
-  sendObs(socket, { type: "ready", ...(agentId ? { agentId: agentId } : {}) });
+  sendObs(socket, {
+    type: "ready",
+    ...(agentId ? { agentId: agentId } : {}),
+    ...(live.cursor === undefined ? {} : { seq: live.cursor }),
+  });
   if (!sandboxId && typeof backfill === "number" && backfill > 0)
     state.backfills[stream] = state.backfills[stream].then(
       (): Promise<void> | undefined =>
@@ -850,10 +860,11 @@ async function startLiveSubscription(
   run: number,
   liveOnly: boolean,
   getNatsConnection: () => Promise<NatsConnection>,
+  afterSeq?: number,
 ): Promise<LiveSubscription | null> {
   try {
     const connection = await getNatsConnection();
-    const messages = await readObservabilityStream({
+    const { messages, cursor } = await readObservabilityStream({
       connection: connection,
       stream: stream,
       accountId: scope.accountId,
@@ -862,6 +873,7 @@ async function startLiveSubscription(
       startTime: new Date(
         liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS,
       ).toISOString(),
+      afterSequence: afterSeq,
     });
     if (state.runs[stream] !== run) {
       messages.stop();
@@ -870,7 +882,7 @@ async function startLiveSubscription(
     }
     void relayNatsMessages(socket, messages, stream, state);
 
-    return { unsubscribe: (): void => messages.stop() };
+    return { unsubscribe: (): void => messages.stop(), cursor: cursor };
   } catch {
     return null;
   }
@@ -1020,7 +1032,7 @@ function sendObs(
   }
 
   try {
-    socket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(payload), true);
   } catch {
     return false;
   }
