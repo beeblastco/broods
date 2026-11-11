@@ -1,4 +1,5 @@
 import { ConvexClientProvider } from "@/app/components/ConvexClientProvider";
+import { NONCE_HEADER } from "@/app/lib/contentSecurityPolicy";
 import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
 import type { InitialSession } from "@/app/lib/session";
 import { withAuth } from "@workos-inc/authkit-nextjs";
@@ -20,6 +21,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>): Promise<React.JSX.Element> {
   const initialSession = await initialSessionFromRequest();
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
   // DNS only, not preconnect: a WebSocket never reuses a pooled connection.
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (convexUrl) prefetchDNS(convexUrl);
@@ -28,7 +30,7 @@ export default async function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         <NuqsAdapter>
-          <ConvexClientProvider initialSession={initialSession}>
+          <ConvexClientProvider initialSession={initialSession} nonce={nonce}>
             {children}
           </ConvexClientProvider>
         </NuqsAdapter>
