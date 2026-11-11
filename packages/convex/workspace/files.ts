@@ -7,11 +7,13 @@ import {
   query,
 } from "../_generated/server";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { requireActiveAccount } from "../model/activeAccount";
 import { deleteWorkspaceFile } from "../model/cascade";
 import {
   getProjectForRole,
   getProjectForWrite,
+  requireProjectForWrite,
 } from "../model/ownership/project";
 import {
   claimUploadedBlob,
@@ -76,6 +78,8 @@ export const workspaceStorageValidator = v.object({
   ),
 });
 
+const FILE_NOT_FOUND = "File not found.";
+
 const WORKSPACE_ADMIN_REQUIRED =
   "Workspace files can only be changed by an org admin.";
 
@@ -100,7 +104,7 @@ export const create = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const blob = storageId ? await claimUploadedBlob(ctx, storageId) : null;
     if (blob && blob.size > MAX_WORKSPACE_FILE_BYTES) {
@@ -185,7 +189,7 @@ export const generateUploadUrl = mutation({
       throw new Error("User not found or not authenticated");
     }
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const grant = await grantUpload(ctx, account._id, "workspace");
     if ("retryAt" in grant) throw new Error(uploadQuotaMessage(grant.retryAt));
@@ -264,14 +268,11 @@ export const remove = mutation({
     }
 
     const file = await ctx.db.get(fileId);
-    if (!file) throw new Error("File not found.");
-    const project = await getProjectForWrite(
-      ctx,
-      user.id,
-      file.projectId,
-      "admin",
-    );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!file) throw new ClientError(FILE_NOT_FOUND, "not_found");
+    await requireProjectForWrite(ctx, user.id, file.projectId, "admin", {
+      forbidden: WORKSPACE_ADMIN_REQUIRED,
+      notFound: FILE_NOT_FOUND,
+    });
 
     await deleteWorkspaceFile(ctx, file);
 
@@ -295,7 +296,7 @@ export const removeFolder = mutation({
     }
 
     const project = await getProjectForWrite(ctx, user.id, projectId, "admin");
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!project) throw new ClientError(WORKSPACE_ADMIN_REQUIRED, "forbidden");
 
     const descendants = await ctx.db
       .query("workspaceFiles")
@@ -333,14 +334,11 @@ export const rename = mutation({
     }
 
     const file = await ctx.db.get(fileId);
-    if (!file) throw new Error("File not found.");
-    const project = await getProjectForWrite(
-      ctx,
-      user.id,
-      file.projectId,
-      "admin",
-    );
-    if (!project) throw new Error(WORKSPACE_ADMIN_REQUIRED);
+    if (!file) throw new ClientError(FILE_NOT_FOUND, "not_found");
+    await requireProjectForWrite(ctx, user.id, file.projectId, "admin", {
+      forbidden: WORKSPACE_ADMIN_REQUIRED,
+      notFound: FILE_NOT_FOUND,
+    });
 
     const trimmed = newName.trim();
     if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");

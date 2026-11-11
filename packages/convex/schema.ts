@@ -817,6 +817,7 @@ export const auditResourceKindValidator = v.union(
   v.literal("account"),
   v.literal("accountApiKey"),
   v.literal("agent"),
+  v.literal("member"),
   v.literal("skill"),
   v.literal("hook"),
   v.literal("mcp"),

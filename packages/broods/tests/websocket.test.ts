@@ -585,3 +585,49 @@ async function until(predicate: () => boolean): Promise<void> {
     await Bun.sleep(5);
   }
 }
+
+test("websocket attach closes on done and reports replay_unavailable as an error", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const input = {
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    requestId: "attach-1",
+    runId: "run_1",
+    eventId: "event-1",
+    conversationKey: "conversation-1",
+  };
+  const calls: string[] = [];
+  const handlers = {
+    onDone: (): void => {
+      calls.push("done");
+    },
+    onError: (error: Error): void => {
+      calls.push(error.message);
+    },
+  };
+
+  client.attach(input, handlers);
+  await Promise.resolve();
+  FakeWebSocket.instances[0]!.emit({ type: "done" } as WebSocketServerMessage);
+  client.attach(input, handlers);
+  await Promise.resolve();
+  FakeWebSocket.instances[1]!.emit({
+    type: "replay_unavailable",
+    requestId: "attach-1",
+    eventId: "event-1",
+    status: "not_found",
+    statusUrl: "/v1/runs/run_1",
+  });
+
+  expect(calls).toEqual([
+    "done",
+    "Cannot replay event-1: the run is not_found. Read it from /v1/runs/run_1.",
+  ]);
+  expect(
+    FakeWebSocket.instances.map((socket): number => socket.readyState),
+  ).toEqual([3, 3]);
+});

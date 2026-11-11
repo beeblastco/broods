@@ -1,0 +1,41 @@
+kind	name	reason
+opaque	ConvexHttpClient	The Convex SDK client instance is only passed along; the twin checks the constructor and auth arguments.
+opaque	DefaultLogger	A field inside the Convex SDK client, never read by the twin.
+opaque	LiveNatsPublisher	The receiver of the publisher methods; the twin reads only its recorded scalar fields.
+opaque	Promise	A promise is passed along or awaited, and its settled value appears as a later recorded effect.
+opaque	Timeout	A Node timer handle, only passed back to clearInterval or unref.
+external	^runSecretValues$	Reads the secrets of the current observability scope; the twin passes the list on and checks each redaction argument.
+external	^redactWithRunSecrets$	The log module scrubber; the twin checks the value and the scrub list it is given.
+external	^setInterval$	The runtime timer; the twin checks the period.
+external	^clearInterval$	The runtime timer; the twin checks the handle.
+external	^queuedLeaseTimer\.unref$	The runtime timer; takes no input and returns nothing the twin uses.
+external	^new ConvexHttpClient$	The Convex SDK constructor; the twin checks the deployment URL.
+external	^\(client as unknown as \{ setAdminAuth\(key: string\): void \}\)\.setAdminAuth$	The Convex SDK accepts the deployment credential; the twin checks it is the input key.
+external	^requireEnv$	Environment configuration; the twin checks the variable name and passes the value on.
+opaque	MsgHdrsImpl	The NATS headers object is passed to publish; the twin checks the single header it sets.
+opaque	WeakMap	The per-connection manager cache; only its return is passed along.
+opaque	AccountCipher	The account cipher is held, not read; decryption is a recorded effect.
+opaque	Session	A session handed to helpers; the twin reads only recorded fields.
+external	^getSharedNatsConn$	Returns the process-wide NATS connection; the twin passes it on.
+external	^connection\.flush$	The NATS client flushes its buffer; takes no input.
+external	^natsHeaders$	The NATS SDK builds an empty headers object.
+external	^hdrs\.set$	The NATS SDK stores a header; the twin checks its name and value.
+external	^connection\.publish$	The NATS client sends the frame; the twin checks subject, bytes and headers.
+external	^jetstreamManagers\.(get|set)$	A WeakMap cache keyed by the connection; arguments are checked and the answer is what was stored.
+external	^connection\.jetstreamManager$	The NATS SDK builds a manager; the twin checks the options.
+external	^jsm\.streams ?\.(info|update|add)$	JetStream stream administration; the twin checks the stream name and full config.
+external	^loader$	Loads wrapped keys, Convex in production or a test double; the twin checks the account id.
+external	^Date\.now$	The clock is an input.
+external	^cipher\.hasKey$	AccountCipher reports whether it holds the blob's key; the twin checks the blob.
+external	^runtime\.mutate$	Convex validates and runs the named mutation; the twin checks name and arguments.
+external	^getStorage\(\)\.connections\.(load|saveRefreshed)$	Storage reads and writes the connection row; the twin checks the arguments.
+external	^subagentCoordinator\.(drainCompletionsToParent|waitForIdle|drainCompletionsAndDetachToParent)$	The coordinator drains subagent work; its own methods are modelled where they are called.
+external	^jsonResponse$	Builds the HTTP response; the twin checks status and body.
+external	^errorResponse$	Builds the HTTP error response; the twin checks status, message, code and headers.
+external	^errorSseResponse$	Builds the event-stream error; the twin checks message and status.
+opaque	ReadableStream	The response body stream is built and handed to Response; its frames are checked as controller effects.
+opaque	ReadableStreamDefaultController	The stream controller is only told to close or enqueue, which are recorded effects.
+external	^new ReadableStream$	The web stream constructor; the twin checks the source shape and handles its start callback.
+external	^controller\.close$	Closes the web stream; takes no input.
+external	^publicEventIdForScope$	Internal helper with its own twin; the twin checks all four arguments.
+external	^toErrorMessage$	Renders an error for the log line; the twin checks it is given the caught error.

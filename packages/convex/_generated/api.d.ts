@@ -4857,6 +4857,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -4924,6 +4925,7 @@ export declare const internal: {
               | "account"
               | "accountApiKey"
               | "agent"
+              | "member"
               | "skill"
               | "hook"
               | "mcp"
@@ -5758,6 +5760,7 @@ export declare const internal: {
           stage: string;
           target:
             | {
+                pruneOnly?: Array<string>;
                 resources: Array<{
                   config: any;
                   description?: string;
@@ -5899,6 +5902,7 @@ export declare const internal: {
             stage: string;
             version: 1;
           };
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         Array<string>
@@ -5914,6 +5918,7 @@ export declare const internal: {
           };
           project: string;
           prune?: boolean;
+          pruneOnly?: Array<string>;
           resources: Array<{
             config: any;
             description?: string;
@@ -5937,7 +5942,14 @@ export declare const internal: {
       removeEnvBySecretHash: FunctionReference<
         "mutation",
         "internal",
-        { name: string; project: string; secretHash: string; stage: string },
+        {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
+          name: string;
+          project: string;
+          secretHash: string;
+          stage: string;
+        },
         { removed: boolean }
       >;
       replaceSkillNodeFilesBySecretHash: FunctionReference<
@@ -5989,6 +6001,7 @@ export declare const internal: {
         null | {
           accountId: Id<"accounts">;
           deployKeyId?: Id<"deployKeys">;
+          lastUsedAt?: number;
           scoped: boolean;
           secretHash: string;
         }
@@ -6010,6 +6023,8 @@ export declare const internal: {
         "mutation",
         "internal",
         {
+          actorId: string;
+          actorKind: "cli" | "deployKey";
           name: string;
           project: string;
           secretHash: string;
@@ -6044,6 +6059,7 @@ export declare const internal: {
             version: 1;
           };
           prune?: boolean;
+          pruneOnly?: Array<string>;
           secretHash: string;
         },
         {
@@ -6115,6 +6131,14 @@ export declare const internal: {
         { blocked: boolean; retryAfterMs?: number }
       >;
     };
+  };
+  deployKeys: {
+    touchLastUsed: FunctionReference<
+      "mutation",
+      "internal",
+      { keyId: Id<"deployKeys">; usedAt: number },
+      null
+    >;
   };
   github: {
     beginFor: FunctionReference<
