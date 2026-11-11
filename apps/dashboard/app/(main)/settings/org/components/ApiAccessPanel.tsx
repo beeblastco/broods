@@ -161,7 +161,7 @@ type MenuItem<V extends string> = {
   disabled?: boolean;
 };
 type OrgAccount = NonNullable<
-  FunctionReturnType<typeof api.org.orgs.getActiveAccount>
+  FunctionReturnType<typeof api.dashboardReads.activeAccount>
 >;
 type OrgKeys = NonNullable<FunctionReturnType<typeof api.apiKeys.listForOrg>>;
 type OrgKey = OrgKeys["keys"][number];
@@ -181,7 +181,7 @@ export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const { can } = usePermissions();
   const canWrite = can("keys:write");
   const now = useNow();
-  const account = useQuery(api.org.orgs.getActiveAccount, {});
+  const account = useQuery(api.dashboardReads.activeAccount, {});
   const listed = useQuery(api.apiKeys.listForOrg, {});
   const [selectedId, setSelectedId] = useQueryState("sel", parseAsName);
   const [creating, setCreating] = useState(false);

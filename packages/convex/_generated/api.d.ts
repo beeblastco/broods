@@ -1196,6 +1196,118 @@ export declare const api: {
       >;
     };
   };
+  dashboardReads: {
+    activeAccount: FunctionReference<
+      "query",
+      "public",
+      { requiredRole?: "owner" | "admin" | "member" },
+      {
+        accountId: Id<"accounts">;
+        role: "owner" | "admin" | "member";
+        status: "active" | "disabled";
+      } | null
+    >;
+    activeOrg: FunctionReference<
+      "query",
+      "public",
+      {},
+      {
+        _creationTime: number;
+        _id: Id<"orgs">;
+        createdAt: number;
+        name: string;
+        onboardedAt?: number;
+        ownerAuthId: string;
+        plan: "free" | "pro";
+        slug: string;
+      } | null
+    >;
+    orgs: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"orgs">;
+        createdAt: number;
+        name: string;
+        onboardedAt?: number;
+        ownerAuthId: string;
+        plan: "free" | "pro";
+        slug: string;
+      }>
+    >;
+    projectById: FunctionReference<
+      "query",
+      "public",
+      { projectId: Id<"projects"> },
+      null | {
+        _creationTime: number;
+        _id: Id<"projects">;
+        authId: string;
+        description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
+        name: string;
+        orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        slug: string;
+        updatedAt: number;
+      }
+    >;
+    projects: FunctionReference<
+      "query",
+      "public",
+      {},
+      Array<{
+        _creationTime: number;
+        _id: Id<"projects">;
+        authId: string;
+        description?: string;
+        linkClaim?: { expiresAt: number; repoId: number };
+        name: string;
+        orgId: Id<"orgs">;
+        repo?: {
+          deployKeyIds: Array<Id<"deployKeys">>;
+          developmentBranch?: string;
+          fullName: string;
+          installationId: number;
+          productionBranch?: string;
+          protectedSecrets: boolean;
+          repoId: number;
+          rootDirectory: string;
+          setupPullRequestUrl?: string;
+        };
+        slug: string;
+        updatedAt: number;
+      }>
+    >;
+    stages: FunctionReference<
+      "query",
+      "public",
+      { projectId: Id<"projects"> },
+      Array<{
+        _creationTime: number;
+        _id: Id<"stages">;
+        authId: string;
+        deploymentRegion?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
+        isDefault: boolean;
+        kind: "development" | "production" | "custom";
+        name: string;
+        projectId: Id<"projects">;
+        updatedAt: number;
+      }>
+    >;
+  };
   deployKeys: {
     create: FunctionReference<
       "mutation",
@@ -6523,14 +6635,27 @@ export declare const internal: {
         { authId: string },
         Array<Id<"accounts">>
       >;
+      release: FunctionReference<
+        "mutation",
+        "internal",
+        { authId: string },
+        null
+      >;
       scheduleRetry: FunctionReference<
         "mutation",
         "internal",
         { authId: string },
         null | number
       >;
+      sweep: FunctionReference<"mutation", "internal", {}, null>;
     };
     workosUserDeletionCleanup: {
+      deleteIdentity: FunctionReference<
+        "action",
+        "internal",
+        { authId: string },
+        null
+      >;
       run: FunctionReference<"action", "internal", { authId: string }, null>;
     };
   };
@@ -8286,6 +8411,129 @@ export declare const internal: {
         updatedAt: number;
       } | null
     >;
+    deploymentByApiKeyHash: FunctionReference<
+      "query",
+      "internal",
+      { apiKeyHash: string },
+      {
+        account: {
+          _creationTime: number;
+          _id: Id<"accounts">;
+          auditRetentionDays?: number;
+          createdAt: number;
+          description?: string;
+          orgId: string;
+          secretHash: string;
+          secretHint?: string;
+          secretRotatedAt?: number;
+          secretRotatedBy?: Id<"users">;
+          status: "active" | "disabled";
+          storageExternalId?: string;
+          updatedAt: number;
+          username: string;
+        };
+        accountId: Id<"accounts">;
+        endpointId: string;
+        projectId: Id<"projects">;
+        projectSlug: string;
+        stageId: Id<"stages">;
+        stageSlug: string;
+        userTokenSecret?: { ciphertext: string; iv: string; tag: string };
+      } | null
+    >;
+    policyById: FunctionReference<
+      "query",
+      "internal",
+      { accountId: Id<"accounts">; policyId: string },
+      {
+        _creationTime: number;
+        _id: Id<"agentPolicies">;
+        accountId: Id<"accounts">;
+        createdAt: number;
+        createdBy?: Id<"users">;
+        deletedAt?: number;
+        description?: string;
+        document: {
+          mode?: "enforce" | "audit";
+          rules: Array<{
+            actions: Array<string>;
+            conditions?: Array<{
+              attribute: string;
+              operator:
+                "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
+              value:
+                | string
+                | number
+                | boolean
+                | Array<string>
+                | Array<number>
+                | Array<boolean>;
+            }>;
+            effect: "allow" | "deny";
+            id: string;
+            resources?: {
+              filePaths?: Array<string>;
+              mcpIds?: Array<string>;
+              resourceIds?: Array<string>;
+              skillPaths?: Array<string>;
+              subagentIds?: Array<string>;
+              toolNames?: Array<string>;
+              workspaceIds?: Array<string>;
+              workspaceNames?: Array<string>;
+            };
+          }>;
+          version: 1;
+        };
+        managedBy?: "cli" | "dashboard" | "api";
+        name: string;
+        projectId?: Id<"projects">;
+        stageId?: Id<"stages">;
+        status: "active" | "deleted";
+        updatedAt: number;
+      } | null
+    >;
+    roleSessionByTokenHash: FunctionReference<
+      "query",
+      "internal",
+      { tokenHash: string },
+      {
+        accountId: Id<"accounts">;
+        policy: {
+          mode?: "enforce" | "audit";
+          rules: Array<{
+            actions: Array<string>;
+            conditions?: Array<{
+              attribute: string;
+              operator:
+                "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
+              value:
+                | string
+                | number
+                | boolean
+                | Array<string>
+                | Array<number>
+                | Array<boolean>;
+            }>;
+            effect: "allow" | "deny";
+            id: string;
+            resources?: {
+              filePaths?: Array<string>;
+              mcpIds?: Array<string>;
+              resourceIds?: Array<string>;
+              skillPaths?: Array<string>;
+              subagentIds?: Array<string>;
+              toolNames?: Array<string>;
+              workspaceIds?: Array<string>;
+              workspaceNames?: Array<string>;
+            };
+          }>;
+          version: 1;
+        };
+        projectId?: Id<"projects">;
+        roleId: string;
+        stageId?: Id<"stages">;
+      } | null
+    >;
     sandboxConfigById: FunctionReference<
       "query",
       "internal",
@@ -8899,6 +9147,14 @@ export declare const internal: {
         toolCallCount: number;
         totalTokens: number;
       },
+      null
+    >;
+  };
+  user: {
+    cancelAccountDeletion: FunctionReference<
+      "mutation",
+      "internal",
+      { authId: string },
       null
     >;
   };

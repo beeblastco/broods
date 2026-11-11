@@ -19,7 +19,7 @@ import {
   type BudgetStatus,
   type BudgetUsage,
 } from "../model/usageMeter";
-import { getActiveCaller } from "../org/orgs";
+import { getActiveCaller } from "../model/activeCaller";
 import { planValidator, usageQuantityFields } from "../schema";
 
 // Core's retries end within a minute; a day of ids is ample.

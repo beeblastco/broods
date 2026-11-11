@@ -38,6 +38,14 @@ describe("zalo channel adapter", () => {
     );
   });
 
+  it("ties the turn to the bot that received it, so a record for another bot skips it", async (): Promise<void> => {
+    const adapter = createZaloChannel("5550002:bot-secret", "zalo-secret");
+    const parsed = await adapter.parse(createZaloRequest(validUpdate()));
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.identity?.workspaceRef).toBe("5550002");
+  });
+
   it("normalizes text webhook events into direct conversations", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
       allowedChannelIds: null,

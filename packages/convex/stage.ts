@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { mutation } from "./_generated/server";
 import { readyStageDeployment } from "./agent/deployments";
 import { authKit } from "./auth";
 import { ClientError } from "./model/clientError";
@@ -14,7 +14,6 @@ import {
 import { NO_MCP_CONNECTION } from "./account/mcp";
 import { deleteAgentConfig } from "./model/agentRuntimeSecrets";
 import { accountIdForProject } from "./model/auditEvents";
-import { byDefaultThenName } from "./model/defaultStage";
 import { assertStageName } from "./lib/slug";
 import { getOwnedStage } from "./model/ownership/stage";
 import {
@@ -23,21 +22,18 @@ import {
   requireProjectForWrite,
 } from "./model/ownership/project";
 import { agentsInStage, stageNameEquals } from "./model/projectScope";
-import { deploymentRegionValidator, stagesFields } from "./schema";
+import { deploymentRegionValidator } from "./schema";
 import { deleteStageSources } from "./stageSources";
 import { LIVE_DEPLOYMENT_REGIONS } from "./cli/types";
-
-const stageDoc = v.object({
-  ...stagesFields,
-  _id: v.id("stages"),
-  _creationTime: v.number(),
-});
 
 const STAGE_NOT_FOUND = "Stage not found.";
 
 // Copies agents, secrets and runtime wiring, so admin-only like deleting a stage.
 const STAGE_ADMIN_REQUIRED =
   "Stages can only be created or promoted by an org admin.";
+
+// Dashboard tabs loaded before this release call these paths until they reload.
+export { stages as list } from "./dashboardReads";
 
 export const create = mutation({
   args: {
@@ -240,17 +236,6 @@ export const initializeProduction = mutation({
     await ctx.db.patch(projectId, { updatedAt: now });
 
     return productionId;
-  },
-});
-
-export const list = query({
-  args: { projectId: v.id("projects") },
-  returns: v.array(stageDoc),
-  handler: async (ctx, { projectId }): Promise<Doc<"stages">[]> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    return listStagesForProject(ctx, authUser.id, projectId);
   },
 });
 
@@ -567,24 +552,6 @@ export function kindForStageName(name: string): Doc<"stages">["kind"] {
   if (normalized === "production") return "production";
 
   return "custom";
-}
-
-// Split from `list` for tests: convex-test cannot run AuthKit.
-export async function listStagesForProject(
-  ctx: QueryCtx | MutationCtx,
-  authId: string,
-  projectId: Id<"projects">,
-): Promise<Doc<"stages">[]> {
-  // Empty, not a throw: a just-deleted project must not crash reactive subscribers.
-  const project = await getProjectForRole(ctx, authId, projectId);
-  if (!project) return [];
-
-  const stages = await ctx.db
-    .query("stages")
-    .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-    .collect();
-
-  return stages.sort(byDefaultThenName);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

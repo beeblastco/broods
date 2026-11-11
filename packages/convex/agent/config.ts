@@ -5,6 +5,7 @@ import type { CanvasNode } from "../model/canvasShapes";
 import {
   agentCanvasBadge,
   collectEnvPlaceholderNames,
+  substituteEnvPlaceholders,
   toNestedAgentConfig,
   type AgentCanvasBadge,
   agentCanvasBadgeValidator,
@@ -12,6 +13,8 @@ import {
 import {
   assertAgentRuntimeRefs,
   mergeCanvasSandboxes,
+  normalizeAgentConfig,
+  runtimeConfigBranches,
 } from "../model/agentRules";
 import {
   deleteAgentRow,
@@ -36,6 +39,7 @@ import {
 } from "../model/ownership/project";
 import {
   deleteAgentConfig,
+  loadAgentRuntimeSecrets,
   saveAgentRuntimeSecrets,
 } from "../model/agentRuntimeSecrets";
 import { redactConfigSecrets } from "../model/configValues";
@@ -349,6 +353,21 @@ export const update = mutation({
     await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
     if (updates.runtimeVariables === undefined) {
       await bindStageEnvRefs(ctx, configId);
+    }
+    const saved = await ctx.db.get(configId);
+    if (saved) {
+      const nested = toNestedAgentConfig(saved);
+      const variables = await loadAgentRuntimeSecrets(ctx, configId);
+      // A variable with no value yet is set later; patch: the canvas wires sandboxes itself.
+      if (
+        [...collectEnvPlaceholderNames(nested)].every((name): boolean =>
+          Boolean(variables[name]),
+        )
+      )
+        normalizeAgentConfig(
+          runtimeConfigBranches(substituteEnvPlaceholders(nested, variables)),
+          { patch: true },
+        );
     }
 
     const accountId = await accountIdForProject(ctx, existing.projectId);

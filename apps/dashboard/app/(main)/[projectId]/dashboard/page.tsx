@@ -56,7 +56,7 @@ export default function DashboardPage(): React.JSX.Element {
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
   // The list, not a get: the header's subscription answers it from cache on navigation.
-  const projects = useQuery(api.project.list, {});
+  const projects = useQuery(api.dashboardReads.projects, {});
   const project =
     projects === undefined
       ? undefined

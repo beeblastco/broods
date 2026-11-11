@@ -24,14 +24,12 @@ import { stableJson } from "../model/objects";
 import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { normalizePolicyDocument } from "../model/policyRules";
-import { agentPoliciesFields, paginationCursorFields } from "../schema";
+import { policyDoc } from "../runtimeLookups";
+import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
-const policyDoc = v.object({
-  ...agentPoliciesFields,
-  _id: v.id("agentPolicies"),
-  _creationTime: v.number(),
-});
+// Core pods deployed before this release call this path until they roll.
+export { policyById as getById } from "../runtimeLookups";
 
 const policyStatusValidator = v.union(
   v.literal("active"),
@@ -128,24 +126,6 @@ export const createInternal = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-  },
-});
-
-export const getById = internalQuery({
-  args: { accountId: v.id("accounts"), policyId: v.string() },
-  returns: v.union(policyDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agentPolicies"> | null> => {
-    const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
-    if (!normalized) return null;
-    const policy = await ctx.db.get(normalized);
-    if (
-      !policy ||
-      policy.accountId !== args.accountId ||
-      policy.status !== "active"
-    )
-      return null;
-
-    return policy;
   },
 });
 

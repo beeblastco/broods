@@ -1138,7 +1138,7 @@ async function resolveChannelTarget(
     record &&
     !channelRecordMatchesWorkspace(record.workspaceRef, identity.workspaceRef)
   ) {
-    logWarn("Channel record belongs to a different provider workspace", {
+    logDebug("Channel record belongs to a different provider workspace", {
       accountId: account.accountId,
       channel: channelName,
       channelId: identity.channelId,

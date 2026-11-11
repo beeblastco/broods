@@ -17,7 +17,7 @@ export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
   const { stageId: activeStageId, stageArgs } = useStage();
-  const stages = useQuery(api.stage.list, {
+  const stages = useQuery(api.dashboardReads.stages, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
   const instances = useQuery(
@@ -29,7 +29,7 @@ export default function SandboxPage(): React.JSX.Element {
   const agents = useQuery(api.agent.agents.listForProject, {
     projectId: projectId,
   });
-  const account = useQuery(api.org.orgs.getActiveAccount, {});
+  const account = useQuery(api.dashboardReads.activeAccount, {});
   const observability = useObservabilityScope(projectId, activeStageId);
 
   const searchParams = useSearchParams();

@@ -509,9 +509,12 @@ async function resolveBearerAuth(
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-    } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: tokenHash,
-    });
+    } | null = await ctx.runQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: tokenHash,
+      },
+    );
 
     return deployment ? { kind: "deployment" } : null;
   }
@@ -578,7 +581,7 @@ async function resolveRoleSessionAuth(
   tokenHash: string,
 ): Promise<ConfigAuth | null> {
   const principal: RolePrincipal | null = await ctx.runQuery(
-    internal.account.roles.resolveSession,
+    internal.runtimeLookups.roleSessionByTokenHash,
     { tokenHash: tokenHash },
   );
   if (!principal) return null;

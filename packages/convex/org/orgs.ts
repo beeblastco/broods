@@ -1,8 +1,9 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { internalQuery, mutation, query } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
+import { internalQuery, mutation } from "../_generated/server";
 import { authKit } from "../auth";
+import { orgDoc } from "../dashboardReads";
 import { purgeOrg } from "../model/cascade";
 import { uniqueOrgSlug } from "../lib/slug";
 import { ClientError } from "../model/clientError";
@@ -10,25 +11,9 @@ import { hasDashboardPermission } from "../model/access";
 import { assertCanCreateOrg } from "../model/orgBilling";
 import {
   getActiveOrgForUser,
-  getOrgMembership,
-  orgRoleMeets,
   requireOrgMember,
   userByAuthId,
-  type OrgRole,
 } from "../model/ownership/org";
-import { orgsFields } from "../schema";
-
-const orgDoc = v.object({
-  ...orgsFields,
-  _id: v.id("orgs"),
-  _creationTime: v.number(),
-});
-
-const orgRoleValidator = v.union(
-  v.literal("owner"),
-  v.literal("admin"),
-  v.literal("member"),
-);
 
 export const orgBootstrapValidator = v.object({
   orgId: v.id("orgs"),
@@ -37,11 +22,12 @@ export const orgBootstrapValidator = v.object({
 
 export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 
-export interface ActiveAccount {
-  account: Doc<"accounts">;
-  role: OrgRole;
-  user: Doc<"users">;
-}
+// Dashboard tabs loaded before this release call these paths until they reload.
+export {
+  activeAccount as getActiveAccount,
+  activeOrg as getActive,
+  orgs as list,
+} from "../dashboardReads";
 
 export const create = mutation({
   args: {
@@ -65,61 +51,6 @@ export const create = mutation({
     }
 
     return await insertOwnedOrg(ctx, user, name);
-  },
-});
-
-export const getActive = query({
-  args: {},
-  returns: v.union(orgDoc, v.null()),
-  handler: async (ctx): Promise<Doc<"orgs"> | null> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      return null;
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) {
-      return null;
-    }
-
-    const org = await getActiveOrgForUser(ctx, user._id);
-
-    return org ?? null;
-  },
-});
-
-// The role only shapes what the dashboard shows; every mutation checks it again.
-export const getActiveAccount = query({
-  args: {
-    requiredRole: v.optional(orgRoleValidator),
-  },
-  returns: v.union(
-    v.object({
-      accountId: v.id("accounts"),
-      status: v.union(v.literal("active"), v.literal("disabled")),
-      role: orgRoleValidator,
-    }),
-    v.null(),
-  ),
-  handler: async (
-    ctx,
-    { requiredRole },
-  ): Promise<{
-    accountId: Id<"accounts">;
-    status: "active" | "disabled";
-    role: OrgRole;
-  } | null> => {
-    const active = await getActiveCaller(ctx, requiredRole);
-    if (!active) return null;
-
-    return {
-      accountId: active.account._id,
-      status: active.account.status,
-      role: active.role,
-    };
   },
 });
 
@@ -163,36 +94,6 @@ export const getOrCreate = mutation({
     }
 
     return await getOrCreateActiveOrg(ctx, authUser.id);
-  },
-});
-
-export const list = query({
-  args: {},
-  returns: v.array(orgDoc),
-  handler: async (ctx): Promise<Doc<"orgs">[]> => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      return [];
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) {
-      return [];
-    }
-
-    const memberships = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .collect();
-
-    const orgs = await Promise.all(
-      memberships.map((membership) => ctx.db.get(membership.orgId)),
-    );
-
-    return orgs.filter((org): org is NonNullable<typeof org> => org !== null);
   },
 });
 
@@ -281,27 +182,6 @@ export const update = mutation({
   },
 });
 
-export async function getActiveAccountForUser(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<Doc<"accounts"> | null> {
-  const active = await getActiveCaller(ctx, requiredRole);
-
-  return active ? active.account : null;
-}
-
-export async function getActiveCaller(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<ActiveAccount | null> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) return null;
-  const active = await resolveActiveAccount(ctx, authUser.id);
-  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
-
-  return active;
-}
-
 export async function getOrCreateActiveOrg(
   ctx: MutationCtx,
   authId: string,
@@ -327,29 +207,6 @@ export async function getOrCreateActiveOrg(
     .unique();
 
   return { orgId: orgId, needsProvision: account === null };
-}
-
-export async function resolveActiveAccount(
-  ctx: QueryCtx,
-  authId: string,
-): Promise<ActiveAccount | null> {
-  const user = await userByAuthId(ctx, authId);
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-  if (!org) return null;
-  const membership = await getOrgMembership(ctx, org._id, user._id);
-  const role: OrgRole | undefined =
-    org.ownerAuthId === authId ? "owner" : membership?.role;
-  if (!role) return null;
-
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-    .unique();
-  if (!account) return null;
-
-  return { account: account, role: role, user: user };
 }
 
 export async function insertOwnedOrg(

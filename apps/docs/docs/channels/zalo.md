@@ -90,6 +90,8 @@ export const internal = defineZaloChannel({
 
 See [Channel records](channel-records.md) for how lists expand.
 
+A channel applies on every bot the account has. Add `botId`, the digits before `:` in the bot token, to tie it to one bot.
+
 ## What works
 
 - Text in private chats and groups. Replies are split at a line break or space into pieces of at most 2000 characters, the Zalo text limit.

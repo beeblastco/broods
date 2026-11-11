@@ -378,6 +378,7 @@ function toInboundMessage(
       ? { attachments: parsed.attachments }
       : {}),
     identity: {
+      workspaceRef: parsed.raw.phoneNumberId,
       channelId: from,
       userId: from,
       ...(userName ? { userName: userName } : {}),

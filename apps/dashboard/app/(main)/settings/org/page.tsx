@@ -50,7 +50,7 @@ const FLUSH_TABS = new Set<string>([
 ]);
 
 export default function OrgSettingsPage(): React.JSX.Element {
-  const org = useQuery(api.org.orgs.getActive, {});
+  const org = useQuery(api.dashboardReads.activeOrg, {});
   const searchParams = useSearchParams();
   const tab = pickTab(ORG_TABS, searchParams.get("tab"));
   useWarmPanel(ORG_PANELS[tab.id]);

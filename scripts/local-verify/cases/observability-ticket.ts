@@ -74,6 +74,28 @@ export async function observabilityTicket(
     JSON.stringify({ opened: opened, otherStage: otherStage, forged: forged }),
   );
 
+  const upgrade = await fetch(
+    `${context.edgeUrl}/v1/projects/${projectSlug}/stages/${deployment?.stageSlug ?? "development"}/observability/ws`,
+    {
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": btoa("the sample nonce"),
+        "Sec-WebSocket-Protocol": webSocketSubprotocols(ticket).join(", "),
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+      },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  await upgrade.body?.cancel();
+  const extensions = upgrade.headers.get("sec-websocket-extensions") ?? "";
+  assertStep(
+    "the edge carries a compression offer to the gateway, which accepts it",
+    upgrade.status === 101 && extensions.includes("permessage-deflate"),
+    `status ${upgrade.status}, extensions "${extensions}"`,
+  );
+
   const account = new BroodsAccountClient({
     baseUrl: context.edgeUrl,
     accountSecret: context.accountSecret,

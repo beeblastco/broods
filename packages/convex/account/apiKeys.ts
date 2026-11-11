@@ -3,7 +3,7 @@
 import { v, type Infer } from "convex/values";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { accountDoc } from "../model/accountDoc";
-import { rolePrincipalValidator } from "./roles";
+import { rolePrincipalValidator } from "../model/policyDocument";
 
 const LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
