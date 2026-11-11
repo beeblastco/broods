@@ -23,6 +23,7 @@ import { clientErrorResponse } from "../model/clientError";
 import { jsonError } from "../model/httpJson";
 import { APPLY_TICKET_PREFIX, openApplyTicket } from "../model/applyTicket";
 import { stageTicketSecret } from "../agent/deployments";
+import { DEPLOY_KEY_LAST_USED_INTERVAL_MS } from "../deployKeys";
 
 export const handle = httpAction(async (ctx, req): Promise<Response> => {
   try {
@@ -166,12 +167,28 @@ async function resolveCliRequestAuth(
       : null;
   if (!keyKind) return null;
 
-  return await ctx.runQuery(internal.cli.sync.resolveCliAuth, {
+  const resolved = await ctx.runQuery(internal.cli.sync.resolveCliAuth, {
     tokenHash: tokenHash,
     keyKind: keyKind,
     project: route.project,
     stage: route.stage,
   });
+  if (!resolved) return null;
+  const { lastUsedAt, ...auth } = resolved;
+  const now = Date.now();
+  if (
+    auth.deployKeyId &&
+    now - (lastUsedAt ?? 0) >= DEPLOY_KEY_LAST_USED_INTERVAL_MS
+  ) {
+    await ctx.scheduler
+      .runAfter(0, internal.deployKeys.touchLastUsed, {
+        keyId: auth.deployKeyId,
+        usedAt: now,
+      })
+      .catch((err: unknown) => console.warn("lastUsedAt stamp failed", err));
+  }
+
+  return auth;
 }
 
 function stageRouteParts(

@@ -2,7 +2,11 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  type MutationCtx,
+} from "./_generated/server";
 import { authKit } from "./auth";
 import { requireDashboardPermission } from "./model/access";
 import {
@@ -14,6 +18,9 @@ import {
 import { userByAuthId } from "./model/ownership/org";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForWrite } from "./model/ownership/project";
+
+// At most one write per key per hour on the CLI's request path.
+export const DEPLOY_KEY_LAST_USED_INTERVAL_MS = 60 * 60 * 1000;
 
 export const create = mutation({
   args: {
@@ -91,10 +98,24 @@ export const remove = mutation({
   },
 });
 
-/**
- * Mints a project key for one stage and answers its plaintext, shown once.
- * Used by `create` and by a GitHub repo link, which seals it into a repo secret.
- */
+// Stamps a project key's lastUsedAt, scheduled from the CLI request path.
+export const touchLastUsed = internalMutation({
+  args: { keyId: v.id("deployKeys"), usedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const key = await ctx.db.get(args.keyId);
+    if (
+      key &&
+      args.usedAt - (key.lastUsedAt ?? 0) >= DEPLOY_KEY_LAST_USED_INTERVAL_MS
+    ) {
+      await ctx.db.patch(key._id, { lastUsedAt: args.usedAt });
+    }
+
+    return null;
+  },
+});
+
+// Mints a project key for one stage and answers its plaintext, shown once.
 export async function insertDeployKey(
   ctx: MutationCtx,
   key: {
