@@ -4,6 +4,7 @@ import { z } from "zod";
 
 // The dock agent's own workspace, by its name in the broods-agent project.
 const DOCK_WORKSPACE = "project";
+const FOLDER_TIMEOUT_MS = 30_000;
 
 const filesSchema = z.object({
   files: z.array(z.object({ path: z.string(), contentBase64: z.string() })),
@@ -69,10 +70,18 @@ export function draftFiles(
   }));
 }
 
-/** Runs the agent folder's reads and writes one at a time, so none writes from a stale read. */
-export function onFolder<T>(task: () => Promise<T>): Promise<T> {
-  const run = folderTail.then(task);
-  folderTail = run.catch((): void => undefined);
+/** Runs the agent folder's reads and writes one at a time; an aborted `signal` skips the line. */
+export function onFolder<T>(
+  task: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const turn = folderTail;
+  const stopped = new Promise<void>((resolve): void => {
+    if (signal?.aborted) resolve();
+    signal?.addEventListener("abort", () => resolve(), { once: true });
+  });
+  const run = Promise.race([turn, stopped]).then(task);
+  folderTail = turn.then(() => run).catch((): void => undefined);
 
   return run;
 }
@@ -85,7 +94,7 @@ export async function readDraft(
 ): Promise<DockFile[]> {
   const response = await fetch(filesUrl(session, conversationKey), {
     headers: headers(session),
-    ...(signal ? { signal: signal } : {}),
+    signal: folderSignal(signal),
   });
   if (!response.ok)
     throw new Error(`Reading the draft failed: ${response.status}`);
@@ -100,8 +109,11 @@ export async function readDraft(
 }
 
 /** The stored source a `stageSources.latest` URL points at. */
-export async function readSource(url: string): Promise<DockFile[]> {
-  const response = await fetch(url);
+export async function readSource(
+  url: string,
+  signal?: AbortSignal,
+): Promise<DockFile[]> {
+  const response = await fetch(url, { signal: folderSignal(signal) });
   if (!response.ok)
     throw new Error(`Reading the stage source failed: ${response.status}`);
 
@@ -144,7 +156,7 @@ export async function reseedConversation(
   seed: readonly DockFile[] | undefined,
   signal: AbortSignal,
 ): Promise<{ files: DockFile[]; lost: string[] }> {
-  const files = await readSource(url);
+  const files = await readSource(url, signal);
   const rebased = seed
     ? rebaseDraft(
         seed,
@@ -152,24 +164,30 @@ export async function reseedConversation(
         files,
       )
     : { files: files, lost: [] };
-  await seedConversation(session, conversationKey, rebased.files);
+  await seedConversation(session, conversationKey, rebased.files, signal);
 
   return { files: files, lost: rebased.lost };
 }
 
-/** Puts `paths` back as the seed has them, so a dropped file is not proposed again. */
-export async function revertPaths(
-  session: DockSession,
+/** Puts `paths` back as the seed has them in the folder's turn, so a drop is not proposed again. */
+export function revertPaths(
+  session: () => Promise<DockSession | null>,
   conversationKey: string,
-  seed: readonly DockFile[],
+  seed: () => readonly DockFile[] | undefined,
   paths: readonly string[],
 ): Promise<void> {
-  const reverted = new Set(paths);
-  const draft = await readDraft(session, conversationKey);
-  await seedConversation(session, conversationKey, [
-    ...draft.filter((file) => !reverted.has(file.path)),
-    ...seed.filter((file) => reverted.has(file.path)),
-  ]);
+  return onFolder(async (): Promise<void> => {
+    const files = seed();
+    if (!files) return;
+    const live = await session();
+    if (!live) throw new Error("Signing in to the agent failed");
+    const reverted = new Set(paths);
+    const draft = await readDraft(live, conversationKey);
+    await seedConversation(live, conversationKey, [
+      ...draft.filter((file) => !reverted.has(file.path)),
+      ...files.filter((file) => reverted.has(file.path)),
+    ]);
+  });
 }
 
 /** Puts the stage's source in the conversation's folder before the agent's first turn. */
@@ -177,6 +195,7 @@ export async function seedConversation(
   session: DockSession,
   conversationKey: string,
   files: readonly DockFile[],
+  signal?: AbortSignal,
 ): Promise<void> {
   const encoder = new TextEncoder();
   const response = await fetch(filesUrl(session, conversationKey), {
@@ -192,6 +211,7 @@ export async function seedConversation(
         ),
       })),
     }),
+    signal: folderSignal(signal),
   });
   if (!response.ok)
     throw new Error(`Seeding the conversation failed: ${response.status}`);
@@ -205,6 +225,12 @@ function filesUrl(session: DockSession, conversationKey: string): string {
   });
 
   return `${session.url}/files?${query.toString()}`;
+}
+
+function folderSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(FOLDER_TIMEOUT_MS);
+
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function headers(session: DockSession): Record<string, string> {

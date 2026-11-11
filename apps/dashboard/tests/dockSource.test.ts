@@ -5,6 +5,7 @@ import {
   draftChanges,
   onFolder,
   rebaseDraft,
+  reseedConversation,
   revertPaths,
   type DockFile,
 } from "../app/lib/dockSource";
@@ -85,8 +86,8 @@ describe("dock source", () => {
       { path: "broods/new.ts", content: "n" },
     ]);
     await Promise.all([
-      onFolder(() => revertPaths(SESSION, "c", SEED, ["broods/a.ts"])),
-      onFolder(() => revertPaths(SESSION, "c", SEED, ["broods/new.ts"])),
+      revertPaths(signedIn, "c", seeded, ["broods/a.ts"]),
+      revertPaths(signedIn, "c", seeded, ["broods/new.ts"]),
     ]);
 
     expect(draftChanges(SEED, folder.files())).toEqual([
@@ -105,14 +106,79 @@ describe("dock source", () => {
     });
     await Promise.all([
       answer,
-      onFolder(() => revertPaths(SESSION, "c", SEED, ["broods/a.ts"])),
+      revertPaths(signedIn, "c", seeded, ["broods/a.ts"]),
     ]);
 
     expect(
       draftChanges(SEED, folder.files()).map((change) => change.after),
     ).toEqual(["b3"]);
   });
+
+  test("a drop with no dock session says so instead of skipping the revert", async () => {
+    coreFolder([{ path: "broods/a.ts", content: "a2" }, SEED[1]]);
+
+    await expect(
+      revertPaths(async () => null, "c", seeded, ["broods/a.ts"]),
+    ).rejects.toThrow("Signing in to the agent failed");
+  });
+
+  test("Stop ends an answer's slow folder request", async () => {
+    slowCore();
+    const controller = new AbortController();
+    const reseed = reseedConversation(
+      SESSION,
+      "c",
+      "http://core.test/source",
+      SEED,
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(reseed).rejects.toThrow();
+  });
+
+  test("Stop ends an answer waiting behind a slow folder request", async () => {
+    slowCore();
+    const settled: string[] = [];
+    const held = onFolder(() => fetch("http://core.test/files")).then(() =>
+      settled.push("held"),
+    );
+    const controller = new AbortController();
+    const answer = onFolder(async (): Promise<void> => {
+      controller.signal.throwIfAborted();
+    }, controller.signal).catch(() => settled.push("stopped"));
+    controller.abort();
+    await Promise.all([held, answer]);
+
+    expect(settled).toEqual(["stopped", "held"]);
+  });
 });
+
+async function signedIn(): Promise<DockSession> {
+  return SESSION;
+}
+
+function seeded(): DockFile[] {
+  return SEED;
+}
+
+/** A core that answers every request 300 ms late, unless the request is aborted first. */
+function slowCore(): void {
+  globalThis.fetch = Object.assign(
+    (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => resolve(Response.json({ files: [] })),
+          300,
+        );
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason);
+        });
+      }),
+    { preconnect: realFetch.preconnect },
+  );
+}
 
 /** Core's conversation folder: a GET reads it and a PUT replaces it, each a few ms late. */
 function coreFolder(initial: readonly DockFile[]): {
