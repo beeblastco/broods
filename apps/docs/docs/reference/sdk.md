@@ -239,7 +239,7 @@ const sub = ws.subscribe(
 );
 ```
 
-`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
+`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. It closes its socket after `onDone`. When the gateway answers `replay_unavailable` (no such run for this caller, or a cursor it no longer keeps), it calls `onError` and closes; poll the run's status instead. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
 
 ## BroodsAccountClient
 
