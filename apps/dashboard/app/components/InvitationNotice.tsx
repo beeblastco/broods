@@ -22,7 +22,7 @@ interface Answer {
 
 const NO_INVITATIONS: Invitation[] = [];
 
-// Mounted under the header on every page. It subscribes only while the user row says an
+// Mounted above every page's content. It subscribes only while the user row says an
 // invitation waits, and keeps each answer on its line until closed or the page changes.
 export function InvitationNotice({
   invited,

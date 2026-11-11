@@ -157,7 +157,6 @@ export function MainShell({
                 className="h-dvh flex-col"
               >
                 <Header />
-                <InvitationNotice invited={currentUser?.invited === true} />
                 {onboardingSecret && (
                   <OnboardingDialog
                     secret={onboardingSecret}
@@ -170,7 +169,10 @@ export function MainShell({
                 <div className="flex min-h-0 flex-1">
                   <AppSidebar />
                   <SidebarInset className="relative min-w-0 overflow-hidden">
-                    {children}
+                    <InvitationNotice invited={currentUser?.invited === true} />
+                    <div className="relative flex min-h-0 flex-1 flex-col">
+                      {children}
+                    </div>
                   </SidebarInset>
                   <CopilotDock />
                 </div>
