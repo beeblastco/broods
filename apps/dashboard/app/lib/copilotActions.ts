@@ -227,7 +227,8 @@ export function dockProposals(
         ? []
         : [{ action: { ...action, files: files }, index: index }];
     });
-    const commit = plan.actions.find((action) => action.type === "commitFiles");
+    const kept = changes.map(({ action }) => action);
+    const commit = kept.find((action) => action.type === "commitFiles");
     const applied = applies[id];
     const apply: DockApply = applied
       ? withDeploy(
@@ -248,8 +249,7 @@ export function dockProposals(
       nodes: edited ? NO_NODES : (plan.nodes ?? NO_NODES),
       stage: stage,
       title:
-        commit?.message ||
-        (writes.length === 1 ? writes[0].action.label : plan.summary),
+        commit?.message || (kept.length === 1 ? kept[0].label : plan.summary),
     });
   }
 
