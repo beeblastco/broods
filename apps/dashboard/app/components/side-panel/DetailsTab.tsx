@@ -61,6 +61,8 @@ export type StageDeployment = {
 
 export type AgentProvider = AccountModelProviderName;
 
+type SaveSection = "name" | "model" | "reasoning" | "access" | "tools";
+
 const providerOptions: Array<{ value: AgentProvider; label: string }> =
   ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
     value: name,
@@ -114,7 +116,7 @@ export function DetailsTab({
   deploymentApiKey?: string;
   editName: string;
   setEditName: (name: string) => void;
-  onSaveName: () => void;
+  onSaveName: () => Promise<void>;
   onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
   onGenerateKey?: () => Promise<boolean>;
   onRotateKey?: () => Promise<boolean>;
@@ -144,6 +146,10 @@ export function DetailsTab({
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<{
+    section: SaveSection;
+    message: string;
+  } | null>(null);
   const [syncedApiKey, setSyncedApiKey] = useState(deploymentApiKey);
   if (deploymentApiKey !== syncedApiKey) {
     setSyncedApiKey(deploymentApiKey);
@@ -359,11 +365,30 @@ export function DetailsTab({
       return;
     }
 
-    void onSaveModelSettings?.({
-      provider: provider,
-      modelId: trimmed,
-      ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+    save(
+      "model",
+      onSaveModelSettings?.({
+        provider: provider,
+        modelId: trimmed,
+        ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+      }),
+    );
+  }
+
+  function save(
+    section: SaveSection,
+    write: Promise<unknown> | undefined,
+  ): void {
+    setSaveError(null);
+    write?.catch((err: unknown): void => {
+      setSaveError({ section: section, message: toErrorMessage(err) });
     });
+  }
+
+  function saveErrorFor(section: SaveSection): React.JSX.Element | null {
+    return saveError?.section === section ? (
+      <p className="text-xs text-destructive">{saveError.message}</p>
+    ) : null;
   }
 
   return (
@@ -374,11 +399,12 @@ export function DetailsTab({
           value={editName}
           onChange={(e) => setEditName(e.target.value)}
           className="h-8 text-sm"
-          onBlur={onSaveName}
+          onBlur={() => save("name", onSaveName())}
           onKeyDown={(e) => {
-            if (e.key === "Enter") onSaveName();
+            if (e.key === "Enter") save("name", onSaveName());
           }}
         />
+        {saveErrorFor("name")}
       </div>
 
       {agentConfig && (
@@ -454,6 +480,7 @@ export function DetailsTab({
                 before running the agent.
               </p>
             )}
+            {saveErrorFor("model")}
           </div>
 
           {onUpdateModelReasoning && (
@@ -466,14 +493,20 @@ export function DetailsTab({
                   if (next) {
                     // OpenAI reasons by effort, the others by a thinking-token budget.
                     if (selectedProvider === "openai") {
-                      void onUpdateModelReasoning({ effort: "medium" });
+                      save(
+                        "reasoning",
+                        onUpdateModelReasoning({ effort: "medium" }),
+                      );
                     } else {
                       setReasoningBudgetText("4096");
-                      void onUpdateModelReasoning({ budgetTokens: 4096 });
+                      save(
+                        "reasoning",
+                        onUpdateModelReasoning({ budgetTokens: 4096 }),
+                      );
                     }
                   } else {
                     setReasoningBudgetText("");
-                    void onUpdateModelReasoning({});
+                    save("reasoning", onUpdateModelReasoning({}));
                   }
                 }}
               />
@@ -497,10 +530,13 @@ export function DetailsTab({
                         const n = parseInt(reasoningBudgetText, 10);
                         const budget =
                           Number.isFinite(n) && n > 0 ? n : undefined;
-                        void onUpdateModelReasoning({
-                          budgetTokens: budget,
-                          effort: reasoningEffort || undefined,
-                        });
+                        save(
+                          "reasoning",
+                          onUpdateModelReasoning({
+                            budgetTokens: budget,
+                            effort: reasoningEffort || undefined,
+                          }),
+                        );
                       }}
                     />
                   </div>
@@ -519,10 +555,13 @@ export function DetailsTab({
                         const n = parseInt(reasoningBudgetText, 10);
                         const budget =
                           Number.isFinite(n) && n > 0 ? n : undefined;
-                        void onUpdateModelReasoning({
-                          budgetTokens: budget,
-                          effort: effort,
-                        });
+                        save(
+                          "reasoning",
+                          onUpdateModelReasoning({
+                            budgetTokens: budget,
+                            effort: effort,
+                          }),
+                        );
                       }}
                     >
                       <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
@@ -545,6 +584,7 @@ export function DetailsTab({
                   </p>
                 </ExpandBlock>
               )}
+              {saveErrorFor("reasoning")}
             </div>
           )}
         </>
@@ -559,9 +599,12 @@ export function DetailsTab({
             label="Public access"
             description="Reachable over HTTP/SSE and WebSocket with the runtime key"
             checked={publicAccess}
-            onCheckedChange={(next) => void onUpdatePublicAccess(next)}
+            onCheckedChange={(next) =>
+              save("access", onUpdatePublicAccess(next))
+            }
           />
         )}
+        {saveErrorFor("access")}
         {publicAccess && agentConfig && (
           <UserTokenToggle configId={agentConfig._id} canWrite={canWrite} />
         )}
@@ -589,7 +632,7 @@ export function DetailsTab({
                 variant="outline"
                 className="h-8 w-fit cursor-pointer text-xs"
                 disabled={isSavingKey}
-                onClick={() => void onGenerateKey?.()}
+                onClick={() => save("access", onGenerateKey?.())}
               >
                 {isSavingKey ? "Generating…" : "Generate runtime key"}
               </Button>
@@ -713,7 +756,7 @@ export function DetailsTab({
                 label="Web browsing"
                 description="Read pages and take screenshots. Needs a first sandbox on Lambda with the Obscura image and internet."
                 checked={browserEnabled}
-                onCheckedChange={(next) => void onUpdateBrowser(next)}
+                onCheckedChange={(next) => save("tools", onUpdateBrowser(next))}
               />
             )}
 
@@ -727,10 +770,13 @@ export function DetailsTab({
               checked={googleSearchEnabled}
               disabled={selectedProvider !== "google"}
               onCheckedChange={(next) =>
-                void onUpdateToolConfig("googleSearch", {
-                  ...googleSearchCfg,
-                  enabled: next,
-                })
+                save(
+                  "tools",
+                  onUpdateToolConfig("googleSearch", {
+                    ...googleSearchCfg,
+                    enabled: next,
+                  }),
+                )
               }
             />
             {googleSearchEnabled && selectedProvider === "google" && (
@@ -739,14 +785,18 @@ export function DetailsTab({
                   label="Needs approval"
                   checked={googleSearchCfg.needsApproval === true}
                   onCheckedChange={(next) =>
-                    void onUpdateToolConfig("googleSearch", {
-                      ...googleSearchCfg,
-                      needsApproval: next,
-                    })
+                    save(
+                      "tools",
+                      onUpdateToolConfig("googleSearch", {
+                        ...googleSearchCfg,
+                        needsApproval: next,
+                      }),
+                    )
                   }
                 />
               </ExpandBlock>
             )}
+            {saveErrorFor("tools")}
           </div>
         </>
       )}
