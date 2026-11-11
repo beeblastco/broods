@@ -113,17 +113,17 @@ const status = await job.wait({ timeoutMs: 300_000 });
 
 Pass exactly one of `input` or `events`.
 
-| Field             | Description                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------- |
-| `input`           | One user text message                                                                                   |
-| `events`          | AI SDK model messages, for images, files, tool approval responses                                       |
-| `conversationKey` | Conversation to continue. Omit for a new one                                                            |
-| `eventId`         | Correlation id. Generated when omitted                                                                  |
-| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                         |
-| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject`  |
-| `system`          | One-turn system message or messages, not persisted                                                      |
-| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`          |
-| `signal`          | `AbortSignal`. Aborting acts like closing the stream: core stops the run. A queued `runAsync` run stays |
+| Field             | Description                                                                                                                                                                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`           | One user text message                                                                                                                                                                                                                          |
+| `events`          | AI SDK model messages, for images, files, tool approval responses                                                                                                                                                                              |
+| `conversationKey` | Conversation to continue. Omit for a new one                                                                                                                                                                                                   |
+| `eventId`         | Correlation id. Generated when omitted                                                                                                                                                                                                         |
+| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                                                                                                                                                                |
+| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject`                                                                                                                                         |
+| `system`          | One-turn system message or messages, not persisted                                                                                                                                                                                             |
+| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`                                                                                                                                                 |
+| `signal`          | `AbortSignal`. On `run` and `stream`, aborting closes the stream and core fails the run when it next writes a frame, so a running tool call finishes first. On `runAsync` it cancels only the request: a run core already accepted keeps going |
 
 `model` rejects `provider`, `modelId`, `output` and `apiKey`, so a request cannot swap the model or credentials. With a runtime key, `system` and `model` need `allowRunOverrides: true` on the agent, or the run fails with `403 run_overrides_disabled`.
 
@@ -144,7 +144,16 @@ await client.run(api.agents.myAgent, {
 
 ### Stream parts
 
-`stream` yields AI SDK `TextStreamPart` values such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+`stream` yields `AgentStreamPart` values: the AI SDK `TextStreamPart` types such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest, plus `{ type: "structured-output", output }` at the end of a run whose agent sets `model.output`. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+
+Upgrading from a release where `stream` and `run().events` were typed `TextStreamPart<ToolSet>`: code that assigns parts to that type, or switches over `part.type` exhaustively, no longer compiles. Type it `AgentStreamPart` (exported from `broods`), or skip `structured-output` first:
+
+```ts
+for await (const part of client.stream(api.agents.myAgent, input)) {
+  if (part.type === "structured-output") continue;
+  handle(part); // TextStreamPart<ToolSet>
+}
+```
 
 ### Async status
 
