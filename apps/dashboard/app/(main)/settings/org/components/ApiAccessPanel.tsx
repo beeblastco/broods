@@ -48,6 +48,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/app/components/ui/tooltip";
 import { PLATFORM, Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
@@ -367,7 +372,7 @@ function AccessCell({
   const { save, saved, pending, error } = useKeySave(orgId, orgKey._id);
 
   return (
-    <span className="flex items-center gap-1.5" title={error ?? undefined}>
+    <span className="flex items-center gap-1.5">
       <InlineMenu
         label="Access"
         disabled={pending}
@@ -381,7 +386,22 @@ function AccessCell({
         }
       />
       {saved === "access" && <Saved />}
-      {error && <span className="text-2xs text-destructive">Not saved</span>}
+      {error && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Not saved: ${error}`}
+                className="cursor-help text-2xs text-destructive"
+              />
+            }
+          >
+            Not saved
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">{error}</TooltipContent>
+        </Tooltip>
+      )}
     </span>
   );
 }
@@ -759,7 +779,11 @@ function KeyDialog({
               </div>
             </>
           )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -820,7 +844,11 @@ function ProvisionAccount({
           )
         }
       />
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -973,7 +1001,11 @@ function ScopedKeyPanel({
       onClose={onClose}
     >
       <DetailRows rows={facts} />
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
 
       <div className="mt-5 mb-1.5 flex items-center justify-between gap-2">
         <h4 className="text-sm font-medium">API access</h4>

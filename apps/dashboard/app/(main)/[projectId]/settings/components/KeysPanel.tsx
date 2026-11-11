@@ -563,7 +563,11 @@ function NewKeyDialog({
               </SelectContent>
             </Select>
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button

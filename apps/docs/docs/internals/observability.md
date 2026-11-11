@@ -45,10 +45,10 @@ flowchart LR
 Logs and spans carry the same attributes, so a span, its logs and the live stream correlate: `account_id`, `project`, `stage`, `endpoint_id`, `agent_id`, `conversation_key`, `trace_id`. NATS subjects encode the routable part (`src/shared/nats.ts`):
 
 ```text
-v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
+<env>.v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
-The `OBSERVABILITY` stream binds `v1.*.*.*.logs.>` and `v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
+`<env>` is the deployment's `DEPLOYMENT_ENVIRONMENT`, so dev and production never share a subject. The `OBSERVABILITY_<env>` stream binds `<env>.v1.*.*.*.logs.>` and `<env>.v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
 
 ## The observability socket
 

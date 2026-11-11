@@ -14,7 +14,14 @@ import {
 import type { SortDir } from "@/app/lib/tableState";
 import { cn } from "@/app/lib/utils";
 import { ArrowDown, ArrowUp } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useId,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 
 interface FilterValue {
   value: string;
@@ -60,9 +67,14 @@ export function DataTableHead({
   filter?: HeadFilter;
 }): React.JSX.Element {
   const button = sort !== undefined || filter !== undefined;
+  const dir = sort?.dir ?? null;
 
   return (
     <th
+      scope="col"
+      aria-sort={
+        dir === "asc" ? "ascending" : dir === "desc" ? "descending" : undefined
+      }
       className={cn(
         "font-medium",
         button ? "px-1 py-1" : "px-3 py-2",
@@ -190,23 +202,54 @@ export function DataTableBody({
   );
 }
 
+// A row with `onClick` opens its detail: the first cell gets a row-wide button for the keyboard,
+// named by that cell. Pointer clicks pass through it to the row and the controls in other cells.
 export function DataTableRow({
   selected = false,
   className,
   onClick,
+  children,
   ...props
 }: ComponentProps<"tr"> & { selected?: boolean }): React.JSX.Element {
+  const fallbackId = useId();
+  const [first, ...rest] = Children.toArray(children);
+  const pickable =
+    onClick !== undefined && isValidElement<ComponentProps<"td">>(first);
+  const nameId = pickable ? (first.props.id ?? fallbackId) : fallbackId;
+
   return (
     <tr
       onClick={onClick}
       className={cn(
         "border-b border-border/40 transition-colors",
-        onClick && "cursor-pointer hover:bg-accent/20",
+        onClick && "relative cursor-pointer hover:bg-accent/20",
         selected && "bg-accent/30",
         className,
       )}
       {...props}
-    />
+    >
+      {pickable ? (
+        <>
+          {cloneElement(first, {
+            id: nameId,
+            children: (
+              <>
+                <button
+                  type="button"
+                  aria-labelledby={nameId}
+                  aria-expanded={selected}
+                  className="pointer-events-none absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                />
+                {first.props.children}
+              </>
+            ),
+          })}
+          {rest}
+        </>
+      ) : (
+        children
+      )}
+    </tr>
   );
 }
 

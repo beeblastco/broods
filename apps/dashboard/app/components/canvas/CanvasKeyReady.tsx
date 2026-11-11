@@ -18,6 +18,7 @@ export function CanvasKeyReady({
   stageId: Id<"stages"> | null;
 }): React.JSX.Element | null {
   const [armed, setArmed] = useState(() => isJustCreated(projectId));
+  const [focused, setFocused] = useState(false);
   const deployment = useQuery(
     api.agent.deployments.getForStage,
     armed && stageId ? { projectId: projectId, stageId: stageId } : "skip",
@@ -26,15 +27,16 @@ export function CanvasKeyReady({
   const visible = armed && hasKey === true;
 
   // Cleared once the query answers, not on mount: the canvas remounts when its stage loads.
+  // Focus on its link holds the hide timer; leaving restarts it.
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module marker and hide timer
   useEffect(() => {
     if (!armed || hasKey === undefined) return;
     clearCreatedProject();
-    if (!hasKey) return;
+    if (!hasKey || focused) return;
     const timer = setTimeout(() => setArmed(false), KEY_READY_MS);
 
     return () => clearTimeout(timer);
-  }, [armed, hasKey]);
+  }, [armed, focused, hasKey]);
 
   if (!visible) return null;
 
@@ -44,6 +46,8 @@ export function CanvasKeyReady({
       <Link
         href={`/${projectId}/dashboard?tab=api-key`}
         className="cursor-pointer text-foreground underline underline-offset-2"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
       >
         View
       </Link>

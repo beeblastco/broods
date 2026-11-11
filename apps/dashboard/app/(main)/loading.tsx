@@ -3,6 +3,7 @@ import { Skeleton } from "@/app/components/ui/skeleton";
 export default function DashboardLoading(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col">
+      <output className="sr-only">Loading</output>
       <div className="shrink-0 px-6 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
           <div className="flex flex-col gap-2">

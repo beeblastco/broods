@@ -1897,6 +1897,7 @@
     "packages/convex/model/modelPricing.ts#normalizeModelId",
     "packages/convex/model/modelPricing.ts#priceLookupIds",
     "packages/convex/model/modelProviders.ts#isAccountModelProviderName",
+    "packages/convex/model/modelProviders.ts#isAgentProviderName",
     "packages/convex/model/modelProviders.ts#providerApiKeyEnvName",
     "packages/convex/model/objects.ts#remapKeys",
     "packages/convex/model/objects.ts#sortJson",

@@ -1,5 +1,6 @@
 import {
   connectNats,
+  natsNames,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
 import {
@@ -386,6 +387,8 @@ export function gatewayConfigFromEnv(): GatewayConfig {
 }
 
 if (import.meta.main) {
+  // A pod missing its environment fails the rollout instead of the first attach.
+  if (process.env.NATS_URL?.trim()) natsNames();
   const config = gatewayConfigFromEnv();
   const gateway = createGateway(config);
   const server = Bun.serve<GatewayData>({

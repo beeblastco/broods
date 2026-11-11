@@ -67,7 +67,7 @@ export function DetailRows({
             {label}
             <span
               className={cn(
-                "truncate",
+                "truncate group-hover/copy:whitespace-normal group-hover/copy:wrap-anywhere group-focus-visible/copy:whitespace-normal group-focus-visible/copy:wrap-anywhere",
                 row.tone === "error"
                   ? "text-destructive"
                   : "text-foreground/80",
@@ -141,7 +141,7 @@ export function PayloadBody({
   ) : (
     <div
       className={cn(
-        "overflow-auto rounded-md border border-border bg-code-background py-2 text-xs leading-relaxed",
+        "overflow-auto rounded-md border border-border bg-code-background py-2 text-xs leading-relaxed scheme-dark",
         className,
       )}
     >

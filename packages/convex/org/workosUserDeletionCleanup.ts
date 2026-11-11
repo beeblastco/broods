@@ -6,6 +6,49 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import { authKit } from "../auth";
+import { isManagedService } from "../model/planLimits";
+import { authProvider } from "../model/selfHostAuth";
+
+// Deletes a claimed user's sign-in before the teardown, so a failure leaves a retryable account.
+export const deleteIdentity = internalAction({
+  args: { authId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    if (authProvider() === "workos") {
+      try {
+        await authKit.workos.userManagement.deleteUser(args.authId);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "NotFoundException")) {
+          console.error(
+            `Account deletion could not remove WorkOS user ${args.authId}`,
+            error,
+          );
+          await ctx.runMutation(internal.org.workosUserDeletion.release, {
+            authId: args.authId,
+          });
+
+          return null;
+        }
+      }
+    }
+    // Signed out for good and past cancelling, so stop billing before core cleanup can fail.
+    if (isManagedService()) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.stripe.cancelUserSubscriptionsInternal,
+        { authId: args.authId },
+      );
+    }
+    await ctx.scheduler.runAfter(
+      0,
+      internal.org.workosUserDeletionCleanup.run,
+      { authId: args.authId },
+    );
+
+    return null;
+  },
+});
 
 export const run = internalAction({
   args: { authId: v.string() },

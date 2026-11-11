@@ -1,6 +1,7 @@
 import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
+import { isManagedService } from "./model/planLimits";
 import { authProvider } from "./model/selfHostAuth";
 
 // Self-hosted never calls WorkOS (`user.ensureSynced` seeds its admin), so it needs no keys.
@@ -96,6 +97,14 @@ export const { authKitEvent } = authKit.events({
     }
 
     await ctx.db.patch(user._id, { workosDeletionRequestedAt: Date.now() });
+    // The sign-in is already gone, so stop billing before core cleanup can fail.
+    if (isManagedService()) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.stripe.cancelUserSubscriptionsInternal,
+        { authId: user.authId },
+      );
+    }
     await ctx.scheduler.runAfter(
       0,
       internal.org.workosUserDeletionCleanup.run,

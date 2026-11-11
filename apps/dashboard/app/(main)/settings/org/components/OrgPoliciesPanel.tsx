@@ -285,7 +285,11 @@ function PolicyPanel({
           Managed by code. Change it in the project and deploy.
         </p>
       )}
-      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
 
       <div className="mt-5 mb-1.5 flex items-center justify-between gap-2">
         <h4 className="text-sm font-medium">Rules</h4>
@@ -470,7 +474,11 @@ function PolicyDialog({
               </SelectContent>
             </Select>
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -714,7 +722,11 @@ function AddRuleDialog({
               sandbox.provider.
             </p>
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button

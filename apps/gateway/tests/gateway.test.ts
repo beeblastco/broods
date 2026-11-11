@@ -1,4 +1,5 @@
 import {
+  afterAll,
   afterEach,
   beforeEach,
   expect,
@@ -76,10 +77,20 @@ import {
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
 
+const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
+
 // Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
-beforeEach(resetTempoTraceCacheForTests);
+beforeEach((): void => {
+  resetTempoTraceCacheForTests();
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
+});
 afterEach((): void => {
   jest.useRealTimers();
+});
+afterAll((): void => {
+  if (originalEnvironment === undefined)
+    delete process.env.DEPLOYMENT_ENVIRONMENT;
+  else process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
 });
 
 const TEST_SCOPE: ObservabilityScope = {

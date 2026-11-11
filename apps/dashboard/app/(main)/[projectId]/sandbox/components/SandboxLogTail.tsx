@@ -83,7 +83,7 @@ export function SandboxLogTail({
           <StatusDot tone={CONNECTION_TONE[status]} label={status} />
         </span>
       </div>
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-terminal-background p-3 font-mono text-xs text-terminal-foreground">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-terminal-background p-3 font-mono text-xs text-terminal-foreground scheme-dark">
         {entries.length === 0 ? (
           <p className="text-terminal-muted">
             No output yet. Guest stdout and stderr appear here a few seconds
@@ -96,7 +96,7 @@ export function SandboxLogTail({
             .map((entry) => (
               <div
                 key={entryKey(entry)}
-                className="flex gap-3 whitespace-pre-wrap wrap-break-word"
+                className="flex gap-3 whitespace-pre-wrap wrap-break-word render-lazy"
               >
                 <span className="shrink-0 text-terminal-subtle tabular-nums">
                   {formatTime(entry.ts)}

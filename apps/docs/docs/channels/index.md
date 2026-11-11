@@ -203,9 +203,12 @@ export const support = defineAgent({
 | OpenAI         | `whisper-1`                                       |
 | Groq           | `whisper-large-v3-turbo`                          |
 | Mistral        | `voxtral-mini-latest`                             |
+| Fish Audio     | `transcribe-1`                                    |
 | Google, Vertex | none. The recording is sent to the model directly |
 
 `transcription.provider` defaults to the chat provider, and `transcription.modelId` to the model in the table. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
+
+Fish Audio (`fishaudio`) only transcribes, so it is valid in `provider` and `transcription.provider` but not in `model.provider`.
 
 A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, a missing key for the transcription provider, or a provider with no speech-to-text.
 

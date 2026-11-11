@@ -72,6 +72,8 @@ export const vip = defineWhatsAppChannel({
 });
 ```
 
+A channel applies on every number the account has. Add `phoneNumberId` to tie it to one number.
+
 ## What works
 
 - Text in both directions. Markdown is converted to WhatsApp formatting, and long replies are split at 4096 characters.

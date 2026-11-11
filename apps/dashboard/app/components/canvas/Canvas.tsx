@@ -20,10 +20,7 @@ import {
   CanvasRefusal,
   type CanvasRefusalHandle,
 } from "@/app/components/canvas/CanvasRefusal";
-import {
-  AGENT_EDGE_STROKE,
-  DeletableEdge,
-} from "@/app/components/canvas/DeletableEdge";
+import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
 import {
   connectionEdge,
   isCodeManagedEdge,
@@ -220,6 +217,11 @@ export const CANVAS_EDGE_TYPES = {
 };
 
 const PRO_OPTIONS = { hideAttribution: true } as const;
+const DEFAULT_EDGE_OPTIONS = {
+  style: { stroke: "var(--canvas-edge)", strokeWidth: 1.5 },
+  // An animated edge repaints the canvas layer on every frame.
+  animated: false,
+};
 const SNAP_GRID: [number, number] = [GRID, GRID];
 
 // One dimmed clone per source object, so a drag frame does not re-render every dimmed card.
@@ -484,20 +486,7 @@ function CanvasInner({
     () => serversByNode(mcpServers ?? []),
     [mcpServers],
   );
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
-  const defaultEdgeOptions = useMemo(
-    () => ({
-      style: {
-        stroke: isDark ? AGENT_EDGE_STROKE.dark : AGENT_EDGE_STROKE.light,
-        strokeWidth: 1.5,
-      },
-      // An animated edge repaints the canvas layer on every frame.
-      animated: false,
-    }),
-    [isDark],
-  );
+  const { resolvedTheme } = useTheme();
 
   // Flat state, the shape that is saved. React Flow draws `framedGraph`.
   const [nodes, setNodes] = useNodesState<Node>([]);
@@ -1659,13 +1648,13 @@ function CanvasInner({
       fitViewOptions={FIT_VIEW_OPTIONS}
       maxZoom={1.5}
       deleteKeyCode={null}
-      colorMode={isDark ? "dark" : "light"}
+      colorMode={resolvedTheme === "dark" ? "dark" : "light"}
       proOptions={PRO_OPTIONS}
-      defaultEdgeOptions={defaultEdgeOptions}
+      defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
     >
       <Background
-        bgColor={isDark ? "#000" : undefined}
-        color={isDark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.16)"}
+        bgColor="var(--canvas-bg)"
+        color="var(--canvas-grid)"
         gap={GRID}
         size={2}
       />

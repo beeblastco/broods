@@ -69,6 +69,8 @@ export const vip = defineTwilioChannel({
 });
 ```
 
+A channel applies on every number the account has. Add `phoneNumber`, the receiving number in E.164, to tie it to one number.
+
 ## What works
 
 - Text in both directions. Replies longer than 1600 characters, the Twilio limit, go out as several messages. SMS has no formatting, so Markdown arrives as typed, asterisks included. Ask the agent for plain text in its instructions.

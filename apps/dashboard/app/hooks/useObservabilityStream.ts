@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import {
   useCallback,
   useEffect,
@@ -115,15 +116,15 @@ export function useObservabilityStream(
   }
 
   const liveRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
-  const frameRef = useRef<number | null>(null);
+  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scopeRef = useRef(connKey);
-  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- socket rAF queue, cut before paint
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- commit timer, cut before paint
   useLayoutEffect(() => {
     scopeRef.current = connKey;
 
     return () => {
-      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
+      if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
       liveRef.current = [];
     };
   }, [connKey]);
@@ -166,8 +167,8 @@ export function useObservabilityStream(
   }, []);
 
   const flushLive = useCallback(() => {
-    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-    frameRef.current = null;
+    if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = null;
     const batch = liveRef.current;
     if (batch.length === 0) return;
     liveRef.current = [];
@@ -252,10 +253,10 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "log" || msg.type === "span") {
-        // A hidden tab runs no frames, so a full queue folds now instead of growing.
+        // A hidden tab throttles timers, so a full queue folds now instead of growing.
         liveRef.current.push(msg.entry);
         if (liveRef.current.length >= MAX_ENTRIES) flushLive();
-        else frameRef.current ??= requestAnimationFrame(flushLive);
+        else commitTimerRef.current ??= setTimeout(flushLive, STREAM_COMMIT_MS);
 
         return;
       }

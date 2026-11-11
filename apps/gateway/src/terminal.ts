@@ -13,13 +13,13 @@ import {
   type TerminalTicket,
 } from "../../core/src/shared/terminal-ticket.ts";
 import { MACHINE_MAX_FRAME_BYTES } from "../../core/src/shared/machine-socket.ts";
+import { natsNames } from "../../core/src/shared/nats.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
 
 export const MAX_PENDING_TERMINAL_BYTES = 64 * 1024;
 // Two of the largest machine frames, so one still in flight never trips it.
 const MAX_UPSTREAM_BUFFERED_BYTES = 2 * MACHINE_MAX_FRAME_BYTES;
 const KV_KEY_EXISTS = 10071;
-const SPENT_TICKET_BUCKET = "TERMINAL_TICKETS_SPENT";
 
 export type TerminalGatewayData = {
   kind: "terminal";
@@ -74,11 +74,13 @@ export function natsSpentTickets(
   connection: () => Promise<NatsConnection>,
 ): SpentTickets {
   async function bucket(): Promise<KV> {
-    return (await connection()).jetstream().views.kv(SPENT_TICKET_BUCKET, {
-      history: 1,
-      storage: StorageType.File,
-      ttl: TERMINAL_TICKET_TTL_MS,
-    });
+    return (await connection())
+      .jetstream()
+      .views.kv(natsNames().spentTicketBucket, {
+        history: 1,
+        storage: StorageType.File,
+        ttl: TERMINAL_TICKET_TTL_MS,
+      });
   }
 
   return {
