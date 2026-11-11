@@ -13,19 +13,7 @@ const RECENT_FRAMES = 32;
 
 type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
 
-// lib.dom ships no Long Animation Frames types yet.
-interface ScriptTiming {
-  duration: number;
-  forcedStyleAndLayoutDuration: number;
-  invoker: string;
-  sourceURL: string;
-}
-
-interface LongAnimationFrame extends PerformanceEntry {
-  scripts: ScriptTiming[];
-}
-
-let recentFrames: LongAnimationFrame[] = [];
+let recentFrames: PerformanceLongAnimationFrameTiming[] = [];
 
 // Module scope: a new callback identity makes useReportWebVitals replay every metric.
 function reportWebVital(metric: WebVitalsMetric): void {
@@ -62,15 +50,18 @@ export function PerfReporter(): null {
     if (typeof PerformanceObserver === "undefined") return;
 
     const observers = [
-      observe("longtask", (entry) => {
-        if (entry.duration >= LONG_TASK_FLOOR_MS)
-          reportPerf("long-task", entry.duration);
+      observe("longtask", (list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.duration >= LONG_TASK_FLOOR_MS)
+            reportPerf("long-task", entry.duration);
+        }
       }),
       // Long animation frames name the script behind a slow INP; only Chromium has them.
-      observe(LONG_FRAME, (entry) => {
-        recentFrames = [...recentFrames, entry as LongAnimationFrame].slice(
-          -RECENT_FRAMES,
-        );
+      observe(LONG_FRAME, (list) => {
+        recentFrames = [
+          ...recentFrames,
+          ...list.getEntriesByType(LONG_FRAME),
+        ].slice(-RECENT_FRAMES);
       }),
     ];
 
@@ -82,7 +73,9 @@ export function PerfReporter(): null {
   return null;
 }
 
-function framesDuring(entries: PerformanceEntry[]): LongAnimationFrame[] {
+function framesDuring(
+  entries: PerformanceEntry[],
+): PerformanceLongAnimationFrameTiming[] {
   return recentFrames.filter((frame) =>
     entries.some(
       (entry) =>
@@ -102,23 +95,21 @@ function invokerLabel(invoker: string): string {
 // Not every browser ships every entry type; an unsupported one observes nothing.
 function observe(
   type: string,
-  onEntry: (entry: PerformanceEntry) => void,
+  onEntries: (list: PerformanceObserverEntryList) => void,
 ): PerformanceObserver | null {
   if (!PerformanceObserver.supportedEntryTypes.includes(type)) return null;
-  const observer = new PerformanceObserver((list) => {
-    for (const entry of list.getEntries()) onEntry(entry);
-  });
+  const observer = new PerformanceObserver(onEntries);
   observer.observe({ type: type, buffered: true });
 
   return observer;
 }
 
 function scriptAttributes(
-  frames: LongAnimationFrame[],
+  frames: PerformanceLongAnimationFrameTiming[],
 ): Record<string, string | number> {
   const top = frames
     .flatMap((frame) => frame.scripts)
-    .reduce<ScriptTiming | null>(
+    .reduce<PerformanceScriptTiming | null>(
       (longest, script) =>
         !longest || script.duration > longest.duration ? script : longest,
       null,

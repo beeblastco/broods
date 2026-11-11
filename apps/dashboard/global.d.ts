@@ -39,3 +39,20 @@ declare module "react-file-icon" {
 interface ScrollIntoViewOptions {
   container?: "all" | "nearest";
 }
+
+// Long Animation Frames (Chromium only): lib.dom ships no types for them yet.
+interface PerformanceScriptTiming extends PerformanceEntry {
+  forcedStyleAndLayoutDuration: number;
+  invoker: string;
+  sourceURL: string;
+}
+
+interface PerformanceLongAnimationFrameTiming extends PerformanceEntry {
+  scripts: PerformanceScriptTiming[];
+}
+
+interface PerformanceObserverEntryList {
+  getEntriesByType(
+    type: "long-animation-frame",
+  ): PerformanceLongAnimationFrameTiming[];
+}
