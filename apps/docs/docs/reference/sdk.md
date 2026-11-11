@@ -123,6 +123,7 @@ Pass exactly one of `input` or `events`.
 | `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject` |
 | `system`          | One-turn system message or messages, not persisted                                                     |
 | `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`         |
+| `signal`          | `AbortSignal` that ends the request and the stream read. A run core already accepted keeps going       |
 
 `model` rejects `provider`, `modelId`, `output` and `apiKey`, so a request cannot swap the model or credentials. With a runtime key, `system` and `model` need `allowRunOverrides: true` on the agent, or the run fails with `403 run_overrides_disabled`.
 
