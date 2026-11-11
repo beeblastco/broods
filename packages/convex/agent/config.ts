@@ -14,6 +14,7 @@ import {
   assertAgentRuntimeRefs,
   mergeCanvasSandboxes,
   normalizeAgentConfig,
+  runtimeConfigBranches,
 } from "../model/agentRules";
 import {
   deleteAgentRow,
@@ -354,15 +355,20 @@ export const update = mutation({
       await bindStageEnvRefs(ctx, configId);
     }
     const saved = await ctx.db.get(configId);
-    // patch: the canvas wires sandboxes and channels in their own saves.
-    if (saved)
-      normalizeAgentConfig(
-        substituteEnvPlaceholders(
-          toNestedAgentConfig(saved),
-          await loadAgentRuntimeSecrets(ctx, configId),
-        ),
-        { patch: true },
-      );
+    if (saved) {
+      const nested = toNestedAgentConfig(saved);
+      const variables = await loadAgentRuntimeSecrets(ctx, configId);
+      // A variable with no value yet is set later; patch: the canvas wires sandboxes itself.
+      if (
+        [...collectEnvPlaceholderNames(nested)].every((name): boolean =>
+          Boolean(variables[name]),
+        )
+      )
+        normalizeAgentConfig(
+          runtimeConfigBranches(substituteEnvPlaceholders(nested, variables)),
+          { patch: true },
+        );
+    }
 
     const accountId = await accountIdForProject(ctx, existing.projectId);
     if (accountId) {
