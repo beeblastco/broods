@@ -76,5 +76,5 @@ async function selfHostProxy(request: NextRequest): Promise<NextResponse> {
 // so a broader asset exclusion answers a typo 200 with the app shell. Keep next.config's
 // static-policy source the complement of this.
 export const config = {
-  matcher: ["/((?!_next|assets/|favicon\\.ico).*)", "/(api|trpc)(.*)"],
+  matcher: ["/((?!_next/|assets/|favicon\\.ico).*)", "/(api|trpc)(.*)"],
 };

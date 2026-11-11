@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
     return [
       {
         // The complement of the proxy matcher; the proxy sets a nonce policy everywhere else.
-        source: "/:path(_next.*|assets/.*|favicon\\.ico.*)",
+        source: "/:path(_next/.*|assets/.*|favicon\\.ico.*)",
         headers: [
           {
             key: "Content-Security-Policy",
