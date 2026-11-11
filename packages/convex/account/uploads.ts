@@ -1,10 +1,24 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
-import { grantUpload, type UploadGrant } from "../model/uploads";
+import {
+  claimUploadedBlob,
+  grantUpload,
+  type UploadGrant,
+} from "../model/uploads";
 
 const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_SCAN_PAGE = 100;
+
+export const claim = internalMutation({
+  args: { storageId: v.id("_storage") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await claimUploadedBlob(ctx, args.storageId);
+
+    return null;
+  },
+});
 
 export const grant = internalMutation({
   args: {

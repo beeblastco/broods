@@ -3915,6 +3915,12 @@ export declare const internal: {
       >;
     };
     uploads: {
+      claim: FunctionReference<
+        "mutation",
+        "internal",
+        { storageId: Id<"_storage"> },
+        null
+      >;
       grant: FunctionReference<
         "mutation",
         "internal",
