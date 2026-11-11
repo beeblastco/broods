@@ -951,13 +951,12 @@ private def claim (call : Json) : Prog Json := do
 
 private def transcribeAudio (call : Json) : Prog Json := do
   let config := Twin.callArg call 0
-  let model ← Prog.effect "resolveTranscriptionModel" [config]
-  if !truth model then
-    let provider := field (field config "model") "provider"
-    let name := if provider == Json.null || undef provider then "this provider" else str provider
-    return obj [("status", toJson "failed"), ("reason", toJson s!"{name} has no transcription model"),
+  let resolved ← Prog.effect "resolveTranscriptionModel" [config]
+  if !undef (field resolved "reason") then
+    return obj [("status", toJson "failed"), ("reason", field resolved "reason"),
       ("recovery", toJson "unavailable")]
-  Prog.effect "transcribeWithModel" [model, Twin.callArg call 1, Twin.callArg call 2]
+  Prog.effect "transcribeWithModel"
+    [field resolved "model", Twin.callArg call 1, Twin.callArg call 2]
 
 private def createModelOutput (call : Json) : Prog Json := do
   let output := Twin.callArg call 0

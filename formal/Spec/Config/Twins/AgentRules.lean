@@ -30,7 +30,7 @@ def hookEvents : List String :=
 
 /-- `MODEL_CONFIG_SETTING_KEYS`. -/
 def modelSettingKeys : List String :=
-  ["provider", "modelId", "transcriptionModelId", "providerOptions", "output", "maxOutputTokens",
+  ["provider", "modelId", "providerOptions", "output", "maxOutputTokens",
    "temperature", "topP", "topK", "presencePenalty", "frequencyPenalty", "stopSequences", "seed",
    "reasoning", "maxRetries", "timeout"]
 
@@ -214,15 +214,24 @@ def modelSchema : Schema :=
     (.object false
       [("provider", .optional (.enum providerNames none)),
        ("modelId", optionalString),
-       ("transcriptionModelId", optionalString),
        ("reasoning", .optional (.enum
           ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] none)),
        ("providerOptions", .optional (.record (.string none) .unknown none)),
        ("timeout", .optional modelTimeout),
        ("output", .optional modelOutput)]
       none)
-    (noOtherKeys modelSettingKeys
-      "is not supported; use {parent}.providerOptions for provider-specific settings")
+    (fun model =>
+      if has model "transcriptionModelId" then
+        fail [.key "transcriptionModelId"] "was renamed to config.transcription.modelId"
+      else
+        noOtherKeys modelSettingKeys
+          "is not supported; use {parent}.providerOptions for provider-specific settings" model)
+
+/-- `TRANSCRIPTION`. -/
+def transcriptionSchema : Schema :=
+  .object true
+    [("provider", .optional (.enum providerNames none)), ("modelId", optionalString)]
+    none
 
 def gatewayIdError : String := "must be an AI Gateway id (letters, digits, - and _)"
 
@@ -546,6 +555,7 @@ def agentConfig : Schema :=
     [("agent", .nullish agentBehavior),
      ("harness", .nullish harnessSchema),
      ("model", .nullish modelSchema),
+     ("transcription", .nullish transcriptionSchema),
      ("provider", .nullish providersSchema),
      ("workspaces", .nullish workspaceRefs),
      ("sandboxes", .optional nonEmptyStrings),
