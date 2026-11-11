@@ -32,6 +32,8 @@ const MAX_FILES = 12;
 const MAX_TESTS_PER_WORKFLOW = 2;
 const MAX_JUDGED = 3;
 const MAX_HISTORY = 15;
+// Finds this workflow's own pull request comment again on a rerun.
+const COMMENT_MARKER = "<!-- jittest -->";
 const REPORT_AT = 0.5;
 const PATTERN_BONUS = 0.5;
 const RUN_TIMEOUT_MS = 180_000;
@@ -483,6 +485,7 @@ export function renderComment(
   if (reported.length === 0) return undefined;
 
   return [
+    COMMENT_MARKER,
     `### JiTTest: ${reported.length} behavior change(s) to confirm`,
     "",
     `Read intent: ${generation.intent}`,
@@ -578,7 +581,10 @@ async function assess(
         const voted = await vote(judge, prompt);
         cost += voted?.cost ?? 0;
 
-        return voted?.answer;
+        // Nothing is reported yet, so a duplicate claim is wrong; keep the vote.
+        return voted === undefined || reported.length > 0
+          ? voted?.answer
+          : { ...voted.answer, duplicate: false };
       });
       verdicts = polled.verdicts;
       if (polled.duplicate) rule = "duplicate";
@@ -679,7 +685,11 @@ function culprit(
     .filter((line) => line !== "");
   const runAt = (ref: string): Run | undefined => {
     if (!exec(["git", "checkout", "--detach", ref], tree).ok) return undefined;
-    prepare(tree);
+    try {
+      prepare(tree);
+    } catch {
+      return undefined;
+    }
     const run = runTest(test.file, tree);
 
     return falsePositiveRule("", run.output) === undefined ? run : undefined;

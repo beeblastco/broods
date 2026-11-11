@@ -54,12 +54,22 @@ jobs:
           bun run jittest
 
       - name: Ask the author about what it caught
-        if: github.event_name == 'pull_request' && hashFiles('.jittest/comment.md') != ''
+        # One comment per pull request: updated on a rerun, removed when a rerun finds nothing.
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-        run: gh pr comment "$PR" --body-file .jittest/comment.md --edit-last --create-if-none
+        run: |
+          id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- jittest -->")) | .id' | tail -n 1)
+          if [ -f .jittest/comment.md ] && [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@.jittest/comment.md >/dev/null
+          elif [ -f .jittest/comment.md ]; then
+            gh pr comment "$PR" --body-file .jittest/comment.md
+          elif [ -n "$id" ]; then
+            gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
+          fi
 
       - name: Upload the report
         if: always()

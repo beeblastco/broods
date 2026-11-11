@@ -147,6 +147,7 @@ describe("renderComment", () => {
     const comment = renderComment(generation, [
       candidate(votes("high", "high", "medium")),
     ]);
+    expect(comment?.startsWith("<!-- jittest -->")).toBe(true);
     expect(comment).toContain("1 behavior change(s) to confirm");
     expect(comment).toContain(
       "**limit() used to cap at 10, now returns every row. Is that expected?**",
