@@ -27,11 +27,14 @@ export interface AsyncRequestAccepted {
   requestedMode?: "reject" | "followup" | "collect" | "steer";
 }
 
-/** The 202 for `answer`. `eventId` names the resumed turn when the conversation resumed. */
+/** The 202 for `answer`. When the conversation resumed, `eventId` and `runId` name that turn. */
 export interface AnswersAccepted {
   status: "accepted";
   resultId: string;
   eventId?: string;
+  /** Pass to `waitForAsyncStatus` to follow the resumed turn. */
+  runId?: string;
+  statusUrl?: string;
   invoked?: boolean;
   /** `statusId`s already answered, skipped because another answer landed. */
   alreadyAnswered?: string[];

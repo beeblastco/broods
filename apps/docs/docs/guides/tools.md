@@ -272,7 +272,7 @@ Each question has an `id`, a short `header`, the `question`, and two to four `op
 | Any client  | status `awaiting_input` with `questions` | posting `answers: [{ statusId, answers: { <id>: [labels] } }]` to `/v1/runs` with no `events`  |
 | WebSocket   | a `question-request` frame               | an `execute` frame carrying `answers`                                                          |
 
-A posted `answers` body gets 202 when any answer landed; prompts someone already answered are skipped and listed in `alreadyAnswered`. It gets 409 `question_already_answered` only when every prompt was already answered.
+A posted `answers` body gets 202 when any answer landed, with the resumed turn's `runId` and `statusUrl` to poll; prompts someone already answered are skipped and listed in `alreadyAnswered`. It gets 409 `question_already_answered` only when every prompt was already answered.
 
 ## Web browsing
 

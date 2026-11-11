@@ -810,30 +810,42 @@ describe("streamed runs", (): void => {
           : null,
     );
 
-    const response = await handler(
-      coreRequest(
-        "POST",
-        "/v1/runs",
-        { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
-        {
-          agentId: "agent_1",
-          eventId: "answer-1",
-          conversationKey: "conversation-1",
-          answers: [
-            { statusId: "async_tool_a", answers: { q: ["yes"] } },
-            { statusId: "async_tool_b", answers: { q: ["no"] } },
-          ],
-        },
-      ),
-    );
-
-    expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({
-      status: "accepted",
-      resultId: "async_tool_a",
-      alreadyAnswered: ["async_tool_b"],
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "owner",
+      runId: "run_resumed",
+      ownerGeneration: 1,
     });
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      const response = await handler(
+        coreRequest(
+          "POST",
+          "/v1/runs",
+          { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
+          {
+            agentId: "agent_1",
+            eventId: "answer-1",
+            conversationKey: "conversation-1",
+            answers: [
+              { statusId: "async_tool_a", answers: { q: ["yes"] } },
+              { statusId: "async_tool_b", answers: { q: ["no"] } },
+            ],
+          },
+        ),
+      );
+
+      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_a",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+        alreadyAnswered: ["async_tool_b"],
+      });
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
   });
 
   describe("channel messages", (): void => {

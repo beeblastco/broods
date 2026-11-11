@@ -4605,6 +4605,13 @@ components:
         eventId:
           type: string
           description: Event id of the resumed turn. Present when it resumed.
+        runId:
+          type: string
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present when it resumed.
+        statusUrl:
+          type: string
+          format: uri
+          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.

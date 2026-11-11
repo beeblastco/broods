@@ -167,16 +167,17 @@ for await (const part of client.stream(api.agents.myAgent, input)) {
 | `failed`                                      | `error` explains. `stoppedByUser: true` means a deliberate stop     |
 | `expired`                                     | Queued work was never run                                           |
 
-Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` in the result. `answer` and `continue` take `signal` like `runAsync`: it cancels only the request, and answers core already accepted still resume the run. Pass your own `eventId` and reuse it when you retry after an abort, so the retry cannot start a second run. Approve an `awaiting_approval` run by sending the responses as `events`:
+Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` and `runId` in the result; pass `runId` to `waitForAsyncStatus` to follow it. `answer` and `continue` take `signal` like `runAsync`: it cancels only the request, and answers core already accepted still resume the run. Pass your own `eventId` and reuse it when you retry after an abort, so the retry cannot start a second run. Approve an `awaiting_approval` run by sending the responses as `events`:
 
 ```ts
 const status = await job.wait();
 const prompt = status.questions?.[0];
 if (status.status === "awaiting_input" && prompt) {
-  await client.answer(api.agents.myAgent, {
+  const answered = await client.answer(api.agents.myAgent, {
     conversationKey: job.conversationKey,
     answers: [{ statusId: prompt.statusId, answers: { color: ["Blue"] } }],
   });
+  if (answered.runId) await client.waitForAsyncStatus(answered.runId);
 }
 if (status.status === "awaiting_approval") {
   await client.runAsync(api.agents.myAgent, {

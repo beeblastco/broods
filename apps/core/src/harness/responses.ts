@@ -18,6 +18,7 @@ export type ContinuationOutcome =
       admission: IngressAdmission["outcome"];
       invoked: boolean;
       publicEventId: string;
+      runId: string;
     }
   | { kind: "skip" };
 
@@ -37,10 +38,14 @@ export function continuationResponse(
     });
   }
 
+  const statusUrl = directStatusUrl({ runId: outcome.runId });
+
   return jsonResponse(202, {
     status: "accepted",
     resultId: settled.resultId,
     eventId: outcome.publicEventId,
+    runId: outcome.runId,
+    ...(statusUrl ? { statusUrl: statusUrl } : {}),
     invoked: outcome.invoked,
     ...skipped,
   });
