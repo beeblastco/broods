@@ -89,6 +89,10 @@ export function DetailSplit({
     DETAIL_MIN_WIDTH,
     frameWidth - HANDLE_WIDTH_PX - tableMinWidth,
   );
+  // Unmeasured, it lays out side by side: no detail is open before the client has data.
+  const stacked =
+    frameWidth > 0 &&
+    frameWidth < tableMinWidth + HANDLE_WIDTH_PX + DETAIL_MIN_WIDTH;
 
   const shown = Math.min(width, room);
   const resize = (next: number): void =>
@@ -98,13 +102,14 @@ export function DetailSplit({
     <div
       ref={measure}
       data-slot="resizable-panel-group"
+      data-stacked={stacked || undefined}
       style={{
         "--detail-min": `${DETAIL_MIN_WIDTH}px`,
         "--detail-width": `${width}px`,
         "--table-min": `${tableMinWidth}px`,
       }}
       className={cn(
-        "@container/split relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
+        "group/split relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
         !flush && "rounded-lg border border-border",
       )}
     >
@@ -113,9 +118,9 @@ export function DetailSplit({
         className={cn(
           "min-h-0 min-w-0 flex-1 overflow-auto",
           // Too narrow for both, the table stays laid out under the open detail, so closing keeps
-          // its scroll; CSS only, so nothing remounts across widths.
+          // its scroll; styled from an attribute, so nothing remounts across widths.
           detail &&
-            "min-w-(--table-min) @max-2xl/split:invisible @max-2xl/split:absolute @max-2xl/split:inset-0",
+            "min-w-(--table-min) group-data-stacked/split:invisible group-data-stacked/split:absolute group-data-stacked/split:inset-0",
         )}
       >
         {children}
@@ -149,11 +154,11 @@ export function DetailSplit({
             onLostPointerCapture={() => {
               drag.current = null;
             }}
-            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden @max-2xl/split:hidden"
+            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden group-data-stacked/split:hidden"
           />
           <div
             data-slot="resizable-panel"
-            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card @max-2xl/split:grow"
+            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card group-data-stacked/split:grow"
           >
             {detail}
           </div>
