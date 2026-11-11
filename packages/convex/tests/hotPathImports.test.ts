@@ -11,18 +11,17 @@ const HOT_ENTRIES = [
   "runtimeLookups.ts",
   "usage.ts",
 ];
-const HEAVY_PACKAGES = ["zod", "convex-helpers"];
 const VALUE_IMPORT =
   /^(?:import|export)\s+(?!type\s)[^;]*?\sfrom\s+"([^"]+)"/gms;
 
 describe("hot Convex modules", () => {
-  test.each(HOT_ENTRIES)("%s loads no schema library", (entry) => {
-    expect(heavyImports(entry)).toEqual([]);
+  test.each(HOT_ENTRIES)("%s imports no package but convex", (entry) => {
+    expect(packageImports(entry)).toEqual([]);
   });
 });
 
-// Every heavy package the entry reaches, as `package via importing file`.
-function heavyImports(entry: string): string[] {
+// Every package but convex the entry reaches, as `package via importing file`.
+function packageImports(entry: string): string[] {
   const seen = new Set<string>([join(ROOT, entry)]);
   const found: string[] = [];
   for (const file of seen) {
@@ -36,11 +35,7 @@ function heavyImports(entry: string): string[] {
           existsSync,
         );
         if (path) seen.add(path);
-      } else if (
-        HEAVY_PACKAGES.some(
-          (name) => specifier === name || specifier.startsWith(`${name}/`),
-        )
-      ) {
+      } else if (specifier !== "convex" && !specifier.startsWith("convex/")) {
         found.push(`${specifier} via ${relative(ROOT, file)}`);
       }
     }
