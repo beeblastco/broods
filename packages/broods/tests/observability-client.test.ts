@@ -355,7 +355,7 @@ test("a zero-line log read returns at once, as the gateway sends no backfill for
   expect(FakeObservabilitySocket.instances).toHaveLength(0);
 });
 
-test("listRuns filtered by agent scans the whole backfill window, not only the newest page", async (): Promise<void> => {
+test("listRuns asks the gateway for one agent's runs, and filters here only on an older gateway", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const account = new BroodsAccountClient({
     baseUrl: "https://app.example",
@@ -378,27 +378,46 @@ test("listRuns filtered by agent scans the whole backfill window, not only the n
     durationMs: 1,
     status: "ok",
   });
-  const pending = account.listRuns(
-    { project: "demo", stage: "development" },
-    { agentId: "ag_A", limit: 2 },
-  );
-  for (
-    let tick = 0;
-    tick < 10 && !FakeObservabilitySocket.instances[0]?.sent[0];
-    tick++
-  )
-    await Bun.sleep(1);
-  const socket = FakeObservabilitySocket.instances[0]!;
-  const backfill = (JSON.parse(socket.sent[0]!) as { backfill: number })
-    .backfill;
   const rows = [run("ag_B", 30), run("ag_B", 20), run("ag_A", 10)];
-  socket.emit({
-    type: "backfill",
-    stream: "traces",
-    entries: rows.slice(0, backfill),
-  });
+  const nextSocket = async (
+    index: number,
+  ): Promise<FakeObservabilitySocket> => {
+    for (
+      let tick = 0;
+      tick < 20 && !FakeObservabilitySocket.instances[index]?.sent[0];
+      tick++
+    )
+      await Bun.sleep(1);
 
-  const { runs } = await pending;
+    return FakeObservabilitySocket.instances[index]!;
+  };
+  const listAgentA = (): ReturnType<BroodsAccountClient["listRuns"]> =>
+    account.listRuns(
+      { project: "demo", stage: "development" },
+      { agentId: "ag_A", limit: 2 },
+    );
+
+  const current = listAgentA();
+  const filtered = await nextSocket(0);
+  expect(JSON.parse(filtered.sent[0]!)).toMatchObject({
+    agentId: "ag_A",
+    backfill: 2,
+  });
+  filtered.emit({ type: "ready", agentId: "ag_A" });
+  filtered.emit({ type: "backfill", stream: "traces", entries: [rows[2]!] });
+  expect((await current).runs).toHaveLength(1);
+  expect(FakeObservabilitySocket.instances).toHaveLength(1);
+
+  FakeObservabilitySocket.instances = [];
+  const older = listAgentA();
+  const page = await nextSocket(0);
+  page.emit({ type: "ready" });
+  page.emit({ type: "backfill", stream: "traces", entries: rows.slice(0, 2) });
+  const scan = await nextSocket(1);
+  expect(JSON.parse(scan.sent[0]!)).toMatchObject({ backfill: 500 });
+  scan.emit({ type: "ready" });
+  scan.emit({ type: "backfill", stream: "traces", entries: rows });
+  const { runs } = await older;
   expect(runs.map((summary): string | undefined => summary.agentId)).toEqual([
     "ag_A",
   ]);

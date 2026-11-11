@@ -332,7 +332,7 @@ The trace id is the 32-character id on the run in the dashboard Tracing tab. Its
 
 ## runs
 
-Prints the stage's recent runs, newest first, with the trace id `broods trace` takes. Needs a `broods login` token and a deployed stage. `--agent` and `--status` filter the newest 500 runs.
+Prints the stage's recent runs, newest first, with the trace id `broods trace` takes. Needs a `broods login` token and a deployed stage. `--agent` asks the gateway for that agent's runs only. `--status` filters the newest 500 runs. Both search the last seven days.
 
 ```bash
 broods runs [--limit <n>] [--agent <id>] [--status <status>] [--json]
