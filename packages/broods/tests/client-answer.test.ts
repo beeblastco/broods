@@ -29,6 +29,8 @@ test("answer posts the answers to the agent's run route and returns the acceptan
           status: "accepted",
           resultId: "res_1",
           eventId: "evt_resumed",
+          runId: "run_resumed",
+          statusUrl: "https://gateway.example.com/v1/runs/run_resumed",
           invoked: true,
         },
         { status: 202 },
@@ -55,6 +57,8 @@ test("answer posts the answers to the agent's run route and returns the acceptan
     status: "accepted",
     resultId: "res_1",
     eventId: "evt_resumed",
+    runId: "run_resumed",
+    statusUrl: "https://gateway.example.com/v1/runs/run_resumed",
     invoked: true,
   });
 });

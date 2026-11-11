@@ -218,6 +218,21 @@ describe("runtime ingress", () => {
     ).rejects.toThrow(/Validator error/);
   });
 
+  test("refuses a key scoped to another agent that embeds this agent's segment", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    await expect(
+      t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId: accountId,
+          conversationKey: `acct:${accountId}:agent:other-agent:api:x:agent:test-agent:y`,
+          eventId: "embedded-agent",
+          mode: "reject",
+        }),
+      }),
+    ).rejects.toThrow(/does not belong to agentId/);
+  });
+
   test("an idempotent retry keeps the first admission's run id", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -2734,6 +2749,7 @@ describe("runtime ingress", () => {
       ownerEventId: "released-owner",
       ownerGeneration: 1,
     });
+    // convex-test can pin a mutation 1 ms ahead of the wall clock: stay off the grace boundary.
     vi.useFakeTimers({ now: Date.now() + 121_000 });
     try {
       expect(

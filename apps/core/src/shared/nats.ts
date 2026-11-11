@@ -30,6 +30,15 @@ export interface NatsEventHeaders {
   connectionId: string;
 }
 
+export interface NatsNames {
+  observabilityStream: string;
+  observabilitySubjects: string[];
+  responseStream: string;
+  responseSubjectWildcard: string;
+  spentTicketBucket: string;
+  subjectRoot: string;
+}
+
 export interface NatsStreamEvent {
   type: "stream";
   headers: NatsEventHeaders;
@@ -37,8 +46,6 @@ export interface NatsStreamEvent {
   sequence: number;
 }
 
-const RESPONSE_STREAM_NAME = "WS_RESPONSES";
-const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
 const RESPONSE_STREAM_STORAGE = StorageType.File;
 const NANOS_PER_MS = 1_000_000;
 const RESPONSE_STREAM_MAX_AGE_MS = 3 * 60 * 1000;
@@ -46,11 +53,6 @@ const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 
 // A span publishes once per state (running, ok): distinct messages, so no duplicate_window.
-const OBSERVABILITY_STREAM_NAME = "OBSERVABILITY";
-const OBSERVABILITY_SUBJECT_WILDCARDS = [
-  "v1.*.*.*.logs.>",
-  "v1.*.*.*.traces.>",
-];
 const OBSERVABILITY_STREAM_STORAGE = StorageType.File;
 const OBSERVABILITY_STREAM_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const OBSERVABILITY_STREAM_MAX_BYTES = 512 * 1024 * 1024;
@@ -58,6 +60,30 @@ const OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT = 20_000;
 
 // Refuses only NATS-reserved characters: virtual subagent ids carry `~` from their task id.
 const SUBJECT_ID_PATTERN = /^[^\s.*>]+$/;
+// One token that is also legal in stream and key-value bucket names.
+const ENVIRONMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+// Dev and production share one NATS server, so every stream, subject and bucket carries the
+// deployment environment. Core and the gateway both resolve their names here.
+export function natsNames(
+  environment: string = process.env.DEPLOYMENT_ENVIRONMENT?.trim() ?? "",
+): NatsNames {
+  if (!ENVIRONMENT_PATTERN.test(environment)) {
+    throw new Error(
+      "NATS needs DEPLOYMENT_ENVIRONMENT: letters, digits, - or _",
+    );
+  }
+  const root = `${environment}.v1`;
+
+  return {
+    observabilityStream: `OBSERVABILITY_${environment}`,
+    observabilitySubjects: [`${root}.*.*.*.logs.>`, `${root}.*.*.*.traces.>`],
+    responseStream: `WS_RESPONSES_${environment}`,
+    responseSubjectWildcard: `${root}.*.*.ws.response.*`,
+    spentTicketBucket: `TERMINAL_TICKETS_SPENT_${environment}`,
+    subjectRoot: root,
+  };
+}
 
 export async function connectNats(options: {
   servers: string;
@@ -124,10 +150,11 @@ export async function ensureResponseStream(
   if (!ensureStreamPromise) {
     ensureStreamPromise = (async () => {
       const jsm = await jetstreamManagerFor(connection);
+      const names = natsNames();
       // Only the limit knobs are mutable after creation, so update applies them in place.
       const config = {
-        name: RESPONSE_STREAM_NAME,
-        subjects: [RESPONSE_SUBJECT_WILDCARD],
+        name: names.responseStream,
+        subjects: [names.responseSubjectWildcard],
         retention: RetentionPolicy.Limits,
         storage: RESPONSE_STREAM_STORAGE,
         discard: DiscardPolicy.Old,
@@ -136,8 +163,8 @@ export async function ensureResponseStream(
         duplicate_window: RESPONSE_STREAM_DUPLICATE_WINDOW_MS * NANOS_PER_MS,
       };
       try {
-        await jsm.streams.info(RESPONSE_STREAM_NAME);
-        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => {});
+        await jsm.streams.info(names.responseStream);
+        await jsm.streams.update(names.responseStream, config).catch(() => {});
 
         return;
       } catch {}
@@ -169,9 +196,10 @@ export async function ensureObservabilityStream(
   if (!ensureObservabilityStreamPromise) {
     ensureObservabilityStreamPromise = (async () => {
       const jsm = await jetstreamManagerFor(connection);
+      const names = natsNames();
       const config = {
-        name: OBSERVABILITY_STREAM_NAME,
-        subjects: OBSERVABILITY_SUBJECT_WILDCARDS,
+        name: names.observabilityStream,
+        subjects: names.observabilitySubjects,
         retention: RetentionPolicy.Limits,
         storage: OBSERVABILITY_STREAM_STORAGE,
         discard: DiscardPolicy.Old,
@@ -180,9 +208,9 @@ export async function ensureObservabilityStream(
         max_msgs_per_subject: OBSERVABILITY_STREAM_MAX_MSGS_PER_SUBJECT,
       };
       try {
-        await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
+        await jsm.streams.info(names.observabilityStream);
         await jsm.streams
-          .update(OBSERVABILITY_STREAM_NAME, config)
+          .update(names.observabilityStream, config)
           .catch(() => {});
 
         return;
@@ -224,12 +252,12 @@ export async function readObservabilityStream(options: {
   let startSequence: number | undefined;
   if (options.afterSequence !== undefined) {
     const jsm = await jetstreamManagerFor(options.connection);
-    const { state } = await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
+    const { state } = await jsm.streams.info(natsNames().observabilityStream);
     // A recreated stream never reaches a sequence past its last: that reader would wait forever.
     if (options.afterSequence <= state.last_seq)
       startSequence = options.afterSequence + 1;
   }
-  const consumer = await js.consumers.get(OBSERVABILITY_STREAM_NAME, {
+  const consumer = await js.consumers.get(natsNames().observabilityStream, {
     filterSubjects: subject,
     ...consumerStartPolicy(startSequence, options.startTime),
   });
@@ -262,7 +290,7 @@ export async function readConversationStream(options: {
     options.agentId,
     options.conversationKey,
   );
-  const consumer = await js.consumers.get(RESPONSE_STREAM_NAME, {
+  const consumer = await js.consumers.get(natsNames().responseStream, {
     filterSubjects: subject,
     ...consumerStartPolicy(options.startSequence, options.startTime),
   });
@@ -278,7 +306,7 @@ export async function conversationLastSequence(options: {
 }): Promise<number | null> {
   try {
     const jsm = await jetstreamManagerFor(options.connection);
-    const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+    const message = await jsm.streams.getMessage(natsNames().responseStream, {
       last_by_subj: streamResponseSubject(
         options.accountId,
         options.agentId,
@@ -309,7 +337,7 @@ export async function conversationReplaySnapshot(options: {
     options.agentId,
     options.conversationKey,
   );
-  const info = await jsm.streams.info(RESPONSE_STREAM_NAME, {
+  const info = await jsm.streams.info(natsNames().responseStream, {
     subjects_filter: subject,
   });
   const created =
@@ -319,7 +347,7 @@ export async function conversationReplaySnapshot(options: {
   let lastSequence = info.state.last_seq;
   if (bufferedCount > 0) {
     try {
-      const last = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+      const last = await jsm.streams.getMessage(natsNames().responseStream, {
         last_by_subj: subject,
       });
       lastSequence = last.seq;
@@ -343,7 +371,7 @@ export async function retainedMessageSubject(
 ): Promise<string | null> {
   try {
     const jsm = await jetstreamManagerFor(connection);
-    const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+    const message = await jsm.streams.getMessage(natsNames().responseStream, {
       seq: sequence,
     });
 
@@ -387,7 +415,7 @@ export function streamResponseSubject(
     throw new Error("Account and agent ids must be plain NATS subject tokens");
   }
 
-  return `v1.${accountId}.${agentId}.ws.response.${subjectToken(conversationKey)}`;
+  return `${natsNames().subjectRoot}.${accountId}.${agentId}.ws.response.${subjectToken(conversationKey)}`;
 }
 
 export function subjectToken(value: string): string {
@@ -400,7 +428,7 @@ export function logsSubject(
   stage: string,
   endpointId: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(stage)}.logs.${endpointId}`;
+  return `${natsNames().subjectRoot}.${accountId}.${project}.${subjectToken(stage)}.logs.${endpointId}`;
 }
 
 export function tracesSubject(
@@ -409,7 +437,7 @@ export function tracesSubject(
   stage: string,
   endpointId: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(stage)}.traces.${endpointId}`;
+  return `${natsNames().subjectRoot}.${accountId}.${project}.${subjectToken(stage)}.traces.${endpointId}`;
 }
 
 export function logsSubjectWildcard(
@@ -417,7 +445,7 @@ export function logsSubjectWildcard(
   project: string,
   stage: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(stage)}.logs.>`;
+  return `${natsNames().subjectRoot}.${accountId}.${project}.${subjectToken(stage)}.logs.>`;
 }
 
 export function tracesSubjectWildcard(
@@ -425,7 +453,7 @@ export function tracesSubjectWildcard(
   project: string,
   stage: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(stage)}.traces.>`;
+  return `${natsNames().subjectRoot}.${accountId}.${project}.${subjectToken(stage)}.traces.>`;
 }
 
 // checkAPI: false skips the account-info probe every fresh manager would send first.

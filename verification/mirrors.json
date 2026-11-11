@@ -114,7 +114,7 @@
   },
   "SyncConcurrency": {
     "packages/convex/cli/httpRoutes.ts": {
-      "handleManifestSync": "599a4eded3c58971"
+      "handleManifestSync": "f8064afcdfa76e64"
     },
     "packages/convex/cli/sync.ts": {
       "recordExternalResourcesBySecretHash": "76a45716a84d6dda",
@@ -124,7 +124,7 @@
   "SyncCron": {
     "packages/convex/cli/httpRoutes.ts": {
       "desiredCrons": "5b59145810b21d5d",
-      "syncCrons": "32b0a470a535d780"
+      "syncCrons": "83d83c13459fa0af"
     },
     "packages/convex/model/agentSync.ts": {
       "deleteAgentRow": "6067f5e49d72d132"

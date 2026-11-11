@@ -108,6 +108,14 @@ export async function asyncToolHandback(context: VerifyContext): Promise<void> {
       JSON.stringify(resumed.response ?? "").includes(ANSWER),
     JSON.stringify(resumed),
   );
+  const followed = accepted.runId
+    ? await context.client.getAsyncStatus(accepted.runId)
+    : null;
+  assertStep(
+    "the answer's runId polls the resumed turn",
+    followed?.status === "completed",
+    JSON.stringify({ accepted: accepted, followed: followed }),
+  );
 
   const history = convexResult(
     context,
