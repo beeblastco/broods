@@ -45,16 +45,17 @@ export function useRouteIntent(): {
   // A tab left open across a deploy loads the page instead, which brings the new build.
   const navigate = useCallback(
     (href: string): void => {
-      if (!isShallowRoute(pathname, href)) router.push(href);
+      // Read at call time: a caller may hold this across a navigation.
+      const { pathname: open, search } = window.location;
+      if (!isShallowRoute(open, href)) router.push(href);
       else if (isStaleBuild()) window.location.assign(href);
       else {
-        const { pathname: path, search } = window.location;
-        if (href !== `${path}${search}`)
+        if (href !== `${open}${search}`)
           window.history.pushState(null, "", href);
         checkBuild();
       }
     },
-    [pathname, router],
+    [router],
   );
 
   const handlers = useCallback(
