@@ -3,6 +3,7 @@ import {
   PROJECT_SECTIONS,
   projectSection,
 } from "@/app/(main)/[projectId]/sections";
+import { inBackground } from "@/app/lib/prefetch";
 import { SETTINGS_PANELS } from "@/app/(main)/[projectId]/settings/panels";
 import { ORG_PANELS } from "@/app/(main)/settings/org/panels";
 
@@ -42,13 +43,18 @@ export function isShallowRoute(pathname: string, href: string): boolean {
 }
 
 /** Downloads every page and tab of a project, so the first click on each finds its chunk. */
-export function warmProject(): void {
+export async function warmProject(signal: AbortSignal): Promise<void> {
   const loaders = [PROJECT_SECTIONS, DASHBOARD_PANELS, SETTINGS_PANELS].flatMap(
     (chunks): Array<(() => Promise<unknown>) | undefined> =>
       Object.values(chunks),
   );
-  // A failed warm-up stays quiet; the page's own load surfaces it.
-  for (const load of loaders) void load?.().catch((): void => {});
+  // One chunk at a time, each behind the open page's own work, so warming slows no render.
+  for (const load of loaders) {
+    await new Promise<void>((resolve) => inBackground(resolve));
+    if (signal.aborted) return;
+    // A failed warm-up stays quiet; the page's own load surfaces it.
+    await load?.().catch((): void => {});
+  }
 }
 
 export function sectionLoader(

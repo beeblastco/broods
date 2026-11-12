@@ -73,7 +73,12 @@ test("a sidebar link between project pages and tabs asks the server for no route
   await sidebar.waitFor();
   const routeFetches: string[] = [];
   page.on("request", (request: Request) => {
-    if (request.headers()["rsc"] === "1") routeFetches.push(request.url());
+    // The project switcher warms other projects; only this project's routes count.
+    const ownRoute = new URL(request.url()).pathname.startsWith(
+      `/${projectId}`,
+    );
+    if (ownRoute && request.headers()["rsc"] === "1")
+      routeFetches.push(request.url());
   });
 
   await sidebar.getByRole("link", { name: "Settings" }).click();
@@ -86,9 +91,13 @@ test("a sidebar link between project pages and tabs asks the server for no route
   await expect(
     page.getByRole("heading", { level: 1, name: "Keys" }),
   ).toBeAttached();
-  await page.goBack();
+  await sidebar.getByRole("link", { name: "Settings" }).click();
   await expect(
     page.getByRole("heading", { level: 1, name: "General" }),
+  ).toBeAttached();
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Keys" }),
   ).toBeAttached();
   await sidebar.getByRole("link", { name: "Architecture" }).click();
   await page.locator(CANVAS_READY).waitFor();

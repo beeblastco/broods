@@ -15,6 +15,7 @@ import {
   TooltipTrigger,
 } from "@/app/components/ui/tooltip";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
 import { navHref } from "@/app/lib/navigation";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -41,19 +42,30 @@ export function Who({
   projectId?: Id<"projects">;
 }): React.JSX.Element {
   const stage = useSearchParams().get("stage");
+  const { handlers } = useRouteIntent();
+  const agent = "kind" in actor && actor.kind === "agent" ? actor : null;
+  const agentHref =
+    agent && projectId
+      ? `${navHref(projectId, "", stage)}${stage ? "&" : "?"}node=${agent.agentId}`
+      : null;
+  const intent = agentHref ? handlers(agentHref) : null;
 
   // flex, not inline: a 16px inline box sits on the line box and lifts the row a pixel.
   return (
     <span className="flex items-center gap-1.5">
       <ActorAvatar actor={actor} />
-      {"kind" in actor && actor.kind === "agent" && projectId ? (
+      {agent && agentHref && intent ? (
         <Link
-          href={`${navHref(projectId, "", stage)}${stage ? "&" : "?"}node=${actor.agentId}`}
+          href={agentHref}
           prefetch={false}
-          onClick={(event) => event.stopPropagation()}
+          {...intent}
+          onClick={(event) => {
+            event.stopPropagation();
+            intent.onClick(event);
+          }}
           className="cursor-pointer text-foreground underline-offset-3 hover:underline"
         >
-          {actor.name}
+          {agent.name}
         </Link>
       ) : (
         <span className="text-foreground">{actorName(actor)}</span>

@@ -38,11 +38,11 @@ export function projectSection(pathname: string): ProjectSection | null {
   const [project = "", section = "", ...rest] = pathname
     .split("/")
     .filter(Boolean);
-  const known =
-    CONVEX_ID_SHAPE.test(project) &&
-    rest.length === 0 &&
-    Object.hasOwn(PROJECT_SECTIONS, section);
-  if (!known) return null;
+  if (!CONVEX_ID_SHAPE.test(project) || rest.length > 0) return null;
 
-  return section as ProjectSection;
+  return isSection(section) ? section : null;
+}
+
+function isSection(section: string): section is ProjectSection {
+  return Object.hasOwn(PROJECT_SECTIONS, section);
 }

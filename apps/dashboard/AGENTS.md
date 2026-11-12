@@ -36,7 +36,8 @@ Interaction
 
 - Preload on intent: hover, focus and pointer down warm the next route and its tab's chunk (`useRouteIntent`, `app/hooks/useRouteIntent.ts`; `warmTestTab` in `NodeSidePanel.tsx` for a panel tab).
 - Nav links navigate on press, not on release (`useRouteIntent`).
-- A project's pages are one route (`app/(main)/[projectId]/[[...section]]/page.tsx`, pages listed in `sections.ts`): a link between them or between tabs changes the URL in the browser and asks the server for nothing. Navigate with `navigate` or `handlers` from `useRouteIntent`; a bare `router.push` or `<Link>` to a project page still works but waits on the server. A new project page goes in `sections.ts`, not in its own `page.tsx`.
+- A project's pages are one route (`app/(main)/[projectId]/[[...section]]/page.tsx`) and the project layout renders the page the URL names (`ProjectSections.tsx`, pages listed in `sections.ts`): a link between them or between tabs changes the URL in the browser and asks the server for nothing, and a page keeps its state however the URL changed. Navigate with `navigate` or `handlers` from `useRouteIntent`; a bare `router.push` or `<Link>` to a project page still works but waits on the server. A new project page goes in `sections.ts`, not in its own `page.tsx`.
+- A tab open across a deploy: `navigate` asks `/healthz` for the served build at most once a minute, and once it differs the next link loads the page instead (`app/lib/buildCheck.ts`). A page whose chunk fails shows a reload prompt inside the shell.
 - Optimistic first: a mutation the user watches land carries `.withOptimisticUpdate` (`app/lib/agentConfigOptimistic.ts`, `app/lib/webhooksOptimistic.ts`).
 - One field is edited inline, not in a modal: Enter or blur commits, Escape cancels (`InlineEdit`, `components/ui/inline-edit.tsx`). A dialog is for a choice with consequences, like a delete.
 - Keyboard parity: what a pointer does, a key does too (`app/lib/shortcuts.ts`, claimed with `useShortcut`).
@@ -51,7 +52,7 @@ Composition
 
 Performance
 
-- A cold page fetches only its own tab: other tabs load through their `panels.ts` loaders, interaction-only components mount on first want (`useEverTrue`), the palette subscribes once it is wanted.
+- A cold page waits only on its own tab: other tabs load through their `panels.ts` loaders, a project's other pages and tabs download after the load event, one chunk at a time behind the page's own work (`warmProject`), interaction-only components mount on first want (`useEverTrue`), the palette subscribes once it is wanted.
 - Stream updates batch: at most one React commit per 50 ms (`STREAM_COMMIT_INTERVAL_MS` in `useAgentChat.ts`, held by `chatStream.spec.ts`).
 - A list past about 200 rows pages (the Tracing task list's Load more), virtualizes, or sets `content-visibility: auto` on its rows.
 

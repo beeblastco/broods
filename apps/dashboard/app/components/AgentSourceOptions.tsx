@@ -2,7 +2,8 @@
 
 import { Button } from "@/app/components/ui/button";
 import { FileDown, FilePlus, GitBranch, LayoutTemplate } from "lucide-react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
+import { useParams } from "next/navigation";
 
 const SOURCE_OPTIONS = [
   {
@@ -38,11 +39,11 @@ export function AgentSourceOptions({
 }: {
   onCreateNew?: () => void;
 }): React.JSX.Element {
-  const router = useRouter();
+  const { navigate } = useRouteIntent();
   const { projectId } = useParams<{ projectId?: string }>();
   const actions: Record<SourceKey, (() => void) | undefined> = {
     github: projectId
-      ? () => router.push(`/${projectId}/settings?tab=git`)
+      ? () => navigate(`/${projectId}/settings?tab=git`)
       : undefined,
     template: undefined,
     import: undefined,

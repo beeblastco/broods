@@ -24,7 +24,8 @@ import { effectiveWindow, parseQuery, type Query } from "@/app/lib/queryTokens";
 import { LOG_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
+import { usePathname, useSearchParams } from "next/navigation";
 import { memo, useDeferredValue, useMemo, useState } from "react";
 import {
   emptyStreamMessage,
@@ -90,7 +91,7 @@ export function MonitoringPanel({
   stageSlug,
   apiKey,
 }: Props): React.JSX.Element {
-  const router = useRouter();
+  const { navigate } = useRouteIntent();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   // A key: indices drift as logs stream in, and a refresh swaps the objects.
@@ -113,7 +114,7 @@ export function MonitoringPanel({
   const now = useNow();
 
   const viewTrace = (traceId: string): void =>
-    router.push(
+    navigate(
       tabHref(pathname, "tracing", searchParams.toString(), {
         trace: traceId,
       }),

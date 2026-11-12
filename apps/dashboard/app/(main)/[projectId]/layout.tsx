@@ -10,6 +10,7 @@ import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ProjectSections } from "./ProjectSections";
 
 // An id the caller cannot read (deleted, another org's) resolves to null: not found.
 export default function ProjectLayout({
@@ -68,7 +69,14 @@ export default function ProjectLayout({
   }, [landed, projectId, setActive, switchTo]);
 
   if (gate?.show === "wait") return null;
-  if (project !== null && gate?.show !== "refused") return children;
+  if (project !== null && gate?.show !== "refused") {
+    return (
+      <>
+        {children}
+        <ProjectSections />
+      </>
+    );
+  }
 
   return (
     <StatusPage

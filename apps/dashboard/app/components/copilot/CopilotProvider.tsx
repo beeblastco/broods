@@ -32,7 +32,8 @@ import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useConvex, useMutation, useQuery } from "convex/react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouteIntent } from "@/app/hooks/useRouteIntent";
+import { useParams } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -124,7 +125,7 @@ export function CopilotProvider({
   const params = useParams<{ projectId?: string }>();
   const projectId = (params.projectId ?? null) as Id<"projects"> | null;
   const { stageArgs, stageId } = useStage();
-  const router = useRouter();
+  const { navigate } = useRouteIntent();
   const registry = useShortcutRegistry();
 
   // Most visits open neither the palette nor the dock, so the index subscribes once wanted.
@@ -280,12 +281,12 @@ export function CopilotProvider({
     async (action: CopilotAction): Promise<boolean> => {
       switch (action.type) {
         case "navigate":
-          router.push(action.href);
+          navigate(action.href);
 
           return true;
         case "openNode":
           if (!projectId) return false;
-          router.push(
+          navigate(
             `${navHref(projectId, "", stageId)}${stageId ? "&" : "?"}node=${action.nodeId}`,
           );
 
@@ -344,7 +345,7 @@ export function CopilotProvider({
           return false;
       }
     },
-    [note, projectId, registry, router, setEnvVar, stageId, updateCron],
+    [navigate, note, projectId, registry, setEnvVar, stageId, updateCron],
   );
 
   // A refusal of a step that runs on its own is noted in the thread.
@@ -530,7 +531,7 @@ export function CopilotProvider({
               };
             } else if (part.toolName === NAVIGATE_TOOL) {
               const path = navigatePath(part.input);
-              if (path) router.push(path);
+              if (path) navigate(path);
             }
           } else if (!traced) continue;
           timer ??= setTimeout(() => {
@@ -584,8 +585,8 @@ export function CopilotProvider({
       driftState,
       note,
       projectId,
+      navigate,
       readRepo,
-      router,
       runSafeSteps,
       source,
     ],

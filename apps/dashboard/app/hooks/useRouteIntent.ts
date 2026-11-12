@@ -1,5 +1,6 @@
 "use client";
 
+import { checkBuild, isStaleBuild } from "@/app/lib/buildCheck";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import {
   isPlainPress,
@@ -41,11 +42,17 @@ export function useRouteIntent(): {
   );
 
   // Next's router follows a pushState, so the route re-renders for the URL with no request.
+  // A tab left open across a deploy loads the page instead, which brings the new build.
   const navigate = useCallback(
     (href: string): void => {
-      if (isShallowRoute(pathname, href))
-        window.history.pushState(null, "", href);
-      else router.push(href);
+      if (!isShallowRoute(pathname, href)) router.push(href);
+      else if (isStaleBuild()) window.location.assign(href);
+      else {
+        const { pathname: path, search } = window.location;
+        if (href !== `${path}${search}`)
+          window.history.pushState(null, "", href);
+        checkBuild();
+      }
     },
     [pathname, router],
   );
@@ -64,9 +71,7 @@ export function useRouteIntent(): {
           if (event.currentTarget instanceof HTMLAnchorElement) {
             // Next's Link would ask the server for a page this route already renders.
             const shallow =
-              !alreadyOpen &&
-              isPlainPress(event) &&
-              isShallowRoute(pathname, href);
+              isPlainPress(event) && isShallowRoute(pathname, href);
             if (pressed || shallow) event.preventDefault();
             if (!pressed && shallow) navigate(href);
           } else if (!pressed) {
@@ -75,7 +80,10 @@ export function useRouteIntent(): {
         },
         onFocus: intent,
         onMouseDown: (event) => {
-          const push = !alreadyOpen && isPlainPress(event);
+          // An open page's link still leads somewhere when a tab or a node is open on it.
+          const push =
+            isPlainPress(event) &&
+            (!alreadyOpen || isShallowRoute(pathname, href));
           pressedRef.current = push ? event.currentTarget : null;
           if (push) navigate(href);
         },
