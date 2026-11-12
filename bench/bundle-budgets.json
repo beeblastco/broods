@@ -1,8 +1,8 @@
 {
-  "recordedAt": "2026-11-01T19:22:24.545Z",
+  "recordedAt": "2026-11-12T01:05:33.858Z",
   "metrics": {
     "dashboard/client-js-total": {
-      "bytes": 5265168,
+      "bytes": 5830862,
       "ceilingBytes": 5913713,
       "maxGrowthPct": 10
     },

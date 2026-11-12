@@ -14,7 +14,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
-import DashboardLoading from "./loading";
+import { DashboardLoading } from "./DashboardLoading";
 import {
   DASHBOARD_PANELS,
   loadBillingPanel,
@@ -51,7 +51,7 @@ const RuntimeKeyDialog = dynamic(loadRuntimeKeyDialog, {
   loading: (): null => null,
 });
 
-export default function DashboardPage(): React.JSX.Element {
+export function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;

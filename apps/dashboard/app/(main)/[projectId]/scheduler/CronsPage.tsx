@@ -8,18 +8,15 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { Plus } from "lucide-react";
-import { use, useState } from "react";
+import { useParams } from "next/navigation";
+import { useState } from "react";
 import { CronDialog } from "./components/CronDialog";
 import { CronsTable } from "./components/CronsTable";
 
-export default function CronsPage({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}): React.JSX.Element {
+export function CronsPage(): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const { projectId } = use(params);
-  const typedProjectId = projectId as Id<"projects">;
+  const params = useParams<{ projectId: string }>();
+  const typedProjectId = params.projectId as Id<"projects">;
 
   const crons = useQuery(api.agent.crons.listForProject, {
     projectId: typedProjectId,

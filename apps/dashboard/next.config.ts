@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   assetPrefix: assetOrigin,
   env: {
     DASHBOARD_ASSET_ORIGIN: assetOrigin ?? "",
+    DASHBOARD_BUILD_ID: crypto.randomUUID(),
   },
   // CDN chunk errors keep their stack, not "Script error."; the CDN must then send
   // Access-Control-Allow-Origin on every chunk, or the page loads unstyled.

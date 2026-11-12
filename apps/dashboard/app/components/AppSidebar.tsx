@@ -30,19 +30,13 @@ import {
 import { cn } from "@/app/lib/utils";
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import {
-  useParams,
-  usePathname,
-  useRouter,
-  useSearchParams,
-} from "next/navigation";
+import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 
 export function AppSidebar(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const pathname = usePathname();
-  const router = useRouter();
-  const { handlers } = useRouteIntent();
+  const { handlers, navigate } = useRouteIntent();
   const searchParams = useSearchParams();
   const { setOpenMobile, toggleSidebar } = useSidebar();
   const hydrated = useHydrated();
@@ -61,10 +55,10 @@ export function AppSidebar(): React.JSX.Element {
     projectId ? navHref(projectId, item.segment, stageParam) : item.segment;
 
   useShortcut("nav.prev", () =>
-    router.push(itemHref(stepNavItem(items, active, -1))),
+    navigate(itemHref(stepNavItem(items, active, -1))),
   );
   useShortcut("nav.next", () =>
-    router.push(itemHref(stepNavItem(items, active, 1))),
+    navigate(itemHref(stepNavItem(items, active, 1))),
   );
   useShortcut("sidebar.toggle", toggleSidebar);
 

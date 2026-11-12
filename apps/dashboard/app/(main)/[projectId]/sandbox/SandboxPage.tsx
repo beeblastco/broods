@@ -13,7 +13,7 @@ import type { SandboxObservabilityScope } from "./components/SandboxLogTail";
 import { SandboxPolicyTable } from "./components/SandboxPolicyTable";
 import { SandboxSnapshotsTable } from "./components/SandboxSnapshotsTable";
 
-export default function SandboxPage(): React.JSX.Element {
+export function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
   const { stageId: activeStageId, stageArgs } = useStage();

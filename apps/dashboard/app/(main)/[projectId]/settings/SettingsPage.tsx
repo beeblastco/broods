@@ -31,7 +31,7 @@ const WebhooksPanel = dynamic(loadWebhooksPanel, { loading: PanelLoading });
 const PoliciesPanel = dynamic(loadPoliciesPanel, { loading: PanelLoading });
 const DangerPanel = dynamic(loadDangerPanel, { loading: PanelLoading });
 
-export default function SettingsPage(): React.JSX.Element {
+export function SettingsPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;

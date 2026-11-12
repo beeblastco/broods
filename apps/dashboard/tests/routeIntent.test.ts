@@ -2,7 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { DASHBOARD_PANELS } from "../app/(main)/[projectId]/dashboard/panels";
 import { SETTINGS_PANELS } from "../app/(main)/[projectId]/settings/panels";
 import { ORG_PANELS } from "../app/(main)/settings/org/panels";
-import { isPlainPress, tabPanelLoader } from "../app/lib/routeIntent";
+import { loadCanvas, loadCronsPage } from "../app/(main)/[projectId]/sections";
+import {
+  isPlainPress,
+  isShallowRoute,
+  sectionLoader,
+  tabPanelLoader,
+} from "../app/lib/routeIntent";
+
+const PROJECT = "/px7818dqbhsjyrkjtdzjw7hfah8j0gcx";
+const OTHER_PROJECT = "/mx74rpm315wj10h81pf9vf8z9n8hjhag";
 
 const PRESS = {
   altKey: false,
@@ -56,5 +65,39 @@ describe("tabPanelLoader", () => {
     expect(tabPanelLoader("/p1/scheduler?tab=tracing")).toBeUndefined();
     expect(tabPanelLoader("/projects")).toBeUndefined();
     expect(tabPanelLoader("/settings/account?tab=danger")).toBeUndefined();
+  });
+});
+
+describe("isShallowRoute", () => {
+  test("a page of the open project", () => {
+    expect(isShallowRoute(PROJECT, `${PROJECT}/scheduler`)).toBe(true);
+    expect(
+      isShallowRoute(`${PROJECT}/dashboard`, `${PROJECT}/settings?tab=keys`),
+    ).toBe(true);
+    expect(isShallowRoute(`${PROJECT}/sandbox`, PROJECT)).toBe(true);
+  });
+
+  test("a tab of the open page, in a project or not", () => {
+    expect(isShallowRoute("/settings/org", "/settings/org?tab=members")).toBe(
+      true,
+    );
+  });
+
+  test("another project, an account page and an unknown page ask the server", () => {
+    expect(isShallowRoute(PROJECT, `${OTHER_PROJECT}/scheduler`)).toBe(false);
+    expect(isShallowRoute(PROJECT, "/projects")).toBe(false);
+    expect(isShallowRoute("/projects", PROJECT)).toBe(false);
+    expect(isShallowRoute("/settings/org", "/settings/account")).toBe(false);
+    expect(isShallowRoute(PROJECT, `${PROJECT}/nope`)).toBe(false);
+    expect(isShallowRoute(PROJECT, `${PROJECT}/dashboard/deeper`)).toBe(false);
+  });
+});
+
+describe("sectionLoader", () => {
+  test("names the chunk of a project page", () => {
+    expect(sectionLoader(PROJECT)).toBe(loadCanvas);
+    expect(sectionLoader(`${PROJECT}/scheduler?stage=x`)).toBe(loadCronsPage);
+    expect(sectionLoader(`${PROJECT}/nope`)).toBeUndefined();
+    expect(sectionLoader("/projects")).toBeUndefined();
   });
 });
