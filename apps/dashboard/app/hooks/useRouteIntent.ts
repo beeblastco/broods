@@ -81,10 +81,7 @@ export function useRouteIntent(): {
         },
         onFocus: intent,
         onMouseDown: (event) => {
-          // An open page's link still leads somewhere when a tab or a node is open on it.
-          const push =
-            isPlainPress(event) &&
-            (!alreadyOpen || isShallowRoute(pathname, href));
+          const push = !alreadyOpen && isPlainPress(event);
           pressedRef.current = push ? event.currentTarget : null;
           if (push) navigate(href);
         },
