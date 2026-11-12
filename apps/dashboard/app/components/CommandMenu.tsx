@@ -16,7 +16,7 @@ export function CommandMenu(): React.JSX.Element {
     setOpen: setCopilotOpen,
     wakeIndex,
   } = useCopilot();
-  const { warm } = useRouteIntent();
+  const { navigate, warm } = useRouteIntent();
   const warmRow = useCallback(
     (item: SearchItem): void => {
       if (item.target.type === "navigate") warm(item.target.href);
@@ -32,7 +32,11 @@ export function CommandMenu(): React.JSX.Element {
         ask(query);
       }}
       onHighlight={warmRow}
-      onSelect={(item) => runAction(itemAction(item))}
+      // A page of the open project switches in the browser; the provider's push asks the server.
+      onSelect={(item) => {
+        if (item.target.type === "navigate") navigate(item.target.href);
+        else runAction(itemAction(item));
+      }}
       onWake={wakeIndex}
     />
   );
