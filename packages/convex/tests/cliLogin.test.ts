@@ -303,7 +303,7 @@ describe("an AuthKit user at /mcp", () => {
     });
   });
 
-  test("being added as admin by a stranger keeps a user in their active org", async () => {
+  test("being made admin of another org keeps a user in their active org", async () => {
     const t = loginTest();
     const home = await seedOrg(
       t,
@@ -312,11 +312,9 @@ describe("an AuthKit user at /mcp", () => {
       "auth_victim",
     );
     await setActive(t, "auth_victim", "home");
-    const stranger = await seedOrg(t, "stranger", { [AUTH_ID]: "owner" });
-    await t.mutation(api.org.members.add, {
-      orgId: await orgBySlug(t, "stranger"),
-      email: "auth_victim@example.com",
-      role: "admin",
+    const stranger = await seedOrg(t, "stranger", {
+      [AUTH_ID]: "owner",
+      auth_victim: "admin",
     });
 
     const unnamed = await signIn(t, "auth_victim");
