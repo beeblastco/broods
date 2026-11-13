@@ -49,6 +49,8 @@ interface UseObservabilityStreamOptions {
   stageSlug: string | undefined;
   apiKey: string | undefined;
   backfill?: number;
+  rangeMs?: number;
+  window?: { from: number; to: number } | null;
   minLevel?: LogLevel;
   sandboxId?: string;
 }
@@ -59,6 +61,10 @@ interface UseObservabilityStreamResult<T> {
   history: ObservabilityHistoryStatus;
   error: string | null;
   refresh: () => void;
+  hasOlder: boolean;
+  loadOlder: () => void;
+  newCount: number;
+  showNew: () => void;
   /** False when the socket is not live, so the caller records no request that never went out. */
   fetchTrace: (traceId: string) => boolean;
 }
@@ -103,12 +109,14 @@ export function useObservabilityStream(
     backfill = 0,
     minLevel,
     sandboxId,
+    rangeMs,
+    window: timeWindow,
   } = options;
 
   // The project id, not its slug (unique per org), and no credential: a renewed ticket
   // reconnects the same stream and keeps its entries.
   const { projectId } = useParams<{ projectId: string }>();
-  const connKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  const connKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}|${rangeMs ?? ""}|${timeWindow?.from ?? ""}|${timeWindow?.to ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -116,11 +124,25 @@ export function useObservabilityStream(
   const [status, setStatus] = useState<ObservabilityStreamStatus>("idle");
   const [history, setHistory] = useState<ObservabilityHistoryStatus>("none");
   const [error, setError] = useState<string | null>(null);
+  const [nextTo, setNextTo] = useState<number | undefined>();
+  const [pending, setPending] = useState<
+    (ObservabilityLogEntry | ObservabilitySpanRow)[]
+  >([]);
+  const entriesRef = useRef(entries);
+  const pendingRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>(
+    [],
+  );
+  const historyBusyRef = useRef(false);
+  const historyRangeRef = useRef<{ from: number; to: number } | undefined>(
+    undefined,
+  );
 
   const [prevConnKey, setPrevConnKey] = useState(connKey);
   if (connKey !== prevConnKey) {
     setPrevConnKey(connKey);
     setEntries(STREAM_CACHE.get(connKey) ?? []);
+    setNextTo(undefined);
+    setPending([]);
     setError(null);
   }
 
@@ -130,6 +152,8 @@ export function useObservabilityStream(
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- commit timer, cut before paint
   useLayoutEffect(() => {
     scopeRef.current = connKey;
+    entriesRef.current = STREAM_CACHE.get(connKey) ?? [];
+    pendingRef.current = [];
 
     return () => {
       if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
@@ -141,6 +165,7 @@ export function useObservabilityStream(
   // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module-level STREAM_CACHE
   useEffect(() => {
     cacheEntries(connKey, entries);
+    entriesRef.current = entries;
   }, [connKey, entries]);
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -181,11 +206,38 @@ export function useObservabilityStream(
   const flushLive = useCallback(() => {
     if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
     commitTimerRef.current = null;
-    const batch = liveRef.current;
-    if (batch.length === 0) return;
+    const batch = liveRef.current.filter((entry) => {
+      const range = historyRangeRef.current;
+
+      return (
+        !range ||
+        (entryTime(entry) >= range.from &&
+          (!timeWindow || entryTime(entry) < range.to))
+      );
+    });
     liveRef.current = [];
-    setEntries((prev) => mergeLive(prev, batch));
-  }, []);
+    if (batch.length === 0) return;
+    if (rangeMs === undefined) setEntries((prev) => mergeLive(prev, batch));
+    else {
+      const known = new Set(
+        entriesRef.current.map((entry) =>
+          "traceId" in entry && "spanId" in entry
+            ? entry.traceId
+            : entryKey(entry),
+        ),
+      );
+      const updates = batch.filter((entry) =>
+        known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+      );
+      const fresh = batch.filter(
+        (entry) =>
+          !known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+      );
+      setEntries((prev) => mergeLive(prev, updates));
+      pendingRef.current = mergeLive(pendingRef.current, fresh);
+      setPending(pendingRef.current);
+    }
+  }, [rangeMs, timeWindow]);
 
   const connect = useCallback(() => {
     if (destroyedRef.current) return;
@@ -208,6 +260,14 @@ export function useObservabilityStream(
     );
     if (resumeSeq === undefined) setHistory(backfill > 0 ? "loading" : "none");
     setError(null);
+    historyBusyRef.current = resumeSeq === undefined && backfill > 0;
+    const to = timeWindow?.to ?? Date.now();
+    if (resumeSeq === undefined)
+      historyRangeRef.current =
+        rangeMs === undefined
+          ? undefined
+          : { from: timeWindow?.from ?? to - rangeMs, to: to };
+    if (resumeSeq === undefined) setNextTo(undefined);
 
     const wsUrl =
       `${wsBaseUrl}/v1/projects/${encodeURIComponent(projectSlug)}` +
@@ -231,6 +291,7 @@ export function useObservabilityStream(
       const subscribeMsg: ObservabilityClientMessage = {
         type: "subscribe",
         stream: stream,
+        ...(historyRangeRef.current ? { range: historyRangeRef.current } : {}),
         ...(resumeSeq !== undefined
           ? { afterSeq: resumeSeq }
           : backfill > 0
@@ -278,13 +339,29 @@ export function useObservabilityStream(
       if (msg.type === "backfill") {
         if (!msg.more) {
           setHistory(msg.error ? "failed" : "loaded");
+          historyBusyRef.current = false;
+          if (!traceFetchRef.current && !msg.error) setNextTo(msg.nextTo);
           if (traceFetchRef.current) traceFetchRef.current = false;
           else if (cursorRef.current)
             cursorRef.current.historyLoaded = !msg.error;
         }
         if (msg.error) setError(msg.error);
         flushLive();
-        setEntries((prev) => mergeBackfill(prev, msg.entries));
+        const loaded = new Set(
+          msg.entries.map((entry) =>
+            "spanId" in entry ? entry.traceId : entryKey(entry),
+          ),
+        );
+        const overlaps = pendingRef.current.filter((entry) =>
+          loaded.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+        );
+        const combined = mergeBackfill(msg.entries, overlaps);
+        setEntries((prev) => mergeBackfill(prev, combined));
+        pendingRef.current = pendingRef.current.filter(
+          (entry) =>
+            !loaded.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+        );
+        setPending(pendingRef.current);
 
         return;
       }
@@ -303,6 +380,7 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "error") {
+        historyBusyRef.current = false;
         setStatus("error");
         setError(msg.error);
         setHistory((current) => (current === "loading" ? "failed" : current));
@@ -349,6 +427,8 @@ export function useObservabilityStream(
     backfill,
     minLevel,
     sandboxId,
+    rangeMs,
+    timeWindow,
     connKey,
     closeSocket,
     clearReconnect,
@@ -377,7 +457,13 @@ export function useObservabilityStream(
 
   const fetchTrace = useCallback((traceId: string): boolean => {
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    if (
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      historyBusyRef.current
+    )
+      return false;
+    historyBusyRef.current = true;
     const message: ObservabilityClientMessage = {
       type: "fetchTrace",
       traceId: traceId,
@@ -390,12 +476,52 @@ export function useObservabilityStream(
     return true;
   }, []);
 
+  const loadOlder = useCallback((): void => {
+    const range = historyRangeRef.current;
+    const socket = socketRef.current;
+    if (
+      nextTo === undefined ||
+      !range ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      historyBusyRef.current
+    )
+      return;
+    historyBusyRef.current = true;
+    setHistory("loading");
+    setError(null);
+    const message: ObservabilityClientMessage = {
+      type: "subscribe",
+      stream: stream,
+      backfill: backfill,
+      historyOnly: true,
+      range: { from: range.from, to: nextTo },
+      ...(minLevel ? { minLevel: minLevel } : {}),
+    };
+    socket.send(JSON.stringify(message));
+  }, [nextTo, stream, backfill, minLevel]);
+
+  const showNew = useCallback((): void => {
+    const revealed = pendingRef.current;
+    pendingRef.current = [];
+    setEntries((prev) => mergeBackfill(prev, revealed));
+    setPending([]);
+  }, []);
+
   return {
     entries: entries,
     status: projectSlug && stageSlug && apiKey ? status : "idle",
     history: history,
     error: error,
     refresh: refresh,
+    newCount: new Set(
+      pending.map((entry) =>
+        "spanId" in entry ? entry.traceId : entryKey(entry),
+      ),
+    ).size,
+    showNew: showNew,
+    hasOlder: nextTo !== undefined,
+    loadOlder: loadOlder,
     fetchTrace: fetchTrace,
   };
 }
@@ -426,15 +552,14 @@ export function mergeBackfill<
     (a, b) => entryTime(b) - entryTime(a),
   );
 
-  return combined.length > MAX_ENTRIES
-    ? combined.slice(0, MAX_ENTRIES)
-    : combined;
+  return combined;
 }
 
 // Same list as applying the batch one entry at a time in arrival order, capped once at the end.
 export function mergeLive<
   T extends ObservabilityLogEntry | ObservabilitySpanRow,
 >(prev: T[], batch: T[]): T[] {
+  if (batch.length === 0) return prev;
   const listed = [...prev];
   const slots = new Map(prev.map((entry, index) => [entryKey(entry), index]));
   const fresh = new Map<string, T>();
@@ -453,7 +578,9 @@ export function mergeLive<
     .concat(listed)
     .sort((a, b) => entryTime(b) - entryTime(a));
 
-  return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
+  const limit = Math.max(MAX_ENTRIES, prev.length);
+
+  return next.length > limit ? next.slice(0, limit) : next;
 }
 
 /** Doubles from 3 s to a minute; null when the close means a new credential is needed. */

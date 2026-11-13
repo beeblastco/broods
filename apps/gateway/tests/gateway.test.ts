@@ -4200,3 +4200,150 @@ test("a user's run sends the token to core and streams from the user's namespace
     streamResponseSubject("acct_test", "agent_public", "chat-1"),
   );
 });
+
+test("bounded log history queries once and continues without skipping timestamp ties", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requests.push(new URL(requestUrl(input)));
+    return json({
+      data: {
+        result: [
+          {
+            stream: {},
+            values: [
+              ["9000000", "new"],
+              ["8000000", "tie-a"],
+              ["8000000", "tie-b"],
+            ],
+          },
+        ],
+      },
+    });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 2,
+        historyOnly: true,
+        range: { from: 1, to: 10 },
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe("1000000");
+    expect(requests[0]!.searchParams.get("end")).toBe("9999999");
+    expect(requests[0]!.searchParams.get("limit")).toBe("3");
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      nextTo: 9,
+      entries: [{ message: "new" }],
+    });
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("bounded Tempo searches narrow a saturated unordered result before paging", async () => {
+  const originalFetch = globalThis.fetch;
+  const starts: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(requestUrl(input));
+    starts.push(url.searchParams.get("start") ?? "");
+    return json({
+      traces:
+        starts.length === 1
+          ? [
+              { traceID: "a", startTimeUnixNano: "1000000000" },
+              { traceID: "b", startTimeUnixNano: "2000000000" },
+            ]
+          : [],
+    });
+  }) as typeof fetch;
+  try {
+    const pages = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+        from: 0,
+        to: 3600000,
+      }),
+    );
+    expect(starts).toEqual(["0", "1800"]);
+    expect(pages).toEqual([{ rows: [], failures: 0, nextTo: 1800000 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a sparse bounded sandbox page searches only one hour without starting a poll", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    requests.push(new URL(requestUrl(input)));
+
+    return json({ data: { result: [] } });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    const range = { from: 0, to: 86_400_000 };
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: range,
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      async (): Promise<never> => {
+        throw new Error("history opened live transport");
+      },
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe(
+      String(82_800_000n * 1_000_000n),
+    );
+    expect(requests[0]!.searchParams.get("query")).toContain(
+      'sandbox_id="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"',
+    );
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      entries: [],
+      range: range,
+      nextTo: 82_800_000,
+    });
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: { from: 0, to: 82_800_000 },
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      idleNats,
+    );
+    await waitForCondition(
+      () => sent.filter((message) => message.type === "backfill").length === 2,
+    );
+    expect(requests).toHaveLength(2);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});

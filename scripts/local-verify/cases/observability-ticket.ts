@@ -1,6 +1,10 @@
 import type { BroodsSyncClient as SyncClient } from "../../../packages/broods/src/sync.ts";
 import { BroodsAccountClient } from "../../../packages/broods/src/account.ts";
-import { fetchObservabilityLogs } from "../../../packages/broods/src/observability-client.ts";
+import {
+  fetchObservabilityLogs,
+  fetchObservabilityLogPage,
+  fetchObservabilitySpans,
+} from "../../../packages/broods/src/observability-client.ts";
 import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import {
   toWebSocketBaseUrl,
@@ -144,6 +148,37 @@ export async function observabilityTicket(
     "a one-shot log read needs no live transport",
     history.includes("Log history is not configured"),
     history,
+  );
+
+  const bounded = await fetchObservabilityLogPage(
+    {
+      baseUrl: context.edgeUrl,
+      credential: async (): Promise<string> => ticket,
+      project: projectSlug,
+      stage: deployment?.stageSlug ?? "development",
+    },
+    { limit: 5, range: { from: Date.now() - 3_600_000, to: Date.now() } },
+  );
+  assertStep(
+    "a bounded history page authenticates and preserves backend failure",
+    bounded.error?.includes("Log history is not configured") === true &&
+      bounded.nextTo === undefined,
+    bounded.error ?? "missing error",
+  );
+
+  const traces = await fetchObservabilitySpans(
+    {
+      baseUrl: context.edgeUrl,
+      credential: async (): Promise<string> => ticket,
+      project: projectSlug,
+      stage: deployment?.stageSlug ?? "development",
+    },
+    5,
+  );
+  assertStep(
+    "a one-shot trace read preserves the gateway history error",
+    traces.error?.includes("Trace history is not configured") === true,
+    traces.error ?? "missing history error",
   );
 
   const status = async (path: string, method: string): Promise<number> => {

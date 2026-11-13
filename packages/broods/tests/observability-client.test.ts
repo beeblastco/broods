@@ -2,6 +2,7 @@ import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
 import { BroodsAccountClient } from "../src/account.ts";
 import {
   fetchObservabilityLogs,
+  fetchObservabilityLogPage,
   fetchObservabilitySpans,
   fetchObservabilityTrace,
   subscribeObservabilityLogs,
@@ -422,3 +423,77 @@ test("listRuns asks the gateway for one agent's runs, and filters here only on a
     "ag_A",
   ]);
 });
+
+test("history waits past the connection deadline after the gateway acknowledges it", async (): Promise<void> => {
+  jest.useFakeTimers();
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityLogs(traceOptions, { limit: 50 });
+  const result = pending.then(
+    (rows): string => `rows:${rows.length}`,
+    (error: Error): string => error.message,
+  );
+  await flushMicrotasks();
+  const socket = FakeObservabilitySocket.instances[0]!;
+  socket.emit({ type: "ready" });
+  await advance(16_000);
+  socket.emit({
+    type: "backfill",
+    stream: "logs",
+    entries: [],
+    error: "Loki query timed out after 15000ms",
+  });
+  expect(await result).toBe("Loki query timed out after 15000ms");
+});
+
+test("an acknowledged history request still has a finite deadline", async (): Promise<void> => {
+  jest.useFakeTimers();
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const result = fetchObservabilityLogs(traceOptions, { limit: 50 }).catch(
+    (error: Error): string => error.message,
+  );
+  await flushMicrotasks();
+  const socket = FakeObservabilitySocket.instances[0]!;
+  socket.emit({ type: "ready" });
+  await advance(45_000);
+  expect(await result).toBe(
+    "The observability gateway did not answer within 45 s.",
+  );
+  expect(socket.readyState).toBe(3);
+});
+
+test.each([true, false])(
+  "bounded log page capability echo: %s",
+  async (supported: boolean): Promise<void> => {
+    globalThis.WebSocket =
+      FakeObservabilitySocket as unknown as typeof WebSocket;
+    const range = { from: 1, to: 10000 };
+    const pending = fetchObservabilityLogPage(
+      {
+        baseUrl: "https://app.example",
+        credential: async (): Promise<string> => "ticket",
+        project: "demo",
+        stage: "dev",
+      },
+      { limit: 10, range: range },
+    );
+    await flushMicrotasks();
+    const socket = FakeObservabilitySocket.instances[0]!;
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+      historyOnly: true,
+      range: range,
+    });
+    socket.emit({
+      type: "backfill",
+      stream: "logs",
+      entries: [],
+      nextTo: 5000,
+      ...(supported ? { range: range } : {}),
+    });
+    const result = await pending;
+    if (supported) expect(result).toEqual({ rows: [], nextTo: 5000 });
+    else {
+      expect(result.error).toContain("does not support bounded history");
+      expect(result.nextTo).toBeUndefined();
+    }
+  },
+);

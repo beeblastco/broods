@@ -2,6 +2,7 @@ import {
   isLogLevel,
   isObservabilityClientMessage,
   type LogLevel,
+  type ObservabilityHistoryRange,
   type ObservabilityClientMessage,
   type ObservabilityLogEntry,
   type ObservabilityServerMessage,
@@ -11,6 +12,7 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
+import { historyPage } from "./history-page.ts";
 import { openCursor, sealCursor } from "./observability-cursor.ts";
 import { resolveSocketScope, type CredentialScope } from "./upstream.ts";
 import {
@@ -33,6 +35,7 @@ export type ObservabilityGatewayData = {
 type LiveSubscription = { unsubscribe(): void; cursor?: number };
 type LokiRange = {
   startNs: bigint;
+  endNs?: bigint;
   limit: number;
   direction: "backward" | "forward";
   timeoutMs: number;
@@ -169,6 +172,30 @@ export async function handleObservabilityMessage(
     return;
   }
 
+  const state = obsState.get(socket);
+  if (msg.historyOnly && msg.range && msg.backfill && state?.subs[msg.stream]) {
+    const stream = msg.stream;
+    const run = state.runs[stream];
+    state.backfills[stream] = state.backfills[stream].then(
+      async (): Promise<void> => {
+        if (state.runs[stream] !== run) return;
+        await sendBackfill(
+          socket,
+          socket.data.scope,
+          stream,
+          msg.backfill!,
+          msg.minLevel ?? "INFO",
+          run,
+          msg.agentId,
+          msg.range,
+          msg.sandboxId,
+        );
+      },
+    );
+
+    return;
+  }
+
   await handleObservabilitySubscribe(
     socket,
     socket.data.scope,
@@ -183,6 +210,7 @@ export async function handleObservabilityMessage(
     msg.afterSeq === undefined || !socket.data.cursorKey
       ? undefined
       : openCursor(socket.data.cursorKey, msg.afterSeq),
+    msg.range,
   );
 }
 
@@ -493,6 +521,7 @@ async function handleObservabilitySubscribe(
   historyOnly = false,
   agentId?: string,
   afterSeq?: number,
+  range?: ObservabilityHistoryRange,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -518,20 +547,27 @@ async function handleObservabilitySubscribe(
   }
 
   // A sandbox tail owns its backfill: one seen set across history and polls dedupes overlap.
-  const live = sandboxId
-    ? startSandboxLogPoll(socket, scope, sandboxId, minLevel, backfill ?? 0)
-    : historyOnly
+  const live =
+    historyOnly && (!sandboxId || range)
       ? { unsubscribe: (): void => {} }
-      : await startLiveSubscription(
-          socket,
-          scope,
-          stream,
-          state,
-          run,
-          liveOnly,
-          getNatsConnection,
-          afterSeq,
-        );
+      : sandboxId
+        ? startSandboxLogPoll(
+            socket,
+            scope,
+            sandboxId,
+            minLevel,
+            range ? 0 : (backfill ?? 0),
+          )
+        : await startLiveSubscription(
+            socket,
+            scope,
+            stream,
+            state,
+            run,
+            liveOnly,
+            getNatsConnection,
+            afterSeq,
+          );
   if (state.runs[stream] !== run) {
     live?.unsubscribe();
 
@@ -552,7 +588,7 @@ async function handleObservabilitySubscribe(
     ...(agentId ? { agentId: agentId } : {}),
     ...sealedSeq(socket, live.cursor),
   });
-  if (!sandboxId && typeof backfill === "number" && backfill > 0)
+  if ((!sandboxId || range) && typeof backfill === "number" && backfill > 0)
     state.backfills[stream] = state.backfills[stream].then(
       (): Promise<void> | undefined =>
         state.runs[stream] === run
@@ -564,6 +600,8 @@ async function handleObservabilitySubscribe(
               minLevel,
               run,
               agentId,
+              range,
+              sandboxId,
             )
           : undefined,
     );
@@ -579,6 +617,8 @@ async function sendBackfill(
   minLevel: LogLevel,
   run: number,
   agentId: string | undefined,
+  range?: ObservabilityHistoryRange,
+  sandboxId?: string,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -587,18 +627,38 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) throw new Error("Log history is not configured (LOKI_URL)");
-      const rows = await fetchLokiBackfill(
-        lokiUrl,
-        scope,
-        lokiBackfillQuery(scope, minLevel),
-        limit,
-      );
+      const query = lokiBackfillQuery(scope, minLevel, sandboxId);
+      const pageFrom = range
+        ? Math.max(range.from, range.to - 3_600_000)
+        : undefined;
+      const rows = range
+        ? await fetchLokiLogs(
+            lokiUrl,
+            scope,
+            query,
+            {
+              startNs: BigInt(pageFrom!) * NS_PER_MS,
+              endNs: BigInt(range.to) * NS_PER_MS - 1n,
+              limit: limit + 1,
+              direction: "backward",
+              timeoutMs: 10_000,
+            },
+            sandboxId !== undefined,
+          )
+        : await fetchLokiBackfill(lokiUrl, scope, query, limit);
       if (state.runs.logs !== run) return;
+      const page = range
+        ? historyPage(rows, limit, (row): number => Number(row.ns / NS_PER_MS))
+        : { rows: rows };
+      const nextTo =
+        page.nextTo ?? (range && pageFrom! > range.from ? pageFrom : undefined);
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        entries: rows
-          .reverse()
+        ...(range ? { range: range } : {}),
+        ...(nextTo !== undefined ? { nextTo: nextTo } : {}),
+        entries: page.rows
+          .toReversed()
           .map((row) => row.entry)
           .filter((entry) => meetsMinLevel(entry, minLevel)),
       });
@@ -607,13 +667,16 @@ async function sendBackfill(
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
       let failures = 0;
+      let nextTo: number | undefined;
       for await (const chunk of fetchTempoBackfill(
         tempoUrl,
         scope,
         limit,
         agentId,
+        range,
       )) {
         failures += chunk.failures;
+        nextTo = chunk.nextTo ?? nextTo;
         const traces = new Map<string, ObservabilitySpanRow[]>();
         for (const row of chunk.rows) {
           const rows = traces.get(row.traceId);
@@ -637,7 +700,9 @@ async function sendBackfill(
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
+        ...(range ? { range: range } : {}),
         entries: [],
+        ...(nextTo !== undefined ? { nextTo: nextTo } : {}),
         ...(failures > 0
           ? {
               error: `${failures} trace${failures === 1 ? "" : "s"} could not be loaded from Tempo`,
@@ -719,7 +784,7 @@ async function fetchLokiLogs(
   url.searchParams.set("limit", String(range.limit));
   url.searchParams.set("direction", range.direction);
   url.searchParams.set("start", String(range.startNs));
-  url.searchParams.set("end", String(nowNs()));
+  url.searchParams.set("end", String(range.endNs ?? nowNs()));
 
   const response = await fetch(url.toString(), {
     signal: AbortSignal.timeout(range.timeoutMs),
@@ -770,38 +835,72 @@ export async function* fetchTempoBackfill(
   scope: ObservabilityScope,
   limit: number,
   agentId?: string,
-): AsyncGenerator<{ rows: ObservabilitySpanRow[]; failures: number }> {
+  range?: ObservabilityHistoryRange,
+): AsyncGenerator<{
+  rows: ObservabilitySpanRow[];
+  failures: number;
+  nextTo?: number;
+}> {
   const url = new URL(`${tempoUrl}/api/search`);
-  const end = Math.floor(Date.now() / 1_000);
-  const start = end - TEMPO_BACKFILL_WINDOW_S;
+  const end = Math.ceil((range?.to ?? Date.now()) / 1_000);
+  const start = range
+    ? Math.floor(range.from / 1_000)
+    : end - TEMPO_BACKFILL_WINDOW_S;
   url.searchParams.set(
     "tags",
     `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}` +
       (agentId ? ` agent_id=${quoteLabel(agentId)}` : ""),
   );
-  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("limit", String(range ? limit + 1 : limit));
   url.searchParams.set("start", String(start));
   url.searchParams.set("end", String(end));
 
-  const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
-  });
-  if (!response.ok)
-    throw new Error(`Tempo search failed with HTTP ${response.status}`);
-
-  const body = (await response.json()) as {
-    traces?: Array<{ traceID: string; startTimeUnixNano?: string }>;
+  const budget = range ? AbortSignal.timeout(12_000) : undefined;
+  let pageStart = range ? Math.max(start, end - 3600) : start;
+  let summaries: Array<{ traceID: string; startTimeUnixNano?: string }> = [];
+  while (true) {
+    url.searchParams.set("start", String(pageStart));
+    const response = await fetch(url.toString(), {
+      signal: budget ?? AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
+    });
+    if (!response.ok)
+      throw new Error(`Tempo search failed with HTTP ${response.status}`);
+    const body = (await response.json()) as {
+      traces?: typeof summaries;
+    };
+    summaries = body.traces ?? [];
+    if (!range || summaries.length <= limit) break;
+    // Tempo 2.7 returns arbitrary matches when its limit is hit, not the newest matches.
+    if (end - pageStart <= 1)
+      throw new Error(
+        "Too many traces in one second. Narrow the query or increase the page size.",
+      );
+    pageStart = Math.floor((pageStart + end) / 2);
+  }
+  const page = {
+    rows: summaries
+      .filter(
+        (row): boolean =>
+          !range ||
+          (Number(BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS) >=
+            range.from &&
+            Number(BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS) <
+              range.to),
+      )
+      .toSorted((a, b): number =>
+        BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
+          ? 1
+          : -1,
+      ),
+    nextTo:
+      range && pageStart * 1000 > range.from ? pageStart * 1000 : undefined,
   };
-  // Tempo's search result is unordered; newest first, so the first chunk tops the Tracing tab.
-  const summaries = (body?.traces ?? []).sort((a, b) =>
-    BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
-      ? 1
-      : -1,
-  );
-
-  for (let at = 0; at < summaries.length; at += TEMPO_BACKFILL_CHUNK) {
+  if (page.rows.length === 0 && page.nextTo !== undefined)
+    yield { rows: [], failures: 0, nextTo: page.nextTo };
+  for (let at = 0; at < page.rows.length; at += TEMPO_BACKFILL_CHUNK) {
+    budget?.throwIfAborted();
     const results = await mapWithConcurrency(
-      summaries.slice(at, at + TEMPO_BACKFILL_CHUNK),
+      page.rows.slice(at, at + TEMPO_BACKFILL_CHUNK),
       TEMPO_DETAIL_CONCURRENCY,
       (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
     );
@@ -812,6 +911,7 @@ export async function* fetchTempoBackfill(
         )
         .filter((row) => rowInScope(row, scope)),
       failures: results.filter((result) => result.status === "rejected").length,
+      ...(page.nextTo !== undefined ? { nextTo: page.nextTo } : {}),
     };
   }
 }

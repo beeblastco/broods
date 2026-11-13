@@ -23,8 +23,8 @@ describe("URL params read as absent when they fail their check", () => {
     expect(LOG_VIEW.range.parse("7d")).toBe("7d");
     expect(LOG_VIEW.range.parse("1y")).toBeNull();
     expect(LOG_VIEW.range.parse("<script>")).toBeNull();
-    expect(LOG_VIEW.range.defaultValue).toBe("30d");
-    expect(TRACE_VIEW.range.defaultValue).toBe("7d");
+    expect(LOG_VIEW.range.defaultValue).toBe("1h");
+    expect(TRACE_VIEW.range.defaultValue).toBe("1h");
   });
 
   test("search text is capped", () => {

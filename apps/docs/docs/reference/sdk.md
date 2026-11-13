@@ -367,3 +367,25 @@ const scoped = new BroodsAccountClient({ sessionToken: session.token });
 ```
 
 See [Security](../guides/security.md) for roles and sessions, and the [API reference](/api-reference) for request and response schemas.
+
+## Log and run history pages
+
+With a logged-in `BroodsAccountClient`, use `readLogPage(scope, { range, limit })` or `listRuns(scope, { range, limit })`. The range uses epoch milliseconds: `from` is inclusive, `to` exclusive, and the maximum width is 30 days. Each page searches at most the newest hour of that range. `listRuns` can search a shorter window in a busy stage.
+
+```ts
+const to = Date.now();
+const range = { from: to - 24 * 60 * 60 * 1000, to: to };
+const page = await account.readLogPage(scope, { range: range, limit: 50 });
+if (page.incomplete) throw new Error(page.incomplete);
+if (page.nextTo !== undefined) {
+  const older = await account.readLogPage(scope, {
+    range: { from: range.from, to: page.nextTo },
+    limit: 50,
+  });
+  console.log(older.logs);
+}
+```
+
+`nextTo` means more of the requested range remains to be searched, even when the page has no matching rows. Keep the original `from` and pass `nextTo` as the next `to`. Do not advance after `incomplete`; retry the same range. `readLogPage` accepts `level` and `sandboxId`; `listRuns` accepts `agentId` and `status`. Status filters apply to the fetched page, so a filtered page can contain fewer than `limit` runs.
+
+The MCP tools `read-logs` and `list-runs` use these bounded pages, default to the last hour, and return the requested `range` plus `nextTo` when available. Pass `from` and `to` to query older history. The array-returning `readLogs` and unbounded `listRuns` remain available for existing SDK callers.

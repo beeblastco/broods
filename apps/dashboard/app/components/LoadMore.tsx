@@ -11,6 +11,8 @@ export function LoadMore({
   pageSize,
   remaining,
   onLoad,
+  hasOlder = false,
+  loading = false,
 }: {
   shown: number;
   total: number;
@@ -19,20 +21,26 @@ export function LoadMore({
   pageSize: number;
   remaining: number;
   onLoad: () => void;
+  hasOlder?: boolean;
+  loading?: boolean;
 }): React.JSX.Element {
   return (
     <DataTableFooter shown={shown} total={total} noun={noun} detail={detail}>
-      {remaining > 0 && (
+      {(remaining > 0 || hasOlder) && (
         <Button
           type="button"
           variant="ghost"
           size="xs"
           tone="muted"
           onClick={onLoad}
-          className="cursor-pointer"
+          disabled={loading}
+          className="cursor-pointer disabled:cursor-not-allowed"
         >
-          Load {Math.min(pageSize, remaining)} more ·{" "}
-          {remaining.toLocaleString()} older
+          {loading
+            ? "Loading history…"
+            : hasOlder && remaining === 0
+              ? "Load older results"
+              : `Load ${Math.min(pageSize, remaining)} more · ${remaining.toLocaleString()} older`}
         </Button>
       )}
     </DataTableFooter>

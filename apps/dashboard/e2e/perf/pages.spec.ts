@@ -240,6 +240,12 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
   const longTasks = await watchLongTasks(page);
   const start = performance.now();
   for (const message of burst) route.send(message);
+  await page
+    .getByRole("button", {
+      name: `Show ${BURST_EVENTS - BURST_EVENTS / 50} new logs`,
+      exact: true,
+    })
+    .click();
   await waitForReady(
     page.getByRole("cell", { name: `burst ${BURST_EVENTS - 1}`, exact: true }),
   );

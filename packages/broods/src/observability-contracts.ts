@@ -50,6 +50,11 @@ export type ObservabilitySpanRow = {
 
 export type TaskWaitingOn = "question" | "approval" | "subagent" | "tool";
 
+export type ObservabilityHistoryRange = {
+  from: number;
+  to: number;
+};
+
 export type ObservabilitySubscribeMessage = {
   type: "subscribe";
   stream: "logs" | "traces";
@@ -58,6 +63,7 @@ export type ObservabilitySubscribeMessage = {
   minLevel?: LogLevel;
   // Only the backfill: no live consumer, so a read of history needs no live transport.
   historyOnly?: boolean;
+  range?: ObservabilityHistoryRange;
   // "logs" only: the UUID ending the instance's `logStream`; these lines never reach NATS.
   sandboxId?: string;
   // "traces" only: the backfill searches Tempo for this agent's traces alone.
@@ -99,6 +105,8 @@ export type ObservabilityBackfillMessage = {
   stream: "logs" | "traces";
   entries: ObservabilityLogEntry[] | ObservabilitySpanRow[];
   more?: boolean;
+  range?: ObservabilityHistoryRange;
+  nextTo?: number;
   error?: string;
 };
 
@@ -181,6 +189,18 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
   if (
     msg["historyOnly"] !== undefined &&
     typeof msg["historyOnly"] !== "boolean"
+  )
+    return false;
+  const range = msg["range"] as ObservabilityHistoryRange | undefined;
+  if (
+    range !== undefined &&
+    (range === null ||
+      typeof range !== "object" ||
+      !Number.isSafeInteger(range.from) ||
+      !Number.isSafeInteger(range.to) ||
+      range.from < 0 ||
+      range.to <= range.from ||
+      range.to - range.from > 30 * 24 * 60 * 60 * 1000)
   )
     return false;
   const minLevel = msg["minLevel"];

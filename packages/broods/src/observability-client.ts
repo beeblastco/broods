@@ -1,6 +1,7 @@
 import { toWebSocketBaseUrl, webSocketSubprotocols } from "./websocket.ts";
 import type {
   LogLevel,
+  ObservabilityHistoryRange,
   ObservabilityClientMessage,
   ObservabilityLogEntry,
   ObservabilityServerMessage,
@@ -28,6 +29,7 @@ export interface ObservabilitySubscribeOptions {
 /** `agentId` is set when the gateway searched only that agent's traces. */
 export interface BackfillResult<T> {
   rows: T[];
+  nextTo?: number;
   error?: string;
   agentId?: string;
 }
@@ -36,6 +38,8 @@ const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 const RECONNECT_GIVE_UP_MS = 60_000;
 const READY_TIMEOUT_MS = 15_000;
+// Log history widens through queries with 5s, 10s and 15s budgets.
+const HISTORY_TIMEOUT_MS = 45_000;
 
 export function reconnectDelay(
   ms: number,
@@ -275,9 +279,40 @@ export async function fetchObservabilityTrace(
 }
 
 /** One page of history with no live tail: what a tool or a one-shot command wants. */
+export async function fetchObservabilityLogPage(
+  options: ObservabilityClientOptions,
+  request: {
+    limit: number;
+    sandboxId?: string;
+    minLevel?: LogLevel;
+    range: ObservabilityHistoryRange;
+  },
+): Promise<BackfillResult<ObservabilityLogEntry>> {
+  if (request.limit <= 0) return { rows: [] };
+
+  return await requestBackfill<ObservabilityLogEntry>(
+    options,
+    {
+      type: "subscribe",
+      stream: "logs",
+      backfill: request.limit,
+      historyOnly: true,
+      range: request.range,
+      ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
+      ...(request.minLevel ? { minLevel: request.minLevel } : {}),
+    },
+    "logs",
+  );
+}
+
 export async function fetchObservabilityLogs(
   options: ObservabilityClientOptions,
-  request: { limit: number; minLevel?: LogLevel; sandboxId?: string },
+  request: {
+    limit: number;
+    minLevel?: LogLevel;
+    sandboxId?: string;
+    range?: ObservabilityHistoryRange;
+  },
 ): Promise<ObservabilityLogEntry[]> {
   // The gateway answers a zero backfill with `ready` alone, so no closing frame would come.
   if (request.limit <= 0) return [];
@@ -288,6 +323,7 @@ export async function fetchObservabilityLogs(
       stream: "logs",
       backfill: request.limit,
       historyOnly: true,
+      ...(request.range ? { range: request.range } : {}),
       ...(request.minLevel ? { minLevel: request.minLevel } : {}),
       ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
     },
@@ -303,6 +339,7 @@ export async function fetchObservabilitySpans(
   options: ObservabilityClientOptions,
   limit: number,
   agentId?: string,
+  range?: ObservabilityHistoryRange,
 ): Promise<BackfillResult<ObservabilitySpanRow>> {
   return await requestBackfill<ObservabilitySpanRow>(
     options,
@@ -312,6 +349,7 @@ export async function fetchObservabilitySpans(
       backfill: limit,
       historyOnly: true,
       ...(agentId ? { agentId: agentId } : {}),
+      ...(range ? { range: range } : {}),
     },
     "traces",
   );
@@ -340,10 +378,11 @@ async function requestBackfill<T>(
       outcome();
     };
     const fail = (error: Error): void => settle((): void => reject(error));
+    let timeoutMs = READY_TIMEOUT_MS;
     const silent = (): void => {
       fail(
         new Error(
-          `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
+          `The observability gateway did not answer within ${timeoutMs / 1000} s.`,
         ),
       );
     };
@@ -357,15 +396,31 @@ async function requestBackfill<T>(
         fail(new Error(`Observability gateway error: ${msg.error}`));
       } else if (msg?.type === "ready") {
         agentId = msg.agentId;
+        timeoutMs = HISTORY_TIMEOUT_MS;
+        clearTimeout(timer);
+        timer = setTimeout(silent, timeoutMs);
       } else if (msg?.type === "backfill" && msg.stream === stream) {
         rows.push(...(msg.entries as T[]));
         clearTimeout(timer);
-        timer = setTimeout(silent, READY_TIMEOUT_MS);
-        const { error } = msg;
+        timeoutMs = HISTORY_TIMEOUT_MS;
+        timer = setTimeout(silent, timeoutMs);
+        const expectedRange =
+          message.type === "subscribe" ? message.range : undefined;
+        const error =
+          msg.error ??
+          (expectedRange &&
+          !msg.more &&
+          (msg.range?.from !== expectedRange.from ||
+            msg.range?.to !== expectedRange.to)
+            ? "This gateway does not support bounded history. Update the gateway before reading pages."
+            : undefined);
         if (!msg.more)
           settle((): void =>
             resolve({
               rows: rows,
+              ...(!error && msg.nextTo !== undefined
+                ? { nextTo: msg.nextTo }
+                : {}),
               ...(error ? { error: error } : {}),
               ...(agentId ? { agentId: agentId } : {}),
             }),

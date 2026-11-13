@@ -94,6 +94,16 @@ Frames are compressed with `permessage-deflate` when the client offers it, as ev
 
 A subscribe with `backfill` always gets a closing `backfill` message, with `error` set when Loki or Tempo failed, so a client can tell an empty stage from a failed query. When the same span arrives from NATS and Tempo, the dashboard keeps the richer or terminal copy, since Tempo truncates large attributes.
 
+## Bounded history
+
+A subscribe can carry `range: { from, to }` in epoch milliseconds, with `from < to` and a maximum width of 30 days. The closing backfill frame echoes `range` so the SDK can reject an older gateway that ignored it, and carries `nextTo` when older history remains in that range. Continue with the original `from` and the returned `to`; an empty page is not necessarily the end. An error preserves partial rows but does not certify coverage, so retry the same page.
+
+The dashboard requests 50 rows and starts at one hour. Loki receives one backward query covering at most one hour, with a 10-second budget and one extra row to detect truncation. Tied millisecond groups stay on the next page; a group larger than the page fails explicitly instead of skipping records. Sandbox history uses the same bounded path without opening its live poll for a history-only read.
+
+Tempo 2.7 returns arbitrary matches when a search fills its limit. Bounded searches halve the newest one-hour window until all matches fit, with a shared 12-second search budget. Each trace-detail batch starts only while that budget remains; its existing five-second detail timeout can finish after the budget. Full trace details still load in batches of six, using the existing shared cache. A saturated one-second window returns an explicit error. Older clients without `range` retain the widening Loki and seven-day Tempo behavior above.
+
+The SDK waits up to 15 seconds for `ready`, then allows 45 seconds between history frames so a backend failure can reach the caller. This does not extend the hosted MCP runner's own execution limit. Bounded queries reduce the backend work; increasing the SDK timeout alone does not fix it.
+
 ## Traces
 
 Every top-level run is its own trace: `agent.task` for a request, `agent.cron` for a scheduled run, `agent.subtask` for a subagent. The root span closes in one of these states:
