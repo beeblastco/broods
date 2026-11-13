@@ -13,6 +13,7 @@ import {
 import {
   isRootSpanKind,
   isTraceId,
+  MAX_OBSERVABILITY_RANGE_MS,
 } from "../../../../packages/broods/src/observability-contracts";
 import type {
   LogLevel,
@@ -116,7 +117,8 @@ export function useObservabilityStream(
   // The project id, not its slug (unique per org), and no credential: a renewed ticket
   // reconnects the same stream and keeps its entries.
   const { projectId } = useParams<{ projectId: string }>();
-  const connKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}|${rangeMs ?? ""}|${timeWindow?.from ?? ""}|${timeWindow?.to ?? ""}`;
+  const streamScopeKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  const connKey = `${streamScopeKey}|${rangeMs ?? ""}|${timeWindow?.from ?? ""}|${timeWindow?.to ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -137,10 +139,22 @@ export function useObservabilityStream(
     undefined,
   );
 
-  const [prevConnKey, setPrevConnKey] = useState(connKey);
-  if (connKey !== prevConnKey) {
-    setPrevConnKey(connKey);
-    setEntries(STREAM_CACHE.get(connKey) ?? []);
+  const pendingRangeRef = useRef<{ from: number; to: number } | undefined>(
+    undefined,
+  );
+  const historyErrorRef = useRef<string | undefined>(undefined);
+
+  const [previousConnection, setPreviousConnection] = useState({
+    key: connKey,
+    scope: streamScopeKey,
+  });
+  if (connKey !== previousConnection.key) {
+    setPreviousConnection({ key: connKey, scope: streamScopeKey });
+    setEntries(
+      previousConnection.scope === streamScopeKey
+        ? mergeBackfill(STREAM_CACHE.get(connKey) ?? [], entries)
+        : (STREAM_CACHE.get(connKey) ?? []),
+    );
     setNextTo(undefined);
     setPending([]);
     setError(null);
@@ -212,7 +226,7 @@ export function useObservabilityStream(
       return (
         !range ||
         (entryTime(entry) >= range.from &&
-          (!timeWindow || entryTime(entry) < range.to))
+          (!Number.isFinite(timeWindow?.to) || entryTime(entry) < range.to))
       );
     });
     liveRef.current = [];
@@ -233,7 +247,7 @@ export function useObservabilityStream(
         (entry) =>
           !known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
       );
-      setEntries((prev) => mergeLive(prev, updates));
+      setEntries((prev) => mergeBackfill(prev, updates));
       pendingRef.current = mergeLive(pendingRef.current, fresh);
       setPending(pendingRef.current);
     }
@@ -261,12 +275,22 @@ export function useObservabilityStream(
     if (resumeSeq === undefined) setHistory(backfill > 0 ? "loading" : "none");
     setError(null);
     historyBusyRef.current = resumeSeq === undefined && backfill > 0;
-    const to = timeWindow?.to ?? Date.now();
+    const to = Number.isFinite(timeWindow?.to) ? timeWindow!.to : Date.now();
     if (resumeSeq === undefined)
       historyRangeRef.current =
         rangeMs === undefined
           ? undefined
-          : { from: timeWindow?.from ?? to - rangeMs, to: to };
+          : {
+              from: Math.max(
+                timeWindow?.from ?? to - rangeMs,
+                to - MAX_OBSERVABILITY_RANGE_MS,
+                0,
+              ),
+              to: to,
+            };
+    pendingRangeRef.current =
+      resumeSeq === undefined ? historyRangeRef.current : undefined;
+    historyErrorRef.current = undefined;
     if (resumeSeq === undefined) setNextTo(undefined);
 
     const wsUrl =
@@ -337,6 +361,23 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "backfill") {
+        const expected = pendingRangeRef.current;
+        if (!traceFetchRef.current && expected) {
+          if (
+            !msg.error &&
+            (msg.range?.from !== expected.from || msg.range?.to !== expected.to)
+          )
+            historyErrorRef.current =
+              "This gateway did not confirm the requested history range. Update the gateway before reading pages.";
+          if (historyErrorRef.current) {
+            setHistory("failed");
+            setError(historyErrorRef.current);
+            historyBusyRef.current = Boolean(msg.more);
+            if (cursorRef.current) cursorRef.current.historyLoaded = false;
+
+            return;
+          }
+        }
         if (!msg.more) {
           setHistory(msg.error ? "failed" : "loaded");
           historyBusyRef.current = false;
@@ -498,6 +539,8 @@ export function useObservabilityStream(
       range: { from: range.from, to: nextTo },
       ...(minLevel ? { minLevel: minLevel } : {}),
     };
+    pendingRangeRef.current = message.range;
+    historyErrorRef.current = undefined;
     socket.send(JSON.stringify(message));
   }, [nextTo, stream, backfill, minLevel]);
 

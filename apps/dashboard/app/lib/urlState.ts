@@ -54,7 +54,6 @@ export const parseAsName = createParser({
 
 export const parseAsModelKeys = parseAsArrayOf(parseAsName);
 
-// Each default range matches the backfill its panel loads: 30 days of logs, 7 of traces.
 export const LOG_VIEW = {
   q: parseAsQuery,
   range: parseAsStringLiteral(RANGE_IDS).withDefault("1h"),

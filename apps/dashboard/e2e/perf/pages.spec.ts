@@ -5,7 +5,10 @@ import {
   type Page,
   type WebSocketRoute,
 } from "@playwright/test";
-import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts";
+import type {
+  ObservabilityLogEntry,
+  ObservabilityClientMessage,
+} from "../../../../packages/broods/src/observability-contracts";
 import { checkPerfBaseline } from "../lib/perfBaseline";
 import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
@@ -194,12 +197,15 @@ test("a live log burst on Monitoring reaches the screen without blocking the pag
   // Routed before goto: a route added while the page loads never reaches that document.
   const subscribed: WebSocketRoute[] = [];
   await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
-    socket.onMessage(() => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as ObservabilityClientMessage;
+      if (message.type !== "subscribe") return;
       socket.send(JSON.stringify({ type: "ready" }));
       socket.send(
         JSON.stringify({
           type: "backfill",
           stream: "logs",
+          range: message.range,
           entries: Array.from({ length: BACKFILL_ROWS }, (_, index) =>
             logLine(`backfill ${index}`, now - 60_000 + index * 100, 300),
           ),

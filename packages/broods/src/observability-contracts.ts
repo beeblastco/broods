@@ -1,6 +1,7 @@
 // The gateway, CLI and dashboard all import this: keep it free of runtime dependencies.
 
 export const MAX_OBSERVABILITY_BACKFILL = 500;
+export const MAX_OBSERVABILITY_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // W3C trace id; all zeros is the "no span" sentinel.
@@ -200,7 +201,7 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
       !Number.isSafeInteger(range.to) ||
       range.from < 0 ||
       range.to <= range.from ||
-      range.to - range.from > 30 * 24 * 60 * 60 * 1000)
+      range.to - range.from > MAX_OBSERVABILITY_RANGE_MS)
   )
     return false;
   const minLevel = msg["minLevel"];

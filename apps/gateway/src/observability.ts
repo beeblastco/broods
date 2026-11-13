@@ -1,4 +1,5 @@
 import {
+  MAX_OBSERVABILITY_BACKFILL,
   isLogLevel,
   isObservabilityClientMessage,
   type LogLevel,
@@ -543,7 +544,7 @@ async function handleObservabilitySubscribe(
   const run = state.runs[stream];
   if (stream === "logs") {
     state.logsMinLevel = minLevel;
-    state.logsSandboxId = sandboxId ?? null;
+    state.logsSandboxId = historyOnly && range ? null : (sandboxId ?? null);
   }
 
   // A sandbox tail owns its backfill: one seen set across history and polls dedupes overlap.
@@ -690,6 +691,7 @@ async function sendBackfill(
           const sent = sendObs(socket, {
             type: "backfill",
             stream: "traces",
+            ...(range ? { range: range } : {}),
             entries: rows,
             more: true,
           });
@@ -851,15 +853,16 @@ export async function* fetchTempoBackfill(
     `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}` +
       (agentId ? ` agent_id=${quoteLabel(agentId)}` : ""),
   );
-  url.searchParams.set("limit", String(range ? limit + 1 : limit));
   url.searchParams.set("start", String(start));
   url.searchParams.set("end", String(end));
 
   const budget = range ? AbortSignal.timeout(12_000) : undefined;
   let pageStart = range ? Math.max(start, end - 3600) : start;
+  let searchLimit = range ? limit + 1 : limit;
   let summaries: Array<{ traceID: string; startTimeUnixNano?: string }> = [];
   while (true) {
     url.searchParams.set("start", String(pageStart));
+    url.searchParams.set("limit", String(searchLimit));
     const response = await fetch(url.toString(), {
       signal: budget ?? AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
     });
@@ -869,29 +872,49 @@ export async function* fetchTempoBackfill(
       traces?: typeof summaries;
     };
     summaries = body.traces ?? [];
-    if (!range || summaries.length <= limit) break;
+    if (!range) break;
+    const matching = summaries.filter((row): boolean => {
+      const startedAt = Number(
+        BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS,
+      );
+
+      return (
+        startedAt >= Math.max(range.from, pageStart * 1000) &&
+        startedAt < range.to
+      );
+    });
+    const truncated = summaries.length >= searchLimit;
+    if (!truncated && matching.length <= limit) {
+      summaries = matching;
+      break;
+    }
+    // Tempo includes traces that started earlier but overlap the requested window.
+    if (
+      truncated &&
+      matching.length < summaries.length &&
+      matching.length <= limit
+    ) {
+      if (searchLimit >= MAX_OBSERVABILITY_BACKFILL + 1)
+        throw new Error(
+          "Too many overlapping traces. Narrow the query by agent.",
+        );
+      searchLimit = Math.min(searchLimit * 2, MAX_OBSERVABILITY_BACKFILL + 1);
+      continue;
+    }
     // Tempo 2.7 returns arbitrary matches when its limit is hit, not the newest matches.
     if (end - pageStart <= 1)
       throw new Error(
         "Too many traces in one second. Narrow the query or increase the page size.",
       );
     pageStart = Math.floor((pageStart + end) / 2);
+    searchLimit = limit + 1;
   }
   const page = {
-    rows: summaries
-      .filter(
-        (row): boolean =>
-          !range ||
-          (Number(BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS) >=
-            range.from &&
-            Number(BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS) <
-              range.to),
-      )
-      .toSorted((a, b): number =>
-        BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
-          ? 1
-          : -1,
-      ),
+    rows: summaries.toSorted((a, b): number =>
+      BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
+        ? 1
+        : -1,
+    ),
     nextTo:
       range && pageStart * 1000 > range.from ? pageStart * 1000 : undefined,
   };

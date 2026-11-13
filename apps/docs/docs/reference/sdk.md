@@ -382,6 +382,7 @@ if (page.nextTo !== undefined) {
     range: { from: range.from, to: page.nextTo },
     limit: 50,
   });
+  if (older.incomplete) throw new Error(older.incomplete);
   console.log(older.logs);
 }
 ```
