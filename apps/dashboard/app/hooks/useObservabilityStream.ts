@@ -364,7 +364,7 @@ export function useObservabilityStream(
         const expected = pendingRangeRef.current;
         if (!traceFetchRef.current && expected) {
           if (
-            !msg.error &&
+            (!msg.error || msg.entries.length > 0) &&
             (msg.range?.from !== expected.from || msg.range?.to !== expected.to)
           )
             historyErrorRef.current =

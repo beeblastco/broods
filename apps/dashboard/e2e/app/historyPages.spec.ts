@@ -169,7 +169,7 @@ test("a history response without a matching range is not accepted as a page", as
         JSON.stringify({
           type: "backfill",
           stream: "logs",
-          ...(attempt > 1
+          ...(attempt > 1 && attempt !== 3
             ? {
                 range: {
                   from: message.range!.from + (attempt === 2 ? 1 : 0),
@@ -185,6 +185,9 @@ test("a history response without a matching range is not accepted as a page", as
               eventType: "",
             },
           ],
+          ...(attempt === 3
+            ? { error: "Backend returned partial history" }
+            : {}),
           nextTo: Date.now() - 2000,
         }),
       );
@@ -200,6 +203,12 @@ test("a history response without a matching range is not accepted as a page", as
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => attempt).toBe(2);
+  await expect(page.locator('[data-history-state="failed"]')).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "unbounded result", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => attempt).toBe(3);
   await expect(page.locator('[data-history-state="failed"]')).toBeVisible();
   await expect(
     page.getByRole("cell", { name: "unbounded result", exact: true }),
