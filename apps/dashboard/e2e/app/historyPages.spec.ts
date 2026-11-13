@@ -330,3 +330,61 @@ test("a new span in a loaded trace does not evict its root", async ({
     "updated loaded root",
   );
 });
+
+test("a loaded trace keeps live details beyond its finite history end", async ({
+  page,
+}) => {
+  const now = Date.now();
+  const traceId = "f".repeat(32);
+  let route: WebSocketRoute | undefined;
+  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
+    route = socket;
+    socket.onMessage((raw) => {
+      const request = JSON.parse(String(raw)) as ObservabilityClientMessage;
+      if (request.type !== "subscribe") return;
+      socket.send(JSON.stringify({ type: "ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "backfill",
+          stream: "traces",
+          range: request.range,
+          entries: [
+            {
+              traceId: traceId,
+              spanId: "root",
+              name: "agent.task",
+              kind: "task",
+              status: "running",
+              startTimeMs: now - 2000,
+              attributes: { "task.input": "active history trace" },
+            },
+          ],
+        }),
+      );
+    });
+  });
+  await page.goto(
+    `/${readProjectId()}/dashboard?tab=tracing&from=${now - 10000}&to=${now - 1000}`,
+  );
+  await page.locator(`#task-${traceId}`).click();
+  route!.send(
+    JSON.stringify({
+      type: "span",
+      entry: {
+        traceId: traceId,
+        spanId: "late-child",
+        parentSpanId: "root",
+        name: "late-history-tool",
+        kind: "tool.call",
+        status: "ok",
+        startTimeMs: now,
+        endTimeMs: now + 1,
+        durationMs: 1,
+        attributes: { "tool.name": "late-history-tool" },
+      },
+    }),
+  );
+  await expect(
+    page.getByText("late-history-tool", { exact: true }),
+  ).toBeVisible();
+});

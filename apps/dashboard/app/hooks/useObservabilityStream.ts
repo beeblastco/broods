@@ -220,11 +220,19 @@ export function useObservabilityStream(
   const flushLive = useCallback(() => {
     if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
     commitTimerRef.current = null;
+    const known = new Set(
+      entriesRef.current.map((entry) =>
+        "traceId" in entry && "spanId" in entry
+          ? entry.traceId
+          : entryKey(entry),
+      ),
+    );
     const batch = liveRef.current.filter((entry) => {
       const range = historyRangeRef.current;
 
       return (
         !range ||
+        ("spanId" in entry && known.has(entry.traceId)) ||
         (entryTime(entry) >= range.from &&
           (!Number.isFinite(timeWindow?.to) || entryTime(entry) < range.to))
       );
@@ -233,13 +241,6 @@ export function useObservabilityStream(
     if (batch.length === 0) return;
     if (rangeMs === undefined) setEntries((prev) => mergeLive(prev, batch));
     else {
-      const known = new Set(
-        entriesRef.current.map((entry) =>
-          "traceId" in entry && "spanId" in entry
-            ? entry.traceId
-            : entryKey(entry),
-        ),
-      );
       const updates = batch.filter((entry) =>
         known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
       );
