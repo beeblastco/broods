@@ -490,6 +490,7 @@ The server enforces these guards itself.
 
 - A delete needs `confirm: true` and takes one id.
 - There is no tool that reads env values.
+- `list-runs` and `read-logs` default to the last hour. Supply epoch-millisecond `from` and `to` for an older range; follow `nextTo` with the same `from` to continue. Empty pages may have older results. `incomplete` means retry the same page.
 - `list-runs`, `read-trace` and `read-logs` need a `broods login`, and open a read-only ticket for that one stage. With a stored login they register even with no account credential in the environment. `read-audit` and `read-usage` use the account credential in the environment when there is one, so a role's policy still bounds them, and the stored login otherwise.
 - A stage-scoped resource refuses a call with no scope.
 - `rotate-secret` and `delete-project` stay unregistered unless `BROODS_MCP_ALLOW_DESTRUCTIVE=1` is exported in the shell that starts the server. A value in `.env` or `.env.local` is ignored, since the agent can write those files.

@@ -54,17 +54,16 @@ export const parseAsName = createParser({
 
 export const parseAsModelKeys = parseAsArrayOf(parseAsName);
 
-// Each default range matches the backfill its panel loads: 30 days of logs, 7 of traces.
 export const LOG_VIEW = {
   q: parseAsQuery,
-  range: parseAsStringLiteral(RANGE_IDS).withDefault("30d"),
+  range: parseAsStringLiteral(RANGE_IDS).withDefault("1h"),
   from: parseAsEpochMs,
   to: parseAsEpochMs,
 };
 
 export const TRACE_VIEW = {
   ...LOG_VIEW,
-  range: parseAsStringLiteral(RANGE_IDS).withDefault("7d"),
+  range: parseAsStringLiteral(RANGE_IDS).withDefault("1h"),
 };
 
 export function parseAsId<T extends TableNames>(): SingleParserBuilder<Id<T>> {
