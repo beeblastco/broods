@@ -23,11 +23,11 @@ async function main(): Promise<void> {
   if (!user)
     throw new Error(`${PROBE_EMAIL} is not a user in this WorkOS environment`);
   const password = randomBytes(30).toString("base64url");
-  writeEnv({ E2E_EMAIL: PROBE_EMAIL, E2E_PASSWORD: password });
   await workos.userManagement.updateUser({
     userId: user.id,
     password: password,
   });
+  writeEnv({ E2E_EMAIL: PROBE_EMAIL, E2E_PASSWORD: password });
   setSecret("DASHBOARD_E2E_EMAIL", PROBE_EMAIL);
   setSecret("DASHBOARD_E2E_PASSWORD", password);
   console.log(
@@ -40,7 +40,11 @@ function setSecret(name: string, value: string): void {
     input: value,
     stdio: ["pipe", "inherit", "inherit"],
   });
-  if (result.status !== 0) throw new Error(`gh secret set ${name} failed`);
+  if (result.status !== 0) {
+    throw new Error(
+      `gh secret set ${name} failed after WorkOS changed; rerun bun run probe:rotate once gh works`,
+    );
+  }
 }
 
 function writeEnv(values: Record<string, string>): void {
