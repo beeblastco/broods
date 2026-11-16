@@ -47,7 +47,7 @@ const { createConfiguredOpenCodeAdapter } =
 
 describe("harness reasoning settings", (): void => {
   it("pins the OpenCode version whose variants are mirrored", (): void => {
-    expect(openCodeBridge.dependencies["opencode-ai"]).toBe("1.18.34");
+    expect(openCodeBridge.dependencies["opencode-ai"]).toBe("1.19.5");
   });
 
   it("gives Pi an explicit level, its default when none is configured", (): void => {
@@ -165,7 +165,7 @@ describe("harness reasoning settings", (): void => {
     ["openai", "o3-deep-research", "high", "medium"],
   ];
   it.each(upstreamCases)(
-    "matches OpenCode 1.18.34 for %s/%s at %s",
+    "matches OpenCode 1.19.5 for %s/%s at %s",
     (provider, modelId, reasoning, expected): void => {
       expect(variant(provider, modelId, reasoning)).toBe(expected);
     },
