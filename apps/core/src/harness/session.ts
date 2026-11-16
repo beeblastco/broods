@@ -93,11 +93,10 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 // Half of Convex's per-mutation caps (16 MiB of arguments, 16,000 written documents).
 const APPEND_EVENT_BYTES = 8 * 1_024 * 1_024;
 const APPEND_EVENT_COUNT = 8_000;
-// The index rides every model call, so only its head loads, as Claude Code caps MEMORY.md.
-const MEMORY_INDEX_MAX_BYTES = 25 * 1_024;
-const MEMORY_INDEX_MAX_LINES = 200;
+// Stops a multi-GB read into the pod; an index past it loads its head only.
+const MEMORY_INDEX_READ_BYTES = 1_024 * 1_024;
 const MEMORY_INDEX_CUT_NOTE =
-  "(index cut at 200 lines or 25 KB: later entries were not loaded. Merge or delete entries to bring it under.)";
+  "(index cut at 1 MiB: later entries were not loaded. Shorten it to one line per memory.)";
 export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
 // call into an error or a denial, so a status read in it stores nothing.
@@ -1248,11 +1247,12 @@ export class Session {
       const head = await readS3TextHead(
         target.bucket,
         key,
-        MEMORY_INDEX_MAX_BYTES + 1,
+        MEMORY_INDEX_READ_BYTES + 1,
         target.access,
       );
+      if (Buffer.byteLength(head) <= MEMORY_INDEX_READ_BYTES) return head;
 
-      return capMemoryIndex(head);
+      return `${head.slice(0, head.lastIndexOf("\n") + 1)}${MEMORY_INDEX_CUT_NOTE}`;
     } catch (error) {
       if (error instanceof S3ObjectTooLargeError) return MEMORY_INDEX_CUT_NOTE;
       if (!isMissingS3Error(error)) {
@@ -1616,27 +1616,6 @@ function appendToLatestUserEvent(
   return [...events, { role: "user", content: parts }];
 }
 
-// Keeps whole lines within both caps, and says so when it cut anything.
-function capMemoryIndex(head: string): string {
-  const overBytes = Buffer.byteLength(head) > MEMORY_INDEX_MAX_BYTES;
-  const capped = overBytes
-    ? Buffer.from(head).subarray(0, MEMORY_INDEX_MAX_BYTES).toString("utf8")
-    : head;
-  const whole = overBytes
-    ? capped.slice(0, capped.lastIndexOf("\n") + 1)
-    : head;
-  const lines = whole.split("\n");
-  // A trailing newline leaves one empty item that is not a line.
-  const lineCount = whole.endsWith("\n") ? lines.length - 1 : lines.length;
-  if (!overBytes && lineCount <= MEMORY_INDEX_MAX_LINES) return head;
-  const kept =
-    lineCount > MEMORY_INDEX_MAX_LINES
-      ? `${lines.slice(0, MEMORY_INDEX_MAX_LINES).join("\n")}\n`
-      : whole;
-
-  return `${kept}${MEMORY_INDEX_CUT_NOTE}`;
-}
-
 function createSystemContextSnapshot(
   entries: StoredConversationEntry[],
 ): SystemContextSnapshot {
@@ -1677,7 +1656,7 @@ function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
-- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete.
+- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete. The whole index loads every turn, so keep it short.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;

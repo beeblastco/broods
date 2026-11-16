@@ -167,7 +167,7 @@ flowchart LR
   Tool -->|"write or remove memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
   Mount -->|"upload on close"| S3[("namespace/memory/")]
   S3 -->|"next turn, S3 API"| Load["Session.loadMemoryFile"]
-  Load -->|"first 200 lines or 25 KB"| Prompt["system prompt<br/>memory index block"]
+  Load --> Prompt["system prompt<br/>memory index block"]
 ```
 
 ## Skills

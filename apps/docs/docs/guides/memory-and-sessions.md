@@ -4,7 +4,7 @@ An agent remembers in two places. The session is the conversation history for on
 
 ## Memory
 
-Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. At the start of every turn the index is loaded into the system prompt, up to its first 200 lines or 25 KB, and the agent reads a linked file before relying on it. Past either limit the rest is left out, and the agent is told to merge or delete entries.
+Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. At the start of every turn the whole index is loaded into the system prompt, and the agent reads a linked file before relying on it. The agent is told the index rides every turn, so it keeps the index short by merging or deleting entries.
 
 With a sandbox behind the workspace, the agent gets a `memory_save` tool that writes an entry like this:
 
