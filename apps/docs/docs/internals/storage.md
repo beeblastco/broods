@@ -37,7 +37,7 @@ flowchart LR
   Resolve -.->|"not wired, fails fast"| EV["E2B"]
 ```
 
-Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit` and `memory_save` rewrite whole files in one `>` pass and `sync` after writing.
+Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit`, `memory_save` and `memory_delete` rewrite whole files in one `>` pass and `sync` after writing.
 
 ## Two doors to the same bytes
 
@@ -163,11 +163,11 @@ Structured memory is one markdown file per fact, indexed by `memory/MEMORY.md`:
 
 ```mermaid
 flowchart LR
-  Model["model calls memory_save"] --> Tool["memory.tool.ts"]
-  Tool -->|"write memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
+  Model["model calls memory_save<br/>or memory_delete"] --> Tool["memory.tool.ts<br/>memory-delete.tool.ts"]
+  Tool -->|"write or remove memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
   Mount -->|"upload on close"| S3[("namespace/memory/")]
   S3 -->|"next turn, S3 API"| Load["Session.loadMemoryFile"]
-  Load --> Prompt["system prompt<br/>memory index block"]
+  Load -->|"first 200 lines or 25 KB"| Prompt["system prompt<br/>memory index block"]
 ```
 
 ## Skills

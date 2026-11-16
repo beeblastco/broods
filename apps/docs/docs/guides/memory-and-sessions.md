@@ -4,7 +4,7 @@ An agent remembers in two places. The session is the conversation history for on
 
 ## Memory
 
-Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. At the start of every turn the index is loaded into the system prompt, and the agent reads a linked file before relying on it.
+Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. At the start of every turn the index is loaded into the system prompt, up to its first 200 lines or 25 KB, and the agent reads a linked file before relying on it. Past either limit the rest is left out, and the agent is told to merge or delete entries.
 
 With a sandbox behind the workspace, the agent gets a `memory_save` tool that writes an entry like this:
 
@@ -21,9 +21,11 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
+Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together. The workspace bucket keeps earlier versions of every file, so a deleted memory can be restored.
+
 `originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent the current conversation and two rules. The index holds summaries only, and current instructions always outrank memory. Today's date comes from the `<environment>` block every run gets.
 
-A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save.
+A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save or delete.
 
 ### Turn it off
 
@@ -32,7 +34,7 @@ Memory and the workspace guidance prompt are separate features, both on by defau
 ```ts
 import { defineWorkspace } from "broods";
 
-// No memory_save, no <memory> block, index not loaded. File tools stay.
+// No memory_save or memory_delete, no <memory> block, index not loaded. File tools stay.
 export const notes = defineWorkspace({
   name: "notes",
   harness: { memory: { enabled: false } },

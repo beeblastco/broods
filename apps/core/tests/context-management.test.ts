@@ -24,7 +24,8 @@ const ORIGINAL_ENV = { ...process.env };
 // Taken before the module mock below replaces it.
 const realReadS3TextHead = actualS3.readS3TextHead;
 const INDEX_LINE = "- [fact](fact.md) - a saved fact\n";
-const MIB = 1024 * 1024;
+const LONG_INDEX_LINE = `- [fact](fact.md) - ${"x".repeat(300)}\n`;
+const INDEX_CAP_BYTES = 25 * 1024;
 
 type StoredRow = StoredConversationEventPage["page"][number];
 
@@ -323,7 +324,7 @@ describe("session system context", () => {
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem",
       expect.stringContaining("/memory/MEMORY.md"),
-      MIB + 1,
+      INDEX_CAP_BYTES + 1,
       undefined,
     );
     expect(
@@ -334,12 +335,18 @@ describe("session system context", () => {
   });
 
   it.each([
-    [2 * 1024 * MIB, Math.floor((MIB + 1) / INDEX_LINE.length), true],
-    [INDEX_LINE.length * 3_100, 3_100, false],
-    [1.5 * MIB, Math.floor((MIB + 1) / INDEX_LINE.length), true],
+    [INDEX_LINE.length * 150, INDEX_LINE, 150, false],
+    [INDEX_LINE.length * 250, INDEX_LINE, 200, true],
+    [
+      LONG_INDEX_LINE.length * 100,
+      LONG_INDEX_LINE,
+      Math.floor((INDEX_CAP_BYTES + 1) / LONG_INDEX_LINE.length),
+      true,
+    ],
+    [2 * 1024 * 1024 * 1024, INDEX_LINE, 200, true],
   ])(
-    "loads a %p byte memory index with one ranged read",
-    async (size, lines, cut): Promise<void> => {
+    "loads a %p byte memory index with one ranged read, capped at 200 lines and 25 KB",
+    async (size, line, lines, cut): Promise<void> => {
       process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
       readS3TextMock.mockImplementation(realReadS3TextHead);
       const send = spyOn(S3Client.prototype, "send").mockImplementation((async (
@@ -348,9 +355,9 @@ describe("session system context", () => {
         const range = /^bytes=0-(\d+)$/.exec(command.input.Range ?? "");
         if (!range) throw new Error("read the index without a range");
         const length = Math.min(size, Number(range[1]) + 1);
-        const text = INDEX_LINE.repeat(
-          Math.ceil(length / INDEX_LINE.length),
-        ).slice(0, length);
+        const text = line
+          .repeat(Math.ceil(length / line.length))
+          .slice(0, length);
 
         return {
           ContentLength: length,
@@ -365,7 +372,7 @@ describe("session system context", () => {
         .createEphemeralTurnContext([{ role: "user", content: "hello" }])
         .finally(() => send.mockRestore());
       const note = cut
-        ? "(index cut at 1 MiB: later entries were not loaded. Shorten it to one line per memory.)"
+        ? "(index cut at 200 lines or 25 KB: later entries were not loaded. Merge or delete entries to bring it under.)"
         : "";
 
       expect(
@@ -373,7 +380,7 @@ describe("session system context", () => {
           message.content.includes("Current memory index"),
         )?.content,
       ).toBe(
-        `Current memory index (memory/MEMORY.md) for this conversation:\n\n${`${INDEX_LINE.repeat(lines)}${note}`.trimEnd()}`,
+        `Current memory index (memory/MEMORY.md) for this conversation:\n\n${`${line.repeat(lines)}${note}`.trimEnd()}`,
       );
     },
   );

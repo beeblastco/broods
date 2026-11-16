@@ -401,6 +401,7 @@ describe("createTools", () => {
       "edit",
       "glob",
       "grep",
+      "memory_delete",
       "memory_save",
       "read",
       "write",
@@ -410,7 +411,7 @@ describe("createTools", () => {
     }
   });
 
-  it("drops memory_save when the workspace harness memory opts out", async () => {
+  it("drops memory_save and memory_delete when the workspace harness memory opts out", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
     const base = sandboxContext(
@@ -457,6 +458,9 @@ describe("createTools", () => {
       "user-approval",
     );
     await expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+      "user-approval",
+    );
+    await expect(approvalStatus("memory_delete", {}, context)).resolves.toBe(
       "user-approval",
     );
     await expect(approvalStatus("bash", {}, context)).resolves.toBe(
@@ -524,6 +528,7 @@ describe("createTools", () => {
       "edit",
       "glob",
       "grep",
+      "memory_delete",
       "memory_save",
       "read",
       "write",

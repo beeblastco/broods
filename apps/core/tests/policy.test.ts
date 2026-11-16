@@ -113,6 +113,18 @@ describe("agent policy input", () => {
       workspaceName: "repo",
       filePath: "memory/owner-prefers-short-replies.md",
     });
+    expect(
+      policyInputForTool(
+        "memory_delete",
+        { workspace: "repo", title: "Owner prefers short replies" },
+        workspaces,
+      ),
+    ).toMatchObject({
+      action: "workspace.write",
+      toolName: "memory_delete",
+      workspaceId: "ws_123",
+      filePath: "memory/owner-prefers-short-replies.md",
+    });
   });
 
   it("maps skill and subagent references", () => {

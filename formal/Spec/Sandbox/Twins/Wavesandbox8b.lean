@@ -59,6 +59,9 @@ private def filesystemTool (name description : String) (call : Json) : Prog Json
 private def memoryTool (call : Json) : Prog Json :=
   filesystemTool "memory_save" "Saves one durable fact to your persistent memory so it survives future conversations.\n\nUsage notes:\n- The entry is written to memory/<slug>.md and indexed in memory/MEMORY.md (loaded into your context every turn).\n- Its metadata records the conversation scope it was learned in (originSessionId), so you can tell where a memory came from when reading it later.\n- Check the memory index already in your context first: saving an existing title updates that entry instead of duplicating it." call
 
+private def memoryDeleteTool (call : Json) : Prog Json :=
+  filesystemTool "memory_delete" "Deletes one memory that turned out wrong or no longer holds, so future conversations stop loading it.\n\nUsage notes:\n- Pass the title as the memory/MEMORY.md index shows it. The file memory/<slug>.md and its index line are removed together.\n- To correct a memory instead, save it again with memory_save under the same title." call
+
 private def globTool (call : Json) : Prog Json :=
   filesystemTool "glob" "Fast file pattern matching in the workspace. Supports glob patterns like `**/*.ts` or `src/**/*.py`.\n\nUsage notes:\n- Returns matching paths (relative to the search root) sorted by modification time, newest first.\n- path is the directory to search in, relative to the workspace root; it defaults to the root.\n- Prefer this over `bash find` for locating files by name." call
 
@@ -440,6 +443,7 @@ def twins : List Spec.Twin :=
    Twin.traced "apps/core/src/harness/sandbox/vercel-executor.ts#VercelSandboxExecutor.run" vercelRun,
    Twin.traced "apps/cloudflare-worker/src/vfs-state.ts#decodeState" decodeState,
    Twin.traced "apps/core/src/harness/tools/memory.tool.ts#memoryTool" memoryTool,
+   Twin.traced "apps/core/src/harness/tools/memory-delete.tool.ts#memoryDeleteTool" memoryDeleteTool,
    Twin.traced "apps/core/src/harness/tools/glob.tool.ts#globTool" globTool,
    Twin.traced "apps/core/src/harness/tools/read.tool.ts#readTool" readTool,
    Twin.traced "apps/core/src/harness/tools/edit.tool.ts#editTool" editTool,
