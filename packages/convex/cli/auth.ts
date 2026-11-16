@@ -4,6 +4,7 @@ import {
   internalMutation,
   internalQuery,
   mutation,
+  query,
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
@@ -22,13 +23,14 @@ import {
   getOrgMembership,
   orgRoleMeets,
   userByAuthId,
+  type OrgRole,
 } from "../model/ownership/org";
 import { accountDoc } from "../model/accountDoc";
 import { insertAccount } from "../account/accounts";
 import { insertOwnedOrg } from "../org/orgs";
 import { ClientError, clientErrorResponse } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
-import { planValidator } from "../schema";
+import { orgMembersFields, planValidator } from "../schema";
 
 const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -423,7 +425,8 @@ export const resolveUserLogin = internalQuery({
     { authId, org },
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
     // Never the dashboard's active org: switching it there must not repoint a connected client.
-    const orgs = await administeredOrgs(ctx, authId);
+    const user = await userByAuthId(ctx, authId);
+    const orgs = user ? await administeredOrgs(ctx, user) : [];
     const picked = org ? orgs.filter(({ slug }) => slug === org) : orgs;
     if (org && picked.length === 0) {
       return {
@@ -644,10 +647,8 @@ async function onboardingContext(
 
 async function administeredOrgs(
   ctx: QueryCtx,
-  authId: string,
-): Promise<Doc<"orgs">[]> {
-  const user = await userByAuthId(ctx, authId);
-  if (!user) return [];
+  user: Doc<"users">,
+): Promise<(Doc<"orgs"> & { role: OrgRole })[]> {
   const memberships = await ctx.db
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
@@ -655,11 +656,52 @@ async function administeredOrgs(
   const orgs = await Promise.all(
     memberships
       .filter(({ role }) => orgRoleMeets(role, "admin"))
-      .map(({ orgId }) => ctx.db.get(orgId)),
+      .map(async ({ orgId, role }) => {
+        const org = await ctx.db.get(orgId);
+
+        return org ? { ...org, role: role } : null;
+      }),
   );
 
   return orgs.filter((org) => org !== null);
 }
+
+// What the dashboard's `/mcp-auth/start` page offers to sign an MCP client in to.
+export const mcpSignInOrgs = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      slug: v.string(),
+      name: v.string(),
+      role: orgMembersFields.role,
+      selected: v.boolean(),
+    }),
+  ),
+  handler: async (
+    ctx,
+  ): Promise<
+    { slug: string; name: string; role: OrgRole; selected: boolean }[]
+  > => {
+    const authUser = await authKit.getAuthUser(ctx);
+    const user = authUser ? await userByAuthId(ctx, authUser.id) : null;
+    if (!user) return [];
+    const selected = (await getActiveOrgForUser(ctx, user._id))?._id;
+    const orgs = await administeredOrgs(ctx, user);
+
+    return orgs
+      .map(({ _id, name, role, slug }) => ({
+        slug: slug,
+        name: name,
+        role: role,
+        selected: _id === selected,
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.selected) - Number(a.selected) ||
+          a.name.localeCompare(b.name),
+      );
+  },
+});
 
 // A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
 export async function resolveActiveCliToken(
