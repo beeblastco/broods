@@ -100,7 +100,9 @@ const MEMORY_INDEX_CUT_NOTE =
 // A conversation keeps the index it loaded while its prompt cache is warm (Anthropic's 5-minute
 // TTL), so a memory_save does not rewrite the cached prefix. In-process: core runs one replica.
 const MEMORY_INDEX_WARM_MS = 5 * 60 * 1_000;
-const MEMORY_INDEX_SNAPSHOT_MAX_BYTES = 256 * 1_024;
+const MEMORY_INDEX_MAX_AGE_MS = 60 * 60 * 1_000;
+const MEMORY_INDEX_SNAPSHOT_MAX_BYTES = 64 * 1_024;
+const MEMORY_INDEX_SNAPSHOT_MAX_COUNT = 512;
 const memoryIndexSnapshots = new Map<string, MemoryIndexSnapshot>();
 export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
@@ -168,6 +170,7 @@ export interface ContextPreparePhases {
 
 interface MemoryIndexSnapshot {
   content: string | null;
+  loadedAt: number;
   usedAt: number;
 }
 
@@ -1253,8 +1256,9 @@ export class Session {
       workspace.namespace,
     );
     const now = Date.now();
+    sweepMemoryIndexSnapshots(now);
     const snapshot = memoryIndexSnapshots.get(snapshotKey);
-    if (snapshot && now - snapshot.usedAt < MEMORY_INDEX_WARM_MS) {
+    if (snapshot && now - snapshot.loadedAt < MEMORY_INDEX_MAX_AGE_MS) {
       snapshot.usedAt = now;
       return snapshot.content;
     }
@@ -1313,6 +1317,8 @@ export class Session {
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
+    // Every model step keeps the provider's cache warm, so it keeps the snapshot warm too.
+    touchMemoryIndexSnapshots(this.conversationKey);
 
     this.memoryFilesPromise ??= Promise.all(
       this.resolvedWorkspaces()
@@ -1534,8 +1540,6 @@ export function createStoredEventFromModelMessage(
   }
 }
 
-// Runs before admission, as a queued turn replays only the queued events, and after the
-// webhook ack, as a download would hold the provider's connection open.
 // Compaction rewrites the cached history anyway, so the next run reloads the memory index.
 export function forgetMemoryIndexSnapshots(conversationKey: string): void {
   const prefix = memoryIndexSnapshotKey(conversationKey, "");
@@ -1544,6 +1548,8 @@ export function forgetMemoryIndexSnapshots(conversationKey: string): void {
   }
 }
 
+// Runs before admission, as a queued turn replays only the queued events, and after the
+// webhook ack, as a download would hold the provider's connection open.
 export async function ingestChannelAttachments(
   events: ConversationIngressEvent[],
   attachments: Attachment[] | undefined,
@@ -1992,25 +1998,25 @@ function projectSystemContextMessages(
   });
 }
 
-// Drops cold snapshots on every write, so the map holds only conversations still warm.
+// A large index, or one past the count cap, is read fresh each run to bound the pod's memory.
 function rememberMemoryIndex(
   key: string,
   content: string | null,
   now: number,
 ): void {
-  for (const [other, snapshot] of memoryIndexSnapshots) {
-    if (now - snapshot.usedAt >= MEMORY_INDEX_WARM_MS) {
-      memoryIndexSnapshots.delete(other);
-    }
-  }
   if (
-    content !== null &&
-    Buffer.byteLength(content) > MEMORY_INDEX_SNAPSHOT_MAX_BYTES
+    (content !== null &&
+      Buffer.byteLength(content) > MEMORY_INDEX_SNAPSHOT_MAX_BYTES) ||
+    memoryIndexSnapshots.size >= MEMORY_INDEX_SNAPSHOT_MAX_COUNT
   ) {
     memoryIndexSnapshots.delete(key);
     return;
   }
-  memoryIndexSnapshots.set(key, { content: content, usedAt: now });
+  memoryIndexSnapshots.set(key, {
+    content: content,
+    loadedAt: now,
+    usedAt: now,
+  });
 }
 
 function sanitizeAssistantMessage(
@@ -2176,6 +2182,15 @@ function storedEventBatches(
   return batches;
 }
 
+// Drops snapshots whose cache has gone cold, so the map holds only warm conversations.
+function sweepMemoryIndexSnapshots(now: number): void {
+  for (const [key, snapshot] of memoryIndexSnapshots) {
+    if (now - snapshot.usedAt >= MEMORY_INDEX_WARM_MS) {
+      memoryIndexSnapshots.delete(key);
+    }
+  }
+}
+
 async function timePhase<T>(
   phases: ContextPreparePhases,
   key: Exclude<keyof ContextPreparePhases, "historyRows">,
@@ -2208,6 +2223,19 @@ function toStoredConversationEvent<
 }
 
 // Another model cannot decrypt this reasoning, and the provider resolves item ids through it.
+function touchMemoryIndexSnapshots(conversationKey: string): void {
+  const now = Date.now();
+  const prefix = memoryIndexSnapshotKey(conversationKey, "");
+  for (const [key, snapshot] of memoryIndexSnapshots) {
+    if (
+      key.startsWith(prefix) &&
+      now - snapshot.usedAt < MEMORY_INDEX_WARM_MS
+    ) {
+      snapshot.usedAt = now;
+    }
+  }
+}
+
 function withoutStoredItems(
   message: AssistantModelMessage,
 ): AssistantModelMessage {

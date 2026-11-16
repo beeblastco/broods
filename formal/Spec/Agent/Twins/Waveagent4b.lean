@@ -150,6 +150,7 @@ def loadMemoryFiles (call : Json) : Prog Json := do
   let _ ← Prog.effect "this.ensureResolvedRuntime"
   let enabled ← Prog.effect "this.isWorkspaceEnabled"
   if !truthy enabled then return arr []
+  let _ ← Prog.effect "touchMemoryIndexSnapshots" [thisField call "conversationKey"]
   if !isUndef (thisField call "memoryFilesPromise") then
     return ← Prog.unsupported "a memoized promise's value is not recorded"
   Prog.setState "self.memoryFilesPromise"

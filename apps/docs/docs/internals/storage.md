@@ -65,7 +65,7 @@ The agent always reads through the mount, so it sees its own writes at once. Har
 | The skills bucket                                                 | harness via S3 | the S3 API. Never mounted                 |
 
 - A read-only workspace reads through a service-managed read-only mount. `sandbox: null` reads S3 directly instead: no cold start, but reads can lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network reaches only the managed bucket.
-- Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` over the S3 API, so a workspace with no sandbox still serves memory. A conversation reuses its last read (an in-process map in `session.ts`) until 5 minutes pass without a turn or the history is compacted, so a memory write never breaks the cached prompt mid-conversation. A read before the agent's last edit reached the bucket is stale; memory converges across turns.
+- Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` over the S3 API, so a workspace with no sandbox still serves memory. A conversation reuses its last read (an in-process map in `session.ts`, at most 512 entries of 64 KB) until 5 minutes pass without a model call, the history is compacted, or an hour has passed, so a memory write never breaks the cached prompt mid-conversation. A read before the agent's last edit reached the bucket is stale; memory converges across turns.
 
 ## Bring-your-own bucket
 
