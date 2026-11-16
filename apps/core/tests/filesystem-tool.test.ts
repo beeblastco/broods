@@ -1647,11 +1647,11 @@ describe("memory tool", () => {
         content: "Mai.",
       });
 
-      const result = await memory_delete.execute({ title: "Q3 launch date" });
-      expect(result).toStartWith(
-        "Deleted memory memory/q3-launch-date.md and removed its line from memory/MEMORY.md.\nIts text was:\n---\nname: q3-launch-date",
+      await expect(
+        memory_delete.execute({ title: "Q3 launch date" }),
+      ).resolves.toBe(
+        "Deleted memory memory/q3-launch-date.md and removed its line from memory/MEMORY.md.",
       );
-      expect(result).toContain("Q3.");
       expect(existsSync(join(workspace, "memory/q3-launch-date.md"))).toBe(
         false,
       );
@@ -1663,16 +1663,6 @@ describe("memory tool", () => {
         memory_delete.execute({ title: "Q3 launch date" }),
       ).rejects.toThrow("Error: no memory at memory/q3-launch-date.md");
 
-      // A long memory comes back cut, and the result says how much was shown.
-      await memory_save.execute({
-        title: "Long note",
-        description: "A note over 4 KB.",
-        content: "x".repeat(5_000),
-      });
-      await expect(
-        memory_delete.execute({ title: "Long note" }),
-      ).resolves.toMatch(/\(first 4096 of \d+ bytes\)$/);
-
       // A hand-edited index line is not the shape memory_save writes, so the result says so.
       writeFileSync(
         join(workspace, "memory/MEMORY.md"),
@@ -1680,7 +1670,7 @@ describe("memory tool", () => {
       );
       await expect(
         memory_delete.execute({ title: "Launch owner" }),
-      ).resolves.toStartWith(
+      ).resolves.toBe(
         "Deleted memory memory/launch-owner.md and found no line for it in memory/MEMORY.md.",
       );
     } finally {
@@ -1714,6 +1704,7 @@ describe("memory tool", () => {
       expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
         index,
       );
+      expect(existsSync(join(workspace, "memory/new-fact.md"))).toBe(false);
 
       const memory_delete = await memoryDelete(ctx);
       await expect(

@@ -6,7 +6,7 @@ An agent remembers in two places. The session is the conversation history for on
 
 Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. The whole index is loaded into the system prompt, and the agent reads a linked file before relying on it. The agent is told the index rides every turn, so it keeps the index short by merging or deleting entries.
 
-A conversation keeps the index it loaded while the model's prompt cache is still warm: until 5 minutes pass with no model call, the history is compacted, or an hour has passed since the load. A memory saved or deleted in the meantime shows up after that, so a save never forces the whole conversation to be cached again. A new conversation always loads the current index. An index over 64 KB is read fresh on every turn.
+A conversation keeps the index it loaded while the model's prompt cache is still warm: until 5 minutes pass with no model call, the history is compacted, or an hour has passed since the load. Core keeps at most 512 of these at a time, so a busy deployment can reload sooner. A memory saved or deleted in the meantime shows up after that, so a save never forces the whole conversation to be cached again. A new conversation always loads the current index. An index over 64 KB is read fresh on every turn.
 
 With a sandbox behind the workspace, the agent gets a `memory_save` tool that writes an entry like this:
 
@@ -23,7 +23,7 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
-Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together and returns the deleted text. The agent sees that text for the rest of the turn and can save it again; after that, pruning hides old tool results from the model, but the text stays in the stored conversation history. Only the Broods-managed bucket also keeps earlier versions of each file; a bucket you bring has whatever versioning you set on it.
+Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together. It does not return the deleted text, since a policy may allow writing a memory but not reading it. The Broods-managed bucket keeps earlier versions of each file, so an operator can restore one; a bucket you bring keeps whatever versioning you set on it.
 
 `originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent the current conversation and two rules. The index holds summaries only, and current instructions always outrank memory. Today's date comes from the `<environment>` block every run gets.
 

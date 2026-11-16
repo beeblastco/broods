@@ -20,7 +20,7 @@ interface MemoryDeleteInput {
 export default function memoryDeleteTool(context: SandboxToolContext): ToolSet {
   return {
     memory_delete: tool({
-      description: `Deletes one memory that no longer holds: its file and its memory/MEMORY.md line. Returns the deleted text.
+      description: `Deletes one memory that no longer holds: its file and its memory/MEMORY.md line.
 
 Usage notes:
 - Pass the title as the index shows it.
@@ -55,13 +55,8 @@ Usage notes:
           `if [ ! -f ${qFile} ] && [ "$found" = no ]; then printf 'Error: no memory at %s\\n' ${qFile} >&2; exit 1; fi`,
           `index_note='found no line for it in'`,
           `if [ "$found" = yes ]; then index_body=$(grep -v ${qPattern} ${qIndex}); [ "$?" -le 1 ] || exit 1; printf '%s\\n' "$index_body" > ${qIndex} && sync ${qIndex} || exit 1; index_note='removed its line from'; fi`,
-          `size=0`,
-          `if [ -f ${qFile} ]; then size=$(wc -c < ${qFile}); fi`,
-          `text=$(head -c 4096 ${qFile} 2>/dev/null || true)`,
           `rm -f ${qFile}`,
           `printf 'Deleted memory %s and %s %s.\\n' ${qFile} "$index_note" ${qIndex}`,
-          `if [ -n "$text" ]; then printf 'Its text was:\\n%s\\n' "$text"; fi`,
-          `if [ "$size" -gt 4096 ]; then printf '(first 4096 of %s bytes)\\n' "$((size))"; fi`,
         ].join(" && ");
         const result = await runSandbox(ws.sandbox, ws.namespace, code, {
           onSandboxCpu: context.onSandboxCpu,

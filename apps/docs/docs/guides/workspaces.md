@@ -45,12 +45,12 @@ That lets one agent give different workspaces different sandboxes and approval r
 
 ### Tools per workspace
 
-| Effective sandbox     | Tools                                                                           |
-| --------------------- | ------------------------------------------------------------------------------- |
-| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`, `memory_delete` |
-| none                  | `read` and `glob` through a read-only mount, which sees writes at once          |
-| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag           |
-| none, your own bucket | `read` and `glob` straight from storage, reads can lag                          |
+| Effective sandbox     | Tools                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`, `memory_delete` (memory on) |
+| none                  | `read` and `glob` through a read-only mount, which sees writes at once                      |
+| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag                       |
+| none, your own bucket | `read` and `glob` straight from storage, reads can lag                                      |
 
 | Agent has                | Tools                                                              |
 | ------------------------ | ------------------------------------------------------------------ |
