@@ -15,6 +15,7 @@ import type {
 import type { ObservabilityClientOptions } from "./observability-client.ts";
 import {
   type LogLevel,
+  type ObservabilityHistoryRange,
   MAX_OBSERVABILITY_BACKFILL,
 } from "./observability-contracts.ts";
 import {
@@ -468,9 +469,47 @@ export class BroodsAccountClient {
     };
   }
 
+  async readLogPage(
+    scope: StageScope,
+    options: {
+      range: ObservabilityHistoryRange;
+      sandboxId?: string;
+      level?: LogLevel;
+      limit?: number;
+    },
+  ): Promise<{
+    logs: LogLine[];
+    range: ObservabilityHistoryRange;
+    nextTo?: number;
+    incomplete?: string;
+  }> {
+    const { fetchObservabilityLogPage } = await observabilityClient();
+    const result = await fetchObservabilityLogPage(
+      await this.openObservabilitySession(scope.project, scope.stage),
+      {
+        range: options.range,
+        ...(options.sandboxId ? { sandboxId: options.sandboxId } : {}),
+        limit: options.limit ?? 50,
+        minLevel: options.level ?? "INFO",
+      },
+    );
+
+    return {
+      logs: result.rows.map(logLine),
+      range: options.range,
+      ...(result.nextTo !== undefined ? { nextTo: result.nextTo } : {}),
+      ...(result.error ? { incomplete: result.error } : {}),
+    };
+  }
+
   async readLogs(
     scope: StageScope,
-    options: { level?: LogLevel; limit?: number; sandboxId?: string } = {},
+    options: {
+      level?: LogLevel;
+      limit?: number;
+      sandboxId?: string;
+      range?: ObservabilityHistoryRange;
+    } = {},
   ): Promise<LogLine[]> {
     const { fetchObservabilityLogs } = await observabilityClient();
     const entries = await fetchObservabilityLogs(
@@ -478,6 +517,7 @@ export class BroodsAccountClient {
       {
         limit: options.limit ?? 50,
         minLevel: options.level ?? "INFO",
+        ...(options.range ? { range: options.range } : {}),
         ...(options.sandboxId ? { sandboxId: options.sandboxId } : {}),
       },
     );
@@ -498,12 +538,18 @@ export class BroodsAccountClient {
 
   async listRuns(
     scope: StageScope,
-    options: { agentId?: string; limit?: number; status?: string } = {},
-  ): Promise<{ runs: RunSummary[]; incomplete?: string }> {
+    options: {
+      agentId?: string;
+      limit?: number;
+      status?: string;
+      range?: ObservabilityHistoryRange;
+    } = {},
+  ): Promise<{ runs: RunSummary[]; nextTo?: number; incomplete?: string }> {
     const limit = options.limit ?? 20;
-    const backfill = options.status
-      ? MAX_OBSERVABILITY_BACKFILL
-      : Math.min(MAX_OBSERVABILITY_BACKFILL, limit);
+    const backfill =
+      options.status && !options.range
+        ? MAX_OBSERVABILITY_BACKFILL
+        : Math.min(MAX_OBSERVABILITY_BACKFILL, limit);
     const { fetchObservabilitySpans } = await observabilityClient();
     const session = await this.openObservabilitySession(
       scope.project,
@@ -513,6 +559,7 @@ export class BroodsAccountClient {
       session,
       backfill,
       options.agentId,
+      options.range,
     );
     // No echo: a gateway that predates the agent filter sent every agent's newest traces.
     if (
@@ -524,11 +571,13 @@ export class BroodsAccountClient {
         session,
         MAX_OBSERVABILITY_BACKFILL,
         options.agentId,
+        options.range,
       );
     const { error, rows } = result;
 
     return {
       runs: runSummaries(rows, { ...options, limit: limit }),
+      ...(result.nextTo !== undefined ? { nextTo: result.nextTo } : {}),
       ...(error ? { incomplete: error } : {}),
     };
   }

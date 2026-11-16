@@ -91,7 +91,7 @@ function openCodeVariant(
   );
 }
 
-// OpenCode 1.18.34 provider/transform.ts, excluding `max`, which is above `xhigh`.
+// OpenCode 1.19.5 provider/transform.ts, excluding `max`, which is above `xhigh`.
 function openCodeVariants(
   provider: NonNullable<AgentConfig["model"]>["provider"],
   modelId: string,

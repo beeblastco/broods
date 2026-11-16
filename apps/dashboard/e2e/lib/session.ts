@@ -30,6 +30,8 @@ export const probeAccount = {
 };
 
 const AUTH_TIMEOUT_MS = 60_000;
+// The one probe user (AGENTS.md); scripts/cloud-setup.sh pins the same address.
+export const PROBE_EMAIL = "cloud-agent@beeblast.co";
 const BOT_CHECK =
   "AuthKit showed the probe its bot check: allow the probe email under Radar > Restrictions in this WorkOS environment";
 // Convex ids are 20+ characters; `/projects` and the other static segments are shorter.
@@ -92,11 +94,19 @@ export async function signIn(page: Page): Promise<void> {
     });
     return;
   }
+  // Another user fails inside AuthKit as a timeout; a retired probe gets a bare "Server Error".
+  if (probeAccount.email !== PROBE_EMAIL) {
+    throw new Error(
+      `E2E_EMAIL is ${probeAccount.email}, not the probe ${PROBE_EMAIL}; use E2E_ADMIN_KEY on the local stack`,
+    );
+  }
   await page.waitForURL((url) => url.origin !== origin, {
     timeout: AUTH_TIMEOUT_MS,
   });
+  // A submit before AuthKit hydrates does nothing; resubmitting gets the probe throttled.
+  await page.waitForLoadState("networkidle");
   await page.getByLabel(/email/i).fill(probeAccount.email!);
-  await page.getByRole("button", { name: /continue/i }).click();
+  await page.getByRole("button", { name: /^continue( with email)?$/i }).click();
   await page
     .getByRole("textbox", { name: /password/i })
     .fill(probeAccount.password!);
@@ -106,7 +116,10 @@ export async function signIn(page: Page): Promise<void> {
   const deadline = Date.now() + AUTH_TIMEOUT_MS;
   const skipPasskey = page.getByRole("button", { name: /^skip for now$/i });
   const botCheck = page.getByText(/sure you are human/i).first();
-  const landed = (): boolean => new URL(page.url()).origin === origin;
+  // The callback redirects again, and a goto meanwhile is aborted: landed means past /auth/.
+  const signedIn = (url: URL): boolean =>
+    url.origin === origin && !url.pathname.startsWith("/auth/");
+  const landed = (): boolean => signedIn(new URL(page.url()));
   await expect
     .poll(
       async () =>
@@ -122,7 +135,7 @@ export async function signIn(page: Page): Promise<void> {
     await skipPasskey.first().click({ timeout: 10_000 });
   }
   await page
-    .waitForURL((url) => url.origin === origin, {
+    .waitForURL(signedIn, {
       timeout: Math.max(deadline - Date.now(), 5_000),
     })
     .catch(async (error: unknown) => {
