@@ -169,6 +169,22 @@ export function isTraceId(value: unknown): value is string {
   return typeof value === "string" && TRACE_ID_PATTERN.test(value);
 }
 
+function isHistoryRange(value: unknown): value is ObservabilityHistoryRange {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "from" in value &&
+    "to" in value &&
+    typeof value.from === "number" &&
+    typeof value.to === "number" &&
+    Number.isSafeInteger(value.from) &&
+    Number.isSafeInteger(value.to) &&
+    value.from >= 0 &&
+    value.to > value.from &&
+    value.to - value.from <= MAX_OBSERVABILITY_RANGE_MS
+  );
+}
+
 function isStreamName(value: unknown): value is "logs" | "traces" {
   return value === "logs" || value === "traces";
 }
@@ -192,18 +208,7 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
     typeof msg["historyOnly"] !== "boolean"
   )
     return false;
-  const range = msg["range"] as ObservabilityHistoryRange | undefined;
-  if (
-    range !== undefined &&
-    (range === null ||
-      typeof range !== "object" ||
-      !Number.isSafeInteger(range.from) ||
-      !Number.isSafeInteger(range.to) ||
-      range.from < 0 ||
-      range.to <= range.from ||
-      range.to - range.from > MAX_OBSERVABILITY_RANGE_MS)
-  )
-    return false;
+  if (msg["range"] !== undefined && !isHistoryRange(msg["range"])) return false;
   const minLevel = msg["minLevel"];
   if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
   const sandboxId = msg["sandboxId"];

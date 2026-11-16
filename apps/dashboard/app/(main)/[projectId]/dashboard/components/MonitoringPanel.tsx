@@ -241,7 +241,7 @@ export function MonitoringPanel({
           Show {newCount} new logs
         </Button>
       )}
-      {error && history === "failed" && (
+      {error && history === "failed" && entries.length > 0 && (
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>

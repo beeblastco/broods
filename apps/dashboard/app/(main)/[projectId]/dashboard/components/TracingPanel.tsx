@@ -954,7 +954,7 @@ export function TracingPanel({
           Show {newCount} new runs
         </Button>
       )}
-      {error && history === "failed" && (
+      {error && history === "failed" && entries.length > 0 && (
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
