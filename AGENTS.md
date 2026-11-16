@@ -10,27 +10,19 @@ You can think of Broods as what Convex and Railway are for backends and deploys,
 
 ### What we never compromise on
 
-People pick Broods for the things below. Keep them true as the product changes.
+These are not features. They decide which features Broods gets and how each one is built. When a change goes against one, say so and get the user's yes first.
 
-#### 1. Define it in code, Broods runs it
+#### 1. Open source
 
-An agent is a `define*` call in a `broods/` folder, and `broods dev` or `broods deploy` makes it real. A user never assembles the queue, the sandbox, the storage or the webhooks themselves. A new capability is a field or a helper they declare, and anything they can declare they can also create through the API.
+The code is public and anyone can run the whole stack themselves. Build in the open: no piece that only works on the managed service without a reason, no hidden dependency a self-hoster cannot get, and docs that let someone outside the team run and change it.
 
-#### 2. Yours to own
+#### 2. Cloud native
 
-Users bring their own model keys, and the whole stack is source-available and self-hostable, so the data, the AWS account and the API keys stay theirs. A feature that works on only one model provider, or only on the managed service, needs a reason and the user's yes.
+Broods is built to run in the cloud, on containers and managed services, deployed by CI. State lives in a store, not on one machine's disk or memory. Prefer a managed primitive over a service we would have to operate, and design every piece to be deployed, replaced and scaled without hand work.
 
-#### 3. One agent, every surface
+#### 3. Enterprise ready: secure and safe agents
 
-The same agent answers over the SDK, HTTP, WebSocket, the CLI, the dashboard, a schedule and 13 chat apps. A behavior added on one path works on the others, or is refused there on purpose and documented.
-
-#### 4. Refuse before granting more
-
-A sandbox provider that cannot enforce a network rule rejects the config, an enforced policy blocks when its check cannot run, and a channel record narrows an agent and never grants. When Broods cannot enforce what the user asked for, it says no and says why.
-
-#### 5. No message is lost
-
-A message to a busy agent steers the running turn or waits its turn. Every accepted message ends as completed, failed or expired, and the caller can read which.
+A company must be able to trust an agent with its data and its tools. Security is part of every design, not a later pass: the safe choice is the default, each credential does one narrow job, tenants stay apart, untrusted code runs outside the core, and what an agent may do is bounded and recorded. When Broods cannot enforce a limit, it refuses instead of quietly granting more.
 
 ## Workspaces
 
