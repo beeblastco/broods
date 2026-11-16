@@ -58,12 +58,16 @@ updates:
       # it: +15 KB dashboard first-load JS. Lift once the perf baseline has room.
       - dependency-name: react-resizable-panels
         versions: [">=4.17.0"]
+      # 4.0 imports undici's Dispatcher1Wrapper, which Bun's built-in undici lacks, so
+      # the import throws. Lift once vercel/sandbox#479 ships.
+      - dependency-name: "@vercel/sandbox"
+        update-types: ["version-update:semver-major"]
       # @convex-dev/workos-authkit takes @workos-inc/node up to 10; a newer
       # major installs a second copy beside it.
       - dependency-name: "@workos-inc/node"
         update-types: ["version-update:semver-major"]
-      # @convex-dev/stripe depends on stripe ^22 and shares our client types and
-      # API version; lift once it ships a release on stripe 23.
+      # The root override keeps @convex-dev/stripe (which asks for ^23) on our stripe 22
+      # client and API version; moving to 23 changes the API version our calls use.
       - dependency-name: stripe
         update-types: ["version-update:semver-major"]
     groups:

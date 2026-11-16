@@ -549,6 +549,42 @@ describe("owner billing", () => {
     ).toBeNull();
   });
 
+  test("checkout moves past a deleted customer Stripe replays for the owner's key", async () => {
+    const t = billingTest();
+    await seedPayer(t);
+    const customer = {
+      id: "cus_deleted",
+      object: "customer",
+      email: "payer@example.com",
+      metadata: { userId: AUTH_ID },
+    };
+    await sendEvent(t, "customer.created", customer);
+    await sendEvent(t, "customer.deleted", { ...customer, deleted: true });
+    const create = vi
+      .spyOn(stripeClient, "createCustomer")
+      .mockResolvedValueOnce({ customerId: "cus_deleted" })
+      .mockResolvedValueOnce({ customerId: CUSTOMER_ID });
+    const checkoutSession = vi
+      .spyOn(stripeClient, "createCheckoutSession")
+      .mockResolvedValue({ sessionId: "cs_pro", url: "https://checkout.test" });
+
+    await t.action(api.stripe.createCheckoutSession, {
+      successUrl: "http://localhost:3000/ok",
+      cancelUrl: "http://localhost:3000/cancel",
+    });
+
+    expect(create).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        idempotencyKey: `${AUTH_ID}_after_cus_deleted`,
+      }),
+    );
+    expect(checkoutSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ customerId: CUSTOMER_ID }),
+    );
+  });
+
   test("refuses a second checkout while the owner has a live subscription", async () => {
     const t = billingTest();
     await seedPayer(t);

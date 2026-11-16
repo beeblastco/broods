@@ -25,6 +25,9 @@ import {
 import { getActiveOrgForUser, userByAuthId } from "./model/ownership/org";
 import { planValidator } from "./schema";
 
+// Each customer deleted within 24 hours of its creation costs one attempt.
+const MAX_CREATE_CUSTOMER_ATTEMPTS = 5;
+
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
 const ownerBillingValidator = v.object({
@@ -498,14 +501,22 @@ async function customerFor(
     });
     filed = await filedCustomer(ctx, authUser.id);
   }
-  const { customerId } = await stripeClient.createCustomer(ctx, {
-    email: authUser.email ?? undefined,
-    metadata: { userId: authUser.id },
-    // A double click makes one customer; replacing a gone one makes a new one.
-    idempotencyKey: gone ? `${authUser.id}_after_${gone}` : authUser.id,
-  });
-
-  return customerId;
+  // A double click makes one customer; replacing a gone one makes a new one. Stripe replays a
+  // key for 24 hours, even once that customer is deleted, so a replayed deleted one moves on.
+  let idempotencyKey = gone ? `${authUser.id}_after_${gone}` : authUser.id;
+  for (let attempt = 0; attempt < MAX_CREATE_CUSTOMER_ATTEMPTS; attempt++) {
+    const { customerId } = await stripeClient.createCustomer(ctx, {
+      email: authUser.email ?? undefined,
+      metadata: { userId: authUser.id },
+      idempotencyKey: idempotencyKey,
+    });
+    const stored = await ctx.runQuery(components.stripe.public.getCustomer, {
+      stripeCustomerId: customerId,
+    });
+    if (!stored?.deleted) return customerId;
+    idempotencyKey = `${authUser.id}_after_${customerId}`;
+  }
+  throw new Error("Stripe kept returning deleted customers for this user");
 }
 
 async function filedCustomer(
