@@ -4200,3 +4200,273 @@ test("a user's run sends the token to core and streams from the user's namespace
     streamResponseSubject("acct_test", "agent_public", "chat-1"),
   );
 });
+
+test("bounded log history queries once and continues without skipping timestamp ties", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requests.push(new URL(requestUrl(input)));
+    return json({
+      data: {
+        result: [
+          {
+            stream: {},
+            values: [
+              ["9000000", "new"],
+              ["8000000", "tie-a"],
+              ["8000000", "tie-b"],
+            ],
+          },
+        ],
+      },
+    });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 2,
+        historyOnly: true,
+        range: { from: 1, to: 10 },
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe("1000000");
+    expect(requests[0]!.searchParams.get("end")).toBe("9999999");
+    expect(requests[0]!.searchParams.get("limit")).toBe("3");
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      nextTo: 9,
+      entries: [{ message: "new" }],
+    });
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("bounded Tempo searches narrow a saturated unordered result before paging", async () => {
+  const originalFetch = globalThis.fetch;
+  const starts: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(requestUrl(input));
+    starts.push(url.searchParams.get("start") ?? "");
+    return json({
+      traces:
+        starts.length === 1
+          ? [
+              { traceID: "a", startTimeUnixNano: "1000000000" },
+              { traceID: "b", startTimeUnixNano: "2000000000" },
+            ]
+          : [],
+    });
+  }) as typeof fetch;
+  try {
+    const pages = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+        from: 0,
+        to: 3600000,
+      }),
+    );
+    expect(starts).toEqual(["0", "1800"]);
+    expect(pages).toEqual([{ rows: [], failures: 0, nextTo: 1800000 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a sparse bounded sandbox page searches only one hour without starting a poll", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    requests.push(new URL(requestUrl(input)));
+
+    return json({ data: { result: [] } });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    const range = { from: 0, to: 86_400_000 };
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: range,
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      async (): Promise<never> => {
+        throw new Error("history opened live transport");
+      },
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe(
+      String(82_800_000n * 1_000_000n),
+    );
+    expect(requests[0]!.searchParams.get("query")).toContain(
+      'sandbox_id="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"',
+    );
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      entries: [],
+      range: range,
+      nextTo: 82_800_000,
+    });
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: { from: 0, to: 82_800_000 },
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      idleNats,
+    );
+    await waitForCondition(
+      () => sent.filter((message) => message.type === "backfill").length === 2,
+    );
+    expect(requests).toHaveLength(2);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      idleNats,
+    );
+    await waitForCondition(() => requests.length === 3);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(2);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("bounded trace chunks and their closer echo the requested range", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const range = { from: 0, to: 3000 };
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    if (requestUrl(input).includes("/api/search"))
+      return json({ traces: tempoSearchHits(1) });
+
+    return json({ batches: [tempoBatch({ traceId: "t0", spanId: "root" })] });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "traces",
+        backfill: 10,
+        historyOnly: true,
+        range: range,
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && !message.more,
+    );
+    const pieces = sent.filter((message) => message.type === "backfill");
+    expect(pieces).toHaveLength(2);
+    expect(
+      pieces.every(
+        (message) => JSON.stringify(message.range) === JSON.stringify(range),
+      ),
+    ).toBe(true);
+    expect(pieces[0]!.more).toBe(true);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("overlapping older traces do not hide a complete page of starts inside the window", async () => {
+  const originalFetch = globalThis.fetch;
+  const limits: number[] = [];
+  const summaries = [
+    { traceID: "old-a", startTimeUnixNano: "1000000000" },
+    { traceID: "old-b", startTimeUnixNano: "2000000000" },
+    { traceID: "inside", startTimeUnixNano: "1500000000000" },
+  ];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = new URL(requestUrl(input));
+    if (url.pathname === "/api/search") {
+      const limit = Number(url.searchParams.get("limit"));
+      limits.push(limit);
+
+      return json({ traces: summaries.slice(0, limit) });
+    }
+
+    return json({
+      batches: [tempoBatch({ traceId: "inside", spanId: "root" })],
+    });
+  }) as typeof fetch;
+  try {
+    const chunks = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+        from: 1_000_000,
+        to: 2_000_000,
+      }),
+    );
+    expect(limits).toEqual([2, 4]);
+    expect(
+      chunks.flatMap((chunk) => chunk.rows).map((row) => row.traceId),
+    ).toEqual(["inside"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("overlapping trace search fails without certifying a page at its summary cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const limits: number[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = new URL(requestUrl(input));
+    const limit = Number(url.searchParams.get("limit"));
+    limits.push(limit);
+
+    return json({
+      traces: Array.from({ length: limit }, (_, index) => ({
+        traceID: `old-${index}`,
+        startTimeUnixNano: "1000000000",
+      })),
+    });
+  }) as typeof fetch;
+  try {
+    await expect(
+      Array.fromAsync(
+        fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+          from: 1_000_000,
+          to: 2_000_000,
+        }),
+      ),
+    ).rejects.toThrow("Too many overlapping traces");
+    expect(limits).toEqual([2, 4, 8, 16, 32, 64, 128, 256, 501]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

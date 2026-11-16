@@ -1,6 +1,7 @@
 // The gateway, CLI and dashboard all import this: keep it free of runtime dependencies.
 
 export const MAX_OBSERVABILITY_BACKFILL = 500;
+export const MAX_OBSERVABILITY_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // W3C trace id; all zeros is the "no span" sentinel.
@@ -50,6 +51,11 @@ export type ObservabilitySpanRow = {
 
 export type TaskWaitingOn = "question" | "approval" | "subagent" | "tool";
 
+export type ObservabilityHistoryRange = {
+  from: number;
+  to: number;
+};
+
 export type ObservabilitySubscribeMessage = {
   type: "subscribe";
   stream: "logs" | "traces";
@@ -58,6 +64,7 @@ export type ObservabilitySubscribeMessage = {
   minLevel?: LogLevel;
   // Only the backfill: no live consumer, so a read of history needs no live transport.
   historyOnly?: boolean;
+  range?: ObservabilityHistoryRange;
   // "logs" only: the UUID ending the instance's `logStream`; these lines never reach NATS.
   sandboxId?: string;
   // "traces" only: the backfill searches Tempo for this agent's traces alone.
@@ -99,6 +106,8 @@ export type ObservabilityBackfillMessage = {
   stream: "logs" | "traces";
   entries: ObservabilityLogEntry[] | ObservabilitySpanRow[];
   more?: boolean;
+  range?: ObservabilityHistoryRange;
+  nextTo?: number;
   error?: string;
 };
 
@@ -160,6 +169,22 @@ export function isTraceId(value: unknown): value is string {
   return typeof value === "string" && TRACE_ID_PATTERN.test(value);
 }
 
+function isHistoryRange(value: unknown): value is ObservabilityHistoryRange {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "from" in value &&
+    "to" in value &&
+    typeof value.from === "number" &&
+    typeof value.to === "number" &&
+    Number.isSafeInteger(value.from) &&
+    Number.isSafeInteger(value.to) &&
+    value.from >= 0 &&
+    value.to > value.from &&
+    value.to - value.from <= MAX_OBSERVABILITY_RANGE_MS
+  );
+}
+
 function isStreamName(value: unknown): value is "logs" | "traces" {
   return value === "logs" || value === "traces";
 }
@@ -183,6 +208,7 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
     typeof msg["historyOnly"] !== "boolean"
   )
     return false;
+  if (msg["range"] !== undefined && !isHistoryRange(msg["range"])) return false;
   const minLevel = msg["minLevel"];
   if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
   const sandboxId = msg["sandboxId"];

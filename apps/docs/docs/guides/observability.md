@@ -23,6 +23,8 @@ Members and admins can both read logs and traces. See [Security](security.md).
 
 The search, range and selected run are in the page URL, so a link opens the same view.
 
+Both tabs start with the last hour. Choose a longer range when needed, then use **Load older results** to read earlier pages. A page can be empty even when an older page exists. Search filters the loaded rows; keep paging to search further back. New live rows wait behind **Show new logs/runs**, so the list stays still while you read it. A failed older page keeps the rows already loaded and can be retried.
+
 ## In the terminal
 
 ```bash
@@ -48,6 +50,6 @@ broods trace <trace-id> --json   # one run's every span, then exit
 
 ## Retention
 
-The dashboard replays roughly the last two hours instantly on connect. Older logs and traces load from long-term storage when you page back. Traces are kept 30 days. The Tracing tab lists the last seven days, and an older trace opens by id, such as from a Usage chart bin. Usage totals and cost outlive their traces.
+The dashboard reads history one page at a time within the selected range and receives live updates separately. Traces are kept 30 days. An older trace opens by id, such as from a Usage chart bin. Usage totals and cost outlive their traces.
 
 For your own pipeline, send [webhooks](webhooks.md) to a service you run. [Observability internals](../internals/observability.md) explains how the pipeline works inside.
