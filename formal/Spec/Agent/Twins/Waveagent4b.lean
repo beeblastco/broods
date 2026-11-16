@@ -388,6 +388,7 @@ def compactConversation (call : Json) : Prog Json := do
        ("instructions", Twin.callArg call 0)]]
   if !truthy summary then return Json.null
   let _ ← Prog.effect "this.persistModelMessages" [arr [field summary "message"]]
+  let _ ← Prog.effect "forgetMemoryIndexSnapshots" [thisField call "conversationKey"]
   let cost := match summary with
     | .obj kvs => kvs.foldl (fun (acc : Json) key value =>
         if key == "message" then acc else acc.setObjVal! key value) (Json.mkObj [])

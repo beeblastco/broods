@@ -97,6 +97,11 @@ const APPEND_EVENT_COUNT = 8_000;
 const MEMORY_INDEX_READ_BYTES = 1_024 * 1_024;
 const MEMORY_INDEX_CUT_NOTE =
   "(index cut at 1 MiB: later entries were not loaded. Shorten it to one line per memory.)";
+// A conversation keeps the index it loaded while its prompt cache is warm (Anthropic's 5-minute
+// TTL), so a memory_save does not rewrite the cached prefix. In-process: core runs one replica.
+const MEMORY_INDEX_WARM_MS = 5 * 60 * 1_000;
+const MEMORY_INDEX_SNAPSHOT_MAX_BYTES = 256 * 1_024;
+const memoryIndexSnapshots = new Map<string, MemoryIndexSnapshot>();
 export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
 // call into an error or a denial, so a status read in it stores nothing.
@@ -159,6 +164,11 @@ export interface ContextPreparePhases {
   runtimeMs: number;
   skillsMs: number;
   subagentsMs: number;
+}
+
+interface MemoryIndexSnapshot {
+  content: string | null;
+  usedAt: number;
 }
 
 interface MemoryFile {
@@ -720,6 +730,7 @@ export class Session {
     }
     const { message, ...cost } = summary;
     await this.persistModelMessages([message]);
+    forgetMemoryIndexSnapshots(this.conversationKey);
 
     return { ...cost, messageCount: messages.length };
   }
@@ -1237,6 +1248,25 @@ export class Session {
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
     if (workspace.config.storage.provider === "disk") return null;
+    const snapshotKey = memoryIndexSnapshotKey(
+      this.conversationKey,
+      workspace.namespace,
+    );
+    const now = Date.now();
+    const snapshot = memoryIndexSnapshots.get(snapshotKey);
+    if (snapshot && now - snapshot.usedAt < MEMORY_INDEX_WARM_MS) {
+      snapshot.usedAt = now;
+      return snapshot.content;
+    }
+    const content = await this.readMemoryIndex(workspace);
+    rememberMemoryIndex(snapshotKey, content, now);
+
+    return content;
+  }
+
+  private async readMemoryIndex(
+    workspace: ResolvedWorkspace,
+  ): Promise<string | null> {
     // S3 API, not the mount, so a workspace with no sandbox still serves its memory.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
@@ -1506,6 +1536,14 @@ export function createStoredEventFromModelMessage(
 
 // Runs before admission, as a queued turn replays only the queued events, and after the
 // webhook ack, as a download would hold the provider's connection open.
+// Compaction rewrites the cached history anyway, so the next run reloads the memory index.
+export function forgetMemoryIndexSnapshots(conversationKey: string): void {
+  const prefix = memoryIndexSnapshotKey(conversationKey, "");
+  for (const key of memoryIndexSnapshots.keys()) {
+    if (key.startsWith(prefix)) memoryIndexSnapshots.delete(key);
+  }
+}
+
 export async function ingestChannelAttachments(
   events: ConversationIngressEvent[],
   attachments: Attachment[] | undefined,
@@ -1856,6 +1894,13 @@ function messageTurnsKey(eventId: string): string {
   return `message-turns:${rootEventId(eventId)}`;
 }
 
+function memoryIndexSnapshotKey(
+  conversationKey: string,
+  namespace: string,
+): string {
+  return `${conversationKey}\n${namespace}`;
+}
+
 function missingHarnessRole(
   entries: StoredConversationEntry[],
   agentConfig: AgentConfig,
@@ -1945,6 +1990,27 @@ function projectSystemContextMessages(
       ? [event.message]
       : [];
   });
+}
+
+// Drops cold snapshots on every write, so the map holds only conversations still warm.
+function rememberMemoryIndex(
+  key: string,
+  content: string | null,
+  now: number,
+): void {
+  for (const [other, snapshot] of memoryIndexSnapshots) {
+    if (now - snapshot.usedAt >= MEMORY_INDEX_WARM_MS) {
+      memoryIndexSnapshots.delete(other);
+    }
+  }
+  if (
+    content !== null &&
+    Buffer.byteLength(content) > MEMORY_INDEX_SNAPSHOT_MAX_BYTES
+  ) {
+    memoryIndexSnapshots.delete(key);
+    return;
+  }
+  memoryIndexSnapshots.set(key, { content: content, usedAt: now });
 }
 
 function sanitizeAssistantMessage(

@@ -144,7 +144,10 @@ const compactingAgentConfig = {
 };
 setStorageForTests(testStorage());
 
-afterEach(() => {
+afterEach(async () => {
+  const { forgetMemoryIndexSnapshots } =
+    await import("../src/harness/session.ts");
+  forgetMemoryIndexSnapshots("conversation");
   process.env = { ...ORIGINAL_ENV };
   setSystemTime();
   generateTextMock.mockClear();
@@ -377,6 +380,44 @@ describe("session system context", () => {
       );
     },
   );
+
+  it("keeps a conversation's memory index while its cache is warm, then reloads it", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { forgetMemoryIndexSnapshots } =
+      await import("../src/harness/session.ts");
+    const config = { workspaces: [{ name: "default", workspaceId: "ws_a" }] };
+    const indexIn = async (conversationKey?: string): Promise<string> => {
+      const session = await newSession(config, conversationKey);
+      const context = await session.createEphemeralTurnContext([
+        { role: "user", content: "hello" },
+      ]);
+
+      return (
+        context.system.find((message) =>
+          message.content.includes("Current memory index"),
+        )?.content ?? ""
+      );
+    };
+
+    setSystemTime(new Date("2026-11-16T10:00:00Z"));
+    readS3TextMock.mockResolvedValue("- [a](a.md) — first");
+    expect(await indexIn()).toContain("first");
+    readS3TextMock.mockResolvedValue("- [a](a.md) — second");
+    // Each warm use restarts the 5 minutes, as a cache read restarts the TTL.
+    setSystemTime(new Date("2026-11-16T10:04:00Z"));
+    expect(await indexIn()).toContain("first");
+    setSystemTime(new Date("2026-11-16T10:08:59Z"));
+    expect(await indexIn()).toContain("first");
+    // Another conversation loads its own copy.
+    expect(await indexIn("other-conversation")).toContain("second");
+    setSystemTime(new Date("2026-11-16T10:14:00Z"));
+    expect(await indexIn()).toContain("second");
+
+    readS3TextMock.mockResolvedValue("- [a](a.md) — third");
+    forgetMemoryIndexSnapshots("conversation");
+    expect(await indexIn()).toContain("third");
+    forgetMemoryIndexSnapshots("other-conversation");
+  });
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
