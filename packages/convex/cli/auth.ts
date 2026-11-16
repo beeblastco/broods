@@ -423,7 +423,7 @@ export const resolveUserLogin = internalQuery({
     { authId, org },
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
     const orgs = await administeredOrgs(ctx, authId);
-    // Only the user moves activeOrgId (switch, create org): being added elsewhere never does.
+    // Only the user's own actions move activeOrgId, and joining an org needs their acceptance.
     const activeOrgId = (await userByAuthId(ctx, authId))?.activeOrgId;
     const active = orgs.filter(({ _id }) => _id === activeOrgId);
     const unnamed = active.length === 1 ? active : orgs;
