@@ -2,6 +2,12 @@
 
 Bun workspaces monorepo. this file = rules for whole repo. each workspace have own `AGENTS.md` with its own gotcha. read that one when you touch that folder, ignore rest.
 
+## Value
+
+Broods runs AI agents for you: you describe an agent in TypeScript (its model, its tools, where it runs code, which chat apps it answers in) and `broods deploy` puts it in the cloud. People pick it because one definition gives the agent a machine to run code on, files and memory that persist, and a presence in 13 chat apps, on the model provider they already pay for. The whole stack is source-available and self-hostable, so the data, the AWS account and the API keys stay theirs.
+
+The idea is the one behind eve (Vercel's agent framework), Convex and Railway: you define in code what the thing does, and the platform owns everything it needs to run in production. A change that makes a broods user assemble or operate those pieces themselves goes against it.
+
 ## Workspaces
 
 - `apps/core` (`@broods/core`) is the agent harness. one Bun container behind Traefik. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
