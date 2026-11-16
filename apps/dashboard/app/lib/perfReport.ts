@@ -38,6 +38,7 @@ const KNOWN_SEGMENTS = new Set([
   "cli-auth",
   "dashboard",
   "healthz",
+  "mcp-auth",
   "org",
   "projects",
   "sandbox",
