@@ -8,10 +8,13 @@ Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` p
 
 These decide which features Broods gets and how each one is built. When a change goes against one, get the user's yes first.
 
-1. **Source available.** Core, the apps and the Convex backend are FSL (`LICENSE.md`): free to use, change and self-host, not to offer as a competing product. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Write "source-available", not "open source".
-2. **Cloud native, managed service first.** This repo and its CI/CD are built to run Broods on our own cloud. Self-hosting is the option beside it, and when the two pull apart the managed service wins. Durable state lives in a persistent store, never on one machine's disk.
-3. **Enterprise ready: secure and safe agents.** Safe by default, one narrow job per credential, tenants kept apart, untrusted code never in core's own process. When Broods cannot enforce a limit, it refuses instead of granting more.
-4. **Fast at scale, for parallel long-horizon tasks.** Performance is critical. Broods spawns and scales many agents fast, each on a long task, the way Modal does for compute, and gives you the tools to manage them. Agents are moving to serverless managed runtimes, so a design that is slow to start or only holds for one run at a time is the wrong one.
+1. **Prototype to production.** Broods is for deploying an agent fast and iterating on it. It bridges the gap between a prototype and production.
+2. **Agent first.** Broods is built for both agents and users, agents first. The agent interfaces (MCP, CLI, SDK, development environment) come first and the user interface (dashboard) comes later. The agent interfaces always have every feature the dashboard has, or more.
+3. **Source available and self-hostable.** Broods will always be source available, with a self-host option beside the managed service we provide. For the license see [LICENSE.md](LICENSE.md), and for self-hosting see [self-hosting.md](apps/docs/docs/internals/self-hosting.md). Every decision keeps Broods safe and secure to host, with a footprint small enough to deploy yourself. Our managed service runs some services modified for scale and security. The core stays the same.
+4. **Cloud native, your choice of provider.** We provide a Helm chart and step-by-step guides to deploy to your favourite cloud provider and to integrate with your existing data infrastructure, so Broods agents work with your data seamlessly. You choose your own sandbox provider, data lake type, harness and so on. We always support every type of provider so the choice stays yours.
+5. **Performance is critical at the core.** Broods stays competitive with other agent cloud providers: it handles and spawns agents fast and coordinates integrations so they stay smooth and safe.
+6. **Scalable, parallel, long-horizon tasks.** Broods is built for agents that run autonomously or work with a human. Examples: 24/7 customer agent services, autonomous research agents running simulations, autonomous business operations management, a software factory.
+7. **Open to contributions.** Broods will always be open to contributions and to developers. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Workspaces
 
