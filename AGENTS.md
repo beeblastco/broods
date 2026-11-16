@@ -4,14 +4,14 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 ## Value
 
-Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
+Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. The main use case is customer-facing agents. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
 
 These decide which features Broods gets and how each one is built. When a change goes against one, get the user's yes first.
 
 1. **Source available.** Core, the apps and the Convex backend are FSL (`LICENSE.md`): free to use, change and self-host, not to offer as a competing product. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Write "source-available", not "open source".
 2. **Cloud native, managed service first.** This repo and its CI/CD are built to run Broods on our own cloud. Self-hosting is the option beside it, and when the two pull apart the managed service wins. Durable state lives in a persistent store, never on one machine's disk.
 3. **Enterprise ready: secure and safe agents.** Safe by default, one narrow job per credential, tenants kept apart, untrusted code never in core's own process. When Broods cannot enforce a limit, it refuses instead of granting more.
-4. **Scalable, parallel, long-horizon tasks.** Broods is built for many agents running long tasks side by side. A design that only holds for one short run at a time is the wrong one.
+4. **Fast at scale, for parallel long-horizon tasks.** Performance is critical. Broods spawns and scales many agents fast, each on a long task, the way Modal does for compute, and gives you the tools to manage them. Agents are moving to serverless managed runtimes, so a design that is slow to start or only holds for one run at a time is the wrong one.
 
 ## Workspaces
 
