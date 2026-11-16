@@ -144,7 +144,11 @@ const compactingAgentConfig = {
 };
 setStorageForTests(testStorage());
 
-afterEach(() => {
+afterEach(async () => {
+  const { forgetMemoryIndexSnapshots } =
+    await import("../src/harness/session.ts");
+  forgetMemoryIndexSnapshots("conversation");
+  forgetMemoryIndexSnapshots("other-conversation");
   process.env = { ...ORIGINAL_ENV };
   setSystemTime();
   generateTextMock.mockClear();
@@ -377,6 +381,85 @@ describe("session system context", () => {
       );
     },
   );
+
+  it("keeps a conversation's memory index while its cache is warm, then reloads it", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { forgetMemoryIndexSnapshots } =
+      await import("../src/harness/session.ts");
+    const config = { workspaces: [{ name: "default", workspaceId: "ws_a" }] };
+    const indexIn = async (conversationKey?: string): Promise<string> => {
+      const session = await newSession(config, conversationKey);
+      const context = await session.createEphemeralTurnContext([
+        { role: "user", content: "hello" },
+      ]);
+
+      return (
+        context.system.find((message) =>
+          message.content.includes("Current memory index"),
+        )?.content ?? ""
+      );
+    };
+
+    setSystemTime(new Date("2026-11-16T10:00:00Z"));
+    readS3TextMock.mockResolvedValue("- [a](a.md) — first");
+    expect(await indexIn()).toContain("first");
+    readS3TextMock.mockResolvedValue("- [a](a.md) — second");
+    // Each warm use restarts the 5 minutes, as a cache read restarts the TTL.
+    setSystemTime(new Date("2026-11-16T10:04:00Z"));
+    expect(await indexIn()).toContain("first");
+    setSystemTime(new Date("2026-11-16T10:08:59Z"));
+    expect(await indexIn()).toContain("first");
+    // Another conversation loads its own copy.
+    expect(await indexIn("other-conversation")).toContain("second");
+    setSystemTime(new Date("2026-11-16T10:14:00Z"));
+    expect(await indexIn()).toContain("second");
+
+    readS3TextMock.mockResolvedValue("- [a](a.md) — third");
+    forgetMemoryIndexSnapshots("conversation");
+    expect(await indexIn()).toContain("third");
+  });
+
+  it("keeps the memory index warm through a long run, but no longer than an hour", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const config = { workspaces: [{ name: "default", workspaceId: "ws_a" }] };
+    const prompt = [{ role: "user" as const, content: "hello" }];
+    const indexOf = (system: { content: string }[]): string =>
+      system.find((message) => message.content.includes("Current memory index"))
+        ?.content ?? "";
+
+    setSystemTime(new Date("2026-11-16T10:00:00Z"));
+    readS3TextMock.mockResolvedValue("- [a](a.md) — first");
+    const longRun = await newSession(config);
+    await longRun.createEphemeralTurnContext(prompt);
+    readS3TextMock.mockResolvedValue("- [a](a.md) — second");
+    // Model steps every 4 minutes for 8 minutes keep the snapshot warm.
+    setSystemTime(new Date("2026-11-16T10:04:00Z"));
+    await longRun.createEphemeralTurnContext(prompt);
+    setSystemTime(new Date("2026-11-16T10:08:00Z"));
+    await longRun.createEphemeralTurnContext(prompt);
+    setSystemTime(new Date("2026-11-16T10:12:30Z"));
+    expect(
+      indexOf(
+        (await (await newSession(config)).createEphemeralTurnContext(prompt))
+          .system,
+      ),
+    ).toContain("first");
+
+    // Kept warm every 4 minutes, it still reloads once the load is an hour old.
+    for (let minute = 16; minute < 60; minute += 4) {
+      setSystemTime(
+        new Date(`2026-11-16T10:${String(minute).padStart(2, "0")}:00Z`),
+      );
+      await (await newSession(config)).createEphemeralTurnContext(prompt);
+    }
+    setSystemTime(new Date("2026-11-16T11:00:00Z"));
+    expect(
+      indexOf(
+        (await (await newSession(config)).createEphemeralTurnContext(prompt))
+          .system,
+      ),
+    ).toContain("second");
+  });
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";

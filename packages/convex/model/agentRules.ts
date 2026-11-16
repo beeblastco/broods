@@ -99,6 +99,7 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "grep",
   "list_schedules",
   "load_skill",
+  "memory_delete",
   "memory_save",
   "message-agents",
   "read",

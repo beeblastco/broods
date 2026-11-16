@@ -144,7 +144,8 @@ export function compatibilityApprovalStatus(
   if (
     toolName === "write" ||
     toolName === "edit" ||
-    toolName === "memory_save"
+    toolName === "memory_save" ||
+    toolName === "memory_delete"
   ) {
     return editNeedsApproval(options.workspaces, workspace)
       ? "user-approval"
@@ -487,7 +488,7 @@ export function policyInputForTool(
     return { action: "workspace.read", ...base };
   if (toolName === "write" || toolName === "edit")
     return { action: "workspace.write", ...base };
-  if (toolName === "memory_save") {
+  if (toolName === "memory_save" || toolName === "memory_delete") {
     const title = typeof record.title === "string" ? record.title : "";
 
     return {

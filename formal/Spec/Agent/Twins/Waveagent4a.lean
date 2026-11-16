@@ -265,7 +265,7 @@ def policyInputForTool (call : Json) : Prog Json := do
     return build "workspace.read" []
   if name == "write" || name == "edit" then
     return build "workspace.write" []
-  if name == "memory_save" then
+  if name == "memory_save" || name == "memory_delete" then
     let title := field record "title"
     let slug ← Prog.effect "memorySlug" [if isString title then title else str ""]
     return build "workspace.write" [("filePath", str s!"memory/{text slug}.md")]
