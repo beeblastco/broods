@@ -2,6 +2,20 @@
 
 Bun workspaces monorepo. this file = rules for whole repo. each workspace have own `AGENTS.md` with its own gotcha. read that one when you touch that folder, ignore rest.
 
+## Value
+
+Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
+
+These decide which features Broods gets and how each one is built. When a change goes against one, get the user's yes first.
+
+1. Broods is for deploying your agent fast and iterating on it. It bridges the gap between prototype and production.
+2. Broods is built for both agents and users, agents first. It supports the agent interfaces first (MCP, CLI, SDK, development environment) and the user interface (dashboard) later. The agent interfaces always have every feature the user interface has, or more.
+3. Broods will always be source available, with a self-host option beside the managed service we provide. For the license see [LICENSE.md](LICENSE.md), and for how to self-host see [self-hosting.md](apps/docs/docs/internals/self-hosting.md). Every decision makes sure Broods is safe and secure to host, with a footprint small enough to deploy yourself with ease. The services we run for our own managed service have some modifications for scale and security. The core remains the same.
+4. Broods is cloud native. We provide a Helm chart and step-by-step guides to deploy to your favourite cloud provider, and to integrate with your existing data infrastructure so Broods agents can work with your data seamlessly. The chart lives in a separate repo that holds only the resources for deploying and running a self-hosted Broods. You can choose your own sandbox provider, data lake type, harness and so on to drive your agent. We always support different types of provider, so the choice is yours.
+5. Broods always keeps its performance competitive with other agent cloud providers. It handles and spawns agents fast, and coordinates integrations so they stay smooth and safe. Performance is critical at the core of Broods.
+6. Broods is built specifically for scalable, parallel, long-horizon agent tasks, where the agent operates autonomously or works with a human. Examples of use cases that benefit from Broods: 24/7 customer agent services, autonomous research agents running simulations, autonomous business operations management, software factories.
+7. Broods will always be open to contributions and to developers. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Workspaces
 
 - `apps/core` (`@broods/core`) is the agent harness. one Bun container behind Traefik. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
