@@ -47,7 +47,7 @@ Whether a tool call asks first is the agent's own config, the same as on every o
 | Credential                          | Agents                                                              |
 | ----------------------------------- | ------------------------------------------------------------------- |
 | Account key (`bask_...`)            | Every agent in the account                                          |
-| OAuth sign-in                       | Every agent in your organization's account (`?org=` picks one)      |
+| OAuth sign-in                       | Every agent in the account of the organization picked at sign-in    |
 | Member's stage ticket (`bdts_...`)  | Every agent of that stage                                           |
 | Runtime key (`bsk_...`)             | Public agents of its stage, with a user token where one is required |
 | Run token, role session, scoped key | None                                                                |
