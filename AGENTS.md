@@ -4,7 +4,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 ## Value
 
-Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. The main use case is customer-facing agents. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
+Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
 
 These decide which features Broods gets and how each one is built. When a change goes against one, get the user's yes first.
 
