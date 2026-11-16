@@ -50,13 +50,18 @@ Usage notes:
         // The index goes first, so a failed rewrite leaves the file and its line both in place.
         // grep exits 2 on a read error, and rewriting then would empty the index.
         const code = [
-          `if [ ! -f ${qFile} ] && ! { [ -f ${qIndex} ] && grep -q ${qPattern} ${qIndex}; }; then printf 'Error: no memory at %s\\n' ${qFile} >&2; exit 1; fi`,
+          `found=no`,
+          `if [ -f ${qIndex} ]; then grep -q ${qPattern} ${qIndex}; rc=$?; [ "$rc" -le 1 ] || exit 1; if [ "$rc" -eq 0 ]; then found=yes; fi; fi`,
+          `if [ ! -f ${qFile} ] && [ "$found" = no ]; then printf 'Error: no memory at %s\\n' ${qFile} >&2; exit 1; fi`,
           `index_note='found no line for it in'`,
-          `if [ -f ${qIndex} ] && grep -q ${qPattern} ${qIndex}; then index_body=$(grep -v ${qPattern} ${qIndex}); [ "$?" -le 1 ] || exit 1; printf '%s\\n' "$index_body" > ${qIndex} && sync ${qIndex} || exit 1; index_note='removed its line from'; fi`,
+          `if [ "$found" = yes ]; then index_body=$(grep -v ${qPattern} ${qIndex}); [ "$?" -le 1 ] || exit 1; printf '%s\\n' "$index_body" > ${qIndex} && sync ${qIndex} || exit 1; index_note='removed its line from'; fi`,
+          `size=0`,
+          `if [ -f ${qFile} ]; then size=$(wc -c < ${qFile}); fi`,
           `text=$(head -c 4096 ${qFile} 2>/dev/null || true)`,
           `rm -f ${qFile}`,
           `printf 'Deleted memory %s and %s %s.\\n' ${qFile} "$index_note" ${qIndex}`,
           `if [ -n "$text" ]; then printf 'Its text was:\\n%s\\n' "$text"; fi`,
+          `if [ "$size" -gt 4096 ]; then printf '(first 4096 of %s bytes)\\n' "$((size))"; fi`,
         ].join(" && ");
         const result = await runSandbox(ws.sandbox, ws.namespace, code, {
           onSandboxCpu: context.onSandboxCpu,

@@ -216,7 +216,7 @@ private def memoryExecute (call : Json) : Prog Json := do
     let qLine ← Prog.effect "shellQuote" [toJson indexLine]
     let code :=
       s!"mkdir -p {render qDir} && printf '%s' {render qEntry} | base64 -d > {render qFile} && sync {render qFile} && " ++
-      s!"if [ -f {render qIndex} ]; then index_body=$(grep -v {render qPattern} {render qIndex}); [ \"$?\" -le 1 ] || exit 1; fi && " ++
+      s!"index_body='' && if [ -f {render qIndex} ]; then index_body=$(grep -v {render qPattern} {render qIndex}); [ \"$?\" -le 1 ] || exit 1; fi && " ++
       s!"if [ -z \"$index_body\" ]; then index_body={render qHeader}; fi && " ++
       s!"printf '%s\\n%s\\n' \"$index_body\" {render qLine} > {render qIndex} && " ++
       s!"sync {render qIndex} && printf 'Saved memory %s (indexed in %s)\\n' {render qFile} {render qIndex}"

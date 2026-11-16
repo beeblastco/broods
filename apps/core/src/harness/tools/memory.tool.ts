@@ -103,7 +103,7 @@ Usage notes:
           // grep exits 2 on a read error, and rewriting then would empty the index.
           const code =
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
-            `if [ -f ${qIndex} ]; then index_body=$(grep -v ${shellQuote(indexLinePattern)} ${qIndex}); [ "$?" -le 1 ] || exit 1; fi && ` +
+            `index_body='' && if [ -f ${qIndex} ]; then index_body=$(grep -v ${shellQuote(indexLinePattern)} ${qIndex}); [ "$?" -le 1 ] || exit 1; fi && ` +
             `if [ -z "$index_body" ]; then index_body=${qHeader}; fi && ` +
             `printf '%s\\n%s\\n' "$index_body" ${shellQuote(indexLine)} > ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;

@@ -1663,6 +1663,16 @@ describe("memory tool", () => {
         memory_delete.execute({ title: "Q3 launch date" }),
       ).rejects.toThrow("Error: no memory at memory/q3-launch-date.md");
 
+      // A long memory comes back cut, and the result says how much was shown.
+      await memory_save.execute({
+        title: "Long note",
+        description: "A note over 4 KB.",
+        content: "x".repeat(5_000),
+      });
+      await expect(
+        memory_delete.execute({ title: "Long note" }),
+      ).resolves.toMatch(/\(first 4096 of \d+ bytes\)$/);
+
       // A hand-edited index line is not the shape memory_save writes, so the result says so.
       writeFileSync(
         join(workspace, "memory/MEMORY.md"),
@@ -1706,10 +1716,13 @@ describe("memory tool", () => {
       );
 
       const memory_delete = await memoryDelete(ctx);
-      await memory_delete.execute({ title: "Kept fact" });
+      await expect(
+        memory_delete.execute({ title: "Kept fact" }),
+      ).rejects.toThrow();
       expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
         index,
       );
+      expect(existsSync(join(workspace, "memory/kept-fact.md"))).toBe(true);
     } finally {
       microvmFetchMock.mockImplementation(microvmFetchResponse);
       rmSync(workspace, { recursive: true, force: true });
