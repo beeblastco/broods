@@ -145,6 +145,18 @@ describe("AuthKit sign-in at /mcp", () => {
     expect(askedOrgs.length).toBe(asked);
   });
 
+  it("tells a client whose picked org refuses it to sign in again", async () => {
+    const response = await handleMcpRequest(
+      request(await token({ org: "acme", subject: "user_member" })),
+      noReplay,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Sign in again to pick another organization.",
+    );
+  });
+
   it("refuses a token minted for another resource", async () => {
     const response = await handleMcpRequest(
       request(await token({ audience: "https://other.test" })),

@@ -671,16 +671,25 @@ export const mcpSignInOrgs = query({
   args: {},
   returns: v.array(
     v.object({
+      orgId: v.id("orgs"),
       slug: v.string(),
       name: v.string(),
       role: orgMembersFields.role,
       selected: v.boolean(),
+      provisioned: v.boolean(),
     }),
   ),
   handler: async (
     ctx,
   ): Promise<
-    { slug: string; name: string; role: OrgRole; selected: boolean }[]
+    {
+      orgId: Id<"orgs">;
+      slug: string;
+      name: string;
+      role: OrgRole;
+      selected: boolean;
+      provisioned: boolean;
+    }[]
   > => {
     const authUser = await authKit.getAuthUser(ctx);
     const user = authUser ? await userByAuthId(ctx, authUser.id) : null;
@@ -688,18 +697,25 @@ export const mcpSignInOrgs = query({
     const selected = (await getActiveOrgForUser(ctx, user._id))?._id;
     const orgs = await administeredOrgs(ctx, user);
 
-    return orgs
-      .map(({ _id, name, role, slug }) => ({
+    const listed = await Promise.all(
+      orgs.map(async ({ _id, name, role, slug }) => ({
+        orgId: _id,
         slug: slug,
         name: name,
         role: role,
         selected: _id === selected,
-      }))
-      .sort(
-        (a, b) =>
-          Number(b.selected) - Number(a.selected) ||
-          a.name.localeCompare(b.name),
-      );
+        provisioned:
+          (await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", _id))
+            .first()) !== null,
+      })),
+    );
+
+    return listed.sort(
+      (a, b) =>
+        Number(b.selected) - Number(a.selected) || a.name.localeCompare(b.name),
+    );
   },
 });
 

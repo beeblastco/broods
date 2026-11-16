@@ -71,7 +71,14 @@ export async function resolveAuthKitAuth(
     };
   }
   const login = await getStorage().accounts.getForUser(subject, org ?? urlOrg);
-  if ("refused" in login) return { kind: "refused", message: login.refused };
+  if ("refused" in login) {
+    return {
+      kind: "refused",
+      message: org
+        ? `${login.refused} Sign in again to pick another organization.`
+        : login.refused,
+    };
+  }
 
   return {
     kind: "signed-in",

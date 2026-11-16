@@ -2,6 +2,7 @@
 
 import { currentSession, selfHosted } from "@/app/lib/selfHostSession";
 import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { ConvexHttpClient } from "convex/browser";
 import { redirect } from "next/navigation";
@@ -29,24 +30,46 @@ export function firstParam(
 
 /**
  * A Convex client for the caller whose user row and active org exist, with the org's API
- * account provisioned: what `broods login` and MCP sign-in need before they hand out access.
+ * account provisioned: what `broods login` needs before it hands out access.
  */
 export async function provisionedCaller(
+  accessToken: string,
+): Promise<ConvexHttpClient> {
+  const client = await syncedCaller(accessToken);
+  const org = await client.mutation(api.org.orgs.getOrCreate, {});
+  if (org.needsProvision) {
+    await provisionOrg(
+      client,
+      org.orgId,
+      async () =>
+        (await client.mutation(api.org.orgs.getOrCreate, {})).needsProvision,
+    );
+  }
+
+  return client;
+}
+
+/** Creates `orgId`'s API account; `stillMissing` tells a lost race from a real failure. */
+export async function provisionOrg(
+  client: ConvexHttpClient,
+  orgId: Id<"orgs">,
+  stillMissing: () => Promise<boolean>,
+): Promise<void> {
+  try {
+    await client.action(api.org.lifecycle.provision, { orgId: orgId });
+  } catch (error) {
+    // Another tab may have provisioned first; only a still-missing account is a failure.
+    if (await stillMissing()) throw error;
+  }
+}
+
+/** A Convex client for the caller, once their user row exists. */
+export async function syncedCaller(
   accessToken: string,
 ): Promise<ConvexHttpClient> {
   const client = convexCaller(accessToken);
   // A login right after signup can beat the WorkOS webhook that creates the user row.
   await client.action(api.user.ensureSynced, {});
-  const org = await client.mutation(api.org.orgs.getOrCreate, {});
-  if (org.needsProvision) {
-    try {
-      await client.action(api.org.lifecycle.provision, { orgId: org.orgId });
-    } catch (error) {
-      // Another tab may have provisioned first; only a still-missing account is a failure.
-      if ((await client.mutation(api.org.orgs.getOrCreate, {})).needsProvision)
-        throw error;
-    }
-  }
 
   return client;
 }

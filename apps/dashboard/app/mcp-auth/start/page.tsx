@@ -5,17 +5,16 @@ import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import { connectMcpClient } from "@/app/mcp-auth/start/actions";
 import {
-  completeMcpSignIn,
+  failureOf,
   MCP_SIGN_IN_PATH,
   type McpSignInOrg,
 } from "@/app/lib/mcpSignIn";
 import { selfHosted } from "@/app/lib/selfHostSession";
-import { firstParam, provisionedCaller } from "@/app/lib/serverPage";
+import { firstParam, syncedCaller } from "@/app/lib/serverPage";
 import { api } from "@broods/convex/_generated/api";
 import type { OrgRole } from "@broods/convex/model/ownership/org";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -26,7 +25,7 @@ export default async function McpAuthStartPage({
 }): Promise<React.JSX.Element> {
   const params = await searchParams;
   const externalAuthId = firstParam(params.external_auth_id);
-  const failed = firstParam(params.failed);
+  const failed = failureOf(firstParam(params.failed));
   if (selfHosted) {
     return (
       <Failure
@@ -68,13 +67,12 @@ export default async function McpAuthStartPage({
     );
   }
 
-  const { accessToken, user } = await withAuth({ ensureSignedIn: true });
-  const client = await provisionedCaller(accessToken);
+  const { accessToken } = await withAuth({ ensureSignedIn: true });
+  const client = await syncedCaller(accessToken);
+  // A first sign-in creates the user's own org, as the dashboard and `broods login` do.
+  await client.mutation(api.org.orgs.getOrCreate, {});
   const orgs = await client.query(api.cli.auth.mcpSignInOrgs, {});
   if (orgs.length === 0) return <NotAdmin />;
-  if (orgs.length === 1) {
-    redirect(await completeMcpSignIn(user, externalAuthId, orgs[0]!));
-  }
 
   return (
     <StatusPage

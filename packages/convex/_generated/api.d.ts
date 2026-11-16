@@ -1200,6 +1200,8 @@ export declare const api: {
         {},
         Array<{
           name: string;
+          orgId: Id<"orgs">;
+          provisioned: boolean;
           role: "owner" | "admin" | "member";
           selected: boolean;
           slug: string;
