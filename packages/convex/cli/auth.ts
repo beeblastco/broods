@@ -692,7 +692,10 @@ export const mcpSignInOrgs = query({
     }[]
   > => {
     const authUser = await authKit.getAuthUser(ctx);
-    const user = authUser ? await userByAuthId(ctx, authUser.id) : null;
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+    const user = await userByAuthId(ctx, authUser.id);
     if (!user) return [];
     const selected = (await getActiveOrgForUser(ctx, user._id))?._id;
     const orgs = await administeredOrgs(ctx, user);
