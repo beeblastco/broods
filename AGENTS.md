@@ -4,25 +4,15 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 ## Value
 
-Broods runs AI agents for you. You describe an agent in TypeScript (its model, its tools, where it runs code, which chat apps it answers in) and `broods deploy` puts it in the cloud. You then call it from your app, a terminal, a chat app or a schedule.
-
-You can think of Broods as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents: you define in code what the thing does, and the platform takes on the runtime work each agent author would otherwise set up again.
+Broods runs AI agents: you describe an agent in TypeScript and `broods deploy` puts it in the cloud. Think of it as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents.
 
 ### What we never compromise on
 
-These are not features. They decide which features Broods gets and how each one is built. When a change goes against one, say so and get the user's yes first.
+These decide which features Broods gets and how each one is built. When a change goes against one, get the user's yes first.
 
-#### 1. Source available
-
-The code is public, and anyone, a company included, may use, change and self-host Broods. The one limit, as with Convex, is the license: core, the apps and the Convex backend are FSL (`LICENSE.md`), which forbids offering this software to others as a competing commercial product or service, and each release becomes Apache 2.0 two years after it ships. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Build in the open, and write "source-available", not "open source", in docs and copy. Self-hosting is a supported option: when a new capability cannot run self-hosted, the docs say so.
-
-#### 2. Cloud native
-
-Keep durable state in a persistent store, never on one machine's disk, and let CI deploy and replace every piece without hand work. The managed service comes first: this repo and its CI/CD are built to run Broods on our own cloud, and self-hosting is the option beside it. Prefer a managed primitive over a service we would have to operate, and when that and self-hosting pull apart, the managed service wins. Respect each service's scaling limits: a piece that keeps live state in memory says so in its own `AGENTS.md`, as core does (one replica, because its machine registry and worker queue are in memory).
-
-#### 3. Enterprise ready: secure and safe agents
-
-A company must be able to trust an agent with its data and its tools. In every design: the safe choice is the default, each credential does one narrow job, tenants are kept apart and the docs say where they are not yet, untrusted code never runs in core's own process, and what an agent may do is bounded and recorded. When Broods cannot enforce a limit, it refuses instead of quietly granting more.
+1. **Source available.** Core, the apps and the Convex backend are FSL (`LICENSE.md`): free to use, change and self-host, not to offer as a competing product. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Write "source-available", not "open source".
+2. **Cloud native, managed service first.** This repo and its CI/CD are built to run Broods on our own cloud. Self-hosting is the option beside it, and when the two pull apart the managed service wins. Durable state lives in a persistent store, never on one machine's disk.
+3. **Enterprise ready: secure and safe agents.** Safe by default, one narrow job per credential, tenants kept apart, untrusted code never in core's own process. When Broods cannot enforce a limit, it refuses instead of granting more.
 
 ## Workspaces
 
