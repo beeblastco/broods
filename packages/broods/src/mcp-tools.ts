@@ -691,9 +691,25 @@ export function registerObservability(
   server.registerTool(
     "list-runs",
     {
-      description: `A stage's recent runs, newest first: status, duration, tokens, error and trace id. Filter by agent id or status. ${UNTRUSTED}`,
+      description: `A page of runs from the last hour by default, newest first: status, duration, tokens, error and trace id. Filter by agent id or status. Follow nextTo with the same from to read older pages; an empty page can have older results. ${UNTRUSTED}`,
       annotations: READ_ONLY,
       inputSchema: {
+        from: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe(
+            "Inclusive start in epoch milliseconds; defaults to one hour before to.",
+          ),
+        to: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Exclusive end in epoch milliseconds; use nextTo with the same from for older results.",
+          ),
         limit: z.number().int().positive().max(50).optional(),
         agentId: z.string().min(1).optional(),
         status: z.enum(["waiting", "needs_input", "ok", "error"]).optional(),
@@ -702,19 +718,25 @@ export function registerObservability(
     },
     async ({
       agentId,
+      from,
+      to,
       limit,
       project,
       stage,
       status,
     }): Promise<CallToolResult> =>
-      await attempt(
-        async (): Promise<unknown> =>
-          await login.listRuns(scopeOf(project, stage), {
-            ...(agentId ? { agentId: agentId } : {}),
-            ...(limit ? { limit: limit } : {}),
-            ...(status ? { status: status } : {}),
-          }),
-      ),
+      await attempt(async (): Promise<unknown> => {
+        const end = to ?? Date.now();
+        const range = { from: from ?? end - 3_600_000, to: end };
+        const result = await login.listRuns(scopeOf(project, stage), {
+          range: range,
+          ...(agentId ? { agentId: agentId } : {}),
+          ...(limit ? { limit: limit } : {}),
+          ...(status ? { status: status } : {}),
+        });
+
+        return { ...result, range: range };
+      }),
   );
 
   server.registerTool(
@@ -734,9 +756,25 @@ export function registerObservability(
   server.registerTool(
     "read-logs",
     {
-      description: `A stage's recent logs, or one sandbox's with sandboxId. ${UNTRUSTED}`,
+      description: `A page of logs from the last hour by default, or one sandbox's with sandboxId. Follow nextTo with the same from to read older pages; an empty page can have older results. ${UNTRUSTED}`,
       annotations: READ_ONLY,
       inputSchema: {
+        from: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe(
+            "Inclusive start in epoch milliseconds; defaults to one hour before to.",
+          ),
+        to: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Exclusive end in epoch milliseconds; use nextTo with the same from for older results.",
+          ),
         limit: z.number().int().positive().max(200).optional(),
         level: z.enum(LOG_LEVELS).optional(),
         sandboxId: z.string().min(1).optional(),
@@ -745,19 +783,24 @@ export function registerObservability(
     },
     async ({
       level,
+      from,
+      to,
       limit,
       project,
       sandboxId,
       stage,
     }): Promise<CallToolResult> =>
-      await attempt(
-        async (): Promise<unknown> =>
-          await login.readLogs(scopeOf(project, stage), {
-            ...(level ? { level: level } : {}),
-            ...(limit ? { limit: limit } : {}),
-            ...(sandboxId ? { sandboxId: sandboxId } : {}),
-          }),
-      ),
+      await attempt(async (): Promise<unknown> => {
+        const end = to ?? Date.now();
+        const options = {
+          range: { from: from ?? end - 3_600_000, to: end },
+          ...(level ? { level: level } : {}),
+          ...(limit ? { limit: limit } : {}),
+          ...(sandboxId ? { sandboxId: sandboxId } : {}),
+        };
+
+        return await login.readLogPage(scopeOf(project, stage), options);
+      }),
   );
 }
 

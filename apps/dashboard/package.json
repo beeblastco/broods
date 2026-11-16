@@ -17,6 +17,7 @@
     "lint": "bun --bun oxlint -c ../../.oxlintrc.json .",
     "test": "bun test tests --pass-with-no-tests",
     "test:ui": "playwright test --project=ui",
+    "probe:rotate": "bun e2e/rotateProbePassword.ts",
     "test:app": "playwright test --project=app",
     "perf": "playwright test --project=perf"
   },

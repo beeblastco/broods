@@ -86,3 +86,23 @@ Workspace examples:
 
 - `workspace-multiple`: one agent with two named S3-backed workspaces.
 - `workspace-readonly`: one shared workspace, a writer with a sandbox and two read-only readers.
+
+## Read a history page
+
+History reads use a member login, not the runtime key used to run an agent. With `BROODS_SESSION_TOKEN` set to a login credential, this example reads one page without starting a live subscription:
+
+```ts
+import { BroodsAccountClient } from "broods";
+
+const account = new BroodsAccountClient({
+  sessionToken: process.env.BROODS_SESSION_TOKEN,
+});
+const to = Date.now();
+const page = await account.readLogPage(
+  { project: "demo", stage: "development" },
+  { range: { from: to - 3_600_000, to: to }, limit: 50 },
+);
+console.log(page.logs, page.nextTo, page.incomplete);
+```
+
+Keep the original `from` and use `nextTo` as `to` for the next page. Retry the same range after `incomplete`. The [SDK history reference](../../apps/docs/docs/reference/sdk.md#log-and-run-history-pages) covers run pages and filters.
