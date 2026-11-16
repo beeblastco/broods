@@ -1600,8 +1600,8 @@ describe("memory tool", () => {
     };
   }
 
-  it("saves, then deletes one memory and only its index line, in a real shell", async () => {
-    const workspace = mkdtempSync(join(tmpdir(), "memory-delete-"));
+  // Runs each sandbox command in a real bash inside `workspace`, `binDir` first on PATH.
+  function runSandboxInShell(workspace: string, binDir?: string): void {
     microvmFetchMock.mockImplementation(
       async (url: string, init: { body: string }): Promise<Response> => {
         const { code } = JSON.parse(init.body);
@@ -1610,6 +1610,9 @@ describe("memory tool", () => {
         }
         const run = Bun.spawnSync(["/bin/bash", "-c", code], {
           cwd: workspace,
+          env: binDir
+            ? { ...process.env, PATH: `${binDir}:${process.env.PATH}` }
+            : process.env,
         });
 
         return Response.json({
@@ -1623,6 +1626,11 @@ describe("memory tool", () => {
         });
       },
     );
+  }
+
+  it("saves, then deletes one memory and only its index line, in a real shell", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "memory-delete-"));
+    runSandboxInShell(workspace);
     const ctx = workspaceCtx() as unknown as Record<string, unknown>;
     const memory_save = await memorySave(ctx);
     const memory_delete = await memoryDelete(ctx);
@@ -1639,11 +1647,11 @@ describe("memory tool", () => {
         content: "Mai.",
       });
 
-      await expect(
-        memory_delete.execute({ title: "Q3 launch date" }),
-      ).resolves.toBe(
-        "Deleted memory memory/q3-launch-date.md (removed from memory/MEMORY.md)",
+      const result = await memory_delete.execute({ title: "Q3 launch date" });
+      expect(result).toStartWith(
+        "Deleted memory memory/q3-launch-date.md and removed its line from memory/MEMORY.md.\nIts text was:\n---\nname: q3-launch-date",
       );
+      expect(result).toContain("Q3.");
       expect(existsSync(join(workspace, "memory/q3-launch-date.md"))).toBe(
         false,
       );
@@ -1654,6 +1662,54 @@ describe("memory tool", () => {
       await expect(
         memory_delete.execute({ title: "Q3 launch date" }),
       ).rejects.toThrow("Error: no memory at memory/q3-launch-date.md");
+
+      // A hand-edited index line is not the shape memory_save writes, so the result says so.
+      writeFileSync(
+        join(workspace, "memory/MEMORY.md"),
+        "# Memory Index\n- [Launch owner](launch-owner.md) - edited by hand\n",
+      );
+      await expect(
+        memory_delete.execute({ title: "Launch owner" }),
+      ).resolves.toStartWith(
+        "Deleted memory memory/launch-owner.md and found no line for it in memory/MEMORY.md.",
+      );
+    } finally {
+      microvmFetchMock.mockImplementation(microvmFetchResponse);
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the index whole when grep cannot read it", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "memory-grep-fails-"));
+    const binDir = join(workspace, ".bin");
+    mkdirSync(binDir);
+    writeFileSync(join(binDir, "grep"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+    mkdirSync(join(workspace, "memory"));
+    const index =
+      "# Memory Index\n- [Kept fact](kept-fact.md) — A fact that must survive.\n";
+    writeFileSync(join(workspace, "memory/MEMORY.md"), index);
+    writeFileSync(join(workspace, "memory/kept-fact.md"), "Kept.\n");
+    runSandboxInShell(workspace, binDir);
+    const ctx = workspaceCtx() as unknown as Record<string, unknown>;
+
+    try {
+      const memory_save = await memorySave(ctx);
+      await expect(
+        memory_save.execute({
+          title: "New fact",
+          description: "d",
+          content: "c",
+        }),
+      ).rejects.toThrow();
+      expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
+        index,
+      );
+
+      const memory_delete = await memoryDelete(ctx);
+      await memory_delete.execute({ title: "Kept fact" });
+      expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
+        index,
+      );
     } finally {
       microvmFetchMock.mockImplementation(microvmFetchResponse);
       rmSync(workspace, { recursive: true, force: true });

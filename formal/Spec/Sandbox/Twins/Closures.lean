@@ -208,15 +208,16 @@ private def memoryExecute (call : Json) : Prog Json := do
     let indexLine := s!"- [{cleanTitle}]({render slug}.md) — {cleanDescription}"
     let qFile ← Prog.effect "shellQuote" [toJson filePath]
     let qIndex ← Prog.effect "shellQuote" [toJson "memory/MEMORY.md"]
+    let qHeader ← Prog.effect "shellQuote" [toJson "# Memory Index"]
     let qDir ← Prog.effect "shellQuote" [toJson "memory"]
     let encoded ← Prog.effect "toBase64" [toJson entry]
     let qEntry ← Prog.effect "shellQuote" [encoded]
     let qPattern ← Prog.effect "shellQuote" [toJson s!"^- \\[[^]]*]({render slug}\\.md) — "]
-    let qHeader ← Prog.effect "shellQuote" [toJson "# Memory Index"]
     let qLine ← Prog.effect "shellQuote" [toJson indexLine]
     let code :=
       s!"mkdir -p {render qDir} && printf '%s' {render qEntry} | base64 -d > {render qFile} && sync {render qFile} && " ++
-      s!"index_body=$(\{ [ -f {render qIndex} ] && grep -v {render qPattern} {render qIndex}; } || printf '%s' {render qHeader}) && " ++
+      s!"if [ -f {render qIndex} ]; then index_body=$(grep -v {render qPattern} {render qIndex}); [ \"$?\" -le 1 ] || exit 1; fi && " ++
+      s!"if [ -z \"$index_body\" ]; then index_body={render qHeader}; fi && " ++
       s!"printf '%s\\n%s\\n' \"$index_body\" {render qLine} > {render qIndex} && " ++
       s!"sync {render qIndex} && printf 'Saved memory %s (indexed in %s)\\n' {render qFile} {render qIndex}"
     let metadata ← Prog.effect "sandboxRunMetadata" [context, ws]

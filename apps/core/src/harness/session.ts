@@ -1619,7 +1619,12 @@ function appendToLatestUserEvent(
 // Keeps whole lines within both caps, and says so when it cut anything.
 function capMemoryIndex(head: string): string {
   const overBytes = Buffer.byteLength(head) > MEMORY_INDEX_MAX_BYTES;
-  const whole = overBytes ? head.slice(0, head.lastIndexOf("\n") + 1) : head;
+  const capped = overBytes
+    ? Buffer.from(head).subarray(0, MEMORY_INDEX_MAX_BYTES).toString("utf8")
+    : head;
+  const whole = overBytes
+    ? capped.slice(0, capped.lastIndexOf("\n") + 1)
+    : head;
   const lines = whole.split("\n");
   // A trailing newline leaves one empty item that is not a line.
   const lineCount = whole.endsWith("\n") ? lines.length - 1 : lines.length;
@@ -1672,7 +1677,7 @@ function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
-- Fix a wrong memory by saving it again under the same title, and delete one that no longer holds with memory_delete. Only the index's first 200 lines (25 KB) load, so keep one short line per memory.
+- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;

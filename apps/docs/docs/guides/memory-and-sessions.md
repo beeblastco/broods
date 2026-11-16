@@ -21,7 +21,7 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
-Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together. The workspace bucket keeps earlier versions of every file, so a deleted memory can be restored.
+Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together and returns the deleted text, so the text stays in the conversation history and the agent can save it again. Only the Broods-managed bucket also keeps earlier versions of each file; a bucket you bring has whatever versioning you set on it.
 
 `originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent the current conversation and two rules. The index holds summaries only, and current instructions always outrank memory. Today's date comes from the `<environment>` block every run gets.
 

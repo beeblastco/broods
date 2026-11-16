@@ -20,10 +20,10 @@ interface MemoryDeleteInput {
 export default function memoryDeleteTool(context: SandboxToolContext): ToolSet {
   return {
     memory_delete: tool({
-      description: `Deletes one memory that turned out wrong or no longer holds, so future conversations stop loading it.
+      description: `Deletes one memory that no longer holds: its file and its memory/MEMORY.md line. Returns the deleted text.
 
 Usage notes:
-- Pass the title as the memory/MEMORY.md index shows it. The file memory/<slug>.md and its index line are removed together.
+- Pass the title as the index shows it.
 - To correct a memory instead, save it again with memory_save under the same title.`,
       inputSchema: jsonSchema(inputSchema(context)),
       execute: async function (input): Promise<string> {
@@ -47,14 +47,17 @@ Usage notes:
         const qIndex = shellQuote(MEMORY_INDEX_PATH);
         // Same anchored line shape memory_save writes, so a cross-reference is never removed.
         const qPattern = shellQuote(`^- \\[[^]]*](${slug}\\.md) — `);
-        // mountpoint-s3 rejects O_APPEND and rename(), so the index is rewritten in one `>`.
-        const code =
-          `if [ ! -f ${qFile} ] && ! { [ -f ${qIndex} ] && grep -q ${qPattern} ${qIndex}; }; then ` +
-          `printf 'Error: no memory at %s\\n' ${qFile} >&2; exit 1; fi && ` +
-          `rm -f ${qFile} && ` +
-          `if [ -f ${qIndex} ]; then index_body=$(grep -v ${qPattern} ${qIndex} || true) && ` +
-          `printf '%s\\n' "$index_body" > ${qIndex} && sync ${qIndex}; fi && ` +
-          `printf 'Deleted memory %s (removed from %s)\\n' ${qFile} ${qIndex}`;
+        // The index goes first, so a failed rewrite leaves the file and its line both in place.
+        // grep exits 2 on a read error, and rewriting then would empty the index.
+        const code = [
+          `if [ ! -f ${qFile} ] && ! { [ -f ${qIndex} ] && grep -q ${qPattern} ${qIndex}; }; then printf 'Error: no memory at %s\\n' ${qFile} >&2; exit 1; fi`,
+          `index_note='found no line for it in'`,
+          `if [ -f ${qIndex} ] && grep -q ${qPattern} ${qIndex}; then index_body=$(grep -v ${qPattern} ${qIndex}); [ "$?" -le 1 ] || exit 1; printf '%s\\n' "$index_body" > ${qIndex} && sync ${qIndex} || exit 1; index_note='removed its line from'; fi`,
+          `text=$(head -c 4096 ${qFile} 2>/dev/null || true)`,
+          `rm -f ${qFile}`,
+          `printf 'Deleted memory %s and %s %s.\\n' ${qFile} "$index_note" ${qIndex}`,
+          `if [ -n "$text" ]; then printf 'Its text was:\\n%s\\n' "$text"; fi`,
+        ].join(" && ");
         const result = await runSandbox(ws.sandbox, ws.namespace, code, {
           onSandboxCpu: context.onSandboxCpu,
           metadata: sandboxRunMetadata(context, ws),
