@@ -14,7 +14,7 @@ These are not features. They decide which features Broods gets and how each one 
 
 #### 1. Open source
 
-The code is public and anyone can run the whole stack themselves. Build in the open: no piece that only works on the managed service without a reason, no hidden dependency a self-hoster cannot get, and docs that let someone outside the team run and change it.
+The code is public, and anyone, a company included, can read it, change it and run the whole stack for their own use. The one limit, as with Convex, is the license (`LICENSE.md`, FSL): nobody may sell Broods, or a product that does the same job, as a competing commercial service. Build in the open: no piece that only works on the managed service without a reason, no hidden dependency a self-hoster cannot get, and docs that let someone outside the team run and change it.
 
 #### 2. Cloud native
 
