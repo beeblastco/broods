@@ -13,11 +13,20 @@ permissions: {}
 jobs:
   owner-review:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
+      # Read the labels live, not from the event: a re-run replays the original
+      # event, so an old passing run would otherwise clear the check.
       - name: Fail while the owner-review label is set
-        if: contains(github.event.pull_request.labels.*.name, 'owner-review')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          echo "::error::This pull request is waiting for the owner's own review. Remove the owner-review label after he has reviewed it."
-          exit 1
-      - name: No owner review pending
-        run: echo "No owner-review label."
+          labels=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name')
+          if grep -qx 'owner-review' <<<"$labels"; then
+            echo "::error::This pull request is waiting for the owner's own review. Remove the owner-review label after he has reviewed it."
+            exit 1
+          fi
+          echo "No owner-review label."
