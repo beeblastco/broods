@@ -25,9 +25,8 @@ export default function memoryDeleteTool(context: SandboxToolContext): ToolSet {
 Usage notes:
 - Pass the title as the index shows it.
 - To correct a memory instead, save it again with memory_save under the same title.`,
-      inputSchema: jsonSchema(inputSchema(context)),
-      execute: async function (input): Promise<string> {
-        const { title, workspace } = input as MemoryDeleteInput;
+      inputSchema: jsonSchema<MemoryDeleteInput>(inputSchema(context)),
+      execute: async function ({ title, workspace }): Promise<string> {
         const ws = resolveWorkspace(context.workspaces, workspace);
         if (!ws?.sandbox) {
           return toolError("Error: workspace is read-only");

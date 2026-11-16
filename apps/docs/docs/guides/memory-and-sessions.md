@@ -6,7 +6,7 @@ An agent remembers in two places. The session is the conversation history for on
 
 Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. The whole index is loaded into the system prompt, and the agent reads a linked file before relying on it. The agent is told the index rides every turn, so it keeps the index short by merging or deleting entries.
 
-A conversation keeps the index it loaded while the model's prompt cache is still warm: until 5 minutes pass with no model call, the history is compacted, or an hour has passed since the load. Core keeps at most 512 of these at a time, so a busy deployment can reload sooner. A memory saved or deleted in the meantime shows up after that, so a save never forces the whole conversation to be cached again. A new conversation always loads the current index. An index over 64 KB is read fresh on every turn.
+A conversation keeps the index it loaded while the model's prompt cache is still warm: until 5 minutes pass with no model call, the history is compacted, or an hour has passed since the load. Core keeps at most 512 of these at a time, so a busy deployment can reload sooner. A memory saved or deleted in the meantime shows up after that, so a save never forces the whole conversation to be cached again. A new conversation always loads the current index; `/new` and `/clear` keep the conversation, so they keep its index until one of those points. An index over 64 KB is read fresh on every turn.
 
 With a sandbox behind the workspace, the agent gets a `memory_save` tool that writes an entry like this:
 

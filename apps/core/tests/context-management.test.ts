@@ -148,6 +148,7 @@ afterEach(async () => {
   const { forgetMemoryIndexSnapshots } =
     await import("../src/harness/session.ts");
   forgetMemoryIndexSnapshots("conversation");
+  forgetMemoryIndexSnapshots("other-conversation");
   process.env = { ...ORIGINAL_ENV };
   setSystemTime();
   generateTextMock.mockClear();
@@ -416,7 +417,6 @@ describe("session system context", () => {
     readS3TextMock.mockResolvedValue("- [a](a.md) — third");
     forgetMemoryIndexSnapshots("conversation");
     expect(await indexIn()).toContain("third");
-    forgetMemoryIndexSnapshots("other-conversation");
   });
 
   it("keeps the memory index warm through a long run, but no longer than an hour", async () => {

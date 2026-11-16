@@ -1700,7 +1700,7 @@ function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
-- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete. The whole index loads every turn, so keep it short.
+- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete. The whole index loads every turn, so keep it short; your own saves and deletes show in it later.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;
@@ -1896,15 +1896,15 @@ function isStorableMediaReference(
 }
 
 // One claim per run lineage: the run a person started and every run continuing it.
-function messageTurnsKey(eventId: string): string {
-  return `message-turns:${rootEventId(eventId)}`;
-}
-
 function memoryIndexSnapshotKey(
   conversationKey: string,
   namespace: string,
 ): string {
   return `${conversationKey}\n${namespace}`;
+}
+
+function messageTurnsKey(eventId: string): string {
+  return `message-turns:${rootEventId(eventId)}`;
 }
 
 function missingHarnessRole(
@@ -2222,7 +2222,6 @@ function toStoredConversationEvent<
     : null;
 }
 
-// Another model cannot decrypt this reasoning, and the provider resolves item ids through it.
 function touchMemoryIndexSnapshots(conversationKey: string): void {
   const now = Date.now();
   const prefix = memoryIndexSnapshotKey(conversationKey, "");
@@ -2236,6 +2235,7 @@ function touchMemoryIndexSnapshots(conversationKey: string): void {
   }
 }
 
+// Another model cannot decrypt this reasoning, and the provider resolves item ids through it.
 function withoutStoredItems(
   message: AssistantModelMessage,
 ): AssistantModelMessage {
