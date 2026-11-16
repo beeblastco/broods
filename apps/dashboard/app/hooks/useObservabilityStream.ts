@@ -398,6 +398,8 @@ export function useObservabilityStream(
           loaded.has("spanId" in entry ? entry.traceId : entryKey(entry)),
         );
         const combined = mergeBackfill(msg.entries, overlaps);
+        // Live frames before the next render must see these rows as loaded.
+        entriesRef.current = mergeBackfill(entriesRef.current, combined);
         setEntries((prev) => mergeBackfill(prev, combined));
         pendingRef.current = pendingRef.current.filter(
           (entry) =>

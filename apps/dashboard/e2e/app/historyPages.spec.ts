@@ -388,3 +388,68 @@ test("a loaded trace keeps live details beyond its finite history end", async ({
     page.getByText("late-history-tool", { exact: true }),
   ).toBeVisible();
 });
+
+test("a live span between history chunks keeps its loaded trace", async ({
+  page,
+}) => {
+  const now = Date.now();
+  const traceId = "e".repeat(32);
+  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
+    socket.onMessage((raw) => {
+      const request = JSON.parse(String(raw)) as ObservabilityClientMessage;
+      if (request.type !== "subscribe") return;
+      socket.send(JSON.stringify({ type: "ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "backfill",
+          stream: "traces",
+          range: request.range,
+          more: true,
+          entries: [
+            {
+              traceId: traceId,
+              spanId: "root",
+              name: "agent.task",
+              kind: "task",
+              status: "running",
+              startTimeMs: now - 2000,
+              attributes: { "task.input": "chunked history trace" },
+            },
+          ],
+        }),
+      );
+      socket.send(
+        JSON.stringify({
+          type: "span",
+          entry: {
+            traceId: traceId,
+            spanId: "between-child",
+            parentSpanId: "root",
+            name: "between-chunks-tool",
+            kind: "tool.call",
+            status: "ok",
+            startTimeMs: now,
+            endTimeMs: now + 1,
+            durationMs: 1,
+            attributes: { "tool.name": "between-chunks-tool" },
+          },
+        }),
+      );
+      socket.send(
+        JSON.stringify({
+          type: "backfill",
+          stream: "traces",
+          range: request.range,
+          entries: [],
+        }),
+      );
+    });
+  });
+  await page.goto(
+    `/${readProjectId()}/dashboard?tab=tracing&from=${now - 10000}&to=${now - 1000}`,
+  );
+  await page.locator(`#task-${traceId}`).click();
+  await expect(
+    page.getByText("between-chunks-tool", { exact: true }),
+  ).toBeVisible();
+});
