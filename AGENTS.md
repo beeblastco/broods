@@ -12,13 +12,13 @@ You can think of Broods as what Convex and Railway are for backends and deploys,
 
 These are not features. They decide which features Broods gets and how each one is built. When a change goes against one, say so and get the user's yes first.
 
-#### 1. Open source
+#### 1. Source available
 
-The code is public, and anyone, a company included, may use, change and self-host Broods. The one limit, as with Convex, is the license: core, the apps and the Convex backend are FSL (`LICENSE.md`), which forbids offering this software to others as a competing commercial product or service, and each release becomes Apache 2.0 two years after it ships. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Build in the open: keep each new capability usable by a self-hoster, with no dependency they cannot get, and docs that let someone outside the team run and change it.
+The code is public, and anyone, a company included, may use, change and self-host Broods. The one limit, as with Convex, is the license: core, the apps and the Convex backend are FSL (`LICENSE.md`), which forbids offering this software to others as a competing commercial product or service, and each release becomes Apache 2.0 two years after it ships. The `broods` SDK and CLI and `@broods/ai-sdk-sandbox` are MIT. Build in the open, and write "source-available", not "open source", in docs and copy. Self-hosting is a supported option: when a new capability cannot run self-hosted, the docs say so.
 
 #### 2. Cloud native
 
-Keep durable state in a persistent store, never on one machine's disk, and let CI deploy and replace every piece without hand work. Prefer a managed primitive over a service we would have to operate, as long as a self-hoster can run the same piece or turn it off. Respect each service's scaling limits: a piece that keeps live state in memory says so in its own `AGENTS.md`, as core does (one replica, because its machine registry and worker queue are in memory).
+Keep durable state in a persistent store, never on one machine's disk, and let CI deploy and replace every piece without hand work. The managed service comes first: this repo and its CI/CD are built to run Broods on our own cloud, and self-hosting is the option beside it. Prefer a managed primitive over a service we would have to operate, and when that and self-hosting pull apart, the managed service wins. Respect each service's scaling limits: a piece that keeps live state in memory says so in its own `AGENTS.md`, as core does (one replica, because its machine registry and worker queue are in memory).
 
 #### 3. Enterprise ready: secure and safe agents
 
