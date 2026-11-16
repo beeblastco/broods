@@ -1,0 +1,23 @@
+# Blocks merging while a pull request carries the `owner-review` label. Agents add
+# the label to a long-term change; the owner removes it after reviewing it himself.
+# Make the `owner-review` check required on the default branch.
+
+name: Owner review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  owner-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail while the owner-review label is set
+        if: contains(github.event.pull_request.labels.*.name, 'owner-review')
+        run: |
+          echo "::error::This pull request is waiting for the owner's own review. Remove the owner-review label after he has reviewed it."
+          exit 1
+      - name: No owner review pending
+        run: echo "No owner-review label."
