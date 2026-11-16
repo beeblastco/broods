@@ -4,9 +4,33 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 
 ## Value
 
-Broods runs AI agents for you: you describe an agent in TypeScript (its model, its tools, where it runs code, which chat apps it answers in) and `broods deploy` puts it in the cloud. People pick it because one definition gives the agent a machine to run code on, files and memory that persist, and a presence in 13 chat apps, on the model provider they already pay for. The whole stack is source-available and self-hostable, so the data, the AWS account and the API keys stay theirs.
+Broods runs AI agents for you. You describe an agent in TypeScript (its model, its tools, where it runs code, which chat apps it answers in) and `broods deploy` puts it in the cloud. You then call it from your app, a terminal, a chat app or a schedule.
 
-The idea is the one behind eve (Vercel's agent framework), Convex and Railway: you define in code what the thing does, and the platform owns everything it needs to run in production. A change that makes a broods user assemble or operate those pieces themselves goes against it.
+You can think of Broods as what Convex and Railway are for backends and deploys, and what eve (Vercel's agent framework) is for agents: you define in code what the thing does, and the platform owns everything it needs to run in production.
+
+### What we never compromise on
+
+People pick Broods for the things below. Keep them true as the product changes.
+
+#### 1. Define it in code, Broods runs it
+
+An agent is a `define*` call in a `broods/` folder, and `broods dev` or `broods deploy` makes it real. A user never assembles the queue, the sandbox, the storage or the webhooks themselves. A new capability is a field or a helper they declare, and anything they can declare they can also create through the API.
+
+#### 2. Yours to own
+
+Users bring their own model keys, and the whole stack is source-available and self-hostable, so the data, the AWS account and the API keys stay theirs. A feature that works on only one model provider, or only on the managed service, needs a reason and the user's yes.
+
+#### 3. One agent, every surface
+
+The same agent answers over the SDK, HTTP, WebSocket, the CLI, the dashboard, a schedule and 13 chat apps. A behavior added on one path works on the others, or is refused there on purpose and documented.
+
+#### 4. Refuse before granting more
+
+A sandbox provider that cannot enforce a network rule rejects the config, an enforced policy blocks when its check cannot run, and a channel record narrows an agent and never grants. When Broods cannot enforce what the user asked for, it says no and says why.
+
+#### 5. No message is lost
+
+A message to a busy agent steers the running turn or waits its turn. Every accepted message ends as completed, failed or expired, and the caller can read which.
 
 ## Workspaces
 
