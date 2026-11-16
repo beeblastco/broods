@@ -511,8 +511,6 @@ interface TaskListPaneProps {
   total: number;
   remaining: number;
   onLoadMore: () => void;
-  hasOlder: boolean;
-  loading: boolean;
 }
 
 export interface TaskCost {
@@ -591,26 +589,14 @@ export function TracingPanel({
     ReadonlyMap<string, ContinueAttempt>
   >(new Map());
 
-  const {
-    entries,
-    status,
-    history,
-    error,
-    refresh,
-    fetchTrace,
-    hasOlder,
-    loadOlder,
-    newCount,
-    showNew,
-  } = useObservabilityStream({
-    stream: "traces",
-    projectSlug: projectSlug,
-    stageSlug: stageSlug,
-    apiKey: apiKey,
-    backfill: 50,
-    rangeMs: rangeMs(range),
-    window: timeWindow,
-  });
+  const { entries, status, history, error, refresh, fetchTrace } =
+    useObservabilityStream({
+      stream: "traces",
+      projectSlug: projectSlug,
+      stageSlug: stageSlug,
+      apiKey: apiKey,
+      backfill: 100,
+    });
 
   const bounds = useMemo(
     () => effectiveWindow(timeWindow, range, now),
@@ -944,21 +930,6 @@ export function TracingPanel({
         refreshTitle={error ?? "Refresh traces"}
         isError={status === "error"}
       />
-      {newCount > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="cursor-pointer"
-          onClick={showNew}
-        >
-          Show {newCount} new runs
-        </Button>
-      )}
-      {error && history === "failed" && entries.length > 0 && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
 
       <div aria-live="polite" className="shrink-0">
         {missingTrace && (
@@ -990,25 +961,13 @@ export function TracingPanel({
           costs={costs}
           emptyMessage={
             entries.length === 0
-              ? emptyStreamMessage(
-                  history,
-                  error,
-                  "traces",
-                  hasOlder
-                    ? "this page; load older results to continue"
-                    : "selected range",
-                )
-              : "No loaded tasks match the current filters."
+              ? emptyStreamMessage(history, error, "traces", "7 days")
+              : "No tasks match the current filters."
           }
           shown={groups.length}
           total={allGroups.length}
           remaining={remaining}
-          hasOlder={hasOlder}
-          loading={history === "loading"}
-          onLoadMore={() => {
-            setVisibleCount((count) => count + PAGE_SIZE);
-            if (remaining === 0) loadOlder();
-          }}
+          onLoadMore={() => setVisibleCount((count) => count + PAGE_SIZE)}
         />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -2713,8 +2672,6 @@ function TaskListPane({
   total,
   remaining,
   onLoadMore,
-  hasOlder,
-  loading,
 }: TaskListPaneProps): React.JSX.Element {
   return (
     <div
@@ -2771,8 +2728,6 @@ function TaskListPane({
           pageSize={PAGE_SIZE}
           remaining={remaining}
           onLoad={onLoadMore}
-          hasOlder={hasOlder}
-          loading={loading}
         />
       )}
     </div>

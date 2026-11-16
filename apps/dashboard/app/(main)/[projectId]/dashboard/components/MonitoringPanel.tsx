@@ -20,12 +20,7 @@ import { useNow } from "@/app/hooks/useNow";
 import { useObservabilityView } from "@/app/hooks/useObservabilityView";
 import { formatDateTimeMillis } from "@/app/lib/formatTime";
 import { tabHref } from "@/app/lib/navigation";
-import {
-  effectiveWindow,
-  parseQuery,
-  rangeMs,
-  type Query,
-} from "@/app/lib/queryTokens";
+import { effectiveWindow, parseQuery, type Query } from "@/app/lib/queryTokens";
 import { LOG_VIEW } from "@/app/lib/urlState";
 import { cn } from "@/app/lib/utils";
 import { ArrowUpRight } from "lucide-react";
@@ -139,24 +134,12 @@ export function MonitoringPanel({
     [deferredFilter],
   );
 
-  const {
-    entries,
-    status,
-    history,
-    error,
-    refresh,
-    hasOlder,
-    loadOlder,
-    newCount,
-    showNew,
-  } = useObservabilityStream({
+  const { entries, status, history, error, refresh } = useObservabilityStream({
     stream: "logs",
     projectSlug: projectSlug,
     stageSlug: stageSlug,
     apiKey: apiKey,
-    backfill: 50,
-    rangeMs: rangeMs(range),
-    window: timeWindow,
+    backfill: 200,
     minLevel: wantsDebug ? "DEBUG" : "INFO",
   });
 
@@ -231,21 +214,6 @@ export function MonitoringPanel({
         refreshTitle={error ?? "Refresh logs"}
         isError={status === "error"}
       />
-      {newCount > 0 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="cursor-pointer"
-          onClick={showNew}
-        >
-          Show {newCount} new logs
-        </Button>
-      )}
-      {error && history === "failed" && entries.length > 0 && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
 
       <DetailSplit
         flush
@@ -318,26 +286,17 @@ export function MonitoringPanel({
                   className="h-32 text-center text-xs text-muted-foreground"
                 >
                   {entries.length === 0
-                    ? emptyStreamMessage(
-                        history,
-                        error,
-                        "logs",
-                        hasOlder
-                          ? "this page; load older results to continue"
-                          : "selected range",
-                      )
-                    : "No loaded logs match the current filters."}
-                  {entries.length === 0 &&
-                    history === "loaded" &&
-                    !hasOlder && (
-                      <div className="mt-2 flex items-center justify-center gap-1">
-                        <code className="font-mono text-foreground">
-                          {firstRunCommand}
-                        </code>
-                        <CopyButton value={firstRunCommand} label="command" />
-                        <span>Replace AGENT with your agent&apos;s name.</span>
-                      </div>
-                    )}
+                    ? emptyStreamMessage(history, error, "logs", "30 days")
+                    : "No logs match the current filters."}
+                  {entries.length === 0 && history === "loaded" && (
+                    <div className="mt-2 flex items-center justify-center gap-1">
+                      <code className="font-mono text-foreground">
+                        {firstRunCommand}
+                      </code>
+                      <CopyButton value={firstRunCommand} label="command" />
+                      <span>Replace AGENT with your agent&apos;s name.</span>
+                    </div>
+                  )}
                 </td>
               </tr>
             )}
@@ -349,15 +308,7 @@ export function MonitoringPanel({
           noun={["line", "lines"]}
           pageSize={PAGE_SIZE}
           remaining={remaining}
-          hasOlder={hasOlder}
-          loading={history === "loading"}
-          onLoad={() => {
-            if (remaining > 0) setVisibleCount((count) => count + PAGE_SIZE);
-            else {
-              setVisibleCount((count) => count + PAGE_SIZE);
-              loadOlder();
-            }
-          }}
+          onLoad={() => setVisibleCount((count) => count + PAGE_SIZE)}
         />
       </DetailSplit>
     </div>
