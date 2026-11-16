@@ -239,7 +239,7 @@ def policyInputForTool (toolName : String) (input : Json) (workspaces sandboxes 
   if toolName == "read" || toolName == "glob" || toolName == "grep" then
     return shaped "workspace.read" []
   if toolName == "write" || toolName == "edit" then return shaped "workspace.write" []
-  if toolName == "memory_save" then
+  if toolName == "memory_save" || toolName == "memory_delete" then
     let slug ← memorySlug ((str? (get input "title")).getD "")
     return shaped "workspace.write" [("filePath", toJson ("memory/" ++ slug ++ ".md"))]
   if toolName == "bash" then return shaped "workspace.exec" []

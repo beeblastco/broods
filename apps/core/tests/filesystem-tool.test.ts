@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1587,6 +1588,180 @@ describe("memory tool", () => {
         content: "y",
       }),
     ).rejects.toThrow("Error: title must not be empty");
+  });
+
+  async function memoryDelete(ctx: Record<string, unknown>): Promise<{
+    execute(input: Record<string, unknown>): Promise<string>;
+  }> {
+    const mod = await import("../src/harness/tools/memory-delete.tool.ts");
+
+    return mod.default(ctx as never).memory_delete as unknown as {
+      execute(input: Record<string, unknown>): Promise<string>;
+    };
+  }
+
+  // Runs each sandbox command in a real bash inside `workspace`, `binDir` first on PATH.
+  function runSandboxInShell(workspace: string, binDir?: string): void {
+    microvmFetchMock.mockImplementation(
+      async (url: string, init: { body: string }): Promise<Response> => {
+        const { code } = JSON.parse(init.body);
+        if (code.includes("mountpoint -q ")) {
+          return microvmFetchResponse(url, init);
+        }
+        const run = Bun.spawnSync(["/bin/bash", "-c", code], {
+          cwd: workspace,
+          env: binDir
+            ? { ...process.env, PATH: `${binDir}:${process.env.PATH}` }
+            : process.env,
+        });
+
+        return Response.json({
+          ok: run.exitCode === 0,
+          runtime: "bash",
+          exit_code: run.exitCode,
+          timed_out: false,
+          duration_ms: 1,
+          stdout: run.stdout.toString(),
+          stderr: run.stderr.toString(),
+        });
+      },
+    );
+  }
+
+  it("saves, then deletes one memory and only its index line, in a real shell", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "memory-delete-"));
+    runSandboxInShell(workspace);
+    const ctx = workspaceCtx() as unknown as Record<string, unknown>;
+    const memory_save = await memorySave(ctx);
+    const memory_delete = await memoryDelete(ctx);
+
+    try {
+      await memory_save.execute({
+        title: "Q3 launch date",
+        description: "The launch is planned for Q3.",
+        content: "Q3.",
+      });
+      await memory_save.execute({
+        title: "Launch owner",
+        description: "Mai owns it; see q3-launch-date.md for the date.",
+        content: "Mai.",
+      });
+
+      await expect(
+        memory_delete.execute({ title: "Q3 launch date" }),
+      ).resolves.toBe(
+        "Deleted memory memory/q3-launch-date.md and removed its line from memory/MEMORY.md.",
+      );
+      expect(existsSync(join(workspace, "memory/q3-launch-date.md"))).toBe(
+        false,
+      );
+      // The other entry cites the deleted slug in its description and must survive.
+      expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
+        "# Memory Index\n- [Launch owner](launch-owner.md) — Mai owns it; see q3-launch-date.md for the date.\n",
+      );
+      await expect(
+        memory_delete.execute({ title: "Q3 launch date" }),
+      ).rejects.toThrow("Error: no memory at memory/q3-launch-date.md");
+
+      // A hand-edited index line is not the shape memory_save writes, so the result says so.
+      writeFileSync(
+        join(workspace, "memory/MEMORY.md"),
+        "# Memory Index\n- [Launch owner](launch-owner.md) - edited by hand\n",
+      );
+      await expect(
+        memory_delete.execute({ title: "Launch owner" }),
+      ).resolves.toBe(
+        "Deleted memory memory/launch-owner.md and found no line for it in memory/MEMORY.md.",
+      );
+    } finally {
+      microvmFetchMock.mockImplementation(microvmFetchResponse);
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the index whole when grep cannot read it", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "memory-grep-fails-"));
+    const binDir = join(workspace, ".bin");
+    mkdirSync(binDir);
+    writeFileSync(join(binDir, "grep"), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+    mkdirSync(join(workspace, "memory"));
+    const index =
+      "# Memory Index\n- [Kept fact](kept-fact.md) — A fact that must survive.\n";
+    writeFileSync(join(workspace, "memory/MEMORY.md"), index);
+    writeFileSync(join(workspace, "memory/kept-fact.md"), "Kept.\n");
+    runSandboxInShell(workspace, binDir);
+    const ctx = workspaceCtx() as unknown as Record<string, unknown>;
+
+    try {
+      const memory_save = await memorySave(ctx);
+      await expect(
+        memory_save.execute({
+          title: "New fact",
+          description: "d",
+          content: "c",
+        }),
+      ).rejects.toThrow();
+      expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
+        index,
+      );
+      expect(existsSync(join(workspace, "memory/new-fact.md"))).toBe(false);
+
+      const memory_delete = await memoryDelete(ctx);
+      await expect(
+        memory_delete.execute({ title: "Kept fact" }),
+      ).rejects.toThrow();
+      expect(readFileSync(join(workspace, "memory/MEMORY.md"), "utf8")).toBe(
+        index,
+      );
+      expect(existsSync(join(workspace, "memory/kept-fact.md"))).toBe(true);
+    } finally {
+      microvmFetchMock.mockImplementation(microvmFetchResponse);
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes through the same slug memory_save and the policy derive", async () => {
+    const memory_delete = await memoryDelete(
+      workspaceCtx() as unknown as Record<string, unknown>,
+    );
+    await memory_delete.execute({ title: "Owner's Slack handle!" });
+    const { payload } = lastSandboxExec();
+    expect(payload.namespace).toBe(NS);
+    expect(payload.code).toContain("rm -f 'memory/owner-s-slack-handle.md'");
+    expect(payload.code).toContain(
+      "^- \\[[^]]*](owner-s-slack-handle\\.md) — ",
+    );
+    expect(payload.code).not.toContain(">>");
+    expect(payload.code).not.toContain("mv ");
+  });
+
+  it("refuses a read-only workspace, a disabled memory harness and a blank title", async () => {
+    const readOnly = await memoryDelete(
+      readonlyMountCtx() as unknown as Record<string, unknown>,
+    );
+    await expect(readOnly.execute({ title: "x" })).rejects.toThrow(
+      "Error: workspace is read-only",
+    );
+    const ctx = workspaceCtx() as unknown as {
+      workspaces: Array<{ config: Record<string, unknown> }>;
+    };
+    ctx.workspaces[0]!.config = {
+      storage: { provider: "s3" },
+      harness: { memory: { enabled: false } },
+    };
+    const disabled = await memoryDelete(
+      ctx as unknown as Record<string, unknown>,
+    );
+    await expect(disabled.execute({ title: "x" })).rejects.toThrow(
+      "Error: the memory harness is disabled for workspace notes",
+    );
+    const blank = await memoryDelete(
+      workspaceCtx() as unknown as Record<string, unknown>,
+    );
+    await expect(blank.execute({ title: "  " })).rejects.toThrow(
+      "Error: title must not be empty",
+    );
+    expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
 

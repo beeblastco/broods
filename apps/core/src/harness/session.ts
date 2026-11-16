@@ -97,6 +97,13 @@ const APPEND_EVENT_COUNT = 8_000;
 const MEMORY_INDEX_READ_BYTES = 1_024 * 1_024;
 const MEMORY_INDEX_CUT_NOTE =
   "(index cut at 1 MiB: later entries were not loaded. Shorten it to one line per memory.)";
+// A conversation keeps the index it loaded while its prompt cache is warm (Anthropic's 5-minute
+// TTL), so a memory_save does not rewrite the cached prefix. In-process: core runs one replica.
+const MEMORY_INDEX_WARM_MS = 5 * 60 * 1_000;
+const MEMORY_INDEX_MAX_AGE_MS = 60 * 60 * 1_000;
+const MEMORY_INDEX_SNAPSHOT_MAX_BYTES = 64 * 1_024;
+const MEMORY_INDEX_SNAPSHOT_MAX_COUNT = 512;
+const memoryIndexSnapshots = new Map<string, MemoryIndexSnapshot>();
 export const ATTACHMENT_NOT_RETAINED = "[attachment not retained]";
 // Tool outputs that hand the model no result: a hook or the run turned the
 // call into an error or a denial, so a status read in it stores nothing.
@@ -159,6 +166,12 @@ export interface ContextPreparePhases {
   runtimeMs: number;
   skillsMs: number;
   subagentsMs: number;
+}
+
+interface MemoryIndexSnapshot {
+  content: string | null;
+  loadedAt: number;
+  usedAt: number;
 }
 
 interface MemoryFile {
@@ -720,6 +733,7 @@ export class Session {
     }
     const { message, ...cost } = summary;
     await this.persistModelMessages([message]);
+    forgetMemoryIndexSnapshots(this.conversationKey);
 
     return { ...cost, messageCount: messages.length };
   }
@@ -1237,6 +1251,26 @@ export class Session {
     workspace: ResolvedWorkspace,
   ): Promise<string | null> {
     if (workspace.config.storage.provider === "disk") return null;
+    const snapshotKey = memoryIndexSnapshotKey(
+      this.conversationKey,
+      workspace.namespace,
+    );
+    const now = Date.now();
+    sweepMemoryIndexSnapshots(now);
+    const snapshot = memoryIndexSnapshots.get(snapshotKey);
+    if (snapshot && now - snapshot.loadedAt < MEMORY_INDEX_MAX_AGE_MS) {
+      snapshot.usedAt = now;
+      return snapshot.content;
+    }
+    const content = await this.readMemoryIndex(workspace);
+    rememberMemoryIndex(snapshotKey, content, now);
+
+    return content;
+  }
+
+  private async readMemoryIndex(
+    workspace: ResolvedWorkspace,
+  ): Promise<string | null> {
     // S3 API, not the mount, so a workspace with no sandbox still serves its memory.
     const target = await resolveS3ReadTarget(
       workspaceReadContext(workspace.config.storage, workspace.namespace),
@@ -1283,6 +1317,8 @@ export class Session {
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
+    // Every model step keeps the provider's cache warm, so it keeps the snapshot warm too.
+    touchMemoryIndexSnapshots(this.conversationKey);
 
     this.memoryFilesPromise ??= Promise.all(
       this.resolvedWorkspaces()
@@ -1504,6 +1540,14 @@ export function createStoredEventFromModelMessage(
   }
 }
 
+// Compaction rewrites the cached history anyway, so the next run reloads the memory index.
+export function forgetMemoryIndexSnapshots(conversationKey: string): void {
+  const prefix = memoryIndexSnapshotKey(conversationKey, "");
+  for (const key of memoryIndexSnapshots.keys()) {
+    if (key.startsWith(prefix)) memoryIndexSnapshots.delete(key);
+  }
+}
+
 // Runs before admission, as a queued turn replays only the queued events, and after the
 // webhook ack, as a download would hold the provider's connection open.
 export async function ingestChannelAttachments(
@@ -1656,6 +1700,7 @@ function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
 You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
 - Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
 - Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
+- Correct a memory by saving it again under the same title; delete one that no longer holds with memory_delete. The whole index loads every turn, so keep it short; your own saves and deletes show in it later.
 - The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
 - Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
 </memory>`;
@@ -1851,6 +1896,13 @@ function isStorableMediaReference(
 }
 
 // One claim per run lineage: the run a person started and every run continuing it.
+function memoryIndexSnapshotKey(
+  conversationKey: string,
+  namespace: string,
+): string {
+  return `${conversationKey}\n${namespace}`;
+}
+
 function messageTurnsKey(eventId: string): string {
   return `message-turns:${rootEventId(eventId)}`;
 }
@@ -1943,6 +1995,27 @@ function projectSystemContextMessages(
     return latestCompactionIndex === -1 || index > latestCompactionIndex
       ? [event.message]
       : [];
+  });
+}
+
+// A large index, or one past the count cap, is read fresh each run to bound the pod's memory.
+function rememberMemoryIndex(
+  key: string,
+  content: string | null,
+  now: number,
+): void {
+  if (
+    (content !== null &&
+      Buffer.byteLength(content) > MEMORY_INDEX_SNAPSHOT_MAX_BYTES) ||
+    memoryIndexSnapshots.size >= MEMORY_INDEX_SNAPSHOT_MAX_COUNT
+  ) {
+    memoryIndexSnapshots.delete(key);
+    return;
+  }
+  memoryIndexSnapshots.set(key, {
+    content: content,
+    loadedAt: now,
+    usedAt: now,
   });
 }
 
@@ -2109,6 +2182,15 @@ function storedEventBatches(
   return batches;
 }
 
+// Drops snapshots whose cache has gone cold, so the map holds only warm conversations.
+function sweepMemoryIndexSnapshots(now: number): void {
+  for (const [key, snapshot] of memoryIndexSnapshots) {
+    if (now - snapshot.usedAt >= MEMORY_INDEX_WARM_MS) {
+      memoryIndexSnapshots.delete(key);
+    }
+  }
+}
+
 async function timePhase<T>(
   phases: ContextPreparePhases,
   key: Exclude<keyof ContextPreparePhases, "historyRows">,
@@ -2138,6 +2220,19 @@ function toStoredConversationEvent<
         message: message,
       }
     : null;
+}
+
+function touchMemoryIndexSnapshots(conversationKey: string): void {
+  const now = Date.now();
+  const prefix = memoryIndexSnapshotKey(conversationKey, "");
+  for (const [key, snapshot] of memoryIndexSnapshots) {
+    if (
+      key.startsWith(prefix) &&
+      now - snapshot.usedAt < MEMORY_INDEX_WARM_MS
+    ) {
+      snapshot.usedAt = now;
+    }
+  }
 }
 
 // Another model cannot decrypt this reasoning, and the provider resolves item ids through it.

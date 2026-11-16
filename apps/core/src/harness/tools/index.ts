@@ -66,6 +66,7 @@ import {
 import globTool from "./glob.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
+import memoryDeleteTool from "./memory-delete.tool.ts";
 import memoryTool from "./memory.tool.ts";
 import { providerToolBuild } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
@@ -221,6 +222,7 @@ export async function createTools(
       Object.assign(
         sandboxTools,
         memoryTool({ ...fsContext, conversationKey: context.conversationKey }),
+        memoryDeleteTool(fsContext),
       );
     }
   }

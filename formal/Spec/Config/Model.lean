@@ -192,7 +192,8 @@ def providerToolName (s : String) : Bool :=
 
 def reservedTools : List String :=
   ["ask_questions", "async_status", "bash", "browse", "cancel_schedule", "computer", "edit",
-   "glob", "grep", "list_schedules", "load_skill", "memory_save", "message-agents", "read",
+   "glob", "grep", "list_schedules", "load_skill", "memory_delete", "memory_save", "message-agents",
+   "read",
    "run_subagent", "schedule", "stop_subagent", "update_schedule", "write"]
 
 def toolProblem (name : String) (entry : Value) : Option String :=

@@ -45,12 +45,12 @@ That lets one agent give different workspaces different sandboxes and approval r
 
 ### Tools per workspace
 
-| Effective sandbox     | Tools                                                                  |
-| --------------------- | ---------------------------------------------------------------------- |
-| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`         |
-| none                  | `read` and `glob` through a read-only mount, which sees writes at once |
-| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag  |
-| none, your own bucket | `read` and `glob` straight from storage, reads can lag                 |
+| Effective sandbox     | Tools                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`, `memory_delete` (memory on) |
+| none                  | `read` and `glob` through a read-only mount, which sees writes at once                      |
+| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag                       |
+| none, your own bucket | `read` and `glob` straight from storage, reads can lag                                      |
 
 | Agent has                | Tools                                                              |
 | ------------------------ | ------------------------------------------------------------------ |
@@ -90,7 +90,7 @@ export const project = defineWorkspace({
 
 - Each workspace folder, partition and user conversation is its own disk, up to 24 MiB.
 - `read`, `write`, `edit`, `glob`, `grep` and `bash` all work. `edit` and `glob` read the file out and compute in Broods, since the shell has no `node`.
-- There is no bucket behind it: download links and the workspace files API read nothing, and the memory harness (`memory_save` and its prompt) is off. Reach a user's files with [`GET` and `PUT .../files`](../reference/http-api.md#a-users-conversation-files) on the agent's URL, with the runtime key and that user's token.
+- There is no bucket behind it: download links and the workspace files API read nothing, and the memory harness (`memory_save`, `memory_delete` and its prompt) is off. Reach a user's files with [`GET` and `PUT .../files`](../reference/http-api.md#a-users-conversation-files) on the agent's URL, with the runtime key and that user's token.
 
 ## Partitioning
 

@@ -37,7 +37,7 @@ flowchart LR
   Resolve -.->|"not wired, fails fast"| EV["E2B"]
 ```
 
-Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit` and `memory_save` rewrite whole files in one `>` pass and `sync` after writing.
+Mountpoint supports whole-file create and overwrite only. `>>`, in-place edits and `rename()` fail with `EPERM`, so `write`, `edit`, `memory_save` and `memory_delete` rewrite whole files in one `>` pass and `sync` after writing.
 
 ## Two doors to the same bytes
 
@@ -65,7 +65,7 @@ The agent always reads through the mount, so it sees its own writes at once. Har
 | The skills bucket                                                 | harness via S3 | the S3 API. Never mounted                 |
 
 - A read-only workspace reads through a service-managed read-only mount. `sandbox: null` reads S3 directly instead: no cold start, but reads can lag. A read-only workspace on a bring-your-own bucket always reads S3 directly, because the mount's `deny-all` network reaches only the managed bucket.
-- Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` over the S3 API every turn, so a workspace with no sandbox still serves memory. A read before the agent's last edit reached the bucket is stale; memory converges across turns.
+- Known exception: `Session.loadMemoryFile` reads `memory/MEMORY.md` over the S3 API, so a workspace with no sandbox still serves memory. A conversation reuses its last read (an in-process map in `session.ts`, at most 512 entries of 64 KB) until 5 minutes pass without a model call, the history is compacted, or an hour has passed, so a memory write never breaks the cached prompt mid-conversation. A read before the agent's last edit reached the bucket is stale; memory converges across turns.
 
 ## Bring-your-own bucket
 
@@ -163,8 +163,8 @@ Structured memory is one markdown file per fact, indexed by `memory/MEMORY.md`:
 
 ```mermaid
 flowchart LR
-  Model["model calls memory_save"] --> Tool["memory.tool.ts"]
-  Tool -->|"write memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
+  Model["model calls memory_save<br/>or memory_delete"] --> Tool["memory.tool.ts<br/>memory-delete.tool.ts"]
+  Tool -->|"write or remove memory/slug.md,<br/>rewrite MEMORY.md, sync"| Mount["sandbox mount"]
   Mount -->|"upload on close"| S3[("namespace/memory/")]
   S3 -->|"next turn, S3 API"| Load["Session.loadMemoryFile"]
   Load --> Prompt["system prompt<br/>memory index block"]
