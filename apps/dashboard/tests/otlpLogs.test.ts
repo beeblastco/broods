@@ -142,6 +142,7 @@ describe("routePattern", () => {
   test("leaves known top-level routes alone", () => {
     expect(routePattern("/projects")).toBe("/projects");
     expect(routePattern("/settings/org")).toBe("/settings/org");
+    expect(routePattern("/mcp-auth/start")).toBe("/mcp-auth/start");
   });
 
   test("handles the root path", () => {

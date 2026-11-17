@@ -7,11 +7,13 @@ export function StatusPage({
   children,
   description,
   error,
+  label,
   title,
 }: {
   children: React.ReactNode;
-  description?: string;
+  description?: React.ReactNode;
   error?: unknown;
+  label?: string;
   title: string;
 }): React.JSX.Element {
   const isError = error !== undefined;
@@ -31,7 +33,7 @@ export function StatusPage({
           isError ? "text-destructive" : "text-muted-foreground",
         )}
       >
-        {isError ? "error" : "404"}
+        {isError ? "error" : (label ?? "404")}
       </p>
       <h1 className="text-base font-semibold text-foreground">{title}</h1>
       {(description || ref) && (

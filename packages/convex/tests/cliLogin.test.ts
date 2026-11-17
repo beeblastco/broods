@@ -225,7 +225,7 @@ describe("an AuthKit user at /mcp", () => {
   async function seedOrg(
     t: T,
     slug: string,
-    members: Record<string, "owner" | "member">,
+    members: Record<string, "owner" | "admin" | "member">,
   ): Promise<Id<"accounts">> {
     return await t.run(async (ctx) => {
       const orgId = await ctx.db.insert("orgs", {
@@ -298,5 +298,67 @@ describe("an AuthKit user at /mcp", () => {
       refused:
         "You are not an owner or admin of an organization with the slug initech.",
     });
+  });
+
+  test("the sign-in page offers the orgs they administer, the dashboard's one first", async () => {
+    const t = loginTest();
+    await seedOrg(t, "acme", { [AUTH_ID]: "owner" });
+    await seedOrg(t, "globex", { [AUTH_ID]: "admin" });
+    await seedOrg(t, "initech", { [AUTH_ID]: "member" });
+    await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", AUTH_ID))
+        .unique();
+      const hooli = await ctx.db.insert("orgs", {
+        name: "hooli",
+        slug: "hooli",
+        ownerAuthId: AUTH_ID,
+        plan: "free",
+        createdAt: 1,
+      });
+      await ctx.db.insert("orgMembers", {
+        orgId: hooli,
+        userId: user!._id,
+        role: "owner",
+        createdAt: 1,
+      });
+    });
+    await t.run(async (ctx) => {
+      const globex = await ctx.db
+        .query("orgs")
+        .withIndex("by_slug", (q) => q.eq("slug", "globex"))
+        .unique();
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_authId", (q) => q.eq("authId", AUTH_ID))
+        .unique();
+      await ctx.db.patch(user!._id, { activeOrgId: globex!._id });
+    });
+
+    const offered = await t.query(api.cli.auth.mcpSignInOrgs, {});
+    expect(offered.map(({ orgId: _orgId, ...rest }) => rest)).toEqual([
+      {
+        slug: "globex",
+        name: "globex",
+        role: "admin",
+        selected: true,
+        provisioned: true,
+      },
+      {
+        slug: "acme",
+        name: "acme",
+        role: "owner",
+        selected: false,
+        provisioned: true,
+      },
+      {
+        slug: "hooli",
+        name: "hooli",
+        role: "owner",
+        selected: false,
+        provisioned: false,
+      },
+    ]);
   });
 });

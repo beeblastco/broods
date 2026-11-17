@@ -4,9 +4,12 @@
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import { toErrorMessage } from "@/app/lib/errors";
-import { firstParam, signedInAccessToken } from "@/app/lib/serverPage";
+import {
+  firstParam,
+  provisionedCaller,
+  signedInAccessToken,
+} from "@/app/lib/serverPage";
 import { api } from "@broods/convex/_generated/api";
-import { ConvexHttpClient } from "convex/browser";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -84,23 +87,7 @@ async function mintLoginCode(
   accessToken: string,
   codeChallenge: string,
 ): Promise<string> {
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!convexUrl) throw new Error("The login backend is not configured.");
-
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(accessToken);
-  // A login right after signup can beat the WorkOS webhook that creates the user row.
-  await client.action(api.user.ensureSynced, {});
-  const org = await client.mutation(api.org.orgs.getOrCreate, {});
-  if (org.needsProvision) {
-    try {
-      await client.action(api.org.lifecycle.provision, { orgId: org.orgId });
-    } catch (error) {
-      // Another tab may have provisioned first; only a still-missing account is a failure.
-      if ((await client.mutation(api.org.orgs.getOrCreate, {})).needsProvision)
-        throw error;
-    }
-  }
+  const client = await provisionedCaller(accessToken);
   const { code } = await client.mutation(api.cli.auth.createLoginCode, {
     codeChallenge: codeChallenge,
   });

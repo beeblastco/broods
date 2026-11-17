@@ -7,6 +7,7 @@ import type { CoreRequest } from "../src/shared/http.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { handleProtectedResourceRequest } from "../src/harness/mcp/authkit.ts";
 import { handleMcpRequest } from "../src/harness/mcp-tasks.ts";
+import { MCP_ORG_CLAIM } from "@broods/convex/model/mcpSignIn";
 
 const DOMAIN = "https://auth.test";
 const BASE = "https://api.test";
@@ -117,6 +118,45 @@ describe("AuthKit sign-in at /mcp", () => {
     expect(askedOrgs.at(-1)).toBe("acme");
   });
 
+  it("signs in to the org picked at sign-in, whatever the dashboard shows", async () => {
+    await handleMcpRequest(request(await token({ org: "globex" })), noReplay);
+
+    expect(askedOrgs.at(-1)).toBe("globex");
+  });
+
+  it("accepts a URL that names the org picked at sign-in", async () => {
+    const named = request(await token({ org: "acme" }));
+    named.query = new URLSearchParams("org=acme");
+    await handleMcpRequest(named, noReplay);
+
+    expect(askedOrgs.at(-1)).toBe("acme");
+  });
+
+  it("refuses a URL that names another org than the one picked at sign-in", async () => {
+    const asked = askedOrgs.length;
+    const named = request(await token({ org: "acme" }));
+    named.query = new URLSearchParams("org=globex");
+    const response = await handleMcpRequest(named, noReplay);
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "This client signed in to acme. Remove ?org=globex",
+    );
+    expect(askedOrgs.length).toBe(asked);
+  });
+
+  it("tells a client whose picked org refuses it to sign in again", async () => {
+    const response = await handleMcpRequest(
+      request(await token({ org: "acme", subject: "user_member" })),
+      noReplay,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).toContain(
+      "Sign in again to pick another organization.",
+    );
+  });
+
   it("refuses a token minted for another resource", async () => {
     const response = await handleMcpRequest(
       request(await token({ audience: "https://other.test" })),
@@ -183,11 +223,12 @@ function request(
 
 async function token(options: {
   audience?: string;
+  org?: string;
   subject?: string;
 }): Promise<string> {
   const { SignJWT } = await import("jose");
 
-  return await new SignJWT({})
+  return await new SignJWT(options.org ? { [MCP_ORG_CLAIM]: options.org } : {})
     .setProtectedHeader({ alg: "RS256", kid: "k1" })
     .setIssuer(DOMAIN)
     .setAudience(options.audience ?? `${BASE}/mcp`)
