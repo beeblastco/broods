@@ -76,29 +76,6 @@ test("compileProject says how to scaffold a missing broods/ folder", async (): P
   );
 });
 
-test("compileProject gives a project with no broods install the SDK the CLI ships", async (): Promise<void> => {
-  const cwd = await mkdtemp(join(tmpdir(), "broods-no-install-"));
-  tempDirs.push(cwd);
-  await mkdir(join(cwd, "broods"), { recursive: true });
-  await writeFile(
-    join(cwd, "broods", "agents.ts"),
-    `import { defineAgent } from "broods";
-
-export const support = defineAgent({
-  name: "support",
-  model: { provider: "openai", modelId: "gpt-5-mini" },
-  agent: { system: "be brief" },
-});
-`,
-  );
-
-  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-
-  expect(manifest.resources.map((entry): string => entry.name)).toEqual([
-    "support",
-  ]);
-});
-
 test("compileProject accepts object-shaped resource definitions", async (): Promise<void> => {
   const cwd = await fixtureProject(
     "",

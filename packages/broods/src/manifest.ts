@@ -214,7 +214,7 @@ export async function compileProject(
     );
   }
   const files = await listTypeScriptFiles(root);
-  const exports = await loadExports(files, root);
+  const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
   const resourceExports = exports
     .filter((entry): entry is ExportedValue & { value: AnyResource } =>
@@ -372,11 +372,7 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
   );
 }
 
-async function loadExports(
-  files: string[],
-  root: string,
-): Promise<ExportedValue[]> {
-  projectRoot = root;
+async function loadExports(files: string[]): Promise<ExportedValue[]> {
   registerTypeScriptLoader();
   const values: ExportedValue[] = [];
   for (const file of files) {
@@ -398,7 +394,9 @@ async function loadExports(
 
 function missingPackageError(error: unknown): Error | undefined {
   const name =
-    error instanceof Error
+    error instanceof Error &&
+    "code" in error &&
+    error.code === "ERR_MODULE_NOT_FOUND"
       ? MISSING_PACKAGE_PATTERN.exec(error.message)?.[1]
       : undefined;
   if (name === undefined) return undefined;
@@ -420,17 +418,6 @@ function ownSdkUrl(specifier: string): string | undefined {
     : import.meta.resolve(specifier);
 }
 
-let projectRoot = "";
-
-// Bun has no resolve hook, and a virtual module shadows an installed package: look for one first.
-function sdkOnBun(specifier: string): string | undefined {
-  try {
-    return Bun.resolveSync(specifier, projectRoot);
-  } catch {
-    return ownSdkUrl(specifier);
-  }
-}
-
 let typeScriptLoaderRegistered = false;
 
 // Node only strips types, so an enum or decorator in broods/ would throw where Bun loads it;
@@ -439,17 +426,6 @@ let typeScriptLoaderRegistered = false;
 function registerTypeScriptLoader(): void {
   if (typeScriptLoaderRegistered) return;
   typeScriptLoaderRegistered = true;
-  if ("bun" in process.versions)
-    Bun.plugin({
-      name: "broods-own-sdk",
-      setup: (build): void => {
-        for (const specifier of Object.keys(OWN_SDK_SOURCES))
-          build.module(specifier, (): { contents: string; loader: "js" } => ({
-            contents: `export * from ${JSON.stringify(sdkOnBun(specifier))};`,
-            loader: "js",
-          }));
-      },
-    });
   if (typeof module.registerHooks !== "function") return;
   module.registerHooks({
     resolve: (specifier, context, nextResolve): module.ResolveFnOutput => {

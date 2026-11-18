@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import module from "node:module";
 import { basename, join, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
@@ -1769,14 +1770,12 @@ async function ensureProjectShell(): Promise<void> {
     false,
   );
   printSuccess(`Created starter ${PROJECT_DIR}/`);
-  const installs = await Promise.all(
-    (module.createRequire(root).resolve.paths("broods") ?? []).map(
-      (dir): Promise<boolean> => pathExists(join(dir, "broods")),
-    ),
-  );
-  if (!installs.includes(true))
+  const installed = (
+    module.createRequire(root).resolve.paths("broods") ?? []
+  ).some((dir): boolean => existsSync(join(dir, "broods")));
+  if (!installed)
     console.log(
-      "· For editor types, run `npm install broods` or `bun add broods`. The CLI runs without it.",
+      "· For editor types, run `npm install broods` or `bun add broods`.",
     );
 }
 
