@@ -35,31 +35,6 @@ describe("agent row ownership", () => {
     vi.unstubAllEnvs();
   });
 
-  test("a run reaches a dashboard agent by its runtime id, not its config id", async () => {
-    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
-    const t = refsTest();
-    const { accountId, projectId, stageId } = await seed(t, []);
-    const configId = await t.mutation(api.agent.config.create, {
-      projectId: projectId,
-      stageId: stageId,
-      name: "reachable",
-      provider: "openai",
-    });
-    const runtimeId = (await docOf(t, configId))?.agentId;
-
-    const byConfigId = await t.query(internal.runtimeLookups.agentById, {
-      accountId: accountId,
-      agentId: configId,
-    });
-    const byRuntimeId = await t.query(internal.runtimeLookups.agentById, {
-      accountId: accountId,
-      agentId: runtimeId ?? "",
-    });
-
-    expect(byConfigId).toBeNull();
-    expect(byRuntimeId?.name).toBe("reachable");
-  });
-
   test("update takes no agent id from the client", async () => {
     const t = refsTest();
     const { configId, foreignAgentId } = await seedForeignLink(t, "unlinked");

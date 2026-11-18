@@ -153,18 +153,3 @@ export const support = defineAgent({
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain('"system":"function"');
 });
-
-test("node names the package to install when a project imports a missing one", async (): Promise<void> => {
-  const cwd = await fixtureProject(`
-import { nothing } from "@broods-test/not-installed/sub";
-
-export const value = nothing;
-`);
-
-  const result = await compileWithNode(cwd);
-
-  expect(result.exitCode).not.toBe(0);
-  expect(result.stderr).toContain(
-    'broods/ imports "@broods-test/not-installed", which is not installed. Run `npm install @broods-test/not-installed`',
-  );
-});

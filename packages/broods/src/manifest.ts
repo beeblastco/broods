@@ -64,8 +64,6 @@ import {
 } from "./resources.ts";
 
 const CHANNEL_REACH_WILDCARD = "*";
-const MISSING_PACKAGE_PATTERN =
-  /Cannot find (?:package|module) '((?:@[a-z0-9._~-]+\/)?[a-z0-9~-][a-z0-9._~-]*)(?:\/[^']*)?'/;
 const OWN_SDK_SOURCES: Record<string, string> = {
   broods: "./index.ts",
   "broods/account": "./account.ts",
@@ -377,9 +375,7 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   const values: ExportedValue[] = [];
   for (const file of files) {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
-    const mod = (await import(href).catch((error: unknown): never => {
-      throw missingPackageError(error) ?? error;
-    })) as Record<string, unknown>;
+    const mod = (await import(href)) as Record<string, unknown>;
     values.push(
       ...Object.entries(mod).map(([exportName, value]): ExportedValue => ({
         exportName: exportName,
@@ -390,21 +386,6 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   }
 
   return values;
-}
-
-function missingPackageError(error: unknown): Error | undefined {
-  const name =
-    error instanceof Error &&
-    "code" in error &&
-    error.code === "ERR_MODULE_NOT_FOUND"
-      ? MISSING_PACKAGE_PATTERN.exec(error.message)?.[1]
-      : undefined;
-  if (name === undefined) return undefined;
-
-  return new Error(
-    `${PROJECT_DIR}/ imports "${name}", which is not installed. Run \`npm install ${name}\` (or \`bun add ${name}\`) in this folder.`,
-    { cause: error },
-  );
 }
 
 // The SDK this CLI ships, for a project with no `broods` install (a global CLI, npx, bunx).
@@ -432,7 +413,12 @@ function registerTypeScriptLoader(): void {
       try {
         return nextResolve(specifier, context);
       } catch (error) {
-        const ownSdk = ownSdkUrl(specifier);
+        const ownSdk =
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ERR_MODULE_NOT_FOUND"
+            ? ownSdkUrl(specifier)
+            : undefined;
         if (ownSdk !== undefined) return { url: ownSdk, shortCircuit: true };
         if (!/^\.{1,2}\//.test(specifier)) throw error;
         const candidates =
