@@ -9,6 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import module from "node:module";
 import { basename, join, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
@@ -1769,6 +1770,13 @@ async function ensureProjectShell(): Promise<void> {
     false,
   );
   printSuccess(`Created starter ${PROJECT_DIR}/`);
+  const installed = (
+    module.createRequire(join(root, "index.ts")).resolve.paths("broods") ?? []
+  ).some((dir): boolean => existsSync(join(dir, "broods")));
+  if (!installed)
+    console.log(
+      "· For editor types, run `npm install broods` or `bun add broods`.",
+    );
 }
 
 async function ensureLocalDevDefaults(args: string[]): Promise<void> {
@@ -1853,9 +1861,7 @@ async function requireAuthOrLogin(
     return await requireAuth(baseUrl);
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
-    printWarning(
-      `${error instanceof Error ? error.message : String(error)} Starting browser login.`,
-    );
+    console.log("Not signed in yet. Opening your browser to sign in.");
 
     return await loginWithBrowser(dashboardUrl);
   }
