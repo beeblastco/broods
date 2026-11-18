@@ -1771,7 +1771,7 @@ async function ensureProjectShell(): Promise<void> {
   );
   printSuccess(`Created starter ${PROJECT_DIR}/`);
   const installed = (
-    module.createRequire(root).resolve.paths("broods") ?? []
+    module.createRequire(join(root, "index.ts")).resolve.paths("broods") ?? []
   ).some((dir): boolean => existsSync(join(dir, "broods")));
   if (!installed)
     console.log(

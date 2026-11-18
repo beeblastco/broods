@@ -64,11 +64,11 @@ import {
 } from "./resources.ts";
 
 const CHANNEL_REACH_WILDCARD = "*";
-const OWN_SDK_SOURCES: Record<string, string> = {
-  broods: "./index.ts",
-  "broods/account": "./account.ts",
-  "broods/mcp": "./mcp-tools.ts",
-};
+const OWN_SDK_SOURCES = new Map([
+  ["broods", "./index.ts"],
+  ["broods/account", "./account.ts"],
+  ["broods/mcp", "./mcp-tools.ts"],
+]);
 const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
@@ -391,7 +391,7 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
 // The SDK this CLI ships, for a project with no `broods` install (a global CLI, npx, bunx).
 // A source checkout has no built package to resolve by name.
 function ownSdkUrl(specifier: string): string | undefined {
-  const source = OWN_SDK_SOURCES[specifier];
+  const source = OWN_SDK_SOURCES.get(specifier);
   if (source === undefined) return undefined;
 
   return import.meta.url.endsWith(".ts")
