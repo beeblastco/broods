@@ -28,6 +28,10 @@ npm install -g broods
 broods dev
 ```
 
+A global CLI needs no local install: when a project has no `broods` of its own,
+`broods dev` and `broods deploy` load `broods/` with the SDK the CLI ships. Add
+`broods` to the project for editor types.
+
 `broods update` installs the newest release of the major you run over the copy
 you are running, and `broods dev` says so when one is out.
 

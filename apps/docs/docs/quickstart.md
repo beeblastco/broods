@@ -12,7 +12,7 @@ bun init -y
 bun add broods ai
 ```
 
-`ai` is the Vercel AI SDK. The `broods` types build on it. For the CLI alone, `bun add -g broods` or `npm install -g broods` is enough.
+`ai` is the Vercel AI SDK. The `broods` types build on it. For the CLI alone, `bun add -g broods` or `npm install -g broods` is enough: `broods dev` then runs in any folder with the SDK the CLI ships, and the local install only adds editor types.
 
 ## 2. Add your model key
 
