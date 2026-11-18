@@ -926,7 +926,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 activeDeployment={activeDeployment}
                 // Ticket first: core limits the permanent key's run overrides.
                 deploymentApiKey={stageSession ?? deploymentApiKey}
-                agentId={agentConfigId ?? ""}
+                agentId={agentConfig?.agentId ?? ""}
                 nodeColor={nodeData?.properties?.color}
               />
             </TabsContent>
