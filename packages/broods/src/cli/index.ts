@@ -1769,6 +1769,15 @@ async function ensureProjectShell(): Promise<void> {
     false,
   );
   printSuccess(`Created starter ${PROJECT_DIR}/`);
+  const installs = await Promise.all(
+    (module.createRequire(root).resolve.paths("broods") ?? []).map(
+      (dir): Promise<boolean> => pathExists(join(dir, "broods")),
+    ),
+  );
+  if (!installs.includes(true))
+    console.log(
+      "· For editor types, run `npm install broods` or `bun add broods`. The CLI runs without it.",
+    );
 }
 
 async function ensureLocalDevDefaults(args: string[]): Promise<void> {
@@ -1853,9 +1862,7 @@ async function requireAuthOrLogin(
     return await requireAuth(baseUrl);
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
-    printWarning(
-      `${error instanceof Error ? error.message : String(error)} Starting browser login.`,
-    );
+    console.log("Not signed in yet. Opening your browser to sign in.");
 
     return await loginWithBrowser(dashboardUrl);
   }
