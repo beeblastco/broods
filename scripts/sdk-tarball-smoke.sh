@@ -73,4 +73,11 @@ if [[ "$actual" != "$expected" ]]; then
 fi
 "${imports[@]}" "await import('broods'); await import('broods/account');"
 node_modules/.bin/tsc -p tsconfig.json
+if [[ "$runtime" == "node" ]]; then
+  # A global CLI in a folder with no broods install must still load the starter.
+  bare="$(mktemp -d)"
+  (cd "$bare" && HOME="$bare" BROODS_TOKEN=smoke BROODS_BASE_URL=http://127.0.0.1:9 \
+    "$project/node_modules/.bin/broods" dev --once < /dev/null > dev.log 2>&1 || true)
+  grep -q "Syncing Development" "$bare/dev.log" || { cat "$bare/dev.log" >&2; exit 1; }
+fi
 echo "broods $expected works on $runtime"

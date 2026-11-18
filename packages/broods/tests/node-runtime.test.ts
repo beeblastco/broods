@@ -133,3 +133,23 @@ export const support = defineAgent({
     expect(result.stdout).toContain("be brief");
   },
 );
+
+test("node gives a project with no broods install the SDK the CLI ships", async (): Promise<void> => {
+  const cwd = await fixtureProject(`
+import { defineAgent, env } from "broods";
+import { BroodsApiError } from "broods/account";
+
+export const support = defineAgent({
+  name: "support",
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  agent: { system: typeof BroodsApiError },
+});
+`);
+
+  const result = await compileWithNode(cwd);
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain('"system":"function"');
+});
