@@ -133,3 +133,50 @@ export const support = defineAgent({
     expect(result.stdout).toContain("be brief");
   },
 );
+
+test("node gives a project with no broods install the SDK the CLI ships", async (): Promise<void> => {
+  const cwd = await fixtureProject(`
+import { defineAgent, env } from "broods";
+import { BroodsApiError } from "broods/account";
+
+export const support = defineAgent({
+  name: "support",
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  agent: { system: typeof BroodsApiError },
+});
+`);
+
+  const result = await compileWithNode(cwd);
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual([
+    {
+      kind: "agent",
+      name: "support",
+      config: {
+        provider: {
+          openai: { apiKey: { __beeblastEnv: true, name: "OPENAI_API_KEY" } },
+        },
+        model: { provider: "openai", modelId: "gpt-5-mini" },
+        agent: { system: "function" },
+      },
+    },
+  ]);
+});
+
+test("node names the package to install when a project imports a missing one", async (): Promise<void> => {
+  const cwd = await fixtureProject(`
+import { nothing } from "@broods-test/not-installed/sub";
+
+export const value = nothing;
+`);
+
+  const result = await compileWithNode(cwd);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr).toContain(
+    'broods/ imports "@broods-test/not-installed", which is not installed. Run `npm install @broods-test/not-installed`',
+  );
+});

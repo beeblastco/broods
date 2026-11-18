@@ -64,6 +64,13 @@ import {
 } from "./resources.ts";
 
 const CHANNEL_REACH_WILDCARD = "*";
+const MISSING_PACKAGE_PATTERN =
+  /Cannot find (?:package|module) '((?:@[a-z0-9._~-]+\/)?[a-z0-9~-][a-z0-9._~-]*)(?:\/[^']*)?'/;
+const OWN_SDK_SOURCES: Record<string, string> = {
+  broods: "./index.ts",
+  "broods/account": "./account.ts",
+  "broods/mcp": "./mcp-tools.ts",
+};
 const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
@@ -207,7 +214,7 @@ export async function compileProject(
     );
   }
   const files = await listTypeScriptFiles(root);
-  const exports = await loadExports(files);
+  const exports = await loadExports(files, root);
   const config = await findConfig(exports, cwd, options.project);
   const resourceExports = exports
     .filter((entry): entry is ExportedValue & { value: AnyResource } =>
@@ -365,12 +372,18 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
   );
 }
 
-async function loadExports(files: string[]): Promise<ExportedValue[]> {
+async function loadExports(
+  files: string[],
+  root: string,
+): Promise<ExportedValue[]> {
   registerTypeScriptLoader();
+  provideOwnSdkOnBun(root);
   const values: ExportedValue[] = [];
   for (const file of files) {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
-    const mod = (await import(href)) as Record<string, unknown>;
+    const mod = (await import(href).catch((error: unknown): never => {
+      throw missingPackageError(error) ?? error;
+    })) as Record<string, unknown>;
     values.push(
       ...Object.entries(mod).map(([exportName, value]): ExportedValue => ({
         exportName: exportName,
@@ -381,6 +394,60 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   }
 
   return values;
+}
+
+function missingPackageError(error: unknown): Error | undefined {
+  const name =
+    error instanceof Error
+      ? MISSING_PACKAGE_PATTERN.exec(error.message)?.[1]
+      : undefined;
+  if (name === undefined) return undefined;
+
+  return new Error(
+    `${PROJECT_DIR}/ imports "${name}", which is not installed. Run \`npm install ${name}\` (or \`bun add ${name}\`) in this folder.`,
+    { cause: error },
+  );
+}
+
+// The SDK this CLI ships, for a project with no `broods` install (a global CLI, npx, bunx).
+// A source checkout has no built package to resolve by name.
+function ownSdkUrl(specifier: string): string | undefined {
+  const source = OWN_SDK_SOURCES[specifier];
+  if (source === undefined) return undefined;
+
+  return import.meta.url.endsWith(".ts")
+    ? new URL(source, import.meta.url).href
+    : import.meta.resolve(specifier);
+}
+
+const ownSdkOnBun = new Set<string>();
+
+// Bun has no resolve hook, only virtual modules, and those shadow an installed package.
+function provideOwnSdkOnBun(root: string): void {
+  if (!("bun" in process.versions)) return;
+  const missing = Object.keys(OWN_SDK_SOURCES).filter((specifier): boolean => {
+    if (ownSdkOnBun.has(specifier)) return false;
+    try {
+      Bun.resolveSync(specifier, root);
+
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  if (missing.length === 0) return;
+  Bun.plugin({
+    name: "broods-own-sdk",
+    setup: (build): void => {
+      for (const specifier of missing) {
+        ownSdkOnBun.add(specifier);
+        build.module(specifier, (): { contents: string; loader: "js" } => ({
+          contents: `export * from ${JSON.stringify(ownSdkUrl(specifier))};`,
+          loader: "js",
+        }));
+      }
+    },
+  });
 }
 
 let typeScriptLoaderRegistered = false;
@@ -397,6 +464,8 @@ function registerTypeScriptLoader(): void {
       try {
         return nextResolve(specifier, context);
       } catch (error) {
+        const ownSdk = ownSdkUrl(specifier);
+        if (ownSdk !== undefined) return { url: ownSdk, shortCircuit: true };
         if (!/^\.{1,2}\//.test(specifier)) throw error;
         const candidates =
           extname(specifier) === ".js"
