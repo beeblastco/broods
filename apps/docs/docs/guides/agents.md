@@ -181,7 +181,7 @@ export const codingAgent = defineAgent({
 ```
 
 - The first sandbox must be persistent and use the `sandbox` or `lambda` provider.
-- The harness ships its own file tools, so the Broods workspace prompt is off. `memory_save` still works.
+- The harness ships its own file tools, so the Broods workspace prompt is off. `memory_save` and `memory_delete` still work.
 - Broods MCP servers and account skills still reach the harness. Filter tools with `activeTools` or `inactiveTools` on `defineHarness`.
 - The harness's own "ask the user" tool is off. The agent asks through [`ask_questions`](tools.md#asking-the-user).
 - Steering sent before a turn starts is folded into its prompt. Claude Code, Codex, OpenCode and Pi take steering sent during a turn at its next step. Deep Agents reads it when the next turn starts.

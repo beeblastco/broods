@@ -64,6 +64,11 @@ import {
 } from "./resources.ts";
 
 const CHANNEL_REACH_WILDCARD = "*";
+const OWN_SDK_SOURCES = new Map([
+  ["broods", "./index.ts"],
+  ["broods/account", "./account.ts"],
+  ["broods/mcp", "./mcp-tools.ts"],
+]);
 const ENV_PLACEHOLDER_GLOBAL_PATTERN = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
@@ -383,6 +388,17 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   return values;
 }
 
+// The SDK this CLI ships, for a project with no `broods` install (a global CLI, npx, bunx).
+// A source checkout has no built package to resolve by name.
+function ownSdkUrl(specifier: string): string | undefined {
+  const source = OWN_SDK_SOURCES.get(specifier);
+  if (source === undefined) return undefined;
+
+  return import.meta.url.endsWith(".ts")
+    ? new URL(source, import.meta.url).href
+    : import.meta.resolve(specifier);
+}
+
 let typeScriptLoaderRegistered = false;
 
 // Node only strips types, so an enum or decorator in broods/ would throw where Bun loads it;
@@ -397,6 +413,13 @@ function registerTypeScriptLoader(): void {
       try {
         return nextResolve(specifier, context);
       } catch (error) {
+        const ownSdk =
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "ERR_MODULE_NOT_FOUND"
+            ? ownSdkUrl(specifier)
+            : undefined;
+        if (ownSdk !== undefined) return { url: ownSdk, shortCircuit: true };
         if (!/^\.{1,2}\//.test(specifier)) throw error;
         const candidates =
           extname(specifier) === ".js"

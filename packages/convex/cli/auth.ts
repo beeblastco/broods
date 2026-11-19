@@ -4,6 +4,7 @@ import {
   internalMutation,
   internalQuery,
   mutation,
+  query,
   type MutationCtx,
   type QueryCtx,
 } from "../_generated/server";
@@ -22,13 +23,14 @@ import {
   getOrgMembership,
   orgRoleMeets,
   userByAuthId,
+  type OrgRole,
 } from "../model/ownership/org";
 import { accountDoc } from "../model/accountDoc";
 import { insertAccount } from "../account/accounts";
 import { insertOwnedOrg } from "../org/orgs";
 import { ClientError, clientErrorResponse } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
-import { planValidator } from "../schema";
+import { orgMembersFields, planValidator } from "../schema";
 
 const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
@@ -422,10 +424,10 @@ export const resolveUserLogin = internalQuery({
     ctx,
     { authId, org },
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
-    const orgs = await administeredOrgs(ctx, authId);
+    const user = await userByAuthId(ctx, authId);
+    const orgs = user ? await administeredOrgs(ctx, user) : [];
     // Only the user's own actions move activeOrgId, and joining an org needs their acceptance.
-    const activeOrgId = (await userByAuthId(ctx, authId))?.activeOrgId;
-    const active = orgs.filter(({ _id }) => _id === activeOrgId);
+    const active = orgs.filter(({ _id }) => _id === user?.activeOrgId);
     const unnamed = active.length === 1 ? active : orgs;
     const picked = org ? orgs.filter(({ slug }) => slug === org) : unnamed;
     if (org && picked.length === 0) {
@@ -647,10 +649,8 @@ async function onboardingContext(
 
 async function administeredOrgs(
   ctx: QueryCtx,
-  authId: string,
-): Promise<Doc<"orgs">[]> {
-  const user = await userByAuthId(ctx, authId);
-  if (!user) return [];
+  user: Doc<"users">,
+): Promise<(Doc<"orgs"> & { role: OrgRole })[]> {
   const memberships = await ctx.db
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", user._id))
@@ -658,11 +658,71 @@ async function administeredOrgs(
   const orgs = await Promise.all(
     memberships
       .filter(({ role }) => orgRoleMeets(role, "admin"))
-      .map(({ orgId }) => ctx.db.get(orgId)),
+      .map(async ({ orgId, role }) => {
+        const org = await ctx.db.get(orgId);
+
+        return org ? { ...org, role: role } : null;
+      }),
   );
 
   return orgs.filter((org) => org !== null);
 }
+
+// What the dashboard's `/mcp-auth/start` page offers to sign an MCP client in to.
+export const mcpSignInOrgs = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      orgId: v.id("orgs"),
+      slug: v.string(),
+      name: v.string(),
+      role: orgMembersFields.role,
+      selected: v.boolean(),
+      provisioned: v.boolean(),
+    }),
+  ),
+  handler: async (
+    ctx,
+  ): Promise<
+    {
+      orgId: Id<"orgs">;
+      slug: string;
+      name: string;
+      role: OrgRole;
+      selected: boolean;
+      provisioned: boolean;
+    }[]
+  > => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+    const user = await userByAuthId(ctx, authUser.id);
+    if (!user) return [];
+    const selected = (await getActiveOrgForUser(ctx, user._id))?._id;
+    const orgs = await administeredOrgs(ctx, user);
+
+    const listed = await Promise.all(
+      orgs.map(async ({ _id, name, role, slug }) => ({
+        orgId: _id,
+        slug: slug,
+        name: name,
+        role: role,
+        selected: _id === selected,
+        provisioned:
+          (await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", _id))
+            .first()) !== null,
+      })),
+    );
+
+    return listed.sort(
+      (a, b) =>
+        Number(b.selected) - Number(a.selected) || a.name.localeCompare(b.name),
+    );
+  },
+});
 
 // A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
 export async function resolveActiveCliToken(

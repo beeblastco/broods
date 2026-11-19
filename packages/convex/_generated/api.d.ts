@@ -1194,6 +1194,19 @@ export declare const api: {
         { codeChallenge: string },
         { code: string; expiresAt: number }
       >;
+      mcpSignInOrgs: FunctionReference<
+        "query",
+        "public",
+        {},
+        Array<{
+          name: string;
+          orgId: Id<"orgs">;
+          provisioned: boolean;
+          role: "owner" | "admin" | "member";
+          selected: boolean;
+          slug: string;
+        }>
+      >;
     };
   };
   dashboardReads: {

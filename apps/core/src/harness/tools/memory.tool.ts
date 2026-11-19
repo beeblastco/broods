@@ -94,14 +94,17 @@ Usage notes:
 
           const qFile = shellQuote(filePath);
           const qIndex = shellQuote(MEMORY_INDEX_PATH);
+          const qHeader = shellQuote(indexHeader);
           // Anchored to `- [title](slug.md) — ` so a mere cross-reference never matches;
           // a safe BRE since slugs are [a-z0-9-] and titles have no `]`.
           const indexLinePattern = `^- \\[[^]]*](${slug}\\.md) — `;
           // mountpoint-s3 rejects O_APPEND and rename(), so the index is rebuilt in a variable and
           // rewritten in one `>`; `sync` uploads both files before the sandbox freezes.
+          // grep exits 2 on a read error; the index is read first, so that error writes nothing.
           const code =
+            `index_body='' && if [ -f ${qIndex} ]; then index_body=$(grep -v ${shellQuote(indexLinePattern)} ${qIndex}); [ "$?" -le 1 ] || exit 1; fi && ` +
+            `if [ -z "$index_body" ]; then index_body=${qHeader}; fi && ` +
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
-            `index_body=$({ [ -f ${qIndex} ] && grep -v ${shellQuote(indexLinePattern)} ${qIndex}; } || printf '%s' ${shellQuote(indexHeader)}) && ` +
             `printf '%s\\n%s\\n' "$index_body" ${shellQuote(indexLine)} > ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {

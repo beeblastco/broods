@@ -122,6 +122,7 @@ private def sandboxSection (context agentConfig sandboxContext : Json) (hasBackg
     if ← someEffect "workspaceMemoryHarnessEnabled" (get · "config") sandboxWorkspaces then
       tools ← assignFrom tools "memoryTool"
         [obj (fsEntries ++ [("conversationKey", conversationKey)])]
+      tools ← assignFrom tools "memoryDeleteTool" [fsContext]
   return tools
 
 private def channelSection (context agentConfig start : Json) : Prog Json := do

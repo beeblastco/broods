@@ -1,3 +1,4 @@
+import { MCP_ORG_CLAIM } from "@broods/convex/model/mcpSignIn";
 import type { JWTVerifyGetKey } from "jose";
 import type { AuthContext } from "../../shared/auth.ts";
 import { getHarnessPublicUrl, optionalEnv } from "../../shared/env.ts";
@@ -48,22 +49,36 @@ export function mcpUnauthorized(invalidToken: boolean): Response {
   return refused;
 }
 
-/** An AuthKit access token for `/mcp`, signed in as the account `broods login` would give. */
+/** An AuthKit access token for `/mcp`: the org picked at sign-in, else the one `?org=` names. */
 export async function resolveAuthKitAuth(
   token: string,
-  org: string | undefined,
+  urlOrg: string | undefined,
 ): Promise<AuthKitAuth> {
   const config = authKitConfig();
   if (!config || !JWT_SHAPE.test(token)) return { kind: "invalid" };
-  let subject: string | undefined;
+  let claims: { subject: string | undefined; org: string | undefined };
   try {
-    subject = await verifiedSubject(token, config);
+    claims = await verifiedClaims(token, config);
   } catch {
     return { kind: "invalid" };
   }
+  const { org, subject } = claims;
   if (!subject) return { kind: "invalid" };
-  const login = await getStorage().accounts.getForUser(subject, org);
-  if ("refused" in login) return { kind: "refused", message: login.refused };
+  if (org && urlOrg && org !== urlOrg) {
+    return {
+      kind: "refused",
+      message: `This client signed in to ${org}. Remove ?org=${urlOrg} from the MCP URL, or sign in again and pick ${urlOrg}.`,
+    };
+  }
+  const login = await getStorage().accounts.getForUser(subject, org ?? urlOrg);
+  if ("refused" in login) {
+    return {
+      kind: "refused",
+      message: org
+        ? `${login.refused} Sign in again to pick another organization.`
+        : login.refused,
+    };
+  }
 
   return {
     kind: "signed-in",
@@ -94,10 +109,10 @@ function authKitConfig(): {
   };
 }
 
-async function verifiedSubject(
+async function verifiedClaims(
   token: string,
   config: { domain: string; resource: string },
-): Promise<string | undefined> {
+): Promise<{ subject: string | undefined; org: string | undefined }> {
   // Lazy: the Teams SDK `require`s jose as core loads, which fails once jose is ESM-loaded.
   const { createRemoteJWKSet, jwtVerify } = await import("jose");
   // jose caches the fetched keys and refetches on an unknown `kid`.
@@ -112,5 +127,10 @@ async function verifiedSubject(
     audience: config.resource,
   });
 
-  return payload.sub;
+  const org = payload[MCP_ORG_CLAIM];
+
+  return {
+    subject: payload.sub,
+    org: typeof org === "string" ? org : undefined,
+  };
 }
