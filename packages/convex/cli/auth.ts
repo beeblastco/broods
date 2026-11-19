@@ -413,7 +413,7 @@ export const resolveAccountLogin = internalMutation({
   },
 });
 
-// An AuthKit-signed-in user at core's `/mcp`: the account `broods login` would give them.
+// An AuthKit-signed-in user at core's `/mcp`: the org `?org=` names, else their active one.
 export const resolveUserLogin = internalQuery({
   args: { authId: v.string(), org: v.optional(v.string()) },
   returns: v.union(
@@ -424,10 +424,12 @@ export const resolveUserLogin = internalQuery({
     ctx,
     { authId, org },
   ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
-    // Never the dashboard's active org: switching it there must not repoint a connected client.
     const user = await userByAuthId(ctx, authId);
     const orgs = user ? await administeredOrgs(ctx, user) : [];
-    const picked = org ? orgs.filter(({ slug }) => slug === org) : orgs;
+    // Only the user's own actions move activeOrgId, and joining an org needs their acceptance.
+    const active = orgs.filter(({ _id }) => _id === user?.activeOrgId);
+    const unnamed = active.length === 1 ? active : orgs;
+    const picked = org ? orgs.filter(({ slug }) => slug === org) : unnamed;
     if (org && picked.length === 0) {
       return {
         refused: `You are not an owner or admin of an organization with the slug ${org}.`,
