@@ -18,15 +18,7 @@ export interface Exception {
 }
 
 /** Reviewed, time-limited exceptions. Each one needs a reachability note. */
-export const EXCEPTIONS: Exception[] = [
-  {
-    package: "picomatch",
-    advisory: "GHSA-fc5q-39xc-vjpf",
-    expires: "2027-01-18",
-    reason:
-      "ReDoS on a crafted glob, no patched release yet. Dev tooling (vite, vitest, shadcn) and @daytona/sdk's Dockerfile COPY expansion, which core never calls: no request reaches a glob.",
-  },
-];
+export const EXCEPTIONS: Exception[] = [];
 
 // bun audit exits 0 when clean and 1 on advisories; any other exit or report is a failed audit.
 export function judgeAudit(
