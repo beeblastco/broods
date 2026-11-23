@@ -50,7 +50,7 @@
     "@noble/hashes": "2.4.0",
     "@oxlint/plugins": "1.93.0",
     "@shadcn/lint": "^0.2.5",
-    "@types/bun": "^1.4.4",
+    "@types/bun": "^1.4.5",
     "fast-check": "4.10.2",
     "oxc-parser": "0.158.0",
     "oxfmt": "^0.78.0",

@@ -8,7 +8,7 @@
         "@noble/hashes": "2.4.0",
         "@oxlint/plugins": "1.93.0",
         "@shadcn/lint": "^0.2.5",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "fast-check": "4.10.2",
         "oxc-parser": "0.158.0",
         "oxfmt": "^0.78.0",
@@ -26,7 +26,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20261113.1",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "miniflare": "5.20261110.0-beta",
         "wrangler": "^4.161.0",
       },
@@ -42,7 +42,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20261113.1",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "wrangler": "^4.161.0",
       },
       "peerDependencies": {
@@ -58,7 +58,7 @@
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20261113.1",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "miniflare": "5.20261110.0-beta",
         "wrangler": "^4.161.0",
       },
@@ -159,7 +159,7 @@
       },
       "devDependencies": {
         "@types/aws-lambda": "8.10.164",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@types/node": "^26.6.6",
         "selfsigned": "^5.5.0",
       },
@@ -229,7 +229,7 @@
         "convex": "^1.50.0",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
       },
       "peerDependencies": {
         "typescript": "^7.0.2",
@@ -261,7 +261,7 @@
       "name": "@broods/edge",
       "version": "0.1.0",
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
       },
       "peerDependencies": {
         "typescript": "^7.0.2",
@@ -275,7 +275,7 @@
         "nats.ws": "^1.30.3",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
       },
       "peerDependencies": {
         "typescript": "^7.0.2",
@@ -289,7 +289,7 @@
         "@ai-sdk/provider-utils": "5.0.81",
       },
       "devDependencies": {
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "typescript": "^7.0.2",
       },
     },
@@ -311,7 +311,7 @@
         "@chat-adapter/slack": "^4.44.0",
         "@chat-adapter/telegram": "^4.44.0",
         "@modelcontextprotocol/server": "2.4.0",
-        "@types/bun": "^1.4.4",
+        "@types/bun": "^1.4.5",
         "@typescript/typescript6": "6.0.2",
         "ai": "^7.0.173",
         "publint": "^0.3.25",
@@ -1955,7 +1955,7 @@
 
     "@types/bonjour": ["@types/bonjour@3.5.13", "", { "dependencies": { "@types/node": "*" } }, "sha512-z9fJ5Im06zvUL548KvYNecEVlA7cVDkGUi6kZusb04mpyEFKCIZJvloCcmpmLaIahDpOQGHaHmG6imtPMmPXGQ=="],
 
-    "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
+    "@types/bun": ["@types/bun@1.4.5", "", { "dependencies": { "bun-types": "1.4.5" } }, "sha512-DpgwNI9z0L1S0gtb45QLCWgwCUcMLnsHYMJHQvpNj7erGiCGBvpggltAIeARrtobNMKMuy0UP7i56tKKgwFs/Q=="],
 
     "@types/chai": ["@types/chai@5.2.3", "", { "dependencies": { "@types/deep-eql": "*", "assertion-error": "^2.0.1" } }, "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA=="],
 
@@ -2325,7 +2325,7 @@
 
     "buffer-from": ["buffer-from@1.1.2", "", {}, "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ=="],
 
-    "bun-types": ["bun-types@1.4.4", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-yjrJh5oGX7mMPKGd19YXyIjmEuj4G4zNC30bs7PM9Az7NQ3ndF3j6hbeRdvJTRQEhJ/FYQwW0a2moweEi2hMxQ=="],
+    "bun-types": ["bun-types@1.4.5", "", { "dependencies": { "@types/node": "*", "undici-types": "*" } }, "sha512-ECHn+9dhL3wv0G6u0+7dQvrnaimXiRDxxerYBmhTaLyJEEuvTPWk2Fye3XIf5Y++JIIiHKfQw4Z7V5D8KuiXbg=="],
 
     "bundle-name": ["bundle-name@4.1.0", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q=="],
 
