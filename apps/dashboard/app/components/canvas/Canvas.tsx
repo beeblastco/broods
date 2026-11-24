@@ -897,7 +897,6 @@ function CanvasInner({
     if (settled === nodesRef.current) return;
     nodesRef.current = settled;
     setNodes(settled);
-    // oxlint-disable-next-line react/set-state-in-effect -- the re-frame starts the save timer
     if (canWrite) scheduleSave();
   }, [mcpServers, canWrite, setNodes, scheduleSave]);
 

@@ -48,14 +48,14 @@
   },
   "devDependencies": {
     "@noble/hashes": "2.4.0",
-    "@oxlint/plugins": "1.95.0",
+    "@oxlint/plugins": "1.94.0",
     "@shadcn/lint": "^0.2.5",
     "@types/bun": "^1.4.5",
     "fast-check": "4.11.0",
     "oxc-parser": "0.160.0",
     "oxfmt": "^0.80.0",
-    "oxlint": "1.95.0",
-    "oxlint-tsgolint": "7.0.2008",
+    "oxlint": "1.94.0",
+    "oxlint-tsgolint": "7.0.2007",
     "tweetnacl": "1.0.3",
     "typescript": "^7.0.2"
   },
