@@ -70,6 +70,12 @@ updates:
       # client and API version; moving to 23 changes the API version our calls use.
       - dependency-name: stripe
         update-types: ["version-update:semver-major"]
+      # 4.45 moves Telegram replies in a regular supergroup onto the chat's thread, so our
+      # own Bot API calls and the adapter's posts disagree. Lift once core picks a behavior.
+      - dependency-name: chat
+        versions: [">=4.45.0"]
+      - dependency-name: "@chat-adapter/*"
+        versions: [">=4.45.0"]
       # 2.8 adds 27 KB to the dashboard's client JS, past the client-js-total ceiling in
       # bench/bundle-budgets.json. Lift once that ceiling has room.
       - dependency-name: streamdown

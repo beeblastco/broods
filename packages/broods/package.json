@@ -85,7 +85,7 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/server": "^2.4.0",
-    "ai": "^7.0.181"
+    "ai": "^7.0.162"
   },
   "peerDependenciesMeta": {
     "@modelcontextprotocol/server": {
