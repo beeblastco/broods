@@ -9,8 +9,8 @@
     "deploy": "broods deploy"
   },
   "dependencies": {
-    "@ai-sdk/google": "^4.0.121",
-    "ai": "^7.0.173",
+    "@ai-sdk/google": "^4.0.125",
+    "ai": "^7.0.181",
     "broods": "file:../../broods"
   },
   "devDependencies": {
