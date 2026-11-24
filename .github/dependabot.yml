@@ -70,6 +70,10 @@ updates:
       # client and API version; moving to 23 changes the API version our calls use.
       - dependency-name: stripe
         update-types: ["version-update:semver-major"]
+      # 13 drops applyNodeChanges, applyEdgeChanges and useStore for changesets and a split
+      # store, so the canvas state path needs a rewrite. Lift with that migration PR.
+      - dependency-name: "@xyflow/react"
+        update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:
         patterns:
