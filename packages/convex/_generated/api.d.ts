@@ -1191,7 +1191,7 @@ export declare const api: {
       createLoginCode: FunctionReference<
         "mutation",
         "public",
-        { approved?: true; codeChallenge: string },
+        { approved?: true; codeChallenge: string; orgId?: Id<"orgs"> },
         { code: string; expiresAt: number }
       >;
       mcpSignInOrgs: FunctionReference<

@@ -48,7 +48,7 @@ test("hasFlag ignores a boolean flag given a value", (): void => {
   expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
 });
 
-test("broods login collects the login once it is approved, with no callback to this machine", async (): Promise<void> => {
+test("broods login waits through a failed poll, then collects the approved login with no callback to this machine", async (): Promise<void> => {
   const home = mkdtempSync(join(tmpdir(), "broods-login-"));
   let polls = 0;
   let verifier = "";
@@ -62,7 +62,9 @@ test("broods login collects the login once it is approved, with no callback to t
       verifier = ((await request.json()) as { code_verifier: string })
         .code_verifier;
 
-      return polls < 2
+      if (polls === 1) return new Response("deploying", { status: 503 });
+
+      return polls === 2
         ? Response.json({ pending: true }, { status: 202 })
         : Response.json({ token: "bcli_test" });
     },
@@ -89,7 +91,7 @@ test("broods login collects the login once it is approved, with no callback to t
     const link = new URL(stdout.match(/^ {2}(http\S+)$/m)![1]!);
 
     expect(exitCode).toBe(0);
-    expect(polls).toBe(2);
+    expect(polls).toBe(3);
     expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(link.pathname).toBe("/cli-auth/start");
     expect(link.searchParams.has("callback")).toBe(false);

@@ -30,9 +30,7 @@ test("approving broods login hands the waiting CLI its login @rollout", async ({
     202,
   );
   await page.getByRole("button", { name: "Approve" }).click();
-  await expect(
-    page.getByRole("heading", { name: "The broods CLI is signed in" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approved" })).toBeVisible();
 
   const collected = await poll();
   expect(collected.status()).toBe(200);

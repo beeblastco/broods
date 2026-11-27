@@ -101,11 +101,16 @@ type OnboardingOrg = {
 
 // PKCE: only the CLI holding the verifier can exchange it, not a stray localhost listener.
 export const createLoginCode = mutation({
-  args: { codeChallenge: v.string(), approved: v.optional(v.literal(true)) },
+  args: {
+    codeChallenge: v.string(),
+    approved: v.optional(v.literal(true)),
+    // The org the approve page showed; without it, the caller's active org.
+    orgId: v.optional(v.id("orgs")),
+  },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
   handler: async (
     ctx,
-    { codeChallenge, approved },
+    { codeChallenge, approved, orgId },
   ): Promise<{ code: string; expiresAt: number }> => {
     if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
       throw new ClientError("codeChallenge must be a base64url S256 challenge");
@@ -114,7 +119,7 @@ export const createLoginCode = mutation({
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
-    const target = await cliLoginTarget(ctx, authUser.id);
+    const target = await cliLoginTarget(ctx, authUser.id, orgId);
     // ClientError: a plain Error reaches a production caller only as "Server Error".
     if (target instanceof ClientError) throw target;
 
@@ -239,16 +244,16 @@ export const exchangeLoginCode = internalMutation({
     const codeChallenge = await pkceChallenge(codeVerifier);
     let row: Doc<"cliAuthCodes"> | null;
     if (code === undefined) {
+      // Only a login approved on the dashboard's page is handed to a poll: the redirect
+      // flow mints its code on a plain page load, which a link from anyone can cause.
       row = await ctx.db
         .query("cliAuthCodes")
-        .withIndex("by_codeChallenge", (q) =>
-          q.eq("codeChallenge", codeChallenge),
+        .withIndex("by_codeChallenge_and_approved", (q) =>
+          q.eq("codeChallenge", codeChallenge).eq("approved", true),
         )
         .order("desc")
         .first();
-      // Only a login approved on the dashboard's page is handed to a poll: the redirect
-      // flow mints its code on a plain page load, which a link from anyone can cause.
-      if (!row?.approved) return null;
+      if (!row) return null;
     } else {
       if (!code.startsWith(CLI_CODE_PREFIX)) {
         throw new ClientError("Login code is invalid or expired");

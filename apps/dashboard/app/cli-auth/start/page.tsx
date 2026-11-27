@@ -22,8 +22,8 @@ const DEVICE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LOGIN_CODE_PATTERN = /^[A-Z]{4}-[A-Z]{4}$/;
 const OUTCOMES = {
   approved: {
-    title: "The broods CLI is signed in",
-    description: "You can close this tab.",
+    title: "Approved",
+    description: "Return to your terminal. You can close this tab.",
   },
   cancelled: {
     title: "Sign-in cancelled",
@@ -59,7 +59,7 @@ export default async function CliAuthStartPage({
   }
   if (outcome) {
     return (
-      <Failure description="The sign-in could not be approved. Run broods login again." />
+      <Failure description="The sign-in could not be approved. Press Ctrl-C in the terminal, then run broods login again." />
     );
   }
   if (callback && state && codeChallenge && isLocalCallback(callback)) {
@@ -77,7 +77,14 @@ export default async function CliAuthStartPage({
   );
   if (!org) {
     return (
-      <Failure description="Signing in the CLI needs the owner or admin role in your current organization. Switch organizations in the dashboard, then run broods login again." />
+      <Failure description="Signing in the CLI needs the owner or admin role in your current organization. Press Ctrl-C in the terminal, switch organizations in the dashboard, then run broods login again." />
+    );
+  }
+  if (!org.provisioned) {
+    return (
+      <Failure
+        description={`${org.name} has no active API account. Press Ctrl-C in the terminal, set it up under Organization > API Access, then run broods login again.`}
+      />
     );
   }
   const email = selfHosted ? undefined : (await withAuth()).user?.email;
@@ -91,6 +98,7 @@ export default async function CliAuthStartPage({
         className="flex flex-col items-center gap-2"
       >
         <input type="hidden" name="code_challenge" value={codeChallenge} />
+        <input type="hidden" name="org" value={org.slug} />
         <p className="font-mono text-2xl tracking-widest text-foreground">
           {code}
         </p>

@@ -411,21 +411,23 @@ function loginCode(): string {
 
 // The dashboard names the API host the login is collected from and used against.
 async function loginBaseUrl(dashboard: string): Promise<string> {
-  const response = await cliFetch(`${dashboard}/cli-auth/config`, {
-    redirect: "manual",
-  });
-  if (!response.ok) {
+  const response = await cliFetch(`${dashboard}/cli-auth/config`, {});
+  if (response.status >= 500) {
     throw new Error(
-      response.status >= 500
-        ? `The broods login page failed: ${response.status} ${await response.text()}`
-        : `${dashboard} has no broods login page for this CLI. Check that --dashboard-url points at your broods dashboard, and that the dashboard is up to date.`,
+      `The broods login page failed: ${response.status} ${await response.text()}`,
     );
   }
-  const { base_url: baseUrl } = (await response.json()) as {
-    base_url: string;
-  };
+  // A dashboard from before this route answers with its sign-in page, not JSON.
+  const config = (await response.json().catch((): null => null)) as {
+    base_url?: unknown;
+  } | null;
+  if (!response.ok || typeof config?.base_url !== "string") {
+    throw new Error(
+      `${dashboard} has no broods login page for this CLI. Check that --dashboard-url points at your broods dashboard, and that the dashboard is up to date.`,
+    );
+  }
 
-  return stripTrailingSlash(baseUrl);
+  return stripTrailingSlash(config.base_url);
 }
 
 async function pollLogin(
@@ -435,14 +437,21 @@ async function pollLogin(
   const deadline = Date.now() + LOGIN_APPROVAL_TIMEOUT_MS;
   console.log("Waiting for approval in the browser (Ctrl-C to stop)...");
   while (Date.now() < deadline) {
+    // A dropped connection, a deploy's 5xx or a rate limit must not lose the approval.
     const response = await cliFetch(`${baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code_verifier: codeVerifier }),
-    });
-    if (response.status === 200)
+    }).catch((): null => null);
+    if (response?.status === 200) {
       return (await response.json()) as LoginExchange;
-    if (response.status !== 202) {
+    }
+    if (
+      response &&
+      response.status !== 202 &&
+      response.status !== 429 &&
+      response.status < 500
+    ) {
       throw new Error(
         `Login failed: ${response.status} ${await response.text()}`,
       );

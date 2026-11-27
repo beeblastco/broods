@@ -9,13 +9,21 @@ const FAILED = "/cli-auth/start?outcome=failed";
 /** The approve button's submit: records the approval the waiting CLI polls for. */
 export async function approveCliLogin(form: FormData): Promise<void> {
   const codeChallenge = form.get("code_challenge");
-  if (typeof codeChallenge !== "string") redirect(FAILED);
-  const accessToken = await signedInAccessToken();
+  const slug = form.get("org");
+  if (typeof codeChallenge !== "string" || typeof slug !== "string") {
+    redirect(FAILED);
+  }
+  const client = convexCaller(await signedInAccessToken());
   try {
-    // The page provisioned the caller; the mutation re-checks user, org, role and account.
-    await convexCaller(accessToken).mutation(api.cli.auth.createLoginCode, {
+    // The org the page showed, not whichever one another tab made active since.
+    const org = (await client.query(api.cli.auth.mcpSignInOrgs, {})).find(
+      (candidate) => candidate.slug === slug,
+    );
+    if (!org) throw new Error(`no admin role in ${slug}`);
+    await client.mutation(api.cli.auth.createLoginCode, {
       codeChallenge: codeChallenge,
       approved: true,
+      orgId: org.orgId,
     });
   } catch (error) {
     console.error("[cli-auth] broods login approval failed", error);

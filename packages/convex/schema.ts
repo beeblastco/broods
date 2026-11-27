@@ -1522,7 +1522,7 @@ export default defineSchema({
     .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
-    .index("by_codeChallenge", ["codeChallenge"])
+    .index("by_codeChallenge_and_approved", ["codeChallenge", "approved"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"]),
   cliTokens: defineTable(cliTokensFields)

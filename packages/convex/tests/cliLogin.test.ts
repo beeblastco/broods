@@ -102,6 +102,17 @@ describe("CLI login code exchange with PKCE", () => {
     expect((await poll()).status).toBe(400);
   });
 
+  test("a later code minted without the approve page does not hide the approved one", async () => {
+    const t = loginTest();
+    await seedCode(t, await pkceChallenge(VERIFIER), CODE, true);
+    await seedCode(t, await pkceChallenge(VERIFIER), "bcode_later");
+
+    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
+      codeVerifier: VERIFIER,
+    });
+    expect(exchanged?.token.startsWith("bcli_")).toBe(true);
+  });
+
   test("a code minted without the approve page is never handed to a poll", async () => {
     const t = loginTest();
     await seedCode(t, await pkceChallenge(VERIFIER));
@@ -246,6 +257,61 @@ describe("CLI login code minting", () => {
     await expect(minting).rejects.toThrow(
       "beeblast has no active API account. Set it up under Organization > API Access in the dashboard.",
     );
+  });
+});
+
+describe("CLI login approval", () => {
+  test("the login is for the org the approve page showed, not the one active at the click", async () => {
+    const t = loginTest();
+    const shown = await t.run(async (ctx) => {
+      const orgIds = [];
+      for (const slug of ["active", "shown"]) {
+        const orgId = await ctx.db.insert("orgs", {
+          name: slug,
+          slug: slug,
+          ownerAuthId: AUTH_ID,
+          plan: "free",
+          createdAt: 1,
+        });
+        await ctx.db.insert("accounts", {
+          orgId: orgId,
+          username: slug,
+          secretHash: `hash-${slug}`,
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        orgIds.push(orgId);
+      }
+      const userId = await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "admin@example.com",
+        name: "admin",
+        plan: "free",
+        activeOrgId: orgIds[0],
+      });
+      for (const orgId of orgIds) {
+        await ctx.db.insert("orgMembers", {
+          orgId: orgId,
+          userId: userId,
+          role: "owner",
+          createdAt: 1,
+        });
+      }
+
+      return orgIds[1];
+    });
+
+    await t.mutation(api.cli.auth.createLoginCode, {
+      codeChallenge: await pkceChallenge(VERIFIER),
+      approved: true,
+      orgId: shown,
+    });
+    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
+      codeVerifier: VERIFIER,
+    });
+
+    expect(exchanged?.org.slug).toBe("shown");
   });
 });
 
