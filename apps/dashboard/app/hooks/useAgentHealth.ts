@@ -4,7 +4,12 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { subscribeNever } from "@/app/hooks/useHydrated";
 import { useSyncExternalStore } from "react";
 
-export type AgentHealthStatus = "healthy" | "deploying" | "idle" | "unhealthy";
+export type AgentHealthStatus =
+  | "healthy"
+  | "not-run"
+  | "deploying"
+  | "idle"
+  | "unhealthy";
 
 const HEALTH_CHECK_INTERVAL = 30_000;
 
@@ -17,8 +22,10 @@ let listenerCount = 0;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
 
+// `hasRun` is the canvas badge's; while it loads the gateway's answer stands.
 export function useAgentHealth(
   agentConfigId: Id<"agentConfigs"> | undefined,
+  hasRun: boolean | undefined,
 ): AgentHealthStatus {
   const healthy = useSyncExternalStore(
     agentConfigId ? subscribe : subscribeNever,
@@ -34,7 +41,11 @@ export function useAgentHealth(
     return "deploying";
   }
 
-  return healthy ? "healthy" : "unhealthy";
+  if (!healthy) {
+    return "unhealthy";
+  }
+
+  return hasRun === false ? "not-run" : "healthy";
 }
 
 async function checkServiceHealth(): Promise<boolean> {

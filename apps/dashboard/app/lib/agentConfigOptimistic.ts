@@ -30,10 +30,11 @@ export function applyAgentConfigUpdate(
   for (const { args: stageArgs, value } of localStore.getAllQueries(
     api.agent.config.canvasBadges,
   )) {
-    if (!value?.[configId]) continue;
+    const current = value?.[configId];
+    if (!value || !current) continue;
     localStore.setQuery(api.agent.config.canvasBadges, stageArgs, {
       ...value,
-      [configId]: agentCanvasBadge(next),
+      [configId]: { ...agentCanvasBadge(next), hasRun: current.hasRun },
     });
   }
 }

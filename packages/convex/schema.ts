@@ -1792,6 +1792,7 @@ export default defineSchema({
     .index("by_runId", ["runId"]),
   taskUsage: defineTable(taskUsageFields)
     .index("by_accountId_and_taskId", ["accountId", "taskId"])
+    .index("by_accountId_and_agentId", ["accountId", "agentId"])
     .index("by_accountId_and_endpointId_and_finishedAt", [
       "accountId",
       "endpointId",

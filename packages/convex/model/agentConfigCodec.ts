@@ -99,6 +99,8 @@ export type NestedAgentConfig = Record<string, unknown>;
 
 /** The bits of one agent config its canvas card and its skill cards draw. */
 export const agentCanvasBadgeValidator = v.object({
+  // A run record exists for the agent. Records are pruned after 90 days.
+  hasRun: v.boolean(),
   // Callers need no runtime key, so the card's globe shows green.
   publicAccess: v.boolean(),
   // Skill refs the agent loads: `skills.allowed` while skills are on, else none.
@@ -117,7 +119,7 @@ export type AgentCanvasBadge = Infer<typeof agentCanvasBadgeValidator>;
 // Shared by the badges query and the optimistic update, so the server's answer matches it.
 export function agentCanvasBadge(
   config: Pick<AgentConfigDoc, "extraConfig" | "outputFormat" | "provider">,
-): AgentCanvasBadge {
+): Omit<AgentCanvasBadge, "hasRun"> {
   const { extraConfig, outputFormat } = config;
   const transcriber = extraConfig?.transcription?.provider;
   const skills = extraConfig?.skills;

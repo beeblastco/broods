@@ -1786,6 +1786,7 @@ function CanvasInner({
             {(node) => (
               <NodeSidePanel
                 node={node}
+                agentBadges={agentBadges}
                 selectedAt={selectedAt}
                 onClose={onPaneClick}
                 onRequestDelete={requestNodeDelete}

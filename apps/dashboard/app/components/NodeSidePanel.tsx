@@ -1,5 +1,6 @@
 "use client";
 
+import type { CanvasFramesValue } from "@/app/components/canvas/CanvasFramesContext";
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import { IconTooltip } from "@/app/components/IconTooltip";
 import { useShortcut } from "@/app/components/ShortcutProvider";
@@ -84,6 +85,7 @@ const healthBadgeVariant: Record<
   "success" | "warning" | "secondary" | "destructive"
 > = {
   healthy: "success",
+  "not-run": "secondary",
   deploying: "warning",
   idle: "secondary",
   unhealthy: "destructive",
@@ -144,6 +146,7 @@ const PANEL_TITLES: Record<NodeType, string> = {
 
 export const NodeSidePanel = memo(function NodeSidePanel({
   node,
+  agentBadges,
   selectedAt,
   onClose,
   onRequestDelete,
@@ -151,6 +154,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   onUpdateNodeData,
 }: {
   node: Node | null;
+  agentBadges: CanvasFramesValue["agentBadges"];
   /** `performance.now()` of the selecting click. */
   selectedAt: number;
   onClose: () => void;
@@ -187,7 +191,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     });
   }, [nodeId, nodeType, selectedAt]);
 
-  const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
+  const healthStatus = useAgentHealth(
+    isAgent ? agentConfigId : undefined,
+    agentConfigId ? agentBadges?.[agentConfigId]?.hasRun : undefined,
+  );
 
   const { agentConfig: connectedAgentConfig } = useConnectedAgentConfig(
     isSkill ? nodeId : undefined,

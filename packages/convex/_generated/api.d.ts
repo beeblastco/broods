@@ -406,6 +406,7 @@ export declare const api: {
         Record<
           Id<"agentConfigs">,
           {
+            hasRun: boolean;
             publicAccess: boolean;
             skills: Array<string>;
             structuredOutput: boolean;

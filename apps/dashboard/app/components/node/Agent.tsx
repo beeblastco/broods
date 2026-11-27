@@ -19,10 +19,10 @@ export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
   const agentConfigId = nodeData.agentConfigId as
     | Id<"agentConfigs">
     | undefined;
-  const healthStatus = useAgentHealth(agentConfigId);
   // Badges come from the canvas's one query; only the side panel reads the full config.
   const { agentBadges } = useCanvasFrames();
   const badge = agentConfigId ? agentBadges?.[agentConfigId] : undefined;
+  const healthStatus = useAgentHealth(agentConfigId, badge?.hasRun);
   const structuredOutput = badge?.structuredOutput === true;
   const voice = (badge?.voice ?? null) as AgentVoice | null;
   const voiceLabel = voice

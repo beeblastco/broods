@@ -478,15 +478,14 @@ export function DetailsTab({
               />
             )}
             {keyVariableMissing && (
-              <p className="text-xs text-destructive">
-                Set <code>{keyVariable}</code> in{" "}
+              <p className="text-xs text-warning">
+                <code>{keyVariable}</code> is not set.{" "}
                 <Link
                   href={`/${projectId}/settings?tab=variables&stage=${stageId}`}
                   className="cursor-pointer underline underline-offset-4"
                 >
-                  Environment variables
-                </Link>{" "}
-                before running the agent.
+                  Set key
+                </Link>
               </p>
             )}
             {saveErrorFor("model")}

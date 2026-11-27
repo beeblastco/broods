@@ -48,6 +48,7 @@ export const agentStatusConfig: Record<
   { color: string; text: string }
 > = {
   healthy: { color: "bg-success", text: "Healthy" },
+  "not-run": { color: "bg-muted-foreground", text: "Not run yet" },
   deploying: { color: "bg-warning", text: "Deploying" },
   idle: { color: "bg-muted-foreground", text: "Idle" },
   unhealthy: { color: "bg-destructive", text: "Unhealthy" },

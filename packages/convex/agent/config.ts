@@ -250,9 +250,31 @@ export const canvasBadges = query({
       )
       .collect();
 
-    return Object.fromEntries(
-      configs.map((config) => [config._id, agentCanvasBadge(config)]),
+    // Core files each run under the agent row's id and that row's account.
+    const accountId = await accountIdForProject(ctx, projectId);
+    const badges = await Promise.all(
+      configs.map(
+        async (config): Promise<[Id<"agentConfigs">, AgentCanvasBadge]> => {
+          const agentId = config.agentId;
+          const run =
+            accountId && agentId
+              ? await ctx.db
+                  .query("taskUsage")
+                  .withIndex("by_accountId_and_agentId", (q) =>
+                    q.eq("accountId", accountId).eq("agentId", agentId),
+                  )
+                  .first()
+              : null;
+
+          return [
+            config._id,
+            { ...agentCanvasBadge(config), hasRun: run !== null },
+          ];
+        },
+      ),
     );
+
+    return Object.fromEntries(badges);
   },
 });
 
