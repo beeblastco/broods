@@ -715,9 +715,13 @@ function deploy(
 async function cliLogin(run: Run): Promise<string> {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  await run.asAdmin("cli/auth:createLoginCode", {
+  const org = (await run.asAdmin(
+    "dashboardReads:activeOrg",
+    {},
+  )) as Doc<"orgs">;
+  await run.asAdmin("cli/auth:approveLogin", {
     codeChallenge: challenge,
-    approved: true,
+    orgId: org._id,
   });
   const response = await fetch(
     `${run.context.edgeUrl}/v1/account/auth/exchange`,

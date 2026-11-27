@@ -246,13 +246,12 @@ export const accountApiKeysFields = {
 };
 
 export const cliAuthCodesFields = {
-  codeHash: v.string(),
+  // Rows from before the approve page carry the hash of a one-time code; nothing reads it.
+  codeHash: v.optional(v.string()),
   authId: v.string(),
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
   codeChallenge: v.string(),
-  // Set when the user approved this login on the dashboard's page, so the CLI may poll for it.
-  approved: v.optional(v.literal(true)),
   expiresAt: v.number(),
   usedAt: v.optional(v.number()),
   createdAt: v.number(),
@@ -1521,8 +1520,7 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
-    .index("by_codeHash", ["codeHash"])
-    .index("by_codeChallenge_and_approved", ["codeChallenge", "approved"])
+    .index("by_codeChallenge", ["codeChallenge"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"]),
   cliTokens: defineTable(cliTokensFields)

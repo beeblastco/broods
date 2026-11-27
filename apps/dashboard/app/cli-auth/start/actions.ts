@@ -20,9 +20,8 @@ export async function approveCliLogin(form: FormData): Promise<void> {
       (candidate) => candidate.slug === slug,
     );
     if (!org) throw new Error(`no admin role in ${slug}`);
-    await client.mutation(api.cli.auth.createLoginCode, {
+    await client.mutation(api.cli.auth.approveLogin, {
       codeChallenge: codeChallenge,
-      approved: true,
       orgId: org.orgId,
     });
   } catch (error) {

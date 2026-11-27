@@ -1,13 +1,11 @@
 // `broods login`'s browser step: the terminal prints a code and waits, and the approval
-// here is what it collects. An older CLI still sends a localhost `callback` to redirect to.
+// here is what it collects.
 
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 import { approveCliLogin } from "@/app/cli-auth/start/actions";
-import { toErrorMessage } from "@/app/lib/errors";
 import { selfHosted } from "@/app/lib/selfHostSession";
 import {
-  advertisedBaseUrl,
   firstParam,
   provisionedCaller,
   signedInAccessToken,
@@ -15,7 +13,6 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 // A host name only: the link picks this text, and it sits beside the approve button.
 const DEVICE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -41,8 +38,6 @@ export default async function CliAuthStartPage({
 }): Promise<React.JSX.Element> {
   const accessToken = await signedInAccessToken();
   const params = await searchParams;
-  const callback = firstParam(params.callback);
-  const state = firstParam(params.state);
   const codeChallenge = firstParam(params.code_challenge);
   const code = firstParam(params.code);
   const outcome = firstParam(params.outcome);
@@ -62,10 +57,12 @@ export default async function CliAuthStartPage({
       <Failure description="The sign-in could not be approved. Press Ctrl-C in the terminal, then run broods login again." />
     );
   }
-  if (callback && state && codeChallenge && isLocalCallback(callback)) {
-    redirect(await callbackTarget(accessToken, callback, state, codeChallenge));
+  if (firstParam(params.callback)) {
+    return (
+      <Failure description="This link is from an older broods CLI. Update it with npm i -g broods@latest, then run broods login again." />
+    );
   }
-  if (callback || !codeChallenge || !code || !LOGIN_CODE_PATTERN.test(code)) {
+  if (!codeChallenge || !code || !LOGIN_CODE_PATTERN.test(code)) {
     return (
       <Failure description="This login link is incomplete. Run broods login again." />
     );
@@ -142,43 +139,4 @@ function Failure({ description }: { description: string }): React.JSX.Element {
       </Button>
     </StatusPage>
   );
-}
-
-// A CLI from before the approve page: the code goes to its localhost listener, a failure as
-// `error` so it stops waiting at once.
-async function callbackTarget(
-  accessToken: string,
-  callback: string,
-  state: string,
-  codeChallenge: string,
-): Promise<string> {
-  const target = new URL(callback);
-  target.searchParams.set("state", state);
-  try {
-    const client = await provisionedCaller(accessToken);
-    const { code } = await client.mutation(api.cli.auth.createLoginCode, {
-      codeChallenge: codeChallenge,
-    });
-    target.searchParams.set("code", code);
-    target.searchParams.set("base_url", advertisedBaseUrl());
-  } catch (error) {
-    console.error("[cli-auth] broods login failed", error);
-    target.searchParams.delete("code");
-    target.searchParams.set("error", toErrorMessage(error));
-  }
-
-  return target.toString();
-}
-
-function isLocalCallback(value: string): boolean {
-  try {
-    const url = new URL(value);
-
-    return (
-      url.protocol === "http:" &&
-      (url.hostname === "127.0.0.1" || url.hostname === "localhost")
-    );
-  } catch {
-    return false;
-  }
 }
