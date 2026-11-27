@@ -45,6 +45,7 @@ const CHANNEL_TARGET: ConversationDispatchTarget = {
 
 const originalQuery = runtime.query.bind(runtime);
 const originalMutate = runtime.mutate.bind(runtime);
+const originalPublicBaseUrl = process.env.PUBLIC_BASE_URL;
 
 let channelTarget: ConversationDispatchTarget | null;
 let conversationKey: string | undefined;
@@ -54,6 +55,7 @@ let failures: string[];
 let removed: string[];
 
 beforeEach(() => {
+  delete process.env.PUBLIC_BASE_URL;
   channelTarget = null;
   conversationKey = undefined;
   scheduleExpression = "cron(0 9 * * ? *)";
@@ -128,6 +130,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalPublicBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+  else process.env.PUBLIC_BASE_URL = originalPublicBaseUrl;
   resetStorageForTests();
   runtime.query = originalQuery;
   runtime.mutate = originalMutate;

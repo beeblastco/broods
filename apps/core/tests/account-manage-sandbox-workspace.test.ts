@@ -44,6 +44,7 @@ interface FetchCall {
 const PTY_TOKEN = "wtt_minted_by_the_host";
 const PTY_TOKEN_EXPIRES_AT = "2099-01-01T00:00:00Z";
 let ptyTokenAuthorizations: string[] = [];
+let ptyTokenRedirects: RequestInit["redirect"][] = [];
 
 let fetchCalls: FetchCall[] = [];
 const fetchMock = mock(
@@ -69,6 +70,7 @@ const fetchMock = mock(
       ptyTokenAuthorizations.push(
         new Headers(init?.headers).get("authorization") ?? "",
       );
+      ptyTokenRedirects.push(init?.redirect);
 
       return Response.json({
         token: PTY_TOKEN,
@@ -209,6 +211,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   fetchCalls = [];
   ptyTokenAuthorizations = [];
+  ptyTokenRedirects = [];
   fetchMock.mockClear();
   getSandboxExternalIdMock.mockClear();
   removeSandboxInstanceMock.mockClear();
@@ -596,6 +599,7 @@ describe("account-manage sandbox endpoints", () => {
       authorization: `Bearer ${PTY_TOKEN}`,
     });
     expect(ptyTokenAuthorizations).toEqual(["Bearer own-key"]);
+    expect(ptyTokenRedirects).toEqual(["error"]);
   });
 
   it("refuses the terminal with an update hint when the workdir host cannot mint tokens", async () => {

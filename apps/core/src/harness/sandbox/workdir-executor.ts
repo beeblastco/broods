@@ -837,6 +837,7 @@ export async function workdirTerminalTarget(
   const response = await fetch(`${sandboxUrl}/pty-token`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
+    redirect: "error",
   });
   if (response.status === 404 || response.status === 405) {
     throw new ClientError(
