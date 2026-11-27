@@ -89,6 +89,11 @@ const healthBadgeVariant: Record<
   unhealthy: "destructive",
 };
 
+// The back arrow is hidden from md up, where focus() does nothing and the canvas stays reachable.
+function focusWhenShown(element: HTMLButtonElement | null): void {
+  element?.focus();
+}
+
 const loadAgentTestTab = () =>
   import("@/app/components/side-panel/TestTab").then((mod) => mod.TestTab);
 
@@ -664,6 +669,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             size="icon-xs"
             className="cursor-pointer md:hidden"
             aria-label="Back to canvas"
+            ref={focusWhenShown}
             onClick={onClose}
           >
             <ArrowLeft className="size-4" />
