@@ -65,7 +65,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import { providerApiKeyEnvName } from "@broods/convex/model/modelProviders";
 import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -659,6 +659,15 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     <div className="flex h-full w-full flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="cursor-pointer md:hidden"
+            aria-label="Back to canvas"
+            onClick={onClose}
+          >
+            <ArrowLeft className="size-4" />
+          </Button>
           <h2 className="text-sm font-medium text-foreground">
             {PANEL_TITLES[nodeType] ?? "Node"}
           </h2>
@@ -673,7 +682,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="cursor-pointer"
+            className="cursor-pointer max-md:hidden"
             onClick={onClose}
           >
             <X className="size-4" />
