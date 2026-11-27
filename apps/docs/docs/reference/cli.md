@@ -105,7 +105,9 @@ Authenticates through the dashboard in your browser and stores the token in `~/.
 broods login [--region <region>]
 ```
 
-The browser hand-off uses PKCE, so only the CLI that started the login can exchange the code. The token belongs to an org owner or admin and is re-checked on every request. Demote or remove the user and it stops working.
+It prints a link and a short code, then waits. Open the link on any device, check the page shows the same code as your terminal, and approve: the terminal logs in by itself. The browser never has to reach the machine the CLI runs on, so it works over SSH and in a container. The wait ends after 10 minutes.
+
+The hand-off uses PKCE, so only the CLI that started the login can collect it. The token belongs to an org owner or admin and is re-checked on every request. Demote or remove the user and it stops working.
 
 `login` does not choose a project. It writes `BROODS_PROJECT`, `BROODS_STAGE` and `BROODS_REGION` to `.env.local` only when passed `--project`, `--stage` or `--region`. It records `BROODS_BASE_URL` so SDK clients in the project reach the same deployment.
 

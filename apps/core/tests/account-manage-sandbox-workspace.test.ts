@@ -44,6 +44,7 @@ interface FetchCall {
 const PTY_TOKEN = "wtt_minted_by_the_host";
 const PTY_TOKEN_EXPIRES_AT = "2099-01-01T00:00:00Z";
 let ptyTokenAuthorizations: string[] = [];
+let ptyTokenRedirects: RequestInit["redirect"][] = [];
 
 let fetchCalls: FetchCall[] = [];
 const fetchMock = mock(
@@ -69,6 +70,7 @@ const fetchMock = mock(
       ptyTokenAuthorizations.push(
         new Headers(init?.headers).get("authorization") ?? "",
       );
+      ptyTokenRedirects.push(init?.redirect);
 
       return Response.json({
         token: PTY_TOKEN,
@@ -209,6 +211,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   fetchCalls = [];
   ptyTokenAuthorizations = [];
+  ptyTokenRedirects = [];
   fetchMock.mockClear();
   getSandboxExternalIdMock.mockClear();
   removeSandboxInstanceMock.mockClear();
@@ -596,6 +599,39 @@ describe("account-manage sandbox endpoints", () => {
       authorization: `Bearer ${PTY_TOKEN}`,
     });
     expect(ptyTokenAuthorizations).toEqual(["Bearer own-key"]);
+    expect(ptyTokenRedirects).toEqual(["manual"]);
+  });
+
+  it("refuses the terminal when the workdir host redirects the token request", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.TERMINAL_TICKET_SECRET = "terminal-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = (async (
+      url: string | URL,
+      init?: RequestInit,
+    ): Promise<Response> =>
+      String(url).endsWith("/pty-token")
+        ? new Response(null, {
+            status: 307,
+            headers: { location: "http://10.0.0.1/" },
+          })
+        : fetchMock(url, init)) as unknown as typeof fetch;
+    const reservationKey = "fs-0123456789abcdef0123456789abcdef01234567";
+    const created = await seedSandbox({
+      provider: "sandbox",
+      persistent: true,
+      options: { reservationKey: reservationKey },
+    });
+
+    const response = await workdirTerminal(created.sandboxId, reservationKey);
+
+    expect(response.status).toBe(409);
+    const text = JSON.stringify(await responseJson(response));
+    expect(text).toContain(
+      "answered the terminal token request with a redirect",
+    );
+    expect(text).not.toContain("tenant-key");
   });
 
   it("refuses the terminal with an update hint when the workdir host cannot mint tokens", async () => {

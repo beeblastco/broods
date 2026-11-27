@@ -27,7 +27,6 @@ export async function connectInBrowser(
   const verifier = randomBytes(32).toString("base64url");
   const { code, close } = await waitForCallback(state, {
     port: CALLBACK_PORT,
-    fixedPort: false,
     path: CALLBACK_PATH,
     read: readAuthorizationCallback,
     done: `${label} is connected to broods. You can close this tab.`,
