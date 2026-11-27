@@ -255,7 +255,7 @@ function ConnectSnippet({
     ].join("\n");
 
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 grid-cols-1 gap-2">
       <div className="relative">
         <pre className="scheme-dark overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
           <code>{highlight(lines(showKey ? apiKey : maskedKey))}</code>

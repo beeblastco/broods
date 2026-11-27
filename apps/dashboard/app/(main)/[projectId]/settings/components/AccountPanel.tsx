@@ -260,15 +260,11 @@ export function AccountPanel(): React.JSX.Element {
             <span className="text-xs text-muted-foreground">Email</span>
             <span className="text-sm text-foreground">{email}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between px-4 py-3">
             <span className="text-xs text-muted-foreground">Account ID</span>
             <span className="font-mono text-xs text-muted-foreground">
               {accountId}
             </span>
-          </div>
-          <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-xs text-muted-foreground">Auth provider</span>
-            <span className="text-sm text-foreground">Google</span>
           </div>
         </div>
       </Section>
