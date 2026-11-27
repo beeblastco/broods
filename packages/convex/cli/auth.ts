@@ -32,7 +32,6 @@ import { ClientError, clientErrorResponse } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import { orgMembersFields, planValidator } from "../schema";
 
-const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 const CODE_TTL_MS = 5 * 60 * 1000;
 const PRUNE_BATCH_SIZE = 100;
@@ -99,14 +98,11 @@ type OnboardingOrg = {
   accountStatus: "active" | "disabled" | "missing";
 };
 
-// PKCE: only the CLI holding the verifier can exchange it, not a stray localhost listener.
-export const createLoginCode = mutation({
-  args: { codeChallenge: v.string() },
-  returns: v.object({ code: v.string(), expiresAt: v.number() }),
-  handler: async (
-    ctx,
-    { codeChallenge },
-  ): Promise<{ code: string; expiresAt: number }> => {
+// The approve page's click. PKCE: only the CLI holding the verifier can collect it.
+export const approveLogin = mutation({
+  args: { codeChallenge: v.string(), orgId: v.id("orgs") },
+  returns: v.null(),
+  handler: async (ctx, { codeChallenge, orgId }): Promise<null> => {
     if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
       throw new ClientError("codeChallenge must be a base64url S256 challenge");
     }
@@ -114,24 +110,21 @@ export const createLoginCode = mutation({
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
-    const target = await cliLoginTarget(ctx, authUser.id);
+    const target = await cliLoginTarget(ctx, authUser.id, orgId);
     // ClientError: a plain Error reaches a production caller only as "Server Error".
     if (target instanceof ClientError) throw target;
 
     const now = Date.now();
-    const code = randomToken(CLI_CODE_PREFIX);
-    const expiresAt = now + CODE_TTL_MS;
     await ctx.db.insert("cliAuthCodes", {
-      codeHash: await sha256Hex(code),
       authId: authUser.id,
       orgId: target.orgId,
       accountId: target.accountId,
       codeChallenge: codeChallenge,
-      expiresAt: expiresAt,
+      expiresAt: now + CODE_TTL_MS,
       createdAt: now,
     });
 
-    return { code: code, expiresAt: expiresAt };
+    return null;
   },
 });
 
@@ -177,30 +170,25 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
     return methodNotAllowed(["POST"]);
   }
 
-  let body: { code?: unknown; code_verifier?: unknown };
+  let body: { code_verifier?: unknown };
   try {
-    body = (await req.json()) as { code?: unknown; code_verifier?: unknown };
+    body = (await req.json()) as { code_verifier?: unknown };
   } catch {
     return jsonError(400, "Request body must be valid JSON");
   }
 
-  if (typeof body.code !== "string" || !body.code.trim()) {
-    return jsonError(400, "Request body must include code");
-  }
   if (typeof body.code_verifier !== "string") {
     return jsonError(400, "Request body must include code_verifier");
   }
 
   try {
-    const result: Record<string, unknown> = await ctx.runMutation(
+    const result: Record<string, unknown> | null = await ctx.runMutation(
       internal.cli.auth.exchangeLoginCode,
-      {
-        code: body.code,
-        codeVerifier: body.code_verifier,
-      },
+      { codeVerifier: body.code_verifier },
     );
 
-    return json(result);
+    // The CLI polls with its verifier until the login is approved in a browser.
+    return result ? json(result) : json({ pending: true }, 202);
   } catch (error) {
     const clientError = clientErrorResponse(error);
     if (clientError) return clientError;
@@ -211,40 +199,42 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
 });
 
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string(), codeVerifier: v.string() },
-  returns: v.object({
-    token: v.string(),
-    expiresAt: v.number(),
-    user: v.object({
-      authId: v.string(),
-      email: v.string(),
-      name: v.string(),
+  args: { codeVerifier: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      token: v.string(),
+      expiresAt: v.number(),
+      user: v.object({
+        authId: v.string(),
+        email: v.string(),
+        name: v.string(),
+      }),
+      org: v.object({
+        id: v.string(),
+        name: v.string(),
+        slug: v.string(),
+      }),
+      account: v.object({
+        id: v.string(),
+        username: v.string(),
+      }),
     }),
-    org: v.object({
-      id: v.string(),
-      name: v.string(),
-      slug: v.string(),
-    }),
-    account: v.object({
-      id: v.string(),
-      username: v.string(),
-    }),
-  }),
-  handler: async (ctx, { code, codeVerifier }) => {
-    if (!code.startsWith(CLI_CODE_PREFIX)) {
-      throw new ClientError("Login code is invalid or expired");
-    }
-    const codeHash = await sha256Hex(code);
+  ),
+  handler: async (ctx, { codeVerifier }) => {
+    const codeChallenge = await pkceChallenge(codeVerifier);
     const row = await ctx.db
       .query("cliAuthCodes")
-      .withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
-      .unique();
+      .withIndex("by_codeChallenge", (q) =>
+        q.eq("codeChallenge", codeChallenge),
+      )
+      .order("desc")
+      .first();
+    // A row with a code hash came from a plain page load, not an Approve click.
+    if (!row || row.codeHash) return null;
     const now = Date.now();
-    if (!row || row.usedAt || row.expiresAt < now) {
-      throw new ClientError("Login code is invalid or expired");
-    }
-    if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
-      throw new ClientError("Login code is invalid or expired");
+    if (row.usedAt || row.expiresAt < now) {
+      throw new ClientError("Login is expired or already collected");
     }
 
     const account = await ctx.db.get(row.accountId);

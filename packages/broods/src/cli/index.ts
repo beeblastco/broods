@@ -267,7 +267,8 @@ Options:
 ${GLOBAL_OPTIONS}`,
   login: `Usage: broods login [options]
 
-Authenticates through the dashboard and stores the token in
+Prints a link and a short code, then waits. Open the link on any
+device, check it shows the same code, and approve. Stores the token in
 ~/.broods/config.json.
 
 Options:
