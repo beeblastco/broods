@@ -17,13 +17,15 @@ export function SidePanelSlot<T>({
 
   return (
     <>
-      {node !== null && <div className="h-full w-2/5 shrink-0" />}
+      {node !== null && (
+        <div className="hidden h-full w-2/5 shrink-0 md:block" />
+      )}
       <div
         data-slot="side-panel"
         data-closing={panel.closing ? "" : undefined}
         hidden={panel.value === null}
         inert={panel.closing}
-        className="motion-panel absolute inset-y-0 right-0 z-10 w-2/5"
+        className="motion-panel absolute inset-y-0 right-0 z-10 w-full md:w-2/5"
       >
         {children(panel.value)}
       </div>
