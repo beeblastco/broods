@@ -19,7 +19,6 @@ vi.mock("../auth", () => ({
 const modules = import.meta.glob("../**/*.ts");
 
 const AUTH_ID = "auth_admin";
-const CODE = "bcode_test-code";
 const VERIFIER = "verifier-verifier-verifier-verifier-verifier-1234";
 
 const loginTest = () => convexTest(schema, modules);
@@ -29,7 +28,6 @@ type T = ReturnType<typeof loginTest>;
 async function seedCode(
   t: T,
   codeChallenge: string,
-  code: string = CODE,
 ): Promise<Id<"cliAuthCodes">> {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -50,7 +48,6 @@ async function seedCode(
     });
 
     return await ctx.db.insert("cliAuthCodes", {
-      codeHash: await sha256Hex(code),
       authId: AUTH_ID,
       orgId: orgId,
       accountId: accountId,
@@ -61,23 +58,55 @@ async function seedCode(
   });
 }
 
-describe("CLI login code exchange with PKCE", () => {
-  test("a code minted with a challenge needs the matching verifier", async () => {
+describe("CLI login collection with PKCE", () => {
+  test("an approved login is collected only with the matching verifier", async () => {
     const t = loginTest();
     await seedCode(t, await pkceChallenge(VERIFIER));
 
-    await expect(
-      t.mutation(internal.cli.auth.exchangeLoginCode, {
-        code: CODE,
+    expect(
+      await t.mutation(internal.cli.auth.exchangeLoginCode, {
         codeVerifier: "not-the-verifier",
       }),
-    ).rejects.toThrow(/invalid or expired/);
+    ).toBeNull();
 
     const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
-      code: CODE,
       codeVerifier: VERIFIER,
     });
-    expect(exchanged.token.startsWith("bcli_")).toBe(true);
+    expect(exchanged?.token.startsWith("bcli_")).toBe(true);
+  });
+
+  test("a poll waits for the approval, then collects it once", async () => {
+    const t = loginTest();
+    const poll = async (): Promise<Response> =>
+      await t.fetch("/v1/account/auth/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code_verifier: VERIFIER }),
+      });
+
+    const waiting = await poll();
+    expect(waiting.status).toBe(202);
+    expect(await waiting.json()).toEqual({ pending: true });
+
+    await seedCode(t, await pkceChallenge(VERIFIER));
+    const collected = await poll();
+    expect(collected.status).toBe(200);
+    expect((await collected.json()).token.startsWith("bcli_")).toBe(true);
+    expect((await poll()).status).toBe(400);
+  });
+
+  test("a row minted without an Approve click is never collected", async () => {
+    const t = loginTest();
+    const codeId = await seedCode(t, await pkceChallenge(VERIFIER));
+    await t.run(async (ctx) => {
+      await ctx.db.patch(codeId, { codeHash: "hash-of-a-redirect-code" });
+    });
+
+    expect(
+      await t.mutation(internal.cli.auth.exchangeLoginCode, {
+        codeVerifier: VERIFIER,
+      }),
+    ).toBeNull();
   });
 
   test("an exchange without a verifier is refused", async () => {
@@ -87,7 +116,7 @@ describe("CLI login code exchange with PKCE", () => {
     const response = await t.fetch("/v1/account/auth/exchange", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: CODE }),
+      body: JSON.stringify({}),
     });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
@@ -106,25 +135,12 @@ describe("CLI login code exchange with PKCE", () => {
     const response = await t.fetch("/v1/account/auth/exchange", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: CODE, code_verifier: VERIFIER }),
+      body: JSON.stringify({ code_verifier: VERIFIER }),
     });
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({
       error: { message: "Account is not active" },
     });
-  });
-
-  test("a code under an old prefix is refused even when its hash is stored", async () => {
-    const t = loginTest();
-    const legacy = "fp_code_test-code";
-    await seedCode(t, await pkceChallenge(VERIFIER), legacy);
-
-    await expect(
-      t.mutation(internal.cli.auth.exchangeLoginCode, {
-        code: legacy,
-        codeVerifier: VERIFIER,
-      }),
-    ).rejects.toThrow(/invalid or expired/);
   });
 
   test("the challenge is the base64url S256 of the verifier", async () => {
@@ -153,10 +169,10 @@ describe("broods logout", () => {
         createdAt: Date.now(),
       });
     });
-    const { token } = await t.mutation(internal.cli.auth.exchangeLoginCode, {
-      code: CODE,
+    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
       codeVerifier: VERIFIER,
     });
+    const token = exchanged?.token ?? "";
     const tokenHash = await sha256Hex(token);
     expect(
       await t.mutation(internal.cli.auth.resolveAccountLogin, {
@@ -179,10 +195,10 @@ describe("broods logout", () => {
   });
 });
 
-describe("CLI login code minting", () => {
-  test("an org with no API account fails with a reason the CLI can show", async () => {
+describe("CLI login approval", () => {
+  test("an org with no API account fails with a reason the page can show", async () => {
     const t = loginTest();
-    await t.run(async (ctx) => {
+    const orgId = await t.run(async (ctx) => {
       const userId = await ctx.db.insert("users", {
         authId: AUTH_ID,
         email: "admin@example.com",
@@ -202,16 +218,71 @@ describe("CLI login code minting", () => {
         role: "owner",
         createdAt: 1,
       });
+
+      return orgId;
     });
 
-    const minting = t.mutation(api.cli.auth.createLoginCode, {
+    const minting = t.mutation(api.cli.auth.approveLogin, {
       codeChallenge: await pkceChallenge(VERIFIER),
+      orgId: orgId,
     });
 
     await expect(minting).rejects.toBeInstanceOf(ClientError);
     await expect(minting).rejects.toThrow(
       "beeblast has no active API account. Set it up under Organization > API Access in the dashboard.",
     );
+  });
+
+  test("the login is for the org the approve page showed, not the one active at the click", async () => {
+    const t = loginTest();
+    const shown = await t.run(async (ctx) => {
+      const orgIds = [];
+      for (const slug of ["active", "shown"]) {
+        const orgId = await ctx.db.insert("orgs", {
+          name: slug,
+          slug: slug,
+          ownerAuthId: AUTH_ID,
+          plan: "free",
+          createdAt: 1,
+        });
+        await ctx.db.insert("accounts", {
+          orgId: orgId,
+          username: slug,
+          secretHash: `hash-${slug}`,
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        orgIds.push(orgId);
+      }
+      const userId = await ctx.db.insert("users", {
+        authId: AUTH_ID,
+        email: "admin@example.com",
+        name: "admin",
+        plan: "free",
+        activeOrgId: orgIds[0],
+      });
+      for (const orgId of orgIds) {
+        await ctx.db.insert("orgMembers", {
+          orgId: orgId,
+          userId: userId,
+          role: "owner",
+          createdAt: 1,
+        });
+      }
+
+      return orgIds[1];
+    });
+
+    await t.mutation(api.cli.auth.approveLogin, {
+      codeChallenge: await pkceChallenge(VERIFIER),
+      orgId: shown,
+    });
+    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
+      codeVerifier: VERIFIER,
+    });
+
+    expect(exchanged?.org.slug).toBe("shown");
   });
 });
 

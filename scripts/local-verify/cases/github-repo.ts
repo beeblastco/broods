@@ -711,19 +711,24 @@ function deploy(
   };
 }
 
-// A `broods login` token for the admin: a PKCE login code, exchanged as the CLI does.
+// A `broods login` token for the admin: an approved login, collected by verifier as the CLI does.
 async function cliLogin(run: Run): Promise<string> {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const { code } = (await run.asAdmin("cli/auth:createLoginCode", {
+  const org = (await run.asAdmin(
+    "dashboardReads:activeOrg",
+    {},
+  )) as Doc<"orgs">;
+  await run.asAdmin("cli/auth:approveLogin", {
     codeChallenge: challenge,
-  })) as { code: string };
+    orgId: org._id,
+  });
   const response = await fetch(
     `${run.context.edgeUrl}/v1/account/auth/exchange`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: code, code_verifier: verifier }),
+      body: JSON.stringify({ code_verifier: verifier }),
     },
   );
   const body = (await response.json()) as { token?: string };

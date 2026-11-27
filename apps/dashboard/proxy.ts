@@ -24,6 +24,7 @@ const UNAUTHENTICATED_PATHS = [
   "/auth/key",
   "/auth/sign-in",
   "/auth/session",
+  "/cli-auth/config",
   ...(process.env.NODE_ENV === "development" ? ["/ui-gallery"] : []),
 ];
 

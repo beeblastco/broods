@@ -246,7 +246,8 @@ export const accountApiKeysFields = {
 };
 
 export const cliAuthCodesFields = {
-  codeHash: v.string(),
+  // Only on rows minted without an Approve click; a poll never collects those.
+  codeHash: v.optional(v.string()),
   authId: v.string(),
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
@@ -1519,7 +1520,7 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
-    .index("by_codeHash", ["codeHash"])
+    .index("by_codeChallenge", ["codeChallenge"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"]),
   cliTokens: defineTable(cliTokensFields)
