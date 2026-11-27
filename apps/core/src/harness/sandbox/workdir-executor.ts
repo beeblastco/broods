@@ -837,7 +837,14 @@ export async function workdirTerminalTarget(
   const response = await fetch(`${sandboxUrl}/pty-token`, {
     method: "POST",
     headers: { authorization: `Bearer ${apiKey}` },
+    redirect: "manual",
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new ClientError(
+      "The workdir host answered the terminal token request with a redirect; set the workdir URL to its final address",
+      "conflict",
+    );
+  }
   if (response.status === 404 || response.status === 405) {
     throw new ClientError(
       "The workdir host does not issue terminal tokens; update the workdir host to open a live terminal",
