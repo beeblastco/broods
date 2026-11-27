@@ -56,7 +56,7 @@ async function seedCode(
       orgId: orgId,
       accountId: accountId,
       codeChallenge: codeChallenge,
-      ...(approved ? { approved: approved } : {}),
+      approved: approved,
       expiresAt: now + 60_000,
       createdAt: now,
     });

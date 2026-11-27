@@ -20,6 +20,17 @@ import { redirect } from "next/navigation";
 // A host name only: the link picks this text, and it sits beside the approve button.
 const DEVICE_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LOGIN_CODE_PATTERN = /^[A-Z]{4}-[A-Z]{4}$/;
+const OUTCOMES = {
+  approved: {
+    title: "The broods CLI is signed in",
+    description: "You can close this tab.",
+  },
+  cancelled: {
+    title: "Sign-in cancelled",
+    description:
+      "The broods CLI is not signed in. Press Ctrl-C in the terminal, then close this tab.",
+  },
+};
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -34,29 +45,19 @@ export default async function CliAuthStartPage({
   const state = firstParam(params.state);
   const codeChallenge = firstParam(params.code_challenge);
   const code = firstParam(params.code);
-  if (firstParam(params.approved)) {
+  const outcome = firstParam(params.outcome);
+  if (outcome === "approved" || outcome === "cancelled") {
     return (
       <StatusPage
         label="broods login"
-        title="The broods CLI is signed in"
-        description="You can close this tab."
+        title={OUTCOMES[outcome].title}
+        description={OUTCOMES[outcome].description}
       >
         {null}
       </StatusPage>
     );
   }
-  if (firstParam(params.cancelled)) {
-    return (
-      <StatusPage
-        label="broods login"
-        title="Sign-in cancelled"
-        description="The broods CLI is not signed in. You can close this tab."
-      >
-        {null}
-      </StatusPage>
-    );
-  }
-  if (firstParam(params.failed)) {
+  if (outcome) {
     return (
       <Failure description="The sign-in could not be approved. Run broods login again." />
     );
@@ -106,7 +107,7 @@ export default async function CliAuthStartPage({
           <Button
             variant="outline"
             nativeButton={false}
-            render={<Link href="/cli-auth/start?cancelled=1" />}
+            render={<Link href="/cli-auth/start?outcome=cancelled" />}
             className="cursor-pointer"
           >
             Cancel

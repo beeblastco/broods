@@ -127,7 +127,7 @@ export const createLoginCode = mutation({
       orgId: target.orgId,
       accountId: target.accountId,
       codeChallenge: codeChallenge,
-      ...(approved ? { approved: approved } : {}),
+      approved: approved,
       expiresAt: expiresAt,
       createdAt: now,
     });

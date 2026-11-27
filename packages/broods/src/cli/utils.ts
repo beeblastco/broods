@@ -21,11 +21,6 @@ const LOGIN_APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ";
 const LOGIN_POLL_MS = 2000;
 
-const DASHBOARD_LOGIN_TIMEOUT =
-  "Timed out waiting for the login to be approved in the browser.\n" +
-  "Run `broods login` again, open the link, and approve it while signed in as an\n" +
-  "owner or admin of an organization with an active API account.";
-
 const VALUE_OPTIONS = new Set([
   "--base-url",
   "--cwd",
@@ -44,16 +39,10 @@ const VALUE_OPTIONS = new Set([
   "-n",
 ]);
 
-interface LoginConfig {
-  base_url: string;
-}
-
-interface LoginExchange {
-  token: string;
-  user?: StoredAuthConfig["user"];
-  org?: StoredAuthConfig["org"];
-  account?: StoredAuthConfig["account"];
-}
+type LoginExchange = Pick<
+  StoredAuthConfig,
+  "token" | "user" | "org" | "account"
+>;
 
 interface CallbackOptions<T> {
   port: number;
@@ -119,7 +108,6 @@ export async function loginWithBrowser(
 ): Promise<StoredAuthConfig> {
   const dashboard = stripTrailingSlash(dashboardUrl);
   // PKCE: only this process, holding the verifier, can collect the approved login.
-  // Imported from node:crypto: the bin's `node` shebang may be Node 18, with no global.
   const codeVerifier = randomBytes(32).toString("base64url");
   const code = loginCode();
   const baseUrl = await loginBaseUrl(dashboard);
@@ -424,7 +412,6 @@ function loginCode(): string {
 // The dashboard names the API host the login is collected from and used against.
 async function loginBaseUrl(dashboard: string): Promise<string> {
   const response = await cliFetch(`${dashboard}/cli-auth/config`, {
-    method: "GET",
     redirect: "manual",
   });
   if (!response.ok) {
@@ -434,7 +421,9 @@ async function loginBaseUrl(dashboard: string): Promise<string> {
         : `${dashboard} has no broods login page for this CLI. Check that --dashboard-url points at your broods dashboard, and that the dashboard is up to date.`,
     );
   }
-  const { base_url: baseUrl } = (await response.json()) as LoginConfig;
+  const { base_url: baseUrl } = (await response.json()) as {
+    base_url: string;
+  };
 
   return stripTrailingSlash(baseUrl);
 }
@@ -444,7 +433,7 @@ async function pollLogin(
   codeVerifier: string,
 ): Promise<LoginExchange> {
   const deadline = Date.now() + LOGIN_APPROVAL_TIMEOUT_MS;
-  console.log("Waiting for approval in the browser...");
+  console.log("Waiting for approval in the browser (Ctrl-C to stop)...");
   while (Date.now() < deadline) {
     const response = await cliFetch(`${baseUrl}/v1/account/auth/exchange`, {
       method: "POST",
@@ -462,5 +451,9 @@ async function pollLogin(
       (resolve): void => void setTimeout(resolve, LOGIN_POLL_MS),
     );
   }
-  throw new Error(DASHBOARD_LOGIN_TIMEOUT);
+  throw new Error(
+    "Timed out waiting for the login to be approved in the browser.\n" +
+      "Run `broods login` again, open the link, and approve it while signed in as an\n" +
+      "owner or admin of an organization with an active API account.",
+  );
 }
