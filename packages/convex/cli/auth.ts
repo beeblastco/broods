@@ -101,11 +101,11 @@ type OnboardingOrg = {
 
 // PKCE: only the CLI holding the verifier can exchange it, not a stray localhost listener.
 export const createLoginCode = mutation({
-  args: { codeChallenge: v.string() },
+  args: { codeChallenge: v.string(), approved: v.optional(v.literal(true)) },
   returns: v.object({ code: v.string(), expiresAt: v.number() }),
   handler: async (
     ctx,
-    { codeChallenge },
+    { codeChallenge, approved },
   ): Promise<{ code: string; expiresAt: number }> => {
     if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
       throw new ClientError("codeChallenge must be a base64url S256 challenge");
@@ -127,6 +127,7 @@ export const createLoginCode = mutation({
       orgId: target.orgId,
       accountId: target.accountId,
       codeChallenge: codeChallenge,
+      ...(approved ? { approved: approved } : {}),
       expiresAt: expiresAt,
       createdAt: now,
     });
@@ -184,15 +185,15 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
     return jsonError(400, "Request body must be valid JSON");
   }
 
-  if (typeof body.code !== "string" || !body.code.trim()) {
-    return jsonError(400, "Request body must include code");
+  if (body.code !== undefined && typeof body.code !== "string") {
+    return jsonError(400, "code must be a string");
   }
   if (typeof body.code_verifier !== "string") {
     return jsonError(400, "Request body must include code_verifier");
   }
 
   try {
-    const result: Record<string, unknown> = await ctx.runMutation(
+    const result: Record<string, unknown> | null = await ctx.runMutation(
       internal.cli.auth.exchangeLoginCode,
       {
         code: body.code,
@@ -200,7 +201,8 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
       },
     );
 
-    return json(result);
+    // No code: the CLI polls with its verifier until the login is approved in a browser.
+    return result ? json(result) : json({ pending: true }, 202);
   } catch (error) {
     const clientError = clientErrorResponse(error);
     if (clientError) return clientError;
@@ -211,39 +213,59 @@ export const exchange = httpAction(async (ctx, req): Promise<Response> => {
 });
 
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string(), codeVerifier: v.string() },
-  returns: v.object({
-    token: v.string(),
-    expiresAt: v.number(),
-    user: v.object({
-      authId: v.string(),
-      email: v.string(),
-      name: v.string(),
+  args: { code: v.optional(v.string()), codeVerifier: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      token: v.string(),
+      expiresAt: v.number(),
+      user: v.object({
+        authId: v.string(),
+        email: v.string(),
+        name: v.string(),
+      }),
+      org: v.object({
+        id: v.string(),
+        name: v.string(),
+        slug: v.string(),
+      }),
+      account: v.object({
+        id: v.string(),
+        username: v.string(),
+      }),
     }),
-    org: v.object({
-      id: v.string(),
-      name: v.string(),
-      slug: v.string(),
-    }),
-    account: v.object({
-      id: v.string(),
-      username: v.string(),
-    }),
-  }),
+  ),
   handler: async (ctx, { code, codeVerifier }) => {
-    if (!code.startsWith(CLI_CODE_PREFIX)) {
-      throw new ClientError("Login code is invalid or expired");
+    const codeChallenge = await pkceChallenge(codeVerifier);
+    let row: Doc<"cliAuthCodes"> | null;
+    if (code === undefined) {
+      row = await ctx.db
+        .query("cliAuthCodes")
+        .withIndex("by_codeChallenge", (q) =>
+          q.eq("codeChallenge", codeChallenge),
+        )
+        .order("desc")
+        .first();
+      // Only a login approved on the dashboard's page is handed to a poll: the redirect
+      // flow mints its code on a plain page load, which a link from anyone can cause.
+      if (!row?.approved) return null;
+    } else {
+      if (!code.startsWith(CLI_CODE_PREFIX)) {
+        throw new ClientError("Login code is invalid or expired");
+      }
+      const codeHash = await sha256Hex(code);
+      row = await ctx.db
+        .query("cliAuthCodes")
+        .withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
+        .unique();
     }
-    const codeHash = await sha256Hex(code);
-    const row = await ctx.db
-      .query("cliAuthCodes")
-      .withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
-      .unique();
     const now = Date.now();
-    if (!row || row.usedAt || row.expiresAt < now) {
-      throw new ClientError("Login code is invalid or expired");
-    }
-    if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
+    if (
+      !row ||
+      row.usedAt ||
+      row.expiresAt < now ||
+      row.codeChallenge !== codeChallenge
+    ) {
       throw new ClientError("Login code is invalid or expired");
     }
 

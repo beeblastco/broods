@@ -1191,7 +1191,7 @@ export declare const api: {
       createLoginCode: FunctionReference<
         "mutation",
         "public",
-        { codeChallenge: string },
+        { approved?: true; codeChallenge: string },
         { code: string; expiresAt: number }
       >;
       mcpSignInOrgs: FunctionReference<
@@ -5462,8 +5462,8 @@ export declare const internal: {
       exchangeLoginCode: FunctionReference<
         "mutation",
         "internal",
-        { code: string; codeVerifier: string },
-        {
+        { code?: string; codeVerifier: string },
+        null | {
           account: { id: string; username: string };
           expiresAt: number;
           org: { id: string; name: string; slug: string };

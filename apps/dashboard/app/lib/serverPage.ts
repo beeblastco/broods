@@ -21,6 +21,18 @@ export async function signedInAccessToken(): Promise<string> {
   return session.token;
 }
 
+/** The public host in front of core. A Convex site serves only the config plane. */
+export function advertisedBaseUrl(): string {
+  const explicit = process.env.BROODS_BASE_URL;
+  if (!explicit) {
+    throw new Error(
+      "this dashboard has no BROODS_BASE_URL; set it to the public host in front of core",
+    );
+  }
+
+  return new URL(explicit).origin;
+}
+
 /** One search param of a server page, the first when it repeats. */
 export function firstParam(
   value: string | string[] | undefined,

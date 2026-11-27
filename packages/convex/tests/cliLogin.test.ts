@@ -30,6 +30,7 @@ async function seedCode(
   t: T,
   codeChallenge: string,
   code: string = CODE,
+  approved?: true,
 ): Promise<Id<"cliAuthCodes">> {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -55,6 +56,7 @@ async function seedCode(
       orgId: orgId,
       accountId: accountId,
       codeChallenge: codeChallenge,
+      ...(approved ? { approved: approved } : {}),
       expiresAt: now + 60_000,
       createdAt: now,
     });
@@ -77,7 +79,38 @@ describe("CLI login code exchange with PKCE", () => {
       code: CODE,
       codeVerifier: VERIFIER,
     });
-    expect(exchanged.token.startsWith("bcli_")).toBe(true);
+    expect(exchanged?.token.startsWith("bcli_")).toBe(true);
+  });
+
+  test("a poll with only the verifier waits for the approval, then collects it once", async () => {
+    const t = loginTest();
+    const poll = async (): Promise<Response> =>
+      await t.fetch("/v1/account/auth/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code_verifier: VERIFIER }),
+      });
+
+    const waiting = await poll();
+    expect(waiting.status).toBe(202);
+    expect(await waiting.json()).toEqual({ pending: true });
+
+    await seedCode(t, await pkceChallenge(VERIFIER), CODE, true);
+    const collected = await poll();
+    expect(collected.status).toBe(200);
+    expect((await collected.json()).token.startsWith("bcli_")).toBe(true);
+    expect((await poll()).status).toBe(400);
+  });
+
+  test("a code minted without the approve page is never handed to a poll", async () => {
+    const t = loginTest();
+    await seedCode(t, await pkceChallenge(VERIFIER));
+
+    expect(
+      await t.mutation(internal.cli.auth.exchangeLoginCode, {
+        codeVerifier: VERIFIER,
+      }),
+    ).toBeNull();
   });
 
   test("an exchange without a verifier is refused", async () => {
@@ -153,10 +186,11 @@ describe("broods logout", () => {
         createdAt: Date.now(),
       });
     });
-    const { token } = await t.mutation(internal.cli.auth.exchangeLoginCode, {
+    const exchanged = await t.mutation(internal.cli.auth.exchangeLoginCode, {
       code: CODE,
       codeVerifier: VERIFIER,
     });
+    const token = exchanged?.token ?? "";
     const tokenHash = await sha256Hex(token);
     expect(
       await t.mutation(internal.cli.auth.resolveAccountLogin, {

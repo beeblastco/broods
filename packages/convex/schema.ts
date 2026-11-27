@@ -251,6 +251,8 @@ export const cliAuthCodesFields = {
   orgId: v.id("orgs"),
   accountId: v.id("accounts"),
   codeChallenge: v.string(),
+  // Set when the user approved this login on the dashboard's page, so the CLI may poll for it.
+  approved: v.optional(v.literal(true)),
   expiresAt: v.number(),
   usedAt: v.optional(v.number()),
   createdAt: v.number(),
@@ -1520,6 +1522,7 @@ export default defineSchema({
     .index("by_stageId", ["stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
+    .index("by_codeChallenge", ["codeChallenge"])
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"]),
   cliTokens: defineTable(cliTokensFields)

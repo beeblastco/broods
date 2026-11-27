@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   browserCommand,
   hasFlag,
@@ -45,33 +48,83 @@ test("hasFlag ignores a boolean flag given a value", (): void => {
   expect(hasFlag(["--prune=false"], "--prune")).toBe(false);
 });
 
-test("loginWithBrowser fails at once with the dashboard's error, browser or not", async (): Promise<void> => {
-  const path = process.env.PATH;
-  process.env.PATH = "/nonexistent";
-  const dashboard = Bun.serve({
+test("broods login collects the login once it is approved, with no callback to this machine", async (): Promise<void> => {
+  const home = mkdtempSync(join(tmpdir(), "broods-login-"));
+  let polls = 0;
+  let verifier = "";
+  const server = Bun.serve({
     port: 0,
-    fetch: (request: Request): Response => {
-      const start = new URL(request.url);
-      const callback = new URL(start.searchParams.get("callback")!);
-      callback.searchParams.set("state", start.searchParams.get("state")!);
-      callback.searchParams.set("error", "No active org");
-      setTimeout((): undefined => void fetch(callback), 50);
+    fetch: async (request: Request): Promise<Response> => {
+      if (new URL(request.url).pathname === "/cli-auth/config") {
+        return Response.json({ base_url: server.url.origin });
+      }
+      polls += 1;
+      verifier = ((await request.json()) as { code_verifier: string })
+        .code_verifier;
 
-      return new Response("ok");
+      return polls < 2
+        ? Response.json({ pending: true }, { status: 202 })
+        : Response.json({ token: "bcli_test" });
     },
   });
   try {
-    await expect(loginWithBrowser(dashboard.url.origin)).rejects.toThrow(
-      "Login failed: No active org",
+    // A subprocess: the stored-login path is fixed from HOME when the CLI loads.
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "login",
+        "--dashboard-url",
+        server.url.origin,
+      ],
+      cwd: home,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { PATH: "/nonexistent", HOME: home },
+    });
+    const [exitCode, stdout] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+    ]);
+    const link = new URL(stdout.match(/^ {2}(http\S+)$/m)![1]!);
+
+    expect(exitCode).toBe(0);
+    expect(polls).toBe(2);
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(link.pathname).toBe("/cli-auth/start");
+    expect(link.searchParams.has("callback")).toBe(false);
+    expect(stdout).toContain(`Your code is ${link.searchParams.get("code")}`);
+    expect(
+      readFileSync(join(home, ".broods", "config.json"), "utf8"),
+    ).toContain("bcli_test");
+  } finally {
+    await server.stop(true);
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("loginWithBrowser stops with the server's reason when the login is refused", async (): Promise<void> => {
+  const path = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request: Request): Response =>
+      new URL(request.url).pathname === "/cli-auth/config"
+        ? Response.json({ base_url: server.url.origin })
+        : new Response("Login code is invalid or expired", { status: 400 }),
+  });
+  try {
+    await expect(loginWithBrowser(server.url.origin)).rejects.toThrow(
+      "Login failed: 400 Login code is invalid or expired",
     );
   } finally {
-    await dashboard.stop(true);
+    await server.stop(true);
     process.env.PATH = path;
   }
 });
 
 test("browserCommand hands Windows the whole URL", (): void => {
-  const url = "https://dash/cli-auth/start?callback=x&state=y";
+  const url = "https://dash/cli-auth/start?code_challenge=x&code=y";
 
   expect(browserCommand(url, "win32")).toEqual({
     command: "rundll32",

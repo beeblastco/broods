@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { hostname } from "node:os";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -16,13 +17,14 @@ import { cliFetch } from "../sync.ts";
 import { formatChoiceRow, formatWarning } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
+const LOGIN_APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
+const LOGIN_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ";
+const LOGIN_POLL_MS = 2000;
 
 const DASHBOARD_LOGIN_TIMEOUT =
-  "Timed out waiting for browser login to complete.\n" +
-  "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
-  "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
-  "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-  "cliAuth Convex functions or no active API account (Organization settings -> API access).";
+  "Timed out waiting for the login to be approved in the browser.\n" +
+  "Run `broods login` again, open the link, and approve it while signed in as an\n" +
+  "owner or admin of an organization with an active API account.";
 
 const VALUE_OPTIONS = new Set([
   "--base-url",
@@ -42,14 +44,19 @@ const VALUE_OPTIONS = new Set([
   "-n",
 ]);
 
-interface LoginCallback {
-  code: string;
-  baseUrl: string;
+interface LoginConfig {
+  base_url: string;
+}
+
+interface LoginExchange {
+  token: string;
+  user?: StoredAuthConfig["user"];
+  org?: StoredAuthConfig["org"];
+  account?: StoredAuthConfig["account"];
 }
 
 interface CallbackOptions<T> {
   port: number;
-  fixedPort: boolean;
   path: string;
   read: (params: URLSearchParams) => T;
   done: string;
@@ -110,68 +117,37 @@ export function positionalArgs(args: string[]): string[] {
 export async function loginWithBrowser(
   dashboardUrl: string,
 ): Promise<StoredAuthConfig> {
+  const dashboard = stripTrailingSlash(dashboardUrl);
+  // PKCE: only this process, holding the verifier, can collect the approved login.
   // Imported from node:crypto: the bin's `node` shebang may be Node 18, with no global.
-  const state = randomUUID();
-  // PKCE: only this process, holding the verifier, can exchange the callback's code.
   const codeVerifier = randomBytes(32).toString("base64url");
-  const codeChallenge = createHash("sha256")
-    .update(codeVerifier)
-    .digest("base64url");
-  const { code, close } = await waitForCallback(state, {
-    port: callbackPort(),
-    fixedPort: Boolean(process.env.BROODS_LOGIN_PORT),
-    path: "/callback",
-    read: readLoginCallback,
-    done: "broods CLI login complete. You can close this tab.",
-  });
+  const code = loginCode();
+  const baseUrl = await loginBaseUrl(dashboard);
+  const startUrl =
+    `${dashboard}/cli-auth/start?` +
+    new URLSearchParams({
+      code_challenge: createHash("sha256")
+        .update(codeVerifier)
+        .digest("base64url"),
+      code: code,
+      device: hostname().slice(0, 64),
+    });
+  console.log(`Open this link on any device to sign in:\n  ${startUrl}`);
+  console.log(`Your code is ${code}`);
+  openBrowser(startUrl);
+  const payload = await pollLogin(baseUrl, codeVerifier);
+  const auth = {
+    baseUrl: baseUrl,
+    dashboardUrl: dashboard,
+    token: payload.token,
+    createdAt: new Date().toISOString(),
+    ...(payload.user ? { user: payload.user } : {}),
+    ...(payload.org ? { org: payload.org } : {}),
+    ...(payload.account ? { account: payload.account } : {}),
+  };
+  await writeStoredAuth(auth);
 
-  try {
-    const callbackUrl = code.callbackUrl;
-    const startUrl =
-      `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
-      new URLSearchParams({
-        callback: callbackUrl,
-        state: state,
-        code_challenge: codeChallenge,
-      });
-    await assertCliAuthRouteExists(startUrl);
-    console.log(`Opening ${startUrl}`);
-    openBrowser(startUrl);
-    const login = await waitWithTimeout(code.promise);
-    const response = await cliFetch(
-      `${login.baseUrl}/v1/account/auth/exchange`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: login.code, code_verifier: codeVerifier }),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(
-        `Login exchange failed: ${response.status} ${await response.text()}`,
-      );
-    }
-    const payload = (await response.json()) as {
-      token: string;
-      user?: StoredAuthConfig["user"];
-      org?: StoredAuthConfig["org"];
-      account?: StoredAuthConfig["account"];
-    };
-    const auth = {
-      baseUrl: login.baseUrl,
-      dashboardUrl: stripTrailingSlash(dashboardUrl),
-      token: payload.token,
-      createdAt: new Date().toISOString(),
-      ...(payload.user ? { user: payload.user } : {}),
-      ...(payload.org ? { org: payload.org } : {}),
-      ...(payload.account ? { account: payload.account } : {}),
-    };
-    await writeStoredAuth(auth);
-
-    return auth;
-  } finally {
-    close();
-  }
+  return auth;
 }
 
 export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
@@ -390,11 +366,7 @@ export function waitForCallback<T>(
     });
 
     server.on("error", (error: NodeJS.ErrnoException): void => {
-      if (
-        !options.fixedPort &&
-        options.port !== 0 &&
-        error.code === "EADDRINUSE"
-      ) {
+      if (options.port !== 0 && error.code === "EADDRINUSE") {
         server.listen(0, "127.0.0.1");
 
         return;
@@ -423,7 +395,7 @@ export function waitForCallback<T>(
 
 export async function waitWithTimeout<T>(
   promise: Promise<T>,
-  message: string = DASHBOARD_LOGIN_TIMEOUT,
+  message: string,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject): void => {
@@ -439,47 +411,56 @@ export async function waitWithTimeout<T>(
   }
 }
 
-async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
-  const response = await cliFetch(startUrl, {
+// 8 consonants: no vowels to spell a word, none of the letters read as another.
+function loginCode(): string {
+  const letters = Array.from(
+    randomBytes(8),
+    (byte): string => LOGIN_CODE_ALPHABET[byte % LOGIN_CODE_ALPHABET.length]!,
+  ).join("");
+
+  return `${letters.slice(0, 4)}-${letters.slice(4)}`;
+}
+
+// The dashboard names the API host the login is collected from and used against.
+async function loginBaseUrl(dashboard: string): Promise<string> {
+  const response = await cliFetch(`${dashboard}/cli-auth/config`, {
     method: "GET",
     redirect: "manual",
   });
-  if (response.status === 404) {
-    const url = new URL(startUrl);
+  if (!response.ok) {
     throw new Error(
-      `${url.origin} has no broods login page. Check that --dashboard-url points at your broods dashboard.`,
+      response.status >= 500
+        ? `The broods login page failed: ${response.status} ${await response.text()}`
+        : `${dashboard} has no broods login page for this CLI. Check that --dashboard-url points at your broods dashboard, and that the dashboard is up to date.`,
     );
   }
-  if (response.status >= 500) {
-    throw new Error(
-      `The broods login page failed: ${response.status} ${await response.text()}`,
-    );
-  }
+  const { base_url: baseUrl } = (await response.json()) as LoginConfig;
+
+  return stripTrailingSlash(baseUrl);
 }
 
-function callbackPort(): number {
-  const raw = process.env.BROODS_LOGIN_PORT;
-  if (raw) {
-    const port = Number(raw);
-    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
-    throw new Error("BROODS_LOGIN_PORT must be a TCP port number");
-  }
-
-  return 18987;
-}
-
-function readLoginCallback(params: URLSearchParams): LoginCallback {
-  const failure = params.get("error");
-  if (failure) throw new Error(`Login failed: ${failure}`);
-  const code = params.get("code");
-  if (!code) throw new Error("Login callback carried no code.");
-  const baseUrl = params.get("base_url");
-  if (!baseUrl) {
-    throw new Error(
-      "Login callback did not advertise the API base URL (base_url). " +
-        "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+async function pollLogin(
+  baseUrl: string,
+  codeVerifier: string,
+): Promise<LoginExchange> {
+  const deadline = Date.now() + LOGIN_APPROVAL_TIMEOUT_MS;
+  console.log("Waiting for approval in the browser...");
+  while (Date.now() < deadline) {
+    const response = await cliFetch(`${baseUrl}/v1/account/auth/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code_verifier: codeVerifier }),
+    });
+    if (response.status === 200)
+      return (await response.json()) as LoginExchange;
+    if (response.status !== 202) {
+      throw new Error(
+        `Login failed: ${response.status} ${await response.text()}`,
+      );
+    }
+    await new Promise(
+      (resolve): void => void setTimeout(resolve, LOGIN_POLL_MS),
     );
   }
-
-  return { code: code, baseUrl: stripTrailingSlash(baseUrl) };
+  throw new Error(DASHBOARD_LOGIN_TIMEOUT);
 }
