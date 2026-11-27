@@ -7,8 +7,7 @@ description: Where to get help with Broods and how fast to expect an answer.
 
 | Need                                             | Go to                                                                                                                | Response                              |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| A question, or help getting an agent running     | [Discord](https://discord.gg/F48633Uca)                                                                              | Usually the same day, weekdays        |
-| A bug or a feature request                       | [GitHub issues](https://github.com/beeblastco/broods/issues)                                                         | Triaged within 5 business days        |
+| A question, a bug or a feature request           | [GitHub issues](https://github.com/beeblastco/broods/issues)                                                         | Triaged within 5 business days        |
 | A security vulnerability                         | [GitHub private vulnerability reporting](https://github.com/beeblastco/broods/security). Do not open a public issue. | First response within 5 business days |
 | Billing, account access, data export or deletion | [business@beeblast.co](mailto:business@beeblast.co)                                                                  | Within 5 business days                |
 
@@ -22,7 +21,7 @@ description: Where to get help with Broods and how fast to expect an answer.
 | Channels                       | [Channels](/channels)                                            | The channel type and when the message was sent       |
 | CLI, SDK and deploying         | [CLI reference](/reference/cli), [Deploying](/guides/deploying)  | `broods --version` and the full command output       |
 | HTTP API                       | [API reference](/reference/http-api)                             | The route, the status code and the `error.code`      |
-| Plans, limits and invoices     | Usage and billing in the dashboard                               | Your organization name. Email, not Discord           |
+| Plans, limits and invoices     | Usage and billing in the dashboard                               | Your organization name. Email, not a public issue    |
 | Security and data              | [Security](/guides/security), [Privacy Policy](/privacy)         | Nothing secret. Use private reporting for a weakness |
 | Running Broods on your own box | [Self-hosting](/internals/self-hosting)                          | Your version and how the stack is deployed           |
 
@@ -34,6 +33,6 @@ description: Where to get help with Broods and how fast to expect an answer.
 
 ## Status
 
-Incidents are announced in Discord. There is no separate status page yet.
+There is no status page yet.
 
 Legal pages: [Terms of Service](/terms) and [Privacy Policy](/privacy).

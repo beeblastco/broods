@@ -5,7 +5,7 @@ Convex is the sole persistence backend for account configuration and runtime sta
 - `../storage.ts` exposes the narrow runtime-facing storage boundary and its test injection seam.
 - `storage.ts` implements only the account, runtime-read, cron-run, cleanup, deployment, and usage operations that core still owns.
 - `runtime.ts` calls the transactional conversation, claim, async-result, and sandbox-reservation functions.
-- `client.ts` owns the deploy-key-authenticated `ConvexHttpClient` shared by these adapters.
+- `client.ts` owns the deploy-key-authenticated `ConvexHttpClient` shared by these adapters, the one `require` of the generated API, and `adminQuery` / `adminMutation`, which check each call against that function's own args and result.
 - The sandbox and usage modules keep focused Convex calls beside the core storage adapter.
 
 Domain records, validation, encryption codecs, redaction, and runtime config

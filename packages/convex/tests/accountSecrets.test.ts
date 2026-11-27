@@ -1,11 +1,5 @@
-/** Account key helper parity tests for config HTTP account rotation. */
-
 import { describe, expect, it } from "vitest";
-import {
-  createAccountSecret,
-  hexFromBytes,
-  sha256Hex,
-} from "../model/accountSecrets";
+import { createAccountSecret, sha256Hex } from "../model/accountSecrets";
 
 describe("account keys", () => {
   it("generates bask_-prefixed 32-byte base64url keys", () => {
@@ -16,14 +10,9 @@ describe("account keys", () => {
     expect(secret.slice("bask_".length)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it("hashes secrets with the same SHA-256 hex digest as Web Crypto", async () => {
-    const secret = "bask_test-secret";
-    const digest = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(secret),
+  it("hashes secrets as lowercase SHA-256 hex", async () => {
+    expect(await sha256Hex("abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
     );
-    const expected = hexFromBytes(new Uint8Array(digest));
-
-    expect(await sha256Hex(secret)).toBe(expected);
   });
 });

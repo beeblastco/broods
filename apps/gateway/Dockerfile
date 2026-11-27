@@ -5,13 +5,13 @@ ARG BUN_IMAGE=oven/bun:1.4.2-alpine@sha256:d888c0ae6c86d7866ff10c5aafdd9077b36ae
 FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
+COPY patches ./patches
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
 COPY apps/edge/package.json ./apps/edge/
 COPY apps/gateway/package.json ./apps/gateway/
-COPY apps/matrix-forwarder/package.json ./apps/matrix-forwarder/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
@@ -32,7 +32,6 @@ COPY packages/convex/model/apiError.ts ./packages/convex/model/apiError.ts
 COPY packages/convex/model/httpJson.ts ./packages/convex/model/httpJson.ts
 COPY packages/convex/model/serviceBridge.ts ./packages/convex/model/serviceBridge.ts
 COPY apps/edge/src/origins.ts ./apps/edge/src/origins.ts
-COPY apps/core/src/shared/object.ts ./apps/core/src/shared/object.ts
 COPY apps/core/src/shared/terminal-ticket.ts ./apps/core/src/shared/terminal-ticket.ts
 COPY apps/gateway ./apps/gateway
 RUN bun build apps/gateway/src/main.ts --compile --minify --outfile /out/gateway

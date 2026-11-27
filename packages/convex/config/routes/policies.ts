@@ -1,8 +1,3 @@
-/**
- * Agent policy CRUD (`/v1/policies*`): list/create on the collection,
- * get/patch/delete by id.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -20,7 +15,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** Mirrors core's former handlePolicyRoute contract. */
 export async function handlePolicyConfigRoute(
   ctx: ActionCtx,
   req: Request,
@@ -53,7 +47,7 @@ export async function handlePolicyConfigRoute(
         },
       );
       const created: Doc<"agentPolicies"> | null = await ctx.runQuery(
-        internal.agent.policies.getById,
+        internal.runtimeLookups.policyById,
         {
           accountId: accountId,
           policyId: createdId,
@@ -79,7 +73,7 @@ export async function handlePolicyConfigRoute(
 
   if (req.method === "GET") {
     const record: Doc<"agentPolicies"> | null = await ctx.runQuery(
-      internal.agent.policies.getById,
+      internal.runtimeLookups.policyById,
       {
         accountId: accountId,
         policyId: policyId,
@@ -92,7 +86,7 @@ export async function handlePolicyConfigRoute(
   }
   if (req.method === "PATCH") {
     const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(
-      internal.agent.policies.getById,
+      internal.runtimeLookups.policyById,
       {
         accountId: accountId,
         policyId: policyId,
@@ -111,7 +105,7 @@ export async function handlePolicyConfigRoute(
       ...(patch.status !== undefined ? { status: patch.status } : {}),
     });
     const updated: Doc<"agentPolicies"> | null = await ctx.runQuery(
-      internal.agent.policies.getById,
+      internal.runtimeLookups.policyById,
       {
         accountId: accountId,
         policyId: policyId,
@@ -136,7 +130,7 @@ export async function handlePolicyConfigRoute(
   }
   if (req.method === "DELETE") {
     const existing: Doc<"agentPolicies"> | null = await ctx.runQuery(
-      internal.agent.policies.getById,
+      internal.runtimeLookups.policyById,
       {
         accountId: accountId,
         policyId: policyId,

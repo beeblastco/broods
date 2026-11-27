@@ -52,6 +52,10 @@ describe("telegram channel actions", () => {
       "A useful chart",
     );
     await actions.sendSticker?.("telegram-file-id");
+    // A workspace path is refused here, before Telegram answers "wrong HTTP URL".
+    await expect(actions.sendSticker?.("stickers/party.webp")).rejects.toThrow(
+      "Telegram sendSticker needs a sticker file_id",
+    );
 
     expect(fetchMock.calls).toHaveLength(2);
     expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
@@ -106,9 +110,7 @@ describe("telegram channel actions", () => {
       "twelve charts",
     );
 
-    // Twelve is past Telegram's ten-per-album ceiling, so it goes out as two
-    // albums rather than one rejected request, and only the first carries the
-    // caption.
+    // Telegram caps an album at ten, so twelve go as two; only the first carries the caption.
     expect(
       fetchMock.calls.map((call): string => requestUrl(call.input)),
     ).toEqual([
@@ -162,8 +164,6 @@ describe("telegram channel actions", () => {
       "công bố sản phẩm",
     );
 
-    // A lone attachment is a plain send, not an album, and `type` is what picks
-    // sendDocument over sendPhoto.
     expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://api.telegram.org/botbot-token/sendDocument",
     );
@@ -270,8 +270,7 @@ describe("telegram channel actions", () => {
     });
   });
 
-  // A run that fails before its first word streams nothing. Throwing here would
-  // skip the error reply, and the sender would see only the reaction.
+  // Throwing on an empty stream would skip the error reply, leaving the sender only a reaction.
   it("hands an empty Telegram stream back so the reply goes out as text", async (): Promise<void> => {
     const fetchMock = installFetchMock();
     const actions = createTelegramChannel(
@@ -361,8 +360,7 @@ describe("discord channel actions", () => {
       "here you go",
     );
 
-    // Discord has no URL attachment at all, so the bytes have to go up as
-    // multipart; a link in the payload would never render.
+    // Discord has no URL attachment: a link in the payload never renders, so bytes go multipart.
     const body = fetchMock.calls[0]!.init?.body;
     expect(body).toBeInstanceOf(FormData);
     const form = body as FormData;
@@ -392,9 +390,7 @@ describe("discord channel actions", () => {
       }),
     );
 
-    // An upload named "file" arrives extensionless and refuses to preview, so
-    // the name comes off the URL. The URL fetch itself is pinned and covered in
-    // channels.test.ts; a reader keeps this test off the network.
+    // An upload named "file" arrives extensionless and won't preview: the name comes off the URL.
     await actions.sendImages?.([
       {
         type: "image",
@@ -413,6 +409,7 @@ describe("discord channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
       jsonResponse({ id: "reply-1" }),
+      jsonResponse({ id: "reply-2" }),
       new Response("", { status: 204 }),
     );
 
@@ -430,23 +427,31 @@ describe("discord channel actions", () => {
       }),
     );
 
-    await actions.sendText(`${"hello ".repeat(450)}tail`);
+    const text = `${"hello ".repeat(450)}tail`;
+    await actions.sendText(text);
     await actions.sendTyping();
     await actions.reactToMessage();
 
-    expect(fetchMock.calls).toHaveLength(2);
+    expect(fetchMock.calls).toHaveLength(3);
     expect(requestUrl(fetchMock.calls[0]!.input)).toBe(
       "https://discord.com/api/v10/webhooks/app-1/interaction-token/messages/@original",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
-    expect(
-      JSON.parse(requestBodyText(fetchMock.calls[0]!.init?.body)).content,
-    ).toHaveLength(2000);
-
     expect(requestUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://discord.com/api/v10/webhooks/app-1/interaction-token?wait=true",
+    );
+    expect(fetchMock.calls[1]!.init?.method).toBe("POST");
+    expect(
+      fetchMock.calls
+        .slice(0, 2)
+        .map((call) => JSON.parse(requestBodyText(call.init?.body)).content)
+        .join(" "),
+    ).toBe(text);
+
+    expect(requestUrl(fetchMock.calls[2]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/typing",
     );
-    expect(fetchMock.calls[1]!.init?.headers).toEqual({
+    expect(fetchMock.calls[2]!.init?.headers).toEqual({
       Authorization: "Bot bot-token",
     });
   });
@@ -467,7 +472,7 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("boom", { status: 500 }));
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Discord interaction API error: 500 boom",
     );
     expect(fetchMock.calls).toHaveLength(1);
@@ -528,7 +533,7 @@ describe("discord channel actions", () => {
 
     fetchMock.responses.push(new Response("Unknown Webhook", { status: 404 }));
     fetchMock.responses.push(new Response("missing access", { status: 403 }));
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Discord API error: 403 missing access",
     );
   });
@@ -550,7 +555,9 @@ describe("discord channel actions", () => {
     );
 
     fetchMock.responses.push(new Response("nope", { status: 403 }));
-    expect(actions.sendTyping()).rejects.toThrow("Discord API error: 403 nope");
+    await expect(actions.sendTyping()).rejects.toThrow(
+      "Discord API error: 403 nope",
+    );
   });
 
   it("skips typing without a channel id and rejects invalid source payloads", async () => {
@@ -638,9 +645,7 @@ describe("slack channel actions", () => {
       "here you go",
     );
 
-    // Slack ignores an outbound URL attachment, so the only way in is an
-    // upload, and both files share one completeUpload call rather than posting
-    // a message each.
+    // Slack ignores an outbound URL attachment; both uploads share one completeUpload call.
     const urls = fetchMock.calls.map((call): string => requestUrl(call.input));
     expect(
       urls.filter((url) => url.includes("getUploadURLExternal")),
@@ -835,6 +840,30 @@ describe("slack channel actions", () => {
     });
   });
 
+  it("splits a long reply at the provider's limit (Slack direct message)", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ ok: true, ts: "1" }),
+      jsonResponse({ ok: true, ts: "2" }),
+      jsonResponse({ ok: true, ts: "3" }),
+    );
+    const text = `${"a".repeat(24_000)}\n\nTrace: https://broods.test/t/1`;
+
+    await createSlackChannel("bot-token", "signing-secret", null, null, "eyes")
+      .actions(createMessage({ teamId: "T1", channelId: "D1" }))
+      .sendText(text);
+
+    const sent = fetchMock.calls.map(
+      (call) =>
+        new URLSearchParams(requestBodyText(call.init?.body)).get(
+          "markdown_text",
+        ) ?? "",
+    );
+    expect(sent).toHaveLength(3);
+    expect(sent.every((chunk) => chunk.length <= 12_000)).toBe(true);
+    expect(sent.join("")).toBe(text);
+  });
+
   it("posts threaded Slack messages and reactions through the Web API", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
@@ -936,7 +965,7 @@ describe("slack channel actions", () => {
       }),
     );
     fetchMock.responses.push(new Response("", { status: 500 }));
-    expect(responseUrlActions.sendText("hello")).rejects.toThrow(
+    await expect(responseUrlActions.sendText("hello")).rejects.toThrow(
       "Slack response_url failed (500)",
     );
 
@@ -950,14 +979,14 @@ describe("slack channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "channel_not_found" }, 200),
     );
-    expect(apiActions.sendText("hello")).rejects.toThrow(
+    await expect(apiActions.sendText("hello")).rejects.toThrow(
       "Slack chat.postMessage failed: channel_not_found",
     );
 
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "missing_scope" }, 403),
     );
-    expect(apiActions.reactToMessage()).rejects.toThrow(
+    await expect(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add returned HTTP 403",
     );
   });
@@ -1003,6 +1032,42 @@ describe("pancake channel actions", () => {
         sender_id: "sender-1",
       },
     );
+  });
+
+  it("splits a long reply at the provider's limit (Pancake)", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ success: true, id: "reply-1" }),
+      jsonResponse({ success: true, id: "reply-2" }),
+      jsonResponse({ success: true, id: "reply-3" }),
+    );
+    const text = `${"a".repeat(4000)} tail`;
+
+    await createPancakeChannel(
+      "page-1",
+      "page-token",
+      "hook-secret",
+      null,
+      null,
+    )
+      .actions(
+        createMessage({
+          pageId: "page-1",
+          conversationId: "conversation-1",
+          messageId: "message-1",
+          messageType: "INBOX",
+        }),
+      )
+      .sendText(text);
+
+    const sent = fetchMock.calls.map(
+      (call) =>
+        (JSON.parse(requestBodyText(call.init?.body)) as { message: string })
+          .message,
+    );
+    expect(sent).toHaveLength(3);
+    expect(sent.every((chunk) => chunk.length <= 2000)).toBe(true);
+    expect(sent.join("")).toBe(text);
   });
 
   it("sends comment replies with the source message id", async () => {
@@ -1057,7 +1122,7 @@ describe("pancake channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ success: false, message: "permission denied" }, 200),
     );
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Pancake send message failed (200): permission denied",
     );
 
@@ -1182,7 +1247,7 @@ describe("zalo channel actions", () => {
     fetchMock.responses.push(
       jsonResponse({ ok: false, description: "permission denied" }, 200),
     );
-    expect(actions.sendText("hello")).rejects.toThrow(
+    await expect(actions.sendText("hello")).rejects.toThrow(
       "Zalo sendMessage failed (200): permission denied",
     );
 
@@ -1252,8 +1317,7 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   });
 }
 
-// sendMediaGroup answers with one message per album entry, unlike the single
-// message every other send returns.
+// sendMediaGroup answers with one message per album entry, unlike every other send.
 function telegramMediaGroupResponse(count: number): Response {
   return jsonResponse({
     ok: true,
@@ -1271,8 +1335,6 @@ interface TelegramMediaGroupItem {
   type: string;
 }
 
-// sendMediaGroup goes out as multipart with the album described in a `media`
-// JSON field, so the assertions read that rather than the request body.
 function telegramMediaGroup(body: RequestInit["body"]): {
   media: TelegramMediaGroupItem[];
 } {

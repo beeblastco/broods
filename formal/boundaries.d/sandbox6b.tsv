@@ -1,0 +1,8 @@
+kind	name	reason
+external	^socket\.send$	Bun websocket send; the twin computes and checks the exact frame text.
+external	^socket\.close$	WebSocket close; the twin checks the code and reason it computed.
+external	^readSpecs$	A caller-supplied callback; its value only feeds writes queued as closures and is not read.
+external	^response\.text$	Web Response body read; the text is passed to the parser the twin calls next.
+external	^waitUntil$	Runtime hook that keeps a promise alive; the twin only checks it was handed the cleanup.
+external	^crypto\.randomUUID$	Random id supplied by the host; the twin composes the sandbox id from it.
+external	^reservePlatformSandbox$	Mocked in some executor tests; the twin checks provider, account and key and treats the id it returns as the reservation.

@@ -1,9 +1,3 @@
-/**
- * Grep tool. Content search across the workspace, backed by ripgrep (`rg`).
- * Mirrors a useful subset of grep. Only registered for
- * sandbox-backed workspaces (read-only workspaces expose read/glob only).
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
@@ -14,7 +8,9 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
+
+const VENDORED_DIRS = [".git", "node_modules"];
 
 type OutputMode = "content" | "files_with_matches" | "count";
 
@@ -34,21 +30,13 @@ export default function grepTool(context: SandboxToolContext): ToolSet {
       description: `A powerful content search tool over the workspace, built on ripgrep.
 
 Usage notes:
-- pattern is a regular expression (ripgrep syntax), e.g. \`function\\s+\\w+\` or \`log.*Error\`.
+- pattern is a regular expression, e.g. \`function\\s+\\w+\` or \`log.*Error\`. Images without ripgrep run it as \`grep -E\`, so prefer portable syntax (\`[0-9]\` over \`\\d\`).
 - output_mode: \`files_with_matches\` (default) returns file paths; \`content\` returns matching lines; \`count\` returns per-file match counts.
 - Filter files with the \`glob\` parameter (e.g. \`*.ts\`) and narrow the search root with \`path\`.
 - Prefer this over \`bash grep\`/\`rg\` for searching file contents.`,
-      inputSchema: jsonSchema(inputSchema(context)),
-      execute: async function (input) {
-        const {
-          pattern,
-          path,
-          glob,
-          output_mode,
-          case_insensitive,
-          line_numbers,
-          workspace,
-        } = input as GrepInput;
+      inputSchema: jsonSchema<GrepInput>(inputSchema(context)),
+      execute: async function (input): Promise<string> {
+        const { pattern, workspace } = input;
         try {
           if (typeof pattern !== "string" || pattern.length === 0) {
             return toolError("Error: pattern is required");
@@ -57,49 +45,49 @@ Usage notes:
           if (!ws?.sandbox) {
             return toolError("Error: workspace is read-only");
           }
-          const mode: OutputMode = output_mode ?? "files_with_matches";
-
-          const args = ["rg"];
-          if (case_insensitive) args.push("-i");
-          if (mode === "files_with_matches") args.push("-l");
-          else if (mode === "count") args.push("-c");
-          else if (line_numbers) args.push("-n");
-          if (glob) args.push("-g", glob);
-          args.push("-e", pattern);
-          if (path) args.push("--", toWorkspaceRelative(path));
-
-          const code = args.map(shellQuote).join(" ");
+          const code = searchCommand(input);
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,
             metadata: sandboxRunMetadata(context, ws),
           });
-          // ripgrep: exit 0 = matches, 1 = no matches (not an error), >=2 = error.
-          if (result.exitCode === 1 && result.stderr.trim().length === 0) {
-            return toolText("No matches found");
+          // rg and grep: exit 1 is no match, not an error; its stderr can explain the miss.
+          if (result.exitCode === 1) {
+            return ["No matches found", result.stderr.trim()]
+              .filter(Boolean)
+              .join("\n");
           }
-          if (!result.ok && result.exitCode !== 1) {
-            // Self-explanatory failure when the sandbox image lacks ripgrep, so the
-            // model doesn't loop retrying a tool that can never work here.
-            if (/rg: command not found|rg: not found/i.test(result.stderr)) {
-              return toolError(
-                "Error: ripgrep (rg) is not installed in this sandbox image, so content search is unavailable. Use the bash tool with `grep -r` instead.",
-              );
-            }
-
+          if (!result.ok) {
             return toolError(
               `${result.stderr}${result.stdout}`.trim() || "Error: grep failed",
             );
           }
+          // grep -c also lists every file with zero matches; rg -c does not.
+          const output =
+            input.output_mode === "count"
+              ? result.stdout
+                  .split("\n")
+                  .filter((line): boolean => !/(^|:)0$/.test(line))
+                  .join("\n")
+              : result.stdout;
 
-          return toolText(result.stdout.trim() || "No matches found");
+          return output.trim() || "No matches found";
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
     }),
   };
+}
+
+// grep matches names only, so `**/*.py` narrows to `*.py`; `!dist/**` skips that directory.
+function grepGlobFlag(glob: string): string {
+  const exclude = glob.startsWith("!");
+  const pattern = glob.replace(/^!/, "");
+  const dir = /(?:^|\/)([^/*]+)\/(?:\*\*)?$/.exec(pattern)?.[1];
+  if (exclude && dir) return `--exclude-dir=${dir}`;
+
+  return `--${exclude ? "exclude" : "include"}=${pattern.split("/").pop() || "*"}`;
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
@@ -110,7 +98,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
     properties: {
       pattern: {
         type: "string",
-        description: "Regular expression to search for (ripgrep syntax).",
+        description: "Regular expression to search for.",
       },
       path: {
         type: "string",
@@ -140,4 +128,43 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
     required: ["pattern"],
     additionalProperties: false,
   };
+}
+
+function searchCommand(input: GrepInput): string {
+  const mode: OutputMode = input.output_mode ?? "files_with_matches";
+  const flags: string[] = [];
+  if (input.case_insensitive) flags.push("-i");
+  if (mode === "files_with_matches") flags.push("-l");
+  else if (mode === "count") flags.push("-c");
+  else if (input.line_numbers) flags.push("-n");
+  const path = input.path ? toWorkspaceRelative(input.path) : undefined;
+  // grep filters file names only, so a glob's literal directory (`src/*.ts`) becomes its root.
+  const globRoot = /^([^!*?[{]+)\/(?:\*\*\/)?[^/]+$/.exec(
+    input.glob ?? "",
+  )?.[1];
+  const grepRoot =
+    path ?? (globRoot ? toWorkspaceRelative(globRoot) : undefined);
+  const inside = new Set(grepRoot?.split("/"));
+  const rg = [
+    "rg",
+    ...flags,
+    ...(input.glob ? ["-g", input.glob] : []),
+    "-e",
+    input.pattern,
+    ...(path ? ["--", path] : []),
+  ];
+  const grep = [
+    "grep",
+    "-rIE",
+    ...VENDORED_DIRS.filter((dir): boolean => !inside.has(dir)).map(
+      (dir): string => `--exclude-dir=${dir}`,
+    ),
+    ...flags,
+    ...(input.glob ? [grepGlobFlag(input.glob)] : []),
+    "-e",
+    input.pattern,
+    ...(grepRoot ? ["--", grepRoot] : []),
+  ];
+
+  return `if command -v rg >/dev/null 2>&1; then ${rg.map(shellQuote).join(" ")}; else ${grep.map(shellQuote).join(" ")}; fi`;
 }

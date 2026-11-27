@@ -1,9 +1,3 @@
-/**
- * Workspace config CRUD (`/v1/workspaces*`): list/create on the collection,
- * get/patch/delete by id. Deletes purge managed files and tear down reserved
- * sandboxes bound to the workspace namespace.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -25,7 +19,6 @@ import {
   writeAudit,
 } from "./shared";
 
-/** Mirrors core's former handleWorkspaceRoute contract. */
 export async function handleWorkspaceConfigRoute(
   ctx: ActionCtx,
   req: Request,
@@ -157,16 +150,13 @@ export async function handleWorkspaceConfigRoute(
     );
     if (!existing) return jsonError(404, "Workspace not found");
     if (!existing.config?.storage?.bucket) {
-      // Only purge managed workspace files; bring-your-own buckets are
-      // customer-owned. A purge failure fails the DELETE (matching core)
-      // so the record is never removed while its files linger.
+      // A bring-your-own bucket is the customer's. A failed purge fails the DELETE, so the
+      // record is never removed while its files linger.
       await ctx.runAction(internal.aws.workspaceFiles.purge, {
         accountId: accountId,
         workspaceId: existing._id,
       });
     }
-    // Tear down any reserved sandbox bound to this workspace's namespace
-    // (reservation keys are the namespace or namespace-prefixed).
     const namespace = await workspaceNamespace(accountId, existing._id);
     await terminateReservedInstances(
       ctx,

@@ -1,10 +1,4 @@
 "use node";
-/**
- * Provision and rotate the per-org account key. The plaintext
- * is returned to the caller exactly once at provisioning or rotation time;
- * only the SHA-256 hash is stored in the `accounts` row.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -15,7 +9,9 @@ import {
   keyHint,
   sha256Hex,
 } from "../model/accountSecrets";
+import { dashboardAuditActor } from "../model/auditEvents";
 import { ClientError } from "../model/clientError";
+import { writeAudit } from "../config/routes/shared";
 
 export const provision = action({
   args: { orgId: v.id("orgs") },
@@ -49,16 +45,22 @@ export const provision = action({
     const account = await ctx.runMutation(internal.account.accounts.create, {
       orgId: args.orgId,
       username: org.slug,
-      description: `Cherry-coke org ${org.name}`,
+      description: `Broods org ${org.name}`,
       secretHash: await sha256Hex(secret),
       secretHint: keyHint(ACCOUNT_KEY_PREFIX, secret),
       secretRotatedBy: await userIdOf(ctx, identity?.subject),
     });
 
-    console.log("AUDIT account key provisioned", {
-      orgId: args.orgId,
+    await writeAudit(ctx, {
       accountId: account._id,
-      actor: identity?.subject ?? "unknown",
+      actor: dashboardAuditActor({
+        id: identity?.subject ?? "unknown",
+        email: identity?.email,
+        name: identity?.name,
+      }),
+      action: "secret-provisioned",
+      resource: { kind: "account", id: account._id, name: account.username },
+      summary: "Account key provisioned",
     });
 
     return { accountId: account._id, secret: secret };
@@ -92,17 +94,22 @@ export const rotateSecret = action({
       secretRotatedBy: await userIdOf(ctx, identity?.subject),
     });
 
-    console.log("AUDIT account key rotated", {
-      orgId: args.orgId,
+    await writeAudit(ctx, {
       accountId: account._id,
-      actor: identity?.subject ?? "unknown",
+      actor: dashboardAuditActor({
+        id: identity?.subject ?? "unknown",
+        email: identity?.email,
+        name: identity?.name,
+      }),
+      action: "secret-rotated",
+      resource: { kind: "account", id: account._id, name: account.username },
+      summary: "Account key rotated",
     });
 
     return { secret: secret };
   },
 });
 
-/** The member row behind the caller's auth id, so the key list can name them. */
 async function userIdOf(
   ctx: ActionCtx,
   authId: string | undefined,

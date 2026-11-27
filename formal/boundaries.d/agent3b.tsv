@@ -1,0 +1,15 @@
+kind	name	reason
+external	^write$	Callback the caller of writeFenced supplies; the twin checks the inline batch and all rows given to it.
+external	^waiter$	Resolver of a promise from nextStateChange; it takes no argument and returns nothing.
+external	^createPendingAsyncAgentResult$	Persistence call for the polling row; the twin checks the whole row and returns its answer.
+external	^this\.publisherFactory$	Injected dependency that builds the stream publisher; the twin checks the task and handles a throw.
+external	^childSession \.persistModelMessages$	The child session's own write, twinned separately; the twin checks the messages it is given.
+external	^ctx\.db\.get$	Convex database read by document id; the twin checks the id and branches on the row.
+external	^ctx\.db\.normalizeId$	Convex id validation; the twin checks table and id and branches on the answer.
+external	^takeNextIngress$	Ingress mutation entered from the writeFenced callback; the twin checks owner, settlement and inline rows.
+external	^childSession \.settleIngress$	The child session's settle, twinned separately; the twin checks status and settlement.
+external	^recordAsyncAgentResult$	Persistence call for a result row; the twin checks event id, outcome and tool result ids.
+external	^childSession\.releaseConversationLease$	The child session's release, twinned separately; its failure is deliberately ignored.
+external	^this\.parentSession \.claimMessageTurn$	The parent session's claim, whose limit the twin checks; its answer is deliberately ignored here.
+external	^this\.resumeParent$	Injected resumer; the twin checks parent, task id, message and row id, and ignores its failure.
+internal	apps/core/src/harness/subagents.ts#SubagentCoordinator.getHooks	Returns its cached private promise, whose resolved value is not recorded; callers forward it unread.

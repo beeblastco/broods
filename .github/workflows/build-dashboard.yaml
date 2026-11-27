@@ -12,6 +12,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/build-dashboard.yaml"
+      - ".github/actions/bun-install/**"
   workflow_dispatch:
 
 env:
@@ -19,6 +20,12 @@ env:
 
 # Each job grants only the token permissions it needs.
 permissions: {}
+
+# One run per branch at a time, in push order, so the newest commit rolls last.
+# A newer push replaces a run still waiting; a running build is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -38,21 +45,18 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
         # Dashboard image builds do not need core's SST provider install; the
         # Dockerfile uses the same flag before building the app image.
-        run: bun install --ignore-scripts --no-save
+        uses: ./.github/actions/bun-install
+        with:
+          args: --ignore-scripts --no-save
 
       - name: Check dashboard
         # Types plus the design system lint (@shadcn/lint), same gate as ci.yaml.
@@ -84,6 +88,10 @@ jobs:
             NEXT_PUBLIC_CONVEX_URL=${{ vars.NEXT_PUBLIC_CONVEX_URL }}
             NEXT_PUBLIC_WORKOS_REDIRECT_URI=${{ vars.NEXT_PUBLIC_WORKOS_REDIRECT_URI }}
             NEXT_PUBLIC_BROODS_BASE_URL=${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
+            NEXT_PUBLIC_POSTHOG_KEY=${{ vars.NEXT_PUBLIC_POSTHOG_KEY }}
+            NEXT_PUBLIC_POSTHOG_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_HOST }}
+            NEXT_PUBLIC_POSTHOG_UI_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_UI_HOST }}
+            DASHBOARD_ASSET_ORIGIN=${{ vars.DASHBOARD_ASSET_ORIGIN }}
           cache-from: type=gha,scope=broods-dashboard
           cache-to: type=gha,mode=max,scope=broods-dashboard
 

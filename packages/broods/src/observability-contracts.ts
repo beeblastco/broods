@@ -1,23 +1,21 @@
-/**
- * Shared WebSocket wire-protocol types for the observability gateway, used by
- * the gateway, the SDK/CLI, and the dashboard. Pure types + tiny pure helpers,
- * zero runtime deps. Kept separate from the agent-test websocket-contracts.
- */
+// The gateway, CLI and dashboard all import this: keep it free of runtime dependencies.
 
 export const MAX_OBSERVABILITY_BACKFILL = 500;
-// The per-launch UUID core puts last in a MicroVM's CloudWatch log stream name.
+export const MAX_OBSERVABILITY_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 const SANDBOX_LOG_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-// A W3C trace id: 32 lowercase hex chars. All zeros is the "no span" sentinel.
+// W3C trace id; all zeros is the "no span" sentinel.
 const TRACE_ID_PATTERN = /^(?!0{32}$)[0-9a-f]{32}$/;
+// 16 bytes as base64url: the gateway seals the stream sequence so it shows no gaps.
+const CURSOR_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+const MAX_AGENT_ID_LENGTH = 256;
 
-// DEBUG never rides the live NATS relay. Core writes it to stdout/OTLP only, so
-// it reaches a client through Loki backfill and nowhere else.
+// DEBUG never rides the live NATS relay: a client sees it only through Loki backfill.
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
-// Matches the shape core's shared/log.ts emits. Backfilled entries can be any
-// level; the live NATS stream is INFO+ only.
 export type ObservabilityLogEntry = {
+  /** Core's id for the line: its live copy and its Loki replay share it. */
+  logId?: string;
   ts: number;
   level: LogLevel;
   eventType: string;
@@ -28,23 +26,12 @@ export type ObservabilityLogEntry = {
   service?: string;
   agentId?: string;
   conversationKey?: string;
-  // Already redacted at the log.ts boundary.
   data?: unknown;
 };
 
-// Root span kind is "task" (one per top-level invocation), "cron" when the
-// scheduler started that invocation instead of a person, or "subtask" for a
-// subagent's root span. A subtask is its OWN top-level trace (its own traceId),
-// linked back to the parent via the parent.trace_id / parent.task_id attributes
-// rather than nested under the parent span. The dashboard renders it as a sibling
-// task row with a jump-to-parent link. Children ("model.step", "tool.call", and
-// "phase" timeline spans like cold start, context prepare, and compaction) share
-// the traceId of the root they belong to.
-//
-// A root that ended cleanly but left something open closes "needs_input" (on the
-// person) or "waiting" (on work that settles by itself), with `task.waiting_on`
-// saying what. Every run a request spawns, answer continuations included, carries
-// the request's event id as `task.id`, or as `task.root_id` when its own differs.
+// A subtask root owns its traceId and links its parent via parent.trace_id/parent.task_id.
+// A root that ends with work open closes "needs_input" or "waiting"; `task.waiting_on` says why.
+// Every run of one request carries its event id as `task.id`, or `task.root_id` if its own differs.
 export type ObservabilitySpanRow = {
   traceId: string;
   spanId: string;
@@ -62,28 +49,29 @@ export type ObservabilitySpanRow = {
   error?: string;
 };
 
-// What a "waiting" or "needs_input" root is blocked on: the person for a
-// question or approval, finishing work for a subagent or tool.
 export type TaskWaitingOn = "question" | "approval" | "subagent" | "tool";
+
+export type ObservabilityHistoryRange = {
+  from: number;
+  to: number;
+};
 
 export type ObservabilitySubscribeMessage = {
   type: "subscribe";
   stream: "logs" | "traces";
-  // Loki/Tempo backfill of up to this many recent entries before going live.
   backfill?: number;
-  // Skip JetStream replay and subscribe only to entries published after this
-  // subscription starts. Used by CLI live tails so stale errors never print on
-  // startup; dashboard views omit it to keep the recent full-fidelity replay.
   liveOnly?: boolean;
-  // Server-side min level for the "logs" stream, applied to both the backfill
-  // and the live relay (default INFO+). Pass "DEBUG" to keep backfilled debug
-  // lines. Traces are unfiltered.
   minLevel?: LogLevel;
-  // "logs" only: tail one sandbox's guest output instead of the deployment's own
-  // logs. The id is the last segment of the instance's `logStream`, a UUID core
-  // minted at launch. Sandbox lines reach Loki through the CloudWatch bridge and
-  // never NATS, so the gateway serves this subscription by polling Loki.
+  // Only the backfill: no live consumer, so a read of history needs no live transport.
+  historyOnly?: boolean;
+  range?: ObservabilityHistoryRange;
+  // "logs" only: the UUID ending the instance's `logStream`; these lines never reach NATS.
   sandboxId?: string;
+  // "traces" only: the backfill searches Tempo for this agent's traces alone.
+  agentId?: string;
+  // A reconnect's cursor, the last `seq` it saw: the live stream starts after it, not at the
+  // replay window. Sent without `backfill` by a client that kept its entries.
+  afterSeq?: string;
 };
 
 export type ObservabilityUnsubscribeMessage = {
@@ -91,9 +79,7 @@ export type ObservabilityUnsubscribeMessage = {
   stream: "logs" | "traces";
 };
 
-// Pull one trace out of Tempo by id, outside the recent-history window the
-// "traces" backfill covers. The answer is a "backfill" message holding that
-// trace's spans, or carrying `error` when Tempo has no such trace in scope.
+// Answered by one "backfill" message: the trace's spans, or `error` when Tempo has none.
 export type ObservabilityFetchTraceMessage = {
   type: "fetchTrace";
   traceId: string;
@@ -104,31 +90,37 @@ export type ObservabilityClientMessage =
   | ObservabilityUnsubscribeMessage
   | ObservabilityFetchTraceMessage;
 
-// Sent once the live subscription (NATS relay, or the Loki poll of a sandbox
-// tail) is active. The backfill, when one was asked for, follows it.
-export type ObservabilityReadyMessage = { type: "ready" };
+// Sent once the live subscription is up; any requested backfill follows it. `agentId` echoes
+// the subscribe's filter, which a gateway that predates it ignores and never echoes. `seq` is
+// the opaque cursor the live stream starts after; each live entry then carries its own.
+export type ObservabilityReadyMessage = {
+  type: "ready";
+  agentId?: string;
+  seq?: string;
+};
 
-// Answers a requested backfill or fetchTrace, failure included, so a client
-// can tell "history loaded, nothing there" from "still loading". A traces
-// backfill is one Tempo lookup per trace, so it arrives in pieces: every piece
-// but the last carries `more`, and the last one settles history and carries
-// `error` when a query failed. Logs and fetchTrace answer in one message.
+// Always sent for a requested backfill, failure included. A traces backfill comes in pieces:
+// all but the last carry `more`; the last carries `error` when a query failed.
 export type ObservabilityBackfillMessage = {
   type: "backfill";
   stream: "logs" | "traces";
   entries: ObservabilityLogEntry[] | ObservabilitySpanRow[];
   more?: boolean;
+  range?: ObservabilityHistoryRange;
+  nextTo?: number;
   error?: string;
 };
 
 export type ObservabilityLogMessage = {
   type: "log";
   entry: ObservabilityLogEntry;
+  seq?: string;
 };
 
 export type ObservabilitySpanMessage = {
   type: "span";
   entry: ObservabilitySpanRow;
+  seq?: string;
 };
 
 export type ObservabilityErrorMessage = {
@@ -143,7 +135,6 @@ export type ObservabilityServerMessage =
   | ObservabilitySpanMessage
   | ObservabilityErrorMessage;
 
-/** Narrow an unknown wire value to a LogLevel. */
 export function isLogLevel(value: unknown): value is LogLevel {
   return (
     value === "DEBUG" ||
@@ -165,22 +156,33 @@ export function isObservabilityClientMessage(
   return false;
 }
 
-/** Whether a span is a top-level run, each of which owns its own trace. */
 export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
   return kind === "task" || kind === "cron" || kind === "subtask";
 }
 
-/**
- * Narrow a wire value to a sandbox log id. Strict on purpose: the gateway
- * interpolates it into LogQL, so only the UUID shape core mints may pass.
- */
+/** Strict on purpose: the gateway interpolates it into LogQL. */
 export function isSandboxLogId(value: unknown): value is string {
   return typeof value === "string" && SANDBOX_LOG_ID_PATTERN.test(value);
 }
 
-/** Whether a value is a real trace id a log line can be followed to. */
 export function isTraceId(value: unknown): value is string {
   return typeof value === "string" && TRACE_ID_PATTERN.test(value);
+}
+
+function isHistoryRange(value: unknown): value is ObservabilityHistoryRange {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "from" in value &&
+    "to" in value &&
+    typeof value.from === "number" &&
+    typeof value.to === "number" &&
+    Number.isSafeInteger(value.from) &&
+    Number.isSafeInteger(value.to) &&
+    value.from >= 0 &&
+    value.to > value.from &&
+    value.to - value.from <= MAX_OBSERVABILITY_RANGE_MS
+  );
 }
 
 function isStreamName(value: unknown): value is "logs" | "traces" {
@@ -201,11 +203,35 @@ function isSubscribeMessage(msg: Record<string, unknown>): boolean {
     return false;
   if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
     return false;
+  if (
+    msg["historyOnly"] !== undefined &&
+    typeof msg["historyOnly"] !== "boolean"
+  )
+    return false;
+  if (msg["range"] !== undefined && !isHistoryRange(msg["range"])) return false;
   const minLevel = msg["minLevel"];
   if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
   const sandboxId = msg["sandboxId"];
+  if (
+    sandboxId !== undefined &&
+    !(stream === "logs" && isSandboxLogId(sandboxId))
+  )
+    return false;
+  const afterSeq = msg["afterSeq"];
+  if (
+    afterSeq !== undefined &&
+    (typeof afterSeq !== "string" ||
+      !CURSOR_PATTERN.test(afterSeq) ||
+      sandboxId !== undefined)
+  )
+    return false;
+  const agentId = msg["agentId"];
 
   return (
-    sandboxId === undefined || (stream === "logs" && isSandboxLogId(sandboxId))
+    agentId === undefined ||
+    (stream === "traces" &&
+      typeof agentId === "string" &&
+      agentId.length > 0 &&
+      agentId.length <= MAX_AGENT_ID_LENGTH)
   );
 }

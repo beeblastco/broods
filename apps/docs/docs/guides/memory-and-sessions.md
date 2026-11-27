@@ -4,7 +4,9 @@ An agent remembers in two places. The session is the conversation history for on
 
 ## Memory
 
-Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. At the start of every turn the index is loaded into the system prompt, and the agent reads a linked file before relying on it.
+Memory needs a [workspace](workspaces.md). The agent saves one markdown file per fact under `memory/`, and `memory/MEMORY.md` indexes them with one line each. The whole index is loaded into the system prompt, and the agent reads a linked file before relying on it. The agent is told the index rides every turn, so it keeps the index short by merging or deleting entries.
+
+A conversation keeps the index it loaded while the model's prompt cache is still warm: until 5 minutes pass with no model call, the history is compacted, or an hour has passed since the load. Core keeps at most 512 of these at a time, so a busy deployment can reload sooner. A memory saved or deleted in the meantime shows up after that, so a save never forces the whole conversation to be cached again. A new conversation always loads the current index; `/new` and `/clear` keep the conversation, so they keep its index until one of those points. An index over 64 KB is read fresh on every turn.
 
 With a sandbox behind the workspace, the agent gets a `memory_save` tool that writes an entry like this:
 
@@ -21,9 +23,11 @@ metadata:
 Keep replies to a few sentences unless asked for detail.
 ```
 
-`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent today's date, the current conversation, and two rules. The index holds summaries only, and current instructions always outrank memory.
+Saving again under the same title replaces that memory. `memory_delete` removes one that no longer holds: it deletes the file and its index line together. It does not return the deleted text, since a policy may allow writing a memory but not reading it. The Broods-managed bucket keeps earlier versions of each file, so an operator can restore one; a bucket you bring keeps whatever versioning you set on it.
 
-A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save.
+`originSessionId` records the conversation the fact came from, so agents that share a workspace across channels can tell where a memory was learned. A `<memory>` block in the prompt gives the agent the current conversation and two rules. The index holds summaries only, and current instructions always outrank memory. Today's date comes from the `<environment>` block every run gets.
+
+A workspace without a sandbox still loads `memory/MEMORY.md` into the prompt, but the agent cannot save or delete.
 
 ### Turn it off
 
@@ -32,7 +36,7 @@ Memory and the workspace guidance prompt are separate features, both on by defau
 ```ts
 import { defineWorkspace } from "broods";
 
-// No memory_save, no <memory> block, index not loaded. File tools stay.
+// No memory_save or memory_delete, no <memory> block, index not loaded. File tools stay.
 export const notes = defineWorkspace({
   name: "notes",
   harness: { memory: { enabled: false } },
@@ -80,7 +84,8 @@ export const myAgent = defineAgent({
 - On a model with a context window under 500k tokens, set `maxContextLength` below that window so compaction runs before the provider refuses a turn.
 - Auto-compaction runs only after a turn has finished, once the model answered with no tool call left, never between tool steps. It runs before the next queued message, so that message starts from the summary. A turn that stops on a tool approval or a question does not compact.
 - If a model rejects a turn because its context is too long, the turn fails with that error and Broods compacts the history, so the next message fits.
+- A compaction's model calls count toward usage and cost. In the Tracing tab it shows as a Compaction line with the messages it folded and its tokens, under the turn that triggered it, or as a run of its own for `/compact`.
 - Compaction stores a summary and folds earlier summaries into the next one. The summary reads every earlier summary and message. When the model refuses that much input, the older and newer halves are summarized apart and merged. Only a single message too long for the model on its own is cut, keeping as much of its beginning as the model accepts.
-- On Slack, Discord, Matrix, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
+- On Slack, Discord, Telegram, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram, `/compact [instructions]` compacts on demand, whatever the config says. Sent mid-turn, it waits until the model finishes the turn and stops calling tools. The instructions steer what the summary keeps. `/new` and `/clear` start over.
 
 A [harness adapter](agents.md) manages its own model context, so these settings apply to the default Broods loop.

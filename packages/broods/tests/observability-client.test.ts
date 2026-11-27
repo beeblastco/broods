@@ -1,8 +1,16 @@
 import { afterEach, expect, jest, setSystemTime, test } from "bun:test";
-import { subscribeObservabilityLogs } from "../src/observability-client.ts";
+import { BroodsAccountClient } from "../src/account.ts";
+import {
+  fetchObservabilityLogs,
+  fetchObservabilityLogPage,
+  fetchObservabilitySpans,
+  fetchObservabilityTrace,
+  subscribeObservabilityLogs,
+} from "../src/observability-client.ts";
 import type {
   ObservabilityLogEntry,
   ObservabilityServerMessage,
+  ObservabilitySpanRow,
 } from "../src/observability-contracts.ts";
 
 class FakeObservabilitySocket {
@@ -16,7 +24,7 @@ class FakeObservabilitySocket {
 
   constructor(readonly url: string) {
     FakeObservabilitySocket.instances.push(this);
-    queueMicrotask(() => {
+    queueMicrotask((): void => {
       this.readyState = 1;
       this.onopen?.({});
     });
@@ -38,12 +46,15 @@ class FakeObservabilitySocket {
 
 const originalWebSocket = globalThis.WebSocket;
 
-afterEach(() => {
+afterEach((): void => {
+  jest.useRealTimers();
+  setSystemTime();
   FakeObservabilitySocket.instances = [];
   globalThis.WebSocket = originalWebSocket;
 });
 
-test("reconnects transient log sockets and de-duplicates overlap backfill", async () => {
+test("reconnects transient log sockets and de-duplicates overlap backfill", async (): Promise<void> => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -69,7 +80,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   };
 
   const first = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.emit({
     type: "log",
     entry: firstEntry,
@@ -78,7 +89,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
 
   const second = stream.next();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway restart");
-  await Bun.sleep(550);
+  await advance(550);
   expect(FakeObservabilitySocket.instances).toHaveLength(2);
   FakeObservabilitySocket.instances[1]!.emit({
     type: "backfill",
@@ -91,8 +102,8 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   await stream.return(undefined);
 });
 
-// The tail used to retry a dead gateway forever without a word.
-test("reports each reconnect and gives up after a minute down", async () => {
+test("reports each reconnect and gives up after a minute down", async (): Promise<void> => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const attempts: string[] = [];
   const stream = subscribeObservabilityLogs(
@@ -109,27 +120,23 @@ test("reports each reconnect and gives up after a minute down", async () => {
     },
   );
   const result = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
-  await Bun.sleep(0);
+  await flushMicrotasks();
   expect(attempts).toEqual(["1: Observability WebSocket closed: gateway down"]);
 
   setSystemTime(new Date(Date.now() + 61_000));
-  try {
-    await Bun.sleep(550);
-    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+  await advance(550);
+  FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
 
-    expect(result).rejects.toThrow(
-      "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
-    );
-    expect(attempts).toHaveLength(1);
-  } finally {
-    setSystemTime();
-  }
+  await expect(result).rejects.toThrow(
+    "Gave up reconnecting to the live logs after 60 s. Last error: Observability WebSocket closed: gateway down",
+  );
+  expect(attempts).toHaveLength(1);
 });
 
-// `broods dev` tails for the whole session, so an outage must not end it.
-test("keeps reconnecting past a minute down when asked to", async () => {
+test("keeps reconnecting past a minute down when asked to", async (): Promise<void> => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -142,61 +149,51 @@ test("keeps reconnecting past a minute down when asked to", async () => {
     { keepReconnecting: true, signal: controller.signal },
   );
   const result = stream.next();
-  await Bun.sleep(0);
+  await flushMicrotasks();
   FakeObservabilitySocket.instances[0]!.close(1006, "gateway down");
 
   setSystemTime(new Date(Date.now() + 61_000));
-  try {
-    await Bun.sleep(550);
-    FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
-    await Bun.sleep(1_050);
-    expect(FakeObservabilitySocket.instances).toHaveLength(3);
-  } finally {
-    setSystemTime();
-  }
+  await advance(550);
+  FakeObservabilitySocket.instances[1]!.close(1006, "gateway down");
+  await advance(1_050);
+  expect(FakeObservabilitySocket.instances).toHaveLength(3);
 
   controller.abort();
   await result;
 });
 
-// A socket that opened but never answered used to hang the tail for good.
-test("reconnects a socket the gateway never answers", async () => {
+test("reconnects a socket the gateway never answers", async (): Promise<void> => {
+  jest.useFakeTimers();
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const attempts: string[] = [];
-  jest.useFakeTimers();
-  try {
-    const stream = subscribeObservabilityLogs(
-      {
-        baseUrl: "https://app.example",
-        credential: async (): Promise<string> => "secret-key",
-        project: "demo",
-        stage: "development",
+  const stream = subscribeObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    {
+      signal: controller.signal,
+      onReconnect: (attempt: number, reason: string): void => {
+        attempts.push(`${attempt}: ${reason}`);
       },
-      {
-        signal: controller.signal,
-        onReconnect: (attempt: number, reason: string): void => {
-          attempts.push(`${attempt}: ${reason}`);
-        },
-      },
-    );
-    const result = stream.next();
-    await flushMicrotasks();
-    expect(FakeObservabilitySocket.instances[0]!.sent).toHaveLength(1);
-    jest.advanceTimersByTime(15_000);
-    await flushMicrotasks();
-    expect(attempts).toEqual([
-      "1: The observability gateway did not answer within 15 s.",
-    ]);
+    },
+  );
+  const result = stream.next();
+  await flushMicrotasks();
+  expect(FakeObservabilitySocket.instances[0]!.sent).toHaveLength(1);
+  await advance(15_000);
+  expect(attempts).toEqual([
+    "1: The observability gateway did not answer within 15 s.",
+  ]);
 
-    controller.abort();
-    await result;
-  } finally {
-    jest.useRealTimers();
-  }
+  controller.abort();
+  await result;
 });
 
-test("requests live-only logs when no backfill is requested", async () => {
+test("requests live-only logs when no backfill is requested", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
@@ -223,7 +220,7 @@ test("requests live-only logs when no backfill is requested", async () => {
   await pending;
 });
 
-test("does not include the credential in connection errors", async () => {
+test("does not include the credential in connection errors", async (): Promise<void> => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const stream = subscribeObservabilityLogs({
     baseUrl: "https://app.example",
@@ -238,11 +235,265 @@ test("does not include the credential in connection errors", async () => {
     error: "Unauthorized",
   });
 
-  expect(result).rejects.toThrow("Unauthorized");
-  expect(result).rejects.not.toThrow("do-not-leak");
+  await expect(result).rejects.toThrow("Unauthorized");
+  await expect(result).rejects.not.toThrow("do-not-leak");
 });
 
-// Lets awaited credentials and queued socket events run while timers are fake.
 async function flushMicrotasks(): Promise<void> {
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  for (let turn = 0; turn < 50; turn++) await Promise.resolve();
 }
+
+async function advance(ms: number): Promise<void> {
+  await flushMicrotasks();
+  jest.advanceTimersByTime(ms);
+  await flushMicrotasks();
+}
+
+const traceOptions = {
+  baseUrl: "https://app.example",
+  credential: async (): Promise<string> => "ticket",
+  project: "demo",
+  stage: "development",
+};
+const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+
+test("fetches one trace by id and closes its socket", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
+  await Bun.sleep(0);
+  const socket = FakeObservabilitySocket.instances[0]!;
+  expect(socket.url).toBe(
+    "wss://app.example/v1/projects/demo/stages/development/observability/ws",
+  );
+  expect(JSON.parse(socket.sent[0]!)).toEqual({
+    type: "fetchTrace",
+    traceId: TRACE_ID,
+  });
+  const span: ObservabilitySpanRow = {
+    traceId: TRACE_ID,
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    startTimeMs: 1,
+    endTimeMs: 2,
+    durationMs: 1,
+    status: "error",
+    error: "boom",
+  };
+  socket.emit({ type: "backfill", stream: "traces", entries: [span] });
+
+  expect(await pending).toEqual([span]);
+  expect(socket.readyState).toBe(3);
+});
+
+test("a backfill that fails partway keeps its rows and says why, with no live consumer", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilitySpans(traceOptions, 5);
+  await Bun.sleep(0);
+  const socket = FakeObservabilitySocket.instances[0]!;
+  expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+    type: "subscribe",
+    stream: "traces",
+    historyOnly: true,
+  });
+  const span: ObservabilitySpanRow = {
+    traceId: TRACE_ID,
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    startTimeMs: 1,
+    endTimeMs: 2,
+    durationMs: 1,
+    status: "ok",
+  };
+  socket.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [span],
+    more: true,
+  });
+  socket.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [],
+    error: "1 trace could not be loaded",
+  });
+
+  expect(await pending).toEqual({
+    rows: [span],
+    error: "1 trace could not be loaded",
+  });
+});
+
+test("rejects with the gateway's reason when the trace is not in the stage", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityTrace(traceOptions, TRACE_ID);
+  await Bun.sleep(0);
+  FakeObservabilitySocket.instances[0]!.emit({
+    type: "backfill",
+    stream: "traces",
+    entries: [],
+    error: "Trace not found in this stage",
+  });
+
+  await expect(pending).rejects.toThrow("Trace not found in this stage");
+});
+
+test("a zero-line log read returns at once, as the gateway sends no backfill for it", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+
+  const rows = await fetchObservabilityLogs(
+    {
+      baseUrl: "https://app.example",
+      credential: async (): Promise<string> => "secret-key",
+      project: "demo",
+      stage: "development",
+    },
+    { limit: 0 },
+  );
+
+  expect(rows).toEqual([]);
+  expect(FakeObservabilitySocket.instances).toHaveLength(0);
+});
+
+test("listRuns asks the gateway for one agent's runs, and filters here only on an older gateway", async (): Promise<void> => {
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const account = new BroodsAccountClient({
+    baseUrl: "https://app.example",
+    accountSecret: "secret-1",
+    fetch: async (): Promise<Response> =>
+      Response.json({
+        token: "ticket",
+        projectSlug: "demo",
+        stageSlug: "development",
+      }),
+  });
+  const run = (agentId: string, startTimeMs: number): ObservabilitySpanRow => ({
+    traceId: `${TRACE_ID.slice(0, -2)}${startTimeMs}`.padEnd(32, "0"),
+    spanId: "00f067aa0ba902b7",
+    name: "task",
+    kind: "task",
+    agentId: agentId,
+    startTimeMs: startTimeMs,
+    endTimeMs: startTimeMs + 1,
+    durationMs: 1,
+    status: "ok",
+  });
+  const rows = [run("ag_B", 30), run("ag_B", 20), run("ag_A", 10)];
+  const nextSocket = async (
+    index: number,
+  ): Promise<FakeObservabilitySocket> => {
+    for (
+      let tick = 0;
+      tick < 20 && !FakeObservabilitySocket.instances[index]?.sent[0];
+      tick++
+    )
+      await Bun.sleep(1);
+
+    return FakeObservabilitySocket.instances[index]!;
+  };
+  const listAgentA = (): ReturnType<BroodsAccountClient["listRuns"]> =>
+    account.listRuns(
+      { project: "demo", stage: "development" },
+      { agentId: "ag_A", limit: 2 },
+    );
+
+  const current = listAgentA();
+  const filtered = await nextSocket(0);
+  expect(JSON.parse(filtered.sent[0]!)).toMatchObject({
+    agentId: "ag_A",
+    backfill: 2,
+  });
+  filtered.emit({ type: "ready", agentId: "ag_A" });
+  filtered.emit({ type: "backfill", stream: "traces", entries: [rows[2]!] });
+  expect((await current).runs).toHaveLength(1);
+  expect(FakeObservabilitySocket.instances).toHaveLength(1);
+
+  FakeObservabilitySocket.instances = [];
+  const older = listAgentA();
+  const page = await nextSocket(0);
+  page.emit({ type: "ready" });
+  page.emit({ type: "backfill", stream: "traces", entries: rows.slice(0, 2) });
+  const scan = await nextSocket(1);
+  expect(JSON.parse(scan.sent[0]!)).toMatchObject({ backfill: 500 });
+  scan.emit({ type: "ready" });
+  scan.emit({ type: "backfill", stream: "traces", entries: rows });
+  const { runs } = await older;
+  expect(runs.map((summary): string | undefined => summary.agentId)).toEqual([
+    "ag_A",
+  ]);
+});
+
+test("history waits past the connection deadline after the gateway acknowledges it", async (): Promise<void> => {
+  jest.useFakeTimers();
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const pending = fetchObservabilityLogs(traceOptions, { limit: 50 });
+  const result = pending.then(
+    (rows): string => `rows:${rows.length}`,
+    (error: Error): string => error.message,
+  );
+  await flushMicrotasks();
+  const socket = FakeObservabilitySocket.instances[0]!;
+  socket.emit({ type: "ready" });
+  await advance(16_000);
+  socket.emit({
+    type: "backfill",
+    stream: "logs",
+    entries: [],
+    error: "Loki query timed out after 15000ms",
+  });
+  expect(await result).toBe("Loki query timed out after 15000ms");
+});
+
+test("an acknowledged history request still has a finite deadline", async (): Promise<void> => {
+  jest.useFakeTimers();
+  globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
+  const result = fetchObservabilityLogs(traceOptions, { limit: 50 }).catch(
+    (error: Error): string => error.message,
+  );
+  await flushMicrotasks();
+  const socket = FakeObservabilitySocket.instances[0]!;
+  socket.emit({ type: "ready" });
+  await advance(45_000);
+  expect(await result).toBe(
+    "The observability gateway did not answer within 45 s.",
+  );
+  expect(socket.readyState).toBe(3);
+});
+
+test.each([true, false])(
+  "bounded log page capability echo: %s",
+  async (supported: boolean): Promise<void> => {
+    globalThis.WebSocket =
+      FakeObservabilitySocket as unknown as typeof WebSocket;
+    const range = { from: 1, to: 10000 };
+    const pending = fetchObservabilityLogPage(
+      {
+        baseUrl: "https://app.example",
+        credential: async (): Promise<string> => "ticket",
+        project: "demo",
+        stage: "dev",
+      },
+      { limit: 10, range: range },
+    );
+    await flushMicrotasks();
+    const socket = FakeObservabilitySocket.instances[0]!;
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+      historyOnly: true,
+      range: range,
+    });
+    socket.emit({
+      type: "backfill",
+      stream: "logs",
+      entries: [],
+      nextTo: 5000,
+      ...(supported ? { range: range } : {}),
+    });
+    const result = await pending;
+    if (supported) expect(result).toEqual({ rows: [], nextTo: 5000 });
+    else {
+      expect(result.error).toContain("does not support bounded history");
+      expect(result.nextTo).toBeUndefined();
+    }
+  },
+);

@@ -18,7 +18,9 @@ interface Props {
 
 export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const project = useQuery(api.project.getById, { projectId: projectId });
+  const project = useQuery(api.dashboardReads.projectById, {
+    projectId: projectId,
+  });
   const update = useMutation(api.project.update);
 
   const [name, setName] = useState("");
@@ -27,8 +29,7 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncedProject, setSyncedProject] = useState(project);
 
-  // Sync editable fields from the project as it loads or changes (set during
-  // render instead of in an effect to avoid a cascading re-render).
+  // Adjusted during render, not in an effect, to skip a cascading re-render.
   if (project && project !== syncedProject) {
     setSyncedProject(project);
     setName(project.name);
@@ -45,9 +46,10 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
 
   const trimmedName = name.trim();
   const trimmedDesc = description.trim();
+  const descriptionChanged = trimmedDesc !== (project.description ?? "");
   const dirty =
     (trimmedName.length > 0 && trimmedName !== project.name) ||
-    trimmedDesc !== (project.description ?? "");
+    descriptionChanged;
 
   async function handleSave(): Promise<void> {
     if (!dirty || !trimmedName) return;
@@ -57,7 +59,8 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
       await update({
         projectId: projectId,
         name: trimmedName,
-        description: trimmedDesc || undefined,
+        // Omitted, the server keeps a description someone else saved meanwhile.
+        ...(descriptionChanged ? { description: trimmedDesc } : {}),
       });
     } catch (err) {
       setSaveError(toErrorMessage(err));
@@ -111,7 +114,11 @@ export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
         </div>
 
         <div className="flex items-center justify-between gap-4">
-          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+          {saveError && (
+            <p role="alert" className="text-xs text-destructive">
+              {saveError}
+            </p>
+          )}
           {canWrite && (
             <Button
               size="sm"

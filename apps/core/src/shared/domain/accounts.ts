@@ -1,11 +1,7 @@
-/**
- * Account types, id/secret/hash helpers, input normalization, and public
- * projection. Persistence is reached through `../storage.ts`.
- */
-
 import { ACCOUNT_KEY_PREFIX } from "@broods/convex/model/accountSecrets";
+import { ClientError } from "@broods/convex/model/clientError";
 import { createHash, randomBytes } from "node:crypto";
-import { isPlainObject } from "../object.ts";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 
 export type AccountStatus = "active" | "disabled";
 
@@ -19,23 +15,9 @@ export interface AccountRecord {
   updatedAt: string;
 }
 
-export interface PublicAccountRecord {
-  accountId: string;
-  username: string;
-  description?: string;
-  status: AccountStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface CreateAccountInput {
   username: string;
   description?: string;
-}
-
-export interface UpdateAccountInput {
-  username?: string;
-  description?: string | null;
 }
 
 export function createAccountId(): string {
@@ -53,12 +35,12 @@ export function hashAccountSecret(secret: string): string {
 export function normalizeCreateAccountInput(
   value: unknown,
 ): CreateAccountInput {
-  if (!isPlainObject(value))
-    throw new Error("Request body must include username");
-  if ("config" in value)
-    throw new Error("Agent config is created through /v1/agents");
-  const username = requireString(value.username, "username");
-  const description = optionalString(value.description, "description");
+  const input = parseOr(configObject, value);
+  if (!input) throw new ClientError("Request body must include username");
+  if ("config" in input)
+    throw new ClientError("Agent config is created through /v1/agents");
+  const username = requireString(input.username, "username");
+  const description = optionalString(input.description, "description");
 
   return {
     username: username,
@@ -66,49 +48,10 @@ export function normalizeCreateAccountInput(
   };
 }
 
-export function normalizeUpdateAccountInput(
-  value: unknown,
-): UpdateAccountInput {
-  if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  if ("config" in value)
-    throw new Error(
-      "Agent config must be updated through /v1/agents/{agentId}",
-    );
-  const v = value as Record<string, unknown>;
-  const normalized: UpdateAccountInput = {
-    ...(v.username !== undefined
-      ? { username: requireString(v.username, "username") }
-      : {}),
-    ...(v.description !== undefined
-      ? {
-          description:
-            v.description === null
-              ? null
-              : optionalString(v.description, "description"),
-        }
-      : {}),
-  };
-  if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include username or description");
-  }
-
-  return normalized;
-}
-
-export function toPublicAccount(account: AccountRecord): PublicAccountRecord {
-  return {
-    accountId: account.accountId,
-    username: account.username,
-    ...(account.description ? { description: account.description } : {}),
-    status: account.status,
-    createdAt: account.createdAt,
-    updatedAt: account.updatedAt,
-  };
-}
-
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  if (typeof value !== "string")
+    throw new ClientError(`${name} must be a string`);
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
@@ -116,7 +59,7 @@ function optionalString(value: unknown, name: string): string | undefined {
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
+    throw new ClientError(`${name} must be a non-empty string`);
   }
 
   return value.trim();

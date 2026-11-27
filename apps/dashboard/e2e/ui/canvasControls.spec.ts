@@ -25,7 +25,9 @@ test("the save pill shows a save, clears after it lands, and keeps a failure", a
 }) => {
   await openGallery(page);
   const controls = page.locator('[data-fixture="canvas-controls"]');
-  const pill = controls.locator("[aria-live]");
+  const pill = controls.locator(
+    '[data-slot="canvas-save-pill"], [data-slot="canvas-notice"]',
+  );
 
   await expect(pill).toHaveCount(0);
   await controls.locator('[data-save-state="saving"]').click();
@@ -38,7 +40,6 @@ test("the save pill shows a save, clears after it lands, and keeps a failure", a
   await expect(pill).toContainText("Couldn't save");
   await expect(pill.getByRole("button", { name: "Retry" })).toBeVisible();
 
-  // The pill never overlaps the controls: it is centred, they are on the left.
   const controlsBox = (await controls
     .getByRole("button", { name: "Zoom in" })
     .boundingBox())!;

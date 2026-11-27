@@ -1,9 +1,3 @@
-/**
- * The audit ledger routes (`/v1/audit*`): rows since a seq, chain
- * verification, and the one webhook sink per account. The router already
- * checked a role session against `audit:read` / `audit:write`.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -29,7 +23,7 @@ const DEFAULT_LIST_LIMIT = 100;
 
 export type AuditLeaf = "events" | "verify" | "sink";
 
-/** Serve one `/v1/audit*` leaf; ledger reads are GET only, the sink takes GET, PUT and DELETE. */
+// The router has already checked a role session against `audit:read` / `audit:write`.
 export async function handleAuditRoute(
   ctx: ActionCtx,
   req: Request,
@@ -103,7 +97,6 @@ export async function handleAuditRoute(
   return methodNotAllowed(["GET", "PUT", "DELETE"]);
 }
 
-/** `/v1/audit`, `/v1/audit/verify`, `/v1/audit/sink`; null for anything else. */
 export function parseAuditRoute(pathname: string): AuditLeaf | null {
   if (pathname === "/v1/audit") return "events";
   if (pathname === "/v1/audit/verify") return "verify";
@@ -112,7 +105,6 @@ export function parseAuditRoute(pathname: string): AuditLeaf | null {
   return null;
 }
 
-/** A non-negative integer query param: undefined when absent, null when malformed or too large to be exact. */
 function integerParam(url: URL, name: string): number | null | undefined {
   const raw = url.searchParams.get(name)?.trim();
   if (raw === undefined || raw === "") return undefined;
@@ -121,7 +113,6 @@ function integerParam(url: URL, name: string): number | null | undefined {
   return Number.isSafeInteger(value) ? value : null;
 }
 
-/** `GET /v1/audit`: one page of rows after `since`, with the chain head. */
 async function listResponse(
   ctx: ActionCtx,
   req: Request,
@@ -145,8 +136,7 @@ async function listResponse(
       { code: "invalid_limit", param: "limit" },
     );
   }
-  // Two snapshots: `head` may already sit past the page, which is what a
-  // reader paging toward the tip expects.
+  // Separate snapshots: `head` may already sit past the page's last row.
   const [rows, head]: [Doc<"auditEvents">[], AuditChainHead] =
     await Promise.all([
       ctx.runQuery(internal.audit.ledger.list, {
@@ -165,7 +155,6 @@ async function listResponse(
   });
 }
 
-/** The sink as the API serves it: never the encrypted secret. */
 function publicSink(sink: Doc<"auditSinks">): Record<string, unknown> {
   return {
     kind: sink.kind,
@@ -176,7 +165,6 @@ function publicSink(sink: Doc<"auditSinks">): Record<string, unknown> {
   };
 }
 
-/** `GET /v1/audit/verify`: recompute the chain over an optional seq range. */
 async function verifyResponse(
   ctx: ActionCtx,
   req: Request,

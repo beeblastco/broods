@@ -1,7 +1,3 @@
-// Hosted MCP bundles are validated at deploy time: a bundle whose default
-// export cannot serve throws during compile instead of uploading and failing
-// only inside the Lambda.
-
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,12 +7,12 @@ import { compileProject } from "../src/manifest.ts";
 const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
 
-test("compileProject bundles a servable hosted MCP server", async () => {
+test("compileProject bundles a servable hosted MCP server", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
@@ -29,61 +25,61 @@ test("compileProject bundles a servable hosted MCP server", async () => {
   expect(typeof bundle).toBe("string");
 });
 
-test("compileProject hashes a hosted MCP server the same from any cwd", async () => {
+test("compileProject hashes a hosted MCP server the same from any cwd", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}", { status: 200 }),`,
   );
 
-  // A changing hash shows the server as changed on every diff and re-uploads it.
   const compile = async (): Promise<{ bundle: string; sha256: string }> =>
     (
       await compileProject({ cwd: cwd, command: "dev" })
-    ).manifest.resources.find((entry) => entry.kind === "mcp")?.config as {
+    ).manifest.resources.find((entry): boolean => entry.kind === "mcp")
+      ?.config as {
       bundle: string;
       sha256: string;
     };
   const first = await compile();
   expect((await compile()).sha256).toBe(first.sha256);
-  // esbuild names each module in a comment; relative to the cwd, the hash would follow it.
+  // esbuild names each module in a comment; an absolute name would tie the hash to the cwd.
   expect(first.bundle).toContain("// mcp-handler.mjs\n");
 });
 
-test("compileProject rejects a handler that is not fetch-style", async () => {
+test("compileProject rejects a handler that is not fetch-style", async (): Promise<void> => {
   const cwd = await mcpFixture(`handler: 42,`);
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "default export must be a fetch handler",
   );
 });
 
-test("compileProject rejects a server that crashes on import", async () => {
-  // The project scan imports every broods/ module, so an import-time crash
-  // surfaces with the author's own error before bundling even starts.
+test("compileProject rejects a server that crashes on import", async (): Promise<void> => {
   const cwd = await mcpFixture(
     `handler: (request) => new Response("{}"),`,
     `throw new Error("boom at import");\n`,
   );
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "boom at import",
   );
 });
 
-test("compileProject forwards a sandbox server's command", async () => {
+test("compileProject forwards a sandbox server's command", async (): Promise<void> => {
   const cwd = await mcpFixture(`sandbox: "web", command: ["obscura", "mcp"],`);
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const server = manifest.resources.find((entry) => entry.kind === "mcp");
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
   expect(server?.config).toEqual({
     sandbox: "web",
     command: ["obscura", "mcp"],
   });
 });
 
-test("compileProject rejects a server with neither url nor handler", async () => {
+test("compileProject rejects a server with neither url nor handler", async (): Promise<void> => {
   const cwd = await mcpFixture("");
 
-  expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "needs url (external), handler (hosted) or sandbox (on a machine)",
   );
 });
@@ -99,6 +95,33 @@ test("a server that needs Node builtins ships the Node build", async (): Promise
     (entry): boolean => entry.kind === "mcp",
   );
   expect(String(server?.config.bundle)).toContain("node:child_process");
+});
+
+test("a handler keeps the code it imports from an SDK subpath", async (): Promise<void> => {
+  const cwd = await mcpFixture(
+    `handler: () => new Response(marker),`,
+    `import { marker } from "broods/account";\n`,
+  );
+  const packageDir = join(cwd, "node_modules", "broods");
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "broods",
+      type: "module",
+      exports: { "./account": "./account.js" },
+    }),
+  );
+  await writeFile(
+    join(packageDir, "account.js"),
+    `export const marker = "from-the-account-subpath";\n`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const server = manifest.resources.find(
+    (entry): boolean => entry.kind === "mcp",
+  );
+  expect(String(server?.config.bundle)).toContain("from-the-account-subpath");
 });
 
 async function mcpFixture(handlerLine: string, prelude = ""): Promise<string> {

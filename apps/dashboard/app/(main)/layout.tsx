@@ -2,11 +2,7 @@ import { SIDEBAR_COOKIE } from "@/app/lib/navigation";
 import { cookies } from "next/headers";
 import { MainShell } from "./MainShell";
 
-/**
- * Reads the sidebar's pinned or hidden state on the server, so a reload paints
- * it the way it was left instead of flashing open first. The root layout
- * already reads the request, so this adds no dynamic rendering.
- */
+// Read on the server so a reload paints the sidebar as left; the root layout is already dynamic.
 export default async function MainLayout({
   children,
 }: Readonly<{

@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * The schedule expression is validated client-side, then cronPublic.create or
- * .update writes the crons row and its registered schedule in one transaction.
- */
-
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -24,13 +19,29 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Textarea } from "@/app/components/ui/textarea";
+import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation } from "convex/react";
-import { useRef, useState } from "react";
+import { useNow } from "@/app/hooks/useNow";
+import { analytics } from "@/app/lib/analytics";
+import { nextFireAt } from "@/app/lib/cronSchedule";
+import { NOT_BLANK } from "@/app/lib/notBlank";
+import { useId, useMemo, useRef, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
-const SCHEDULE_REGEX = /^(cron|rate|at)\(.+\)$/;
+const SCHEDULE_PATTERN = "\\s*(cron|rate|at)\\(.+\\)\\s*";
+const SCHEDULE_REGEX = new RegExp(`^${SCHEDULE_PATTERN}$`);
+const TIME_ZONES = Intl.supportedValuesOf("timeZone");
+const NEXT_RUN: Intl.DateTimeFormatOptions = {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZoneName: "short",
+};
 
 const PRESETS: Array<{ label: string; value: string }> = [
   { label: "Every hour", value: "rate(1 hour)" },
@@ -48,7 +59,6 @@ type Mode = "create" | "edit";
 
 interface Props {
   mode: Mode;
-  /** Required when mode is "edit". */
   cron?: Doc<"crons">;
   agents: Array<Pick<Doc<"agents">, "_id" | "name">>;
   onClose: () => void;
@@ -68,7 +78,8 @@ export function CronDialog({
   const [agentId, setAgentId] = useState<string>(
     cron?.agentId ?? agents[0]?._id ?? "",
   );
-  const [prompt, setPrompt] = useState(eventsToText(cron?.events));
+  const [storedPrompt] = useState(() => eventsToText(cron?.events));
+  const [prompt, setPrompt] = useState(storedPrompt);
   const [conversationKey, setConversationKey] = useState(
     cron?.conversationKey ?? "",
   );
@@ -82,52 +93,104 @@ export function CronDialog({
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scheduleTouched, setScheduleTouched] = useState(false);
+  const [timezoneTouched, setTimezoneTouched] = useState(false);
   const submittingRef = useRef(false);
+  const timezoneRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const fieldId = useId();
+  const now = useNow();
 
   const scheduleValid = SCHEDULE_REGEX.test(scheduleExpression.trim());
+  // A zone the runtime cannot format is one the server rejects too.
+  const zoneFormat = useMemo((): Intl.DateTimeFormat | null => {
+    try {
+      return new Intl.DateTimeFormat([], {
+        ...NEXT_RUN,
+        timeZone: timezone.trim() || "UTC",
+      });
+    } catch {
+      return null;
+    }
+  }, [timezone]);
+  const nextRun =
+    scheduleValid && zoneFormat
+      ? nextFireAt(
+          {
+            scheduleExpression: scheduleExpression.trim(),
+            timezone: timezone.trim() || undefined,
+            status: status,
+            lastInvokedAt: cron?.lastInvokedAt,
+            createdAt: cron?.createdAt ?? now,
+          },
+          now,
+        )
+      : null;
+  const showScheduleError = scheduleTouched && !scheduleValid;
+  const showTimezoneError = timezoneTouched && zoneFormat === null;
+  // An untouched prompt keeps the stored events, which can hold images or several messages.
+  const input =
+    cron && prompt.trim() === storedPrompt.trim() ? undefined : prompt.trim();
   const canSubmit =
     name.trim().length > 0 &&
     agentId.length > 0 &&
-    prompt.trim().length > 0 &&
+    input !== "" &&
     timezone.trim().length > 0 &&
     scheduleValid &&
     !pending;
 
   async function handleSubmit(): Promise<void> {
+    if (zoneFormat === null) {
+      setTimezoneTouched(true);
+      timezoneRef.current?.focus();
+
+      return;
+    }
+    // A textarea takes no `pattern`, so a blank prompt is refused here, the same native way.
+    if (input === "") {
+      promptRef.current?.setCustomValidity("Write what the agent should do.");
+      promptRef.current?.reportValidity();
+
+      return;
+    }
     if (!canSubmit) return;
-    // `pending` only blocks the next render, so two fast clicks can both
-    // pass canSubmit and double-create the job. This ref closes in the
-    // same tick.
+    // `pending` lands a render late; the ref stops a fast double click double-creating.
     if (submittingRef.current) return;
 
     submittingRef.current = true;
     setPending(true);
     setError(null);
     try {
+      const payload = {
+        name: name.trim(),
+        agentId: agentId as Id<"agents">,
+        conversationKey: conversationKey.trim() || undefined,
+        scheduleExpression: scheduleExpression.trim(),
+        timezone: timezoneToSave(cron?.timezone, timezone),
+        status: status,
+        description: description.trim() || undefined,
+      };
       if (mode === "create") {
-        await create({
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
-        });
+        await create({ ...payload, input: prompt.trim() });
       } else if (cron) {
         await update({
           cronId: cron._id,
-          name: name.trim(),
-          agentId: agentId as Id<"agents">,
-          input: prompt.trim(),
-          conversationKey: conversationKey.trim() || undefined,
-          scheduleExpression: scheduleExpression.trim(),
-          timezone: timezoneToSave(cron?.timezone, timezone),
-          status: status,
-          description: description.trim() || undefined,
+          input: input,
+          ...payload,
+          conversationKey: conversationKey.trim() || null,
+          description: description.trim() || null,
         });
       }
+      void analytics.then((posthog): void => {
+        posthog.capture(
+          mode === "create" ? "scheduler_created" : "scheduler_updated",
+          {
+            schedule_type: scheduleExpression.trim().split("(", 1)[0],
+            status: status,
+            has_conversation_key: Boolean(conversationKey.trim()),
+          },
+        );
+      });
       onClose();
     } catch (err) {
       setError(toErrorMessage(err));
@@ -138,7 +201,7 @@ export function CronDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
@@ -149,194 +212,282 @@ export function CronDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 py-2">
-          <div className="grid gap-1">
-            <Label htmlFor="cj-name" variant="muted" className="text-xs">
-              Name
-            </Label>
-            <Input
-              id="cj-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Daily summary"
-            />
-          </div>
-
-          <div className="grid gap-1">
-            <Label htmlFor="cj-description" variant="muted" className="text-xs">
-              Description
-            </Label>
-            <Input
-              id="cj-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
-
-          <div className="grid gap-1">
-            <Label htmlFor="cj-agent" variant="muted" className="text-xs">
-              Agent
-            </Label>
-            {agents.length === 0 ? (
-              <p className="text-xs text-destructive">
-                No agents available. Create one before scheduling jobs.
-              </p>
-            ) : (
-              <Select
-                items={agents.map((agent) => ({
-                  label: agent.name,
-                  value: agent._id,
-                }))}
-                value={agentId}
-                onValueChange={(value) => {
-                  if (value !== null) {
-                    setAgentId(value);
-                  }
-                }}
-              >
-                <SelectTrigger id="cj-agent" className="w-full cursor-pointer">
-                  <SelectValue placeholder="Pick an agent" />
-                </SelectTrigger>
-                <SelectContent>
-                  {agents.map((agent) => (
-                    <SelectItem
-                      key={agent._id}
-                      value={agent._id}
-                      className="cursor-pointer"
-                    >
-                      {agent.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          <div className="grid gap-1">
-            <Label htmlFor="cj-prompt" variant="muted" className="text-xs">
-              Prompt
-            </Label>
-            <Textarea
-              id="cj-prompt"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="What should the agent do on each invocation?"
-              rows={3}
-            />
-          </div>
-
-          <div className="grid gap-1">
-            <Label htmlFor="cj-conv" variant="muted" className="text-xs">
-              Conversation key (optional)
-            </Label>
-            <Input
-              id="cj-conv"
-              value={conversationKey}
-              onChange={(e) => setConversationKey(e.target.value)}
-              placeholder="Reuse a conversation across runs"
-            />
-          </div>
-
-          <div className="grid gap-1">
-            <Label htmlFor="cj-schedule" variant="muted" className="text-xs">
-              Schedule expression
-            </Label>
-            <Input
-              id="cj-schedule"
-              value={scheduleExpression}
-              onChange={(e) => setScheduleExpression(e.target.value)}
-              placeholder="rate(1 hour) or cron(0 9 * * ? *)"
-              className="font-mono text-xs"
-            />
-            <div className="flex flex-wrap gap-1.5 pt-1">
-              {PRESETS.map((preset) => (
-                <Button
-                  key={preset.value}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs cursor-pointer"
-                  onClick={() => setScheduleExpression(preset.value)}
-                >
-                  {preset.label}
-                </Button>
-              ))}
-            </div>
-            {!scheduleValid && scheduleExpression.length > 0 && (
-              <p className="text-xs text-destructive">
-                Must match cron(...), rate(...), or at(...).
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSubmit();
+          }}
+        >
+          <div className="grid gap-3 py-2">
             <div className="grid gap-1">
-              <Label htmlFor="cj-tz" variant="muted" className="text-xs">
-                Timezone
+              <Label htmlFor="cj-name" variant="muted" className="text-xs">
+                Name{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
               </Label>
               <Input
-                id="cj-tz"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="UTC"
+                id="cj-name"
+                required={true}
+                pattern={NOT_BLANK}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Daily summary"
               />
             </div>
 
             <div className="grid gap-1">
-              <Label htmlFor="cj-status" variant="muted" className="text-xs">
-                Status
-              </Label>
-              <Select
-                items={STATUS_LABELS}
-                value={status}
-                onValueChange={(v) => {
-                  if (v === null) return;
-                  setStatus(v as "active" | "paused");
-                }}
+              <Label
+                htmlFor="cj-description"
+                variant="muted"
+                className="text-xs"
               >
-                <SelectTrigger id="cj-status" className="w-full cursor-pointer">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active" className="cursor-pointer">
-                    Active
-                  </SelectItem>
-                  <SelectItem value="paused" className="cursor-pointer">
-                    Paused
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+                Description
+              </Label>
+              <Input
+                id="cj-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional"
+              />
             </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="cj-agent" variant="muted" className="text-xs">
+                Agent
+              </Label>
+              {agents.length === 0 ? (
+                <p className="text-xs text-destructive">
+                  No agents available. Create one before scheduling jobs.
+                </p>
+              ) : (
+                <Select
+                  items={agents.map((agent) => ({
+                    label: agent.name,
+                    value: agent._id,
+                  }))}
+                  value={agentId}
+                  onValueChange={(value) => {
+                    if (value !== null) {
+                      setAgentId(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    id="cj-agent"
+                    className="w-full cursor-pointer"
+                  >
+                    <SelectValue placeholder="Pick an agent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {agents.map((agent) => (
+                      <SelectItem
+                        key={agent._id}
+                        value={agent._id}
+                        className="cursor-pointer"
+                      >
+                        {agent.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="cj-prompt" variant="muted" className="text-xs">
+                Prompt{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
+              <Textarea
+                id="cj-prompt"
+                // Untouched, an edit keeps stored events that may hold no text.
+                required={!cron || storedPrompt.trim() !== ""}
+                ref={promptRef}
+                value={prompt}
+                onChange={(e) => {
+                  e.target.setCustomValidity("");
+                  setPrompt(e.target.value);
+                }}
+                placeholder="What should the agent do on each invocation?"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="cj-conv" variant="muted" className="text-xs">
+                Conversation key (optional)
+              </Label>
+              <Input
+                id="cj-conv"
+                value={conversationKey}
+                onChange={(e) => setConversationKey(e.target.value)}
+                placeholder="Reuse a conversation across runs"
+              />
+            </div>
+
+            <div className="grid gap-1">
+              <Label htmlFor="cj-schedule" variant="muted" className="text-xs">
+                Schedule expression{" "}
+                <span aria-hidden="true" className="text-destructive">
+                  *
+                </span>
+              </Label>
+              <Input
+                id="cj-schedule"
+                required={true}
+                pattern={SCHEDULE_PATTERN}
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
+                aria-invalid={showScheduleError}
+                aria-describedby={
+                  showScheduleError ? `${fieldId}-schedule-error` : undefined
+                }
+                value={scheduleExpression}
+                onChange={(e) => setScheduleExpression(e.target.value)}
+                onBlur={() => {
+                  if (scheduleExpression !== "") setScheduleTouched(true);
+                }}
+                onInvalid={() => setScheduleTouched(true)}
+                placeholder="rate(1 hour) or cron(0 9 * * ? *)"
+                className="font-mono text-xs"
+              />
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {PRESETS.map((preset) => (
+                  <Button
+                    key={preset.value}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs cursor-pointer"
+                    onClick={() => setScheduleExpression(preset.value)}
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+              {showScheduleError && (
+                <p
+                  id={`${fieldId}-schedule-error`}
+                  className="text-xs text-destructive"
+                >
+                  Must match cron(...), rate(...), or at(...).
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1">
+                <Label htmlFor="cj-tz" variant="muted" className="text-xs">
+                  Timezone{" "}
+                  <span aria-hidden="true" className="text-destructive">
+                    *
+                  </span>
+                </Label>
+                <Input
+                  ref={timezoneRef}
+                  id="cj-tz"
+                  list={`${fieldId}-zones`}
+                  required={true}
+                  spellCheck={false}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  aria-invalid={showTimezoneError}
+                  aria-describedby={`${fieldId}-tz-hint`}
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  onBlur={() => setTimezoneTouched(true)}
+                  placeholder="UTC"
+                />
+                <datalist id={`${fieldId}-zones`}>
+                  {TIME_ZONES.map((zone) => (
+                    <option key={zone} value={zone}>
+                      {zone}
+                    </option>
+                  ))}
+                </datalist>
+                <p
+                  id={`${fieldId}-tz-hint`}
+                  className={cn(
+                    "text-xs",
+                    showTimezoneError
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {showTimezoneError
+                    ? "Unknown timezone. Pick one from the list."
+                    : status === "active" && nextRun !== null && zoneFormat
+                      ? `Next run ${zoneFormat.format(nextRun)}`
+                      : null}
+                </p>
+              </div>
+
+              <div className="grid gap-1">
+                <Label htmlFor="cj-status" variant="muted" className="text-xs">
+                  Status
+                </Label>
+                <Select
+                  items={STATUS_LABELS}
+                  value={status}
+                  onValueChange={(v) => {
+                    if (v === null) return;
+                    setStatus(v as "active" | "paused");
+                  }}
+                >
+                  <SelectTrigger
+                    id="cj-status"
+                    className="w-full cursor-pointer"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active" className="cursor-pointer">
+                      Active
+                    </SelectItem>
+                    <SelectItem value="paused" className="cursor-pointer">
+                      Paused
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {error && (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            )}
           </div>
 
-          {error && <p className="text-xs text-destructive">{error}</p>}
-        </div>
-
-        <DialogFooter>
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={onClose}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
-          <Button
-            className="cursor-pointer"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            {pending ? "Saving..." : mode === "create" ? "Create" : "Save"}
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="cursor-pointer"
+              onClick={onClose}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              className={pending ? "cursor-not-allowed" : "cursor-pointer"}
+              disabled={pending}
+            >
+              {pending ? "Saving..." : mode === "create" ? "Create" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
 }
 
-/** The first user text message, which is the part the dialog lets you edit. */
-/** The user text of the stored events: the prompt the job sends each fire. */
 export function eventsToText(
   events: Doc<"crons">["events"] | undefined,
 ): string {
@@ -357,11 +508,8 @@ export function eventsToText(
   return "";
 }
 
-/**
- * The zone to store. A job saved without one runs in UTC and shows "UTC";
- * leaving that untouched keeps the stored value, so an edit to another field
- * does not re-register the schedule.
- */
+// A job saved with no zone shows "UTC"; leaving it so keeps the stored value, so editing
+// another field does not re-register the schedule.
 function timezoneToSave(
   stored: string | undefined,
   typed: string,

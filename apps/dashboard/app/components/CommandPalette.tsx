@@ -1,162 +1,120 @@
 "use client";
 
-/**
- * Search everything, run anything, or hand the query to Broods.
- *
- * Takes its rows rather than fetching them, so the `/ui-gallery` fixture can
- * drive the real dialog, the real ranking and the real bindings with no Convex
- * behind it. `CommandMenu` is the wrapper that supplies the live index.
- */
-import {
-  useShortcut,
-  useShortcutRegistry,
-} from "@/app/components/ShortcutProvider";
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/app/components/ui/command";
-import {
-  rankItems,
-  type SearchGroup,
-  type SearchItem,
-} from "@/app/lib/paletteSearch";
-import { formatCombo, SHORTCUTS } from "@/app/lib/shortcuts";
+// Takes its rows as props, so the `/ui-gallery` fixture drives it with no Convex behind it.
+import { chunkFailed } from "@/app/components/ChunkFailed";
+import { useShortcut } from "@/app/components/ShortcutProvider";
 import { ShortcutKeys } from "@/app/components/ShortcutKeys";
+import { useEverTrue } from "@/app/hooks/useEverTrue";
+import { afterLoad } from "@/app/lib/prefetch";
+import type { SearchGroup, SearchItem } from "@/app/lib/paletteSearch";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+} from "react";
+import type { CommandPaletteDialog as Dialog } from "./CommandPaletteDialog";
+
+const loadDialog = (): Promise<{
+  default: ComponentType<ComponentProps<typeof Dialog>>;
+}> =>
+  import("./CommandPaletteDialog").then(
+    (mod) => ({ default: mod.CommandPaletteDialog }),
+    () => chunkFailed<ComponentProps<typeof Dialog>>("search"),
+  );
+
+const CommandPaletteDialog = lazy(loadDialog);
 
 export function CommandPalette({
   items,
   onAsk,
+  onHighlight,
   onSelect,
+  onWake,
 }: {
   items: readonly SearchItem[];
   onAsk: (query: string) => void;
+  onHighlight?: (item: SearchItem) => void;
   onSelect: (item: SearchItem) => void;
+  onWake?: () => void;
 }): React.JSX.Element {
-  const { activeIds, isMac } = useShortcutRegistry();
-
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  // Switching project or stage is the same list with one heading left standing,
-  // which is cheaper than three dropdowns that each need controlled open state.
   const [only, setOnly] = useState<SearchGroup | null>(null);
+  const wanted = useEverTrue(open);
 
   const openScoped = (group: SearchGroup | null): void => {
+    onWake?.();
     setQuery("");
     setOnly(group);
     setOpen(true);
   };
+  const close = (): void => {
+    setQuery("");
+    setOnly(null);
+    setOpen(false);
+  };
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- warms the chunk after the load event
+  useEffect(() => afterLoad(() => void loadDialog()), []);
   useShortcut("search.open", () => (open ? setOpen(false) : openScoped(null)));
   useShortcut("project.switch", () => openScoped("Projects"));
   useShortcut("stage.switch", () => openScoped("Stages"));
-
-  // Every claimed binding is a row, labelled and shortcut-hinted from the one
-  // registry, so the palette teaches the keyboard map by being used.
-  const actions = useMemo(
-    () =>
-      SHORTCUTS.filter((shortcut) => activeIds.has(shortcut.id)).map(
-        (shortcut): SearchItem => ({
-          detail: formatCombo(shortcut.combos[0], isMac).join(" "),
-          group: "Actions",
-          id: `action:${shortcut.id}`,
-          keywords:
-            "keywords" in shortcut
-              ? [shortcut.scope, ...shortcut.keywords]
-              : [shortcut.scope],
-          target: { commandId: shortcut.id, type: "command" },
-          title: shortcut.label,
-        }),
-      ),
-    [activeIds, isMac],
-  );
-
-  const groups = useMemo(() => {
-    const ranked = rankItems([...items, ...actions], query);
-
-    return only ? ranked.filter((group) => group.group === only) : ranked;
-  }, [actions, items, only, query]);
-
-  const select = (item: SearchItem): void => {
-    openScoped(null);
-    setOpen(false);
-    onSelect(item);
-  };
-
-  const handOff = (): void => {
-    const asked = query;
-    openScoped(null);
-    setOpen(false);
-    onAsk(asked);
-  };
 
   return (
     <>
       <button
         type="button"
         data-palette-trigger
-        aria-label="Search or ask Broods"
+        aria-label="Search everything"
         onClick={() => openScoped(null)}
+        onFocus={onWake}
+        onPointerEnter={onWake}
         className="flex h-6.5 shrink-0 cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-2 text-muted-foreground transition-colors hover:text-foreground lg:w-56"
       >
         <Search className="size-3.5" />
-        {/* Icon only below lg, where the header has no room for the label. */}
-        <span className="hidden text-xs lg:inline">Search or ask Broods</span>
+        <span className="hidden text-xs lg:inline">Search</span>
         <ShortcutKeys id="search.open" className="ml-auto hidden lg:flex" />
       </button>
 
-      <CommandDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Search everything"
-        description="Find a node, a cron, a variable, a page, or run a command."
-        shouldFilter={false}
-      >
-        <CommandInput
-          value={query}
-          onValueChange={setQuery}
-          placeholder={
-            only
-              ? `Switch ${only.toLowerCase().replace(/s$/, "")}...`
-              : "Search nodes, crons, variables, pages, actions..."
+      {wanted && (
+        <Suspense
+          // Until the dialog arrives, typing lands in the query, not on a page shortcut.
+          fallback={
+            open && (
+              <input
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just opened the palette
+                autoFocus
+                aria-label="Search everything"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  close();
+                }}
+                className="sr-only"
+              />
+            )
           }
-        />
-        <CommandList>
-          {groups.length === 0 && (
-            <CommandEmpty>Nothing here matches.</CommandEmpty>
-          )}
-          {groups.map((group) => (
-            <CommandGroup key={group.group} heading={group.group}>
-              {group.items.map((item) => (
-                <CommandItem
-                  key={item.id}
-                  value={item.id}
-                  onSelect={() => select(item)}
-                >
-                  <span className="truncate">{item.title}</span>
-                  {item.detail && (
-                    <span className="ml-auto pl-2 text-2xs text-muted-foreground">
-                      {item.detail}
-                    </span>
-                  )}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          ))}
-          {query.trim() && !only && (
-            <CommandGroup heading="Ask">
-              <CommandItem value="ask-broods" onSelect={handOff}>
-                <span className="truncate">Ask Broods: {query.trim()}</span>
-              </CommandItem>
-            </CommandGroup>
-          )}
-        </CommandList>
-      </CommandDialog>
+        >
+          <CommandPaletteDialog
+            items={items}
+            only={only}
+            open={open}
+            query={query}
+            onAsk={onAsk}
+            onClose={close}
+            onHighlight={onHighlight}
+            onOpenChange={setOpen}
+            onQueryChange={setQuery}
+            onSelect={onSelect}
+          />
+        </Suspense>
+      )}
     </>
   );
 }

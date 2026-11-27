@@ -1,7 +1,9 @@
 import {
+  MAX_OBSERVABILITY_BACKFILL,
   isLogLevel,
   isObservabilityClientMessage,
   type LogLevel,
+  type ObservabilityHistoryRange,
   type ObservabilityClientMessage,
   type ObservabilityLogEntry,
   type ObservabilityServerMessage,
@@ -11,6 +13,9 @@ import {
   readObservabilityStream,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
+import { historyPage } from "./history-page.ts";
+import { openCursor, sealCursor } from "./observability-cursor.ts";
+import { resolveSocketScope, type CredentialScope } from "./upstream.ts";
 import {
   decoder,
   errorMessage,
@@ -18,47 +23,37 @@ import {
   parseJson,
 } from "./utils.ts";
 
-export type ObservabilityScope = {
-  accountId: string;
-  projectSlug: string;
-  stageSlug: string;
-  endpointIds: string[];
-};
+export type ObservabilityScope = CredentialScope & { expiresAt: number };
 
 export type ObservabilityGatewayData = {
   kind: "observability";
   scope: ObservabilityScope;
+  token: string;
+  // Absent: the socket gets no resume cursor and every subscribe loads in full.
+  cursorKey?: Buffer;
 };
 
-// A NATS consumer for the deployment's own stream, or the Loki poll loop that
-// serves a sandbox tail; the socket state only ever needs to stop it.
-type LiveSubscription = { unsubscribe(): void };
+type LiveSubscription = { unsubscribe(): void; cursor?: number };
 type LokiRange = {
   startNs: bigint;
+  endNs?: bigint;
   limit: number;
   direction: "backward" | "forward";
-  // A query's cost is the range it scans, so each caller budgets its own
-  // instead of every Loki call sharing one.
   timeoutMs: number;
 };
 type LokiRow = { entry: ObservabilityLogEntry; ns: bigint };
 type ObservabilityStream = "logs" | "traces";
 type ObservabilitySocketState = {
-  // One live consumer per stream, and a generation bumped whenever that stream
-  // is torn down: a consumer still opening or a backfill still running for the
-  // old subscription sees the bump and stops instead of relaying into the new
-  // one's.
   subs: Record<ObservabilityStream, LiveSubscription | null>;
+  // Bumped on each teardown: a consumer still opening or a backfill still running for the old
+  // subscription sees it and stops instead of relaying into the new one.
   runs: Record<ObservabilityStream, number>;
   logsMinLevel: LogLevel;
-  // The sandbox a logs subscription tails, so a repeat of the same subscribe
-  // does not fire another Loki backfill scan.
   logsSandboxId: string | null;
-  // The last backfill queued per stream. Each waits for the one before, so a
-  // socket never has two Loki or Tempo backfills running for one stream.
+  // Chained, so a socket never runs two Loki or Tempo backfills for one stream.
   backfills: Record<ObservabilityStream, Promise<void>>;
-  // One fetchTrace at a time per socket; a second one is refused.
   fetchingTrace: boolean;
+  lifetime?: ReturnType<typeof setTimeout>;
 };
 type OtelValue = {
   stringValue?: string;
@@ -79,22 +74,10 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   WARN: 2,
   ERROR: 3,
 };
-// Loki caps query ranges at 30d1h and Tempo search at 168h (their defaults);
-// a wider window is rejected with HTTP 400 and the backfill delivers nothing.
+// Loki caps query ranges at 30d1h and Tempo search at 168h; wider is an HTTP 400.
 const LOKI_BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-// Loki splits a query_range into per-interval subqueries and runs them over the
-// whole range, so the row limit does not stop the scan: 30 days is ~1400
-// subqueries whether or not the newest hour already holds the answer. Ours is a
-// SingleBinary Loki on one CPU with the results cache off (infra
-// charts/releases/loki.yaml), so those queue against one core and nothing is
-// amortized between tab opens. That is the ~8 s the Logs tab used to spend
-// before failing on a 5 s budget, with the abort's bare "The operation timed
-// out." as the only explanation.
-//
-// So ask for the cheap window first and widen only when it comes back short of
-// a full page. A stage with recent logs answers from one subquery; only a stage
-// genuinely quiet for 30 days pays for the whole range. A step that times out
-// ends the backfill: a wider window is strictly more expensive, never a retry.
+// Loki scans the whole range whatever the row limit (one CPU, no results cache), so start cheap
+// and widen only on a short page. A timed-out step ends it: wider is never cheaper.
 const LOKI_BACKFILL_STEPS: ReadonlyArray<{
   windowMs: number;
   timeoutMs: number;
@@ -103,57 +86,46 @@ const LOKI_BACKFILL_STEPS: ReadonlyArray<{
   { windowMs: 24 * 60 * 60 * 1000, timeoutMs: 10_000 },
   { windowMs: LOKI_BACKFILL_WINDOW_MS, timeoutMs: 15_000 },
 ];
-// A sandbox backfill reads one fixed day, so it does not step; it is the widest
-// step's cost at most.
 const LOKI_SANDBOX_BACKFILL_TIMEOUT_MS = 15_000;
-// A sandbox poll scans 3 minutes and runs every SANDBOX_LOG_POLL_MS, so it
-// stays tight; a slow one should be skipped, not queued up behind itself.
 const LOKI_POLL_TIMEOUT_MS = 5_000;
 const TEMPO_BACKFILL_WINDOW_S = 7 * 24 * 60 * 60;
-// A search over the whole window walks every block in it; a single trace by
-// id is an index hit. Both used to share 5 s, which the search blew through on
-// a busy stage and left the Tracing tab "waiting" with no history at all.
+// `tempo.retention` in the infra repo's kubernetes/charts/releases/tempo.yaml.
+const TEMPO_RETENTION_DAYS = 30;
+// A search walks every block in the window; a trace by id is an index hit.
 const TEMPO_SEARCH_TIMEOUT_MS = 15_000;
 const TEMPO_TRACE_TIMEOUT_MS = 5_000;
-// How long a trace lookup is shared. A trace still growing is inside the 30 min
-// NATS replay (OBS_REPLAY_WINDOW_MS) every subscribe gets, so a shared answer
-// that misses its newest spans never shows.
+// A still-growing trace is inside the NATS replay window, so a stale shared answer never shows.
 const TEMPO_TRACE_SHARE_MS = 5 * 60 * 1000;
-// Bounds the shared lookups by count too: past it the oldest goes first.
 const TEMPO_TRACE_CACHE_MAX = 5_000;
-// Sandbox lines reach Loki via the CloudWatch bridge, never NATS, so a sandbox tail
-// polls Loki (its tail endpoint caps at 10 concurrent requests cluster-wide). Guest
-// timestamps trail arrival, by minutes when CloudWatch retries a failed delivery,
-// so each poll re-reads a lookback window newest-first and dedupes.
+// Sandbox lines reach Loki via CloudWatch, never NATS, and Loki's tail API caps at 10 clients,
+// so poll. Guest timestamps trail arrival by minutes on a retry: re-read a lookback and dedupe.
 const SANDBOX_LOG_POLL_MS = 2_000;
 const SANDBOX_LOG_POLL_LIMIT = 1_000;
 const SANDBOX_LOG_POLL_LOOKBACK_NS = 180n * 1_000_000_000n;
-// The forwarder's service.name. Guest output is untrusted text, so it never
-// joins the deployment stream, where a JSON line would read as a core record.
+// Guest output is untrusted: kept off the deployment stream, where JSON would read as core's.
 const SANDBOX_SERVICE_NAME = "broods-sandbox";
-// The sandbox_id filter is structured metadata and scans every chunk in the window;
-// one day covers any VM's lifetime and stays well inside the backfill timeout.
+// sandbox_id is structured metadata, so its filter scans every chunk; a day covers any VM.
 const SANDBOX_LOG_BACKFILL_WINDOW_NS = 24n * 60n * 60n * 1_000_000_000n;
 const NS_PER_MS = 1_000_000n;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
-// Tempo mostly serialises trace-by-id lookups; 6 in flight buys about 20%
-// over 1, more buys nothing.
+// Tempo mostly serialises trace-by-id lookups; past 6 in flight buys nothing.
 const TEMPO_DETAIL_CONCURRENCY = 6;
-// The backfill goes out newest first in chunks, so the Tracing tab paints
-// after one chunk instead of after the whole batch. A single TraceQL search
-// cannot replace the lookups: on Tempo 2.7 `select()` has no attribute
-// wildcard and rejects `span:parentID`, both of which the rows need.
+// No single TraceQL search instead: Tempo 2.7 select() has no wildcard, rejects span:parentID.
 const TEMPO_BACKFILL_CHUNK = 12;
 const OBS_SHED_BUFFERED_BYTES = 512 * 1024;
-// Span relay backpressure: re-check cadence and cap before shedding.
 const OBS_DRAIN_POLL_MS = 20;
 const OBS_DRAIN_MAX_WAIT_MS = 5_000;
+// Expiry is not fatal (the client reconnects with a fresh ticket); the CLI stops on 4401.
+const OBS_EXPIRED_CLOSE = { code: 4419, reason: "Stage session expired" };
+const OBS_REVOKED_CLOSE = {
+  code: 4401,
+  reason: "Unauthorized; the stage session was revoked",
+};
+const OBS_REVALIDATE_MS = 60_000;
 const obsState = new WeakMap<
   Bun.ServerWebSocket<ObservabilityGatewayData>,
   ObservabilitySocketState
 >();
-// Trace lookups shared by every socket on this gateway, so a reopen, reconnect
-// or second panel does not send Tempo the same reads again.
 const tempoTraces = new Map<string, TempoTraceEntry>();
 
 export async function handleObservabilityMessage(
@@ -161,6 +133,7 @@ export async function handleObservabilityMessage(
   rawMessage: string | Buffer,
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
+  if (closeIfExpired(socket)) return;
   const text =
     typeof rawMessage === "string" ? rawMessage : decoder.decode(rawMessage);
   const parsed = parseJson(text);
@@ -200,6 +173,30 @@ export async function handleObservabilityMessage(
     return;
   }
 
+  const state = obsState.get(socket);
+  if (msg.historyOnly && msg.range && msg.backfill && state?.subs[msg.stream]) {
+    const stream = msg.stream;
+    const run = state.runs[stream];
+    state.backfills[stream] = state.backfills[stream].then(
+      async (): Promise<void> => {
+        if (state.runs[stream] !== run) return;
+        await sendBackfill(
+          socket,
+          socket.data.scope,
+          stream,
+          msg.backfill!,
+          msg.minLevel ?? "INFO",
+          run,
+          msg.agentId,
+          msg.range,
+          msg.sandboxId,
+        );
+      },
+    );
+
+    return;
+  }
+
   await handleObservabilitySubscribe(
     socket,
     socket.data.scope,
@@ -209,12 +206,20 @@ export async function handleObservabilityMessage(
     msg.minLevel ?? "INFO",
     getNatsConnection,
     msg.sandboxId,
+    msg.historyOnly === true,
+    msg.agentId,
+    msg.afterSeq === undefined || !socket.data.cursorKey
+      ? undefined
+      : openCursor(socket.data.cursorKey, msg.afterSeq),
+    msg.range,
   );
 }
 
 export async function relayNatsMessages(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
-  sub: { [Symbol.asyncIterator](): AsyncIterator<{ data: Uint8Array }> },
+  sub: {
+    [Symbol.asyncIterator](): AsyncIterator<{ data: Uint8Array; seq?: number }>;
+  },
   stream: "logs" | "traces",
   state: Pick<ObservabilitySocketState, "logsMinLevel">,
 ): Promise<void> {
@@ -227,15 +232,18 @@ export async function relayNatsMessages(
         if (stream === "logs") {
           const entry = parsed as ObservabilityLogEntry;
           if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
-          sendObs(socket, { type: "log", entry: entry });
+          sendObs(socket, {
+            type: "log",
+            entry: entry,
+            ...sealedSeq(socket, msg.seq),
+          });
         } else {
-          // Replay outruns the tab's drain rate; shedding would drop the newest
-          // rows, the terminal spans that mark recent tasks finished. Logs skip
-          // the wait: they are small and Loki backfill restores a shed line.
+          // Shedding drops the newest rows, the spans that finish tasks. A full load restores logs.
           await waitForObsDrain(socket);
           sendObs(socket, {
             type: "span",
             entry: parsed as ObservabilitySpanRow,
+            ...sealedSeq(socket, msg.seq),
           });
         }
       } catch {
@@ -260,24 +268,45 @@ export function openObservabilitySocket(
   });
 }
 
+// Re-asks core every minute so a suspended account loses its tail before the ticket expires.
+// An outage keeps the socket: only a refusal closes it.
+export function watchObservabilityLifetime(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  coreBaseUrl: string,
+): void {
+  const state = obsState.get(socket);
+  if (!state) return;
+  state.lifetime = setTimeout(
+    async (): Promise<void> => {
+      if (closeIfExpired(socket)) return;
+      const resolved = await resolveSocketScope(
+        "observability",
+        socket.data.token,
+        coreBaseUrl,
+      );
+      if (!obsState.has(socket) || closeIfExpired(socket)) return;
+      if (resolved.kind === "invalid") {
+        socket.close(OBS_REVOKED_CLOSE.code, OBS_REVOKED_CLOSE.reason);
+
+        return;
+      }
+      watchObservabilityLifetime(socket, coreBaseUrl);
+    },
+    Math.min(socket.data.scope.expiresAt - Date.now(), OBS_REVALIDATE_MS),
+  );
+}
+
 export function cleanupObservabilitySocket(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
 ): void {
+  clearTimeout(obsState.get(socket)?.lifetime);
   cleanupObservabilityStream(socket, "logs");
   cleanupObservabilityStream(socket, "traces");
   obsState.delete(socket);
 }
 
-/**
- * LogQL for a durable backfill. Levels below `minLevel` are dropped by Loki
- * itself, so an errors-only tail reaches past a long quiet run of DEBUG instead
- * of returning whatever happens to sit in the newest page. Core stamps `level`
- * on every record it emits; a line that somehow arrives without one survives
- * the filter and is judged by meetsMinLevel. A sandbox tail narrows further on
- * the `sandbox_id` metadata the log bridge stamps; the id was validated against
- * the UUID shape by the wire contract, so it is safe to interpolate. The
- * deployment stream excludes the bridge's service, matching the live NATS relay.
- */
+// Loki drops levels below minLevel, so an errors-only page reaches past a run of DEBUG.
+// sandboxId is safe to interpolate: the wire contract checks its UUID shape.
 export function lokiBackfillQuery(
   scope: ObservabilityScope,
   minLevel: LogLevel,
@@ -307,9 +336,7 @@ export function lokiLogEntry(
     parsed && typeof parsed === "object"
       ? (parsed as Record<string, unknown>)
       : {};
-  // Loki labels are lowercase (`detected_level=debug`) while core's own JSON
-  // line is uppercase, so normalize before matching or every debug line from
-  // the label path reads as INFO.
+  // Loki labels are lowercase (`detected_level=debug`); core's own JSON line is uppercase.
   const rawLevel =
     record.level ??
     metadata.level ??
@@ -325,11 +352,13 @@ export function lokiLogEntry(
         ? Date.parse(record.time)
         : Number.NaN;
 
+  const logId = optionalString(record.logId, metadata.logId, metadata.log_id);
+
   return {
+    ...(logId ? { logId: logId } : {}),
     ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
     level: level,
-    // Core's live stream falls back to the lowercased level, so a replayed row
-    // dedupes against its live copy instead of showing twice.
+    // Matches core's live fallback, so a replayed row dedupes against its live copy.
     eventType: stringValue(
       record.eventType,
       metadata.eventType,
@@ -371,11 +400,7 @@ export function lokiLogEntry(
   };
 }
 
-/**
- * Quote a scope value for a LogQL label matcher or a Tempo logfmt tag. Stage
- * slugs are tenant-named, so a quote or backslash in one must stay inside
- * the string instead of ending the matcher.
- */
+// Stage slugs are tenant-named: a quote or backslash must not end the LogQL or Tempo matcher.
 export function quoteLabel(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
@@ -443,8 +468,7 @@ export function tempoTraceRowsFromResponse(
           | undefined;
         const isError =
           status?.code === 2 || status?.code === "STATUS_CODE_ERROR";
-        // OTel only knows ok and error, so a root that closed waiting on
-        // something keeps that in task.state.
+        // OTel knows only ok and error; a root that closed waiting keeps that in task.state.
         const taskState = attributes["task.state"];
         const openState =
           taskState === "waiting" || taskState === "needs_input"
@@ -482,7 +506,6 @@ export function tempoTraceRowsFromResponse(
   return rows;
 }
 
-/** Tests only: forget every shared trace lookup. */
 export function resetTempoTraceCacheForTests(): void {
   tempoTraces.clear();
 }
@@ -496,12 +519,15 @@ async function handleObservabilitySubscribe(
   minLevel: LogLevel,
   getNatsConnection: () => Promise<NatsConnection>,
   sandboxId?: string,
+  historyOnly = false,
+  agentId?: string,
+  afterSeq?: number,
+  range?: ObservabilityHistoryRange,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
 
-  // The same sandbox tail again is a no-op: the poll is already running, and a
-  // fresh backfill would only rescan a day of Loki for lines the client has.
+  // The same sandbox tail again: its poll runs already, a backfill would rescan a day of Loki.
   if (
     sandboxId &&
     state.subs.logs &&
@@ -514,31 +540,36 @@ async function handleObservabilitySubscribe(
   }
 
   cleanupObservabilityStream(socket, stream);
-  // The bump above is this subscribe's claim on the stream. Opening the NATS
-  // consumer yields, so a second subscribe can land meanwhile and bump again;
-  // the generation is read here, not after, so only the newest one wins.
+  // Read before opening the consumer yields, so a subscribe landing meanwhile supersedes this.
   const run = state.runs[stream];
   if (stream === "logs") {
     state.logsMinLevel = minLevel;
-    state.logsSandboxId = sandboxId ?? null;
+    state.logsSandboxId = historyOnly && range ? null : (sandboxId ?? null);
   }
 
-  // A sandbox tail owns its backfill too: history and the first poll window
-  // overlap, and one seen set across both is what keeps a line from going twice.
-  const live = sandboxId
-    ? startSandboxLogPoll(socket, scope, sandboxId, minLevel, backfill ?? 0)
-    : await startLiveSubscription(
-        socket,
-        scope,
-        stream,
-        state,
-        run,
-        liveOnly,
-        getNatsConnection,
-      );
+  // A sandbox tail owns its backfill: one seen set across history and polls dedupes overlap.
+  const live =
+    historyOnly && (!sandboxId || range)
+      ? { unsubscribe: (): void => {} }
+      : sandboxId
+        ? startSandboxLogPoll(
+            socket,
+            scope,
+            sandboxId,
+            minLevel,
+            range ? 0 : (backfill ?? 0),
+          )
+        : await startLiveSubscription(
+            socket,
+            scope,
+            stream,
+            state,
+            run,
+            liveOnly,
+            getNatsConnection,
+            afterSeq,
+          );
   if (state.runs[stream] !== run) {
-    // Superseded while the consumer opened: the newer subscribe owns the
-    // stream, so neither this consumer nor its failure may reach it.
     live?.unsubscribe();
 
     return;
@@ -553,24 +584,32 @@ async function handleObservabilitySubscribe(
   }
   state.subs[stream] = live;
 
-  sendObs(socket, { type: "ready" });
-  // Runs after the stream's previous backfill, and only if no newer subscribe
-  // replaced this one meanwhile.
-  if (!sandboxId && typeof backfill === "number" && backfill > 0)
+  sendObs(socket, {
+    type: "ready",
+    ...(agentId ? { agentId: agentId } : {}),
+    ...sealedSeq(socket, live.cursor),
+  });
+  if ((!sandboxId || range) && typeof backfill === "number" && backfill > 0)
     state.backfills[stream] = state.backfills[stream].then(
       (): Promise<void> | undefined =>
         state.runs[stream] === run
-          ? sendBackfill(socket, scope, stream, backfill, minLevel, run)
+          ? sendBackfill(
+              socket,
+              scope,
+              stream,
+              backfill,
+              minLevel,
+              run,
+              agentId,
+              range,
+              sandboxId,
+            )
           : undefined,
     );
 }
 
-// Backfill honours the same minLevel as the live relay, so a client asking for
-// errors never has to re-filter a screenful of Loki history. The client always
-// gets a closing backfill message (one without `more`), failure included: a
-// swallowed error used to leave the Tracing tab "waiting for traces" for good.
-// `run` is the subscription this backfill serves; once the stream's generation
-// moves past it, nothing more goes out, not even the failure closer.
+// Always ends with one closer (no `more`), failure included, or the tab waits forever; but once
+// the stream's generation passes `run`, nothing goes out, not even the closer.
 async function sendBackfill(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -578,6 +617,9 @@ async function sendBackfill(
   limit: number,
   minLevel: LogLevel,
   run: number,
+  agentId: string | undefined,
+  range?: ObservabilityHistoryRange,
+  sandboxId?: string,
 ): Promise<void> {
   const state = obsState.get(socket);
   if (!state) return;
@@ -586,18 +628,38 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) throw new Error("Log history is not configured (LOKI_URL)");
-      const rows = await fetchLokiBackfill(
-        lokiUrl,
-        scope,
-        lokiBackfillQuery(scope, minLevel),
-        limit,
-      );
+      const query = lokiBackfillQuery(scope, minLevel, sandboxId);
+      const pageFrom = range
+        ? Math.max(range.from, range.to - 3_600_000)
+        : undefined;
+      const rows = range
+        ? await fetchLokiLogs(
+            lokiUrl,
+            scope,
+            query,
+            {
+              startNs: BigInt(pageFrom!) * NS_PER_MS,
+              endNs: BigInt(range.to) * NS_PER_MS - 1n,
+              limit: limit + 1,
+              direction: "backward",
+              timeoutMs: 10_000,
+            },
+            sandboxId !== undefined,
+          )
+        : await fetchLokiBackfill(lokiUrl, scope, query, limit);
       if (state.runs.logs !== run) return;
+      const page = range
+        ? historyPage(rows, limit, (row): number => Number(row.ns / NS_PER_MS))
+        : { rows: rows };
+      const nextTo =
+        page.nextTo ?? (range && pageFrom! > range.from ? pageFrom : undefined);
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        entries: rows
-          .reverse()
+        ...(range ? { range: range } : {}),
+        ...(nextTo !== undefined ? { nextTo: nextTo } : {}),
+        entries: page.rows
+          .toReversed()
           .map((row) => row.entry)
           .filter((entry) => meetsMinLevel(entry, minLevel)),
       });
@@ -606,29 +668,33 @@ async function sendBackfill(
       if (!tempoUrl)
         throw new Error("Trace history is not configured (TEMPO_URL)");
       let failures = 0;
-      for await (const chunk of fetchTempoBackfill(tempoUrl, scope, limit)) {
+      let nextTo: number | undefined;
+      for await (const chunk of fetchTempoBackfill(
+        tempoUrl,
+        scope,
+        limit,
+        agentId,
+        range,
+      )) {
         failures += chunk.failures;
+        nextTo = chunk.nextTo ?? nextTo;
         const traces = new Map<string, ObservabilitySpanRow[]>();
         for (const row of chunk.rows) {
           const rows = traces.get(row.traceId);
           if (rows) rows.push(row);
           else traces.set(row.traceId, [row]);
         }
-        // One trace per message, each once the buffer is empty: a chunk of LLM
-        // payloads nears the socket's backpressure limit, and passing it
-        // closes the socket.
+        // One trace per message on an empty buffer: a chunk could pass backpressure and close it.
         for (const rows of traces.values()) {
           await waitForObsDrain(socket, 0);
-          // A re-subscribe or unsubscribe landed meanwhile: a newer backfill
-          // owns the stream now.
           if (state.runs.traces !== run) return;
           const sent = sendObs(socket, {
             type: "backfill",
             stream: "traces",
+            ...(range ? { range: range } : {}),
             entries: rows,
             more: true,
           });
-          // The socket is gone: stop paying Tempo for a tab nobody is watching.
           if (!sent) return;
         }
       }
@@ -636,7 +702,9 @@ async function sendBackfill(
       sendObs(socket, {
         type: "backfill",
         stream: "traces",
+        ...(range ? { range: range } : {}),
         entries: [],
+        ...(nextTo !== undefined ? { nextTo: nextTo } : {}),
         ...(failures > 0
           ? {
               error: `${failures} trace${failures === 1 ? "" : "s"} could not be loaded from Tempo`,
@@ -646,8 +714,7 @@ async function sendBackfill(
     }
   } catch (error) {
     console.error(`observability ${stream} backfill failed:`, error);
-    // A superseded run's failure would sit as `error` on the stream a newer
-    // subscription owns, and a later good closer does not clear it.
+    // A later good closer does not clear an error, so a superseded run must not send one.
     if (state.runs[stream] !== run) return;
     sendObs(socket, {
       type: "backfill",
@@ -658,9 +725,6 @@ async function sendBackfill(
   }
 }
 
-// One trace by id, for a log line's "View trace" when the trace is older than
-// the backfill window covers. Tempo's id lookup is not tenant-scoped, so the
-// spans are checked against the socket's scope before anything leaves.
 async function sendTrace(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -673,7 +737,11 @@ async function sendTrace(
     const rows = (await fetchTempoTrace(tempoUrl, traceId)).filter((row) =>
       rowInScope(row, scope),
     );
-    if (rows.length === 0) throw new Error("Trace not found in this stage");
+    if (rows.length === 0) {
+      throw new Error(
+        `Trace not found in this stage. Traces are kept ${TEMPO_RETENTION_DAYS} days`,
+      );
+    }
     sendObs(socket, { type: "backfill", stream: "traces", entries: rows });
   } catch (error) {
     console.error("observability trace fetch failed:", error);
@@ -686,12 +754,6 @@ async function sendTrace(
   }
 }
 
-/**
- * The deployment logs backfill: the newest LOKI_BACKFILL_STEPS window that
- * returns a full page, widening only when a step comes back short. Each step
- * re-reads its own window rather than extending the last, so the rows are
- * always one Loki answer and never a merge across overlapping ranges.
- */
 async function fetchLokiBackfill(
   lokiUrl: string,
   scope: ObservabilityScope,
@@ -712,12 +774,6 @@ async function fetchLokiBackfill(
   return rows;
 }
 
-/**
- * One Loki query_range call in Loki's own order (`backward` = newest first).
- * Each entry keeps its nanosecond timestamp so the sandbox poll can dedupe
- * across overlapping windows. A sandbox tail's lines are guest text: they are
- * relayed verbatim, never parsed as a core record.
- */
 async function fetchLokiLogs(
   lokiUrl: string,
   scope: ObservabilityScope,
@@ -730,10 +786,8 @@ async function fetchLokiLogs(
   url.searchParams.set("limit", String(range.limit));
   url.searchParams.set("direction", range.direction);
   url.searchParams.set("start", String(range.startNs));
-  url.searchParams.set("end", String(nowNs()));
+  url.searchParams.set("end", String(range.endNs ?? nowNs()));
 
-  // A bare abort reaches the client as "The operation timed out.", which names
-  // neither the query nor its budget.
   const response = await fetch(url.toString(), {
     signal: AbortSignal.timeout(range.timeoutMs),
   }).catch((error: unknown) => {
@@ -777,50 +831,99 @@ async function fetchLokiLogs(
   return rows;
 }
 
-/**
- * The traces backfill: one tag-scoped Tempo search, then each trace's spans by
- * id, newest trace first, yielded a chunk at a time with the count of lookups
- * that failed in it. The caller turns a non-zero total into the closing
- * message's `error` so a half- or fully-failed history reads as a failure, not
- * an empty stage.
- */
+// `failures` feeds the closer's error, so a failed history never reads as an empty stage.
 export async function* fetchTempoBackfill(
   tempoUrl: string,
   scope: ObservabilityScope,
   limit: number,
-): AsyncGenerator<{ rows: ObservabilitySpanRow[]; failures: number }> {
+  agentId?: string,
+  range?: ObservabilityHistoryRange,
+): AsyncGenerator<{
+  rows: ObservabilitySpanRow[];
+  failures: number;
+  nextTo?: number;
+}> {
   const url = new URL(`${tempoUrl}/api/search`);
-  const end = Math.floor(Date.now() / 1_000);
-  const start = end - TEMPO_BACKFILL_WINDOW_S;
+  const end = Math.ceil((range?.to ?? Date.now()) / 1_000);
+  const start = range
+    ? Math.floor(range.from / 1_000)
+    : end - TEMPO_BACKFILL_WINDOW_S;
   url.searchParams.set(
     "tags",
-    `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}`,
+    `account_id=${quoteLabel(scope.accountId)} project=${quoteLabel(scope.projectSlug)} stage=${quoteLabel(scope.stageSlug)}` +
+      (agentId ? ` agent_id=${quoteLabel(agentId)}` : ""),
   );
-  url.searchParams.set("limit", String(limit));
   url.searchParams.set("start", String(start));
   url.searchParams.set("end", String(end));
 
-  const response = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
-  });
-  if (!response.ok)
-    throw new Error(`Tempo search failed with HTTP ${response.status}`);
+  const budget = range ? AbortSignal.timeout(12_000) : undefined;
+  let pageStart = range ? Math.max(start, end - 3600) : start;
+  let searchLimit = range ? limit + 1 : limit;
+  let summaries: Array<{ traceID: string; startTimeUnixNano?: string }> = [];
+  while (true) {
+    url.searchParams.set("start", String(pageStart));
+    url.searchParams.set("limit", String(searchLimit));
+    const response = await fetch(url.toString(), {
+      signal: budget ?? AbortSignal.timeout(TEMPO_SEARCH_TIMEOUT_MS),
+    });
+    if (!response.ok)
+      throw new Error(`Tempo search failed with HTTP ${response.status}`);
+    const body = (await response.json()) as {
+      traces?: typeof summaries;
+    };
+    summaries = body.traces ?? [];
+    if (!range) break;
+    const matching = summaries.filter((row): boolean => {
+      const startedAt = Number(
+        BigInt(row.startTimeUnixNano ?? "0") / NS_PER_MS,
+      );
 
-  const body = (await response.json()) as {
-    traces?: Array<{ traceID: string; startTimeUnixNano?: string }>;
+      return (
+        startedAt >= Math.max(range.from, pageStart * 1000) &&
+        startedAt < range.to
+      );
+    });
+    const truncated = summaries.length >= searchLimit;
+    if (!truncated && matching.length <= limit) {
+      summaries = matching;
+      break;
+    }
+    // Tempo includes traces that started earlier but overlap the requested window.
+    if (
+      truncated &&
+      matching.length < summaries.length &&
+      matching.length <= limit
+    ) {
+      if (searchLimit >= MAX_OBSERVABILITY_BACKFILL + 1)
+        throw new Error(
+          "Too many overlapping traces. Narrow the query by agent.",
+        );
+      searchLimit = Math.min(searchLimit * 2, MAX_OBSERVABILITY_BACKFILL + 1);
+      continue;
+    }
+    // Tempo 2.7 returns arbitrary matches when its limit is hit, not the newest matches.
+    if (end - pageStart <= 1)
+      throw new Error(
+        "Too many traces in one second. Narrow the query or increase the page size.",
+      );
+    pageStart = Math.floor((pageStart + end) / 2);
+    searchLimit = limit + 1;
+  }
+  const page = {
+    rows: summaries.toSorted((a, b): number =>
+      BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
+        ? 1
+        : -1,
+    ),
+    nextTo:
+      range && pageStart * 1000 > range.from ? pageStart * 1000 : undefined,
   };
-  // Tempo's search result is not ordered; sort here so the first chunk is the
-  // newest traces, the ones the Tracing tab shows at the top. The client
-  // orders the rows inside a chunk itself.
-  const summaries = (body?.traces ?? []).sort((a, b) =>
-    BigInt(b.startTimeUnixNano ?? "0") > BigInt(a.startTimeUnixNano ?? "0")
-      ? 1
-      : -1,
-  );
-
-  for (let at = 0; at < summaries.length; at += TEMPO_BACKFILL_CHUNK) {
+  if (page.rows.length === 0 && page.nextTo !== undefined)
+    yield { rows: [], failures: 0, nextTo: page.nextTo };
+  for (let at = 0; at < page.rows.length; at += TEMPO_BACKFILL_CHUNK) {
+    budget?.throwIfAborted();
     const results = await mapWithConcurrency(
-      summaries.slice(at, at + TEMPO_BACKFILL_CHUNK),
+      page.rows.slice(at, at + TEMPO_BACKFILL_CHUNK),
       TEMPO_DETAIL_CONCURRENCY,
       (traceSummary) => fetchTempoTrace(tempoUrl, traceSummary.traceID),
     );
@@ -831,12 +934,12 @@ export async function* fetchTempoBackfill(
         )
         .filter((row) => rowInScope(row, scope)),
       failures: results.filter((result) => result.status === "rejected").length,
+      ...(page.nextTo !== undefined ? { nextTo: page.nextTo } : {}),
     };
   }
 }
 
-// Unfiltered rows: callers scope them. A failed lookup leaves the map, so the
-// next ask goes back to Tempo.
+// Unscoped rows: every caller filters them with rowInScope.
 function fetchTempoTrace(
   tempoUrl: string,
   traceId: string,
@@ -881,9 +984,6 @@ async function requestTempoTrace(
   return tempoTraceRowsFromResponse(await response.json(), traceId);
 }
 
-// Opens the NATS consumer for `run`, the stream generation the subscribe holds.
-// Null when the transport is unavailable, or when a newer subscribe took the
-// stream while the consumer opened: then it is stopped before it relays a line.
 async function startLiveSubscription(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -892,10 +992,11 @@ async function startLiveSubscription(
   run: number,
   liveOnly: boolean,
   getNatsConnection: () => Promise<NatsConnection>,
+  afterSeq?: number,
 ): Promise<LiveSubscription | null> {
   try {
     const connection = await getNatsConnection();
-    const messages = await readObservabilityStream({
+    const { messages, cursor } = await readObservabilityStream({
       connection: connection,
       stream: stream,
       accountId: scope.accountId,
@@ -904,6 +1005,7 @@ async function startLiveSubscription(
       startTime: new Date(
         liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS,
       ).toISOString(),
+      afterSequence: afterSeq,
     });
     if (state.runs[stream] !== run) {
       messages.stop();
@@ -912,17 +1014,13 @@ async function startLiveSubscription(
     }
     void relayNatsMessages(socket, messages, stream, state);
 
-    return { unsubscribe: (): void => messages.stop() };
+    return { unsubscribe: (): void => messages.stop(), cursor: cursor };
   } catch {
     return null;
   }
 }
 
-// A sandbox tail: Loki backfill first, then a poll every SANDBOX_LOG_POLL_MS
-// over a lookback window, relaying only what this socket has not had yet. The
-// seen set is pruned to the window, so it stays as small as the sandbox is
-// chatty. The poll is armed only after the backfill settles, so the two never
-// race on that set.
+// The poll arms only after the backfill settles, so the two never race on `seen`.
 function startSandboxLogPoll(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
@@ -939,8 +1037,6 @@ function startSandboxLogPoll(
   let stopped = false;
   let inFlight = false;
 
-  // Marks every row as sent and keeps the ones that are new and pass the level.
-  // Rows arrive newest first; the caller wants them in time order.
   const unseen = (rows: LokiRow[]): ObservabilityLogEntry[] =>
     rows
       .reverse()
@@ -970,7 +1066,6 @@ function startSandboxLogPoll(
         },
         true,
       );
-      // Unsubscribed while Loki answered: the rows belong to nobody now.
       if (stopped) return;
       for (const [key, ns] of seen) if (ns < floorNs) seen.delete(key);
       for (const entry of unseen(rows))
@@ -1040,9 +1135,7 @@ function cleanupObservabilityStream(
   if (stream === "logs") state.logsSandboxId = null;
 }
 
-// Wait for a backed-up socket to drain below the shed threshold. Bounded so a
-// dead tab cannot pin the relay loop; on timeout the send falls through to
-// sendObs shedding.
+// Bounded so a dead tab cannot pin the relay loop; past the deadline sendObs sheds.
 async function waitForObsDrain(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   maxBufferedBytes = OBS_SHED_BUFFERED_BYTES,
@@ -1057,13 +1150,21 @@ async function waitForObsDrain(
   }
 }
 
-// True when the payload went out; false for a closed socket, a shed live
-// entry, or a send that threw.
+function sealedSeq(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+  sequence: number | undefined,
+): { seq?: string } {
+  return sequence === undefined || !socket.data.cursorKey
+    ? {}
+    : { seq: sealCursor(socket.data.cursorKey, sequence) };
+}
+
 function sendObs(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   payload: ObservabilityServerMessage,
 ): boolean {
-  if (socket.readyState !== WebSocket.OPEN) return false;
+  if (socket.readyState !== WebSocket.OPEN || closeIfExpired(socket))
+    return false;
   if (
     (payload.type === "log" || payload.type === "span") &&
     socket.getBufferedAmount() > OBS_SHED_BUFFERED_BYTES
@@ -1072,10 +1173,20 @@ function sendObs(
   }
 
   try {
-    socket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(payload), true);
   } catch {
     return false;
   }
+
+  return true;
+}
+
+// Timers run late under load, so every send checks the deadline itself.
+function closeIfExpired(
+  socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
+): boolean {
+  if (Date.now() < socket.data.scope.expiresAt) return false;
+  socket.close(OBS_EXPIRED_CLOSE.code, OBS_EXPIRED_CLOSE.reason);
 
   return true;
 }
@@ -1084,7 +1195,6 @@ function nowNs(): bigint {
   return BigInt(Date.now()) * NS_PER_MS;
 }
 
-/** Whether an entry is at or above the subscription's minimum level. */
 function meetsMinLevel(
   entry: ObservabilityLogEntry,
   minLevel: LogLevel,
@@ -1094,9 +1204,7 @@ function meetsMinLevel(
   return LOG_LEVEL_ORDER[entry.level] >= LOG_LEVEL_ORDER[minLevel];
 }
 
-// Tempo's search is scoped by tag, but a matched trace's detail can carry spans
-// from other scopes, so every row is checked against the socket's scope before
-// it leaves. Both the backfill and the single-trace fetch go through here.
+// Tempo's trace detail is not tenant-scoped: a matched trace can carry other scopes' spans.
 function rowInScope(
   row: ObservabilitySpanRow,
   scope: ObservabilityScope,

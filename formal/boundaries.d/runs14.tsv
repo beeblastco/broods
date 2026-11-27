@@ -1,0 +1,5 @@
+kind	name	reason
+external	^stepAttributes$	Caller-supplied callback of closeOrphans; the twin checks the step number it is asked about and uses its answer as span attributes.
+external	^identity\.publish$	Caller-supplied publisher in the run span identity; the twin checks the exact row it is given and nothing reads its answer.
+external	^inputs\.restoreObservabilityContext$	Caller-supplied callback of the run finalizer; the twin checks when it runs and reads no answer.
+external	^baseFetch$	Caller-supplied fetch of connectionFetch; the twin checks the URL and the headers carrying the bearer token and returns its response.

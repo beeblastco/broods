@@ -1,19 +1,3 @@
-/** Shared guards and transforms for Convex config blobs that store unknown object-shaped data. */
-export function isPlainObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function isStringRecord(
-  value: unknown,
-): value is Record<string, string> {
-  return (
-    isPlainObject(value) &&
-    Object.values(value).every((entry) => typeof entry === "string")
-  );
-}
-
 export function remapKeys(
   record: Record<string, unknown>,
   keyMap: Record<string, string>,
@@ -23,12 +7,10 @@ export function remapKeys(
   );
 }
 
-/** Deterministic JSON (keys sorted recursively) for small payload comparisons. */
 export function stableJson(value: unknown): string {
   return JSON.stringify(sortJson(value));
 }
 
-/** Drop `undefined`-valued entries so optional fields stay absent, not null. */
 export function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
@@ -37,11 +19,12 @@ export function stripUndefined<T extends Record<string, unknown>>(value: T): T {
 
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson);
-  if (isPlainObject(value)) {
+  if (typeof value === "object" && value !== null) {
+    const entries: [string, unknown][] = Object.entries(value);
+
     return Object.fromEntries(
-      Object.entries(value)
-        // Code-unit order, not locale collation: a hash over this output
-        // must come out the same in any runtime or language.
+      entries
+        // Code-unit order, not locale collation: a hash of it must match in any runtime.
         .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, entry]) => [key, sortJson(entry)]),
     );

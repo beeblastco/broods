@@ -11,13 +11,19 @@ Every run produces logs and a trace. You read them in the dashboard or the termi
 | Instances  | Sandbox instances, their activity, a terminal, and a Logs tab with the guest's own output for `lambda` sandboxes                         |
 | Settings   | Audit log of config changes, webhooks                                                                                                    |
 
-Each run carries a label for what started it, `task` for a request, `cron` for a scheduled run, `subtask` for a subagent. Each model step is split into time to first token, streaming, and tool wait, so a slow tool never looks like slow generation. A failed `task` or `cron` run has a Continue button. See [Conversations](conversations.md).
+Each run carries a label for what started it, `task` for a request, `cron` for a scheduled run, `subtask` for a subagent. A run's rows read as lines: each model step, then its reasoning, its tool calls with their first argument, and its answer, each opening inline on its text. Each model step is split into time to first token, streaming, and tool wait, so a slow tool never looks like slow generation. A failed `task` or `cron` run has a Continue button. See [Conversations](conversations.md).
+
+A subagent is its own run. It lists under the request that started it, at any depth, behind the avatar stack at the end of the request's row, and the request's trace shows it as one line that opens it. The run's header then carries the chain back to the request.
+
+To hand a run to your own coding agent, such as Claude Code, open it in Tracing and click **Copy prompt for agent**. The prompt carries the dashboard, project, stage, agent, task id, trace id (plus the trace ids of the task's other runs), conversation and the run's error quoted as data, and tells the agent to read the run with `broods trace <trace-id> --json` under its own `broods login`, find the root cause, and fix or audit the agent. Besides the ids it holds only the run's own error, which Broods redacts before recording it, never prompts, tool data or keys. The short trace id beside it copies the full id.
 
 The system prompt shown on a trace is the whole assembled prompt, meaning your `agent.system` plus memory, workspace, skills, subagent and scheduler blocks, and any steering. Large payloads are truncated, but the recorded size is always real.
 
 Members and admins can both read logs and traces. See [Security](security.md).
 
-The search, range and selected run are in the page URL, so a link opens the same view. See [Dashboard links](dashboard-links.md).
+The search, range and selected run are in the page URL, so a link opens the same view.
+
+Both tabs start with the last hour. Choose a longer range when needed, then use **Load older results** to read earlier pages. A page can be empty even when an older page exists. Search filters the loaded rows; keep paging to search further back. New live rows wait behind **Show new logs/runs**, so the list stays still while you read it. A failed older page keeps the rows already loaded and can be retried.
 
 ## In the terminal
 
@@ -28,6 +34,7 @@ broods logs --level info         # INFO and above
 broods logs --all                # every level. DEBUG only appears in history.
 broods logs --json               # one JSON object per line
 broods logs --sandbox <uuid>     # one lambda sandbox's guest output
+broods trace <trace-id> --json   # one run's every span, then exit
 ```
 
 `broods dev` also tails warnings and errors while it watches. These commands need `broods login`. They trade your login for a 15-minute stage ticket and renew it on reconnect. The runtime key in `BROODS_API_KEY` cannot open logs, because logs contain every end user's messages and tool data.
@@ -43,6 +50,6 @@ broods logs --sandbox <uuid>     # one lambda sandbox's guest output
 
 ## Retention
 
-The dashboard replays roughly the last two hours instantly on connect. Older logs and traces load from long-term storage when you page back. Traces older than the seven-day search window can still be opened by id.
+The dashboard reads history one page at a time within the selected range and receives live updates separately. Traces are kept 30 days. An older trace opens by id, such as from a Usage chart bin. Usage totals and cost outlive their traces.
 
 For your own pipeline, send [webhooks](webhooks.md) to a service you run. [Observability internals](../internals/observability.md) explains how the pipeline works inside.

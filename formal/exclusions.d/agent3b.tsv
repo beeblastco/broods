@@ -1,0 +1,2 @@
+pattern	category	reason
+apps/core/src/shared/cache-digest.ts#cacheDigest	vendor-passthrough	One HMAC over a random per-process key the recording cannot show; it makes no decision.

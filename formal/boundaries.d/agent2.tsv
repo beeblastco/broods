@@ -1,0 +1,33 @@
+kind	name	reason
+external	^asSchema$	AI SDK schema adapter supplies the validator contract checked by hookArgs.
+external	^validate$	The supplied tool schema owns validation; the twin checks its input and branches on the validation result.
+external	^extractHarnessPromptContent$	Harness SDK determines supported media; the twin supplies the exact prompt and handles the SDK error.
+external	^HarnessCapabilityUnsupportedError\.isInstance$	Harness SDK owns its branded error identity.
+external	^serialize$	Caller supplied telemetry serializer is checked against the computed joined system content.
+external	^getSharedNatsConn$	NATS connection availability comes from the connection manager; no connection means no publish.
+external	^hooks\.hasHooksFor$	Injected dispatcher owns its hook index and answers an exact event lookup.
+external	^hooks\.runMutation$	Injected hook dispatcher owns mutation execution; the twin checks event payloads and applies the result.
+external	^createHash$	Node crypto constructs the requested standard SHA-256 hash; the twin checks algorithm and subsequent input.
+external	^createHash\("sha256"\)\.update$	Node crypto consumes the exact computed byte string as UTF-8.
+external	^createHash\("sha256"\)\.update\(secret\)\.digest$	Node crypto implements SHA-256; hex output is the trusted cryptographic primitive.
+external	^createHash\("sha256"\)\.update\(`\$\{taskId\}\\0\$\{text\}`\)\.digest$	Node crypto implements SHA-256; the twin computes the UUID layout from its digest.
+external	^createHmac$	Node crypto implements standard keyed SHA-256 with the supplied secret.
+external	^createHmac\("sha256", secret\)\.update$	Node crypto consumes the exact supplied webhook body.
+external	^createHmac\("sha256", secret\)\.update\(body\)\.digest$	Node crypto provides the standard HMAC digest; the twin computes the signature prefix.
+external	^optionalEnv$	Environment reader supplies the operator's value; the twin validates it before using it.
+external	^Date\.now$	The platform clock is an explicit input; lifetime comparison is computed by the twin.
+external	^session\.applySteeringIngress$	The session owns ingress admission; each batch is checked before the twin appends it.
+external	^session\.appendIngressEvents$	Session persistence supplies ephemeral messages for the exact admitted events.
+external	^session\.loadRefreshedSystemPromptParts$	Session prompt assembly owns persisted context; the twin checks its accumulated ephemeral messages.
+opaque	Hash	Node crypto hash state is used only through the checked algorithm, update and digest calls.
+opaque	Hmac	Node crypto HMAC state is used only through the checked key, update and digest calls.
+external	^\( await hooks \)\.runMutation$	Injected hook dispatcher owns mutation execution; the twin checks event and payload and applies the answer.
+external	^getStorage\(\) \.budgets\.claimWarning$	The storage adapter owns the once-per-month warning claim; the twin checks the account and handles rejection.
+external	^getStorage\(\)\.budgets\.record$	The storage adapter persists metered usage; the twin checks account, usage and source.
+external	^getStorage\(\)\.taskUsage\.record$	The storage adapter persists the task usage row; the twin checks the row and swallows failure.
+external	^live\.settle$	Resolver of the promise made by pendingAdmission; the twin checks the started flag passed to it.
+external	^markAsyncAgentHandback$	Persistence call on the result row; the twin checks the event id and handback state.
+external	^new BudgetExhaustedError$	Error class construction with the checked refusal message; the twin rethrows what it built.
+external	^pruneMessages$	AI SDK owns message pruning; the twin checks every pruning option and message list.
+external	^this\.childStop\.abort$	Platform AbortController; the twin checks the abort reason.
+external	^this\.lifecycle \.emit$	Injected lifecycle emitter delivers webhooks; the twin checks event name and payload and swallows rejection.

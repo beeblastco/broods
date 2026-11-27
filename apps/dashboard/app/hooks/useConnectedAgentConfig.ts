@@ -1,6 +1,8 @@
 "use client";
 
 import type { AgentProvider } from "@/app/components/side-panel/DetailsTab";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
+import { useReachableAgentConfigId } from "@/app/hooks/useReachableAgentConfigId";
 import {
   fromNestedAgentConfig,
   toNestedAgentConfig,
@@ -9,47 +11,20 @@ import {
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useStore } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 
-type ReactFlowState = {
-  edges: Array<{ source: string; target: string }>;
-  nodeLookup: Map<string, { type?: string; data?: { agentConfigId?: string } }>;
-};
-
-/**
- * The agent config a canvas node is wired to, plus the writer its side-panel tabs
- * edit through. `agentConfig` is undefined while the query loads and null when the
- * id resolves to nothing.
- */
 export interface ConnectedAgentConfig {
   agentConfigId: Id<"agentConfigs"> | undefined;
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   updateBranch: (path: ReadonlyArray<string>, value: unknown) => Promise<void>;
 }
 
-/**
- * Returns the connected agent's config plus an `updateBranch` helper that
- * writes a slice (top-level branch like "workspace" or nested path like
- * ["workspace", "sandbox"]) back through the agentConfig codec.
- *
- * @param nodeId source canvas node id
- * @param via intermediate node types allowed when walking to the agent
- * @returns connected agent config + update helpers, or `null` when nothing wired
- */
 export function useConnectedAgentConfig(
   nodeId: string | undefined,
   via?: ReadonlyArray<string>,
 ): ConnectedAgentConfig {
-  const viaKey = via?.join("|");
-  const agentConfigId = useStore(
-    useCallback(
-      (state: unknown) =>
-        findReachableAgentConfigId(state as ReactFlowState, nodeId, via),
-      [nodeId, viaKey],
-    ),
-  ) as Id<"agentConfigs"> | undefined;
+  const agentConfigId = useReachableAgentConfigId(nodeId, via);
 
   const agentConfig = useQuery(
     api.agent.config.getById,
@@ -59,21 +34,13 @@ export function useConnectedAgentConfig(
     api.agent.config.update,
   ).withOptimisticUpdate(applyAgentConfigUpdate);
 
-  // Keep the freshest config and serialize writes so chained edits never build
-  // on a stale reactive snapshot (each branch edit re-projects the whole config).
-  const latestConfig = useRef<FlatAgentConfig | null | undefined>(
-    agentConfig as FlatAgentConfig | undefined,
-  );
-  useEffect(() => {
-    latestConfig.current = agentConfig as FlatAgentConfig | undefined;
-  }, [agentConfig]);
+  // Writes queue on the freshest config: each re-projects the whole config, so one built on
+  // a stale reactive snapshot would undo the edit before it.
+  const config = agentConfig as FlatAgentConfig | undefined;
+  const latestConfig = useRef<FlatAgentConfig | null | undefined>(config);
+  useLatestRef(latestConfig, config);
   const writeChain = useRef<Promise<void>>(Promise.resolve());
 
-  /**
-   * Writes a JSON value at the given branch path of the nested AgentConfig and
-   * persists the projected flat patch to Convex. Writes are queued so a burst of
-   * edits applies sequentially against the latest config rather than clobbering.
-   */
   const updateBranch = useCallback(
     (path: ReadonlyArray<string>, value: unknown) => {
       if (!agentConfigId || path.length === 0) {
@@ -86,9 +53,7 @@ export function useConnectedAgentConfig(
           return;
         }
 
-        // Clone before editing: toNestedAgentConfig returns branches by
-        // reference, and `base` is the Convex-cached query document. Writing
-        // through it would corrupt the client cache and survive rollbacks.
+        // toNestedAgentConfig returns branches by reference into the Convex-cached document.
         const nested = structuredClone(toNestedAgentConfig(base));
         let cursor: Record<string, unknown> = nested as Record<string, unknown>;
         for (let i = 0; i < path.length - 1; i += 1) {
@@ -111,7 +76,6 @@ export function useConnectedAgentConfig(
         }
 
         const patch = fromNestedAgentConfig(nested);
-        // Advance the local snapshot so the next queued write sees this change.
         latestConfig.current = { ...base, ...patch };
         const { provider, ...rest } = patch;
         await updateConfig({
@@ -133,42 +97,4 @@ export function useConnectedAgentConfig(
     agentConfig: agentConfig,
     updateBranch: updateBranch,
   };
-}
-
-/**
- * Walks edges from `nodeId` (BFS) and returns the first reachable agent
- * node's `agentConfigId`. `via` restricts intermediate node types, e.g. a
- * sandbox can only reach an agent through a workspace.
- */
-function findReachableAgentConfigId(
-  state: ReactFlowState,
-  nodeId: string | undefined,
-  via?: ReadonlyArray<string>,
-): string | undefined {
-  if (!nodeId || !state.edges || !state.nodeLookup) return undefined;
-
-  const visited = new Set<string>([nodeId]);
-  const queue: string[] = [nodeId];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const edge of state.edges) {
-      if (edge.source !== current && edge.target !== current) continue;
-
-      const next = edge.source === current ? edge.target : edge.source;
-      if (visited.has(next)) continue;
-      visited.add(next);
-
-      const node = state.nodeLookup.get(next);
-      if (!node) continue;
-      if (node.type === "agent") {
-        return node.data?.agentConfigId;
-      }
-      if (via && via.includes(node.type ?? "")) {
-        queue.push(next);
-      }
-    }
-  }
-
-  return undefined;
 }

@@ -35,7 +35,6 @@ const DELETE_DESCRIPTIONS: Record<
   },
 };
 
-/** Danger-zone settings for a canvas node: delete, or why delete is locked. */
 export function SettingsTab({
   nodeType,
   onDelete,
@@ -44,17 +43,12 @@ export function SettingsTab({
   deleteLocked = managedByCode,
 }: {
   nodeType: NodeType;
-  /** Hands the delete to the canvas, which owns the confirm dialog. */
   onDelete: () => void;
-  /** When true, this resource is code-owned (CLI or account API): delete is locked. */
   managedByCode?: boolean;
-  /** Which code surface owns the resource; picks the Danger Zone guidance. */
   codeOwner?: CodeOwner;
-  /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
 }): React.JSX.Element {
-  // A stale stored layout can still carry a retired node type; fall back to
-  // generic copy instead of crashing the panel.
+  // A stale layout can carry a retired node type: fall back rather than crash the panel.
   const descriptions = DELETE_DESCRIPTIONS[nodeType] ?? {
     summary: "Remove this node from the canvas.",
     detail: "Only the canvas node is removed.",

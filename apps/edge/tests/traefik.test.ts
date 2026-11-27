@@ -1,8 +1,3 @@
-/**
- * The rendered Traefik routers pick the router the table picks, for raw paths
- * with trailing slashes included, and every router stamps the gateway marker.
- */
-
 import { expect, test } from "bun:test";
 import { resolveRouter } from "../src/routes.ts";
 import {
@@ -45,6 +40,7 @@ const SAMPLES = [
   "/v1/media/ml1abc",
   "/v1/media//",
   "/v1/webhooks/acct/slack",
+  "/v1/webhooks/acct/dev/e1/pancake/",
   "/v1/webhooks//",
   "/v1/runs",
   "/v2/agents",
@@ -77,8 +73,6 @@ test("every router marks the request as public first", (): void => {
   }
 });
 
-// Traefik keeps a bucket per router, so the per-address limit holds only if
-// few routers count against it.
 test("the cluster limits HTTP in three routers and upgrades in one", (): void => {
   const limited = (name: string): string[] =>
     clusterRoutes()
@@ -90,13 +84,62 @@ test("the cluster limits HTTP in three routers and upgrades in one", (): void =>
   expect(limited("limit-http").join()).not.toMatch(/webhooks|media/);
 });
 
-// Download and media links carry their credential in the path.
-test("download and media links stay out of the access log", (): void => {
+// The config plane's auth limiter trusts the X-Forwarded-For hop Traefik appends, so the
+// edge must limit by peer address, never by a header the caller writes.
+test("the cluster limits every config route by peer address", (): void => {
+  const config = clusterRoutes().filter(
+    (route) => route.services[0]?.name === "convex",
+  );
+
+  expect(config.length).toBeGreaterThan(0);
+  for (const route of config) {
+    expect(route.middlewares.map((middleware) => middleware.name)).toContain(
+      "broods-edge-limit-http",
+    );
+  }
+  expect(
+    renderKubernetes([], "beeblast").find(
+      (resource) => resource.metadata.name === "broods-edge-limit-http",
+    ),
+  ).toMatchObject({
+    spec: { rateLimit: { average: 20, period: "1s", burst: 200 } },
+  });
+  expect(JSON.stringify(renderKubernetes([], "beeblast"))).not.toMatch(
+    /sourceCriterion|ipStrategy|requestHeaderName/,
+  );
+});
+
+test("credential-bearing routers stay out of the access log", (): void => {
   const unlogged = Object.entries(renderFileConfig(UPSTREAMS).http.routers)
     .filter(([, router]) => router.observability?.accessLogs === false)
     .map(([name]) => name);
 
-  expect(unlogged).toEqual(["broods-edge-downloads", "broods-edge-media"]);
+  expect(unlogged).toEqual([
+    "broods-edge-downloads",
+    "broods-edge-secret-webhooks",
+    "broods-edge-media",
+  ]);
+  const clusterUnlogged = clusterRoutes()
+    .filter((route) => route.observability?.accessLogs === false)
+    .map((route) => route.match);
+
+  expect(clusterUnlogged).toHaveLength(3);
+  expect(clusterUnlogged.join()).toMatch(/pancake/);
+});
+
+test("only webhook requests that carry a credential skip the access log", (): void => {
+  const unlogged = (method: string, path: string): boolean | undefined =>
+    resolveRouter(method, path)?.secretPath;
+
+  expect(unlogged("POST", "/v1/webhooks/acct/pancake")).toBe(true);
+  expect(unlogged("POST", "/v1/webhooks/acct/dev/e1/pancake")).toBe(true);
+  expect(unlogged("GET", "/v1/webhooks/acct/whatsapp")).toBe(true);
+  expect(unlogged("GET", "/v1/webhooks/acct/dev/e1/messenger")).toBe(true);
+  expect(unlogged("POST", "/v1/webhooks/acct/whatsapp")).toBeUndefined();
+  expect(unlogged("POST", "/v1/webhooks/acct/slack")).toBeUndefined();
+  expect(unlogged("POST", "/v1/webhooks/acct/dev/e1/telegram")).toBeUndefined();
+  expect(unlogged("GET", "/v1/mcp-connections/callback")).toBe(true);
+  expect(unlogged("POST", "/v1/mcp-connections/server_1")).toBeUndefined();
 });
 
 test("a self-hosted install allows its own origins", (): void => {
@@ -138,8 +181,7 @@ function clusterRoutes(): KubeRoute[] {
   return [];
 }
 
-// Evaluates the matchers the renderer emits: OR'ed rules of Method and
-// PathRegexp. The regex syntax used is shared by Go and JavaScript.
+// The regex syntax the renderer emits means the same in Go (Traefik) and JavaScript.
 function ruleMatches(rule: string, method: string, path: string): boolean {
   return topLevelAlternatives(rule).some((member) => {
     const pathRegex = member.match(/PathRegexp\(`([^`]+)`\)/)![1]!;
@@ -152,7 +194,6 @@ function ruleMatches(rule: string, method: string, path: string): boolean {
   });
 }
 
-// Splits a rule on the `||` outside any parentheses or backticks.
 function topLevelAlternatives(rule: string): string[] {
   const members: string[] = [];
   let depth = 0;

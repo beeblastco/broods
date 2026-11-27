@@ -1,9 +1,3 @@
-/**
- * Build helper that syncs the embedded compaction prompt module with
- * COMPACTION.md; src/harness/compaction.ts imports the generated module.
- * Agents have no default system prompt; this one is only for the compaction model.
- */
-
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const COMPACTION_PROMPT_SOURCE = new URL("../COMPACTION.md", import.meta.url);
@@ -13,10 +7,6 @@ const COMPACTION_PROMPT_MODULE = new URL(
   GENERATED_DIR,
 );
 
-/**
- * Writes COMPACTION.md into src/shared/.generated; run by scripts/build.ts and
- * the package scripts, Dockerfile and CI.
- */
 export async function syncCompactionPromptModule(): Promise<void> {
   const compactionPrompt = await readFile(COMPACTION_PROMPT_SOURCE, "utf8");
   const moduleSource = `/**

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { sha256Hex } from "../model/accountSecrets";
@@ -10,6 +10,10 @@ import { cronSchedules } from "../model/cronSchedules";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const STALE_AGE_MS = 10 * 60 * 1000;
+const ONE_TIME = "at(2026-01-03T00:00:00)";
 
 const t = () => {
   const tt = convexTest(schema, modules);
@@ -18,6 +22,384 @@ const t = () => {
   return tt;
 };
 type T = ReturnType<typeof t>;
+
+describe("sweepDeadRuns", () => {
+  test("fails a run whose envelope expired long ago, and shows it on the cron", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-dead");
+    await insertEnvelope(tt, accountId, "event-dead", "expired", HOUR_MS + 1);
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(1);
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "failed",
+      error: "The run stopped before it recorded an outcome.",
+    });
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+      lastStatus: "failed",
+    });
+  });
+
+  test("gives a worker that outlived its lease time to report", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-long");
+    await insertEnvelope(tt, accountId, "event-long", "expired", STALE_AGE_MS);
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(0);
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "late",
+    });
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  test("records a completed envelope's result when the settle was lost", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-done");
+    await insertEnvelope(
+      tt,
+      accountId,
+      "event-done",
+      "completed",
+      STALE_AGE_MS,
+      {
+        result: "done",
+      },
+    );
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "done",
+    });
+  });
+
+  test("leaves a live run, and one that ended moments ago, to settle itself", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const live = await staleRun(tt, accountId, cronId, "event-live");
+    await insertEnvelope(
+      tt,
+      accountId,
+      "event-live",
+      "processing",
+      STALE_AGE_MS,
+    );
+    const ending = await staleRun(tt, accountId, cronId, "event-ending");
+    await insertEnvelope(tt, accountId, "event-ending", "completed", 1_000);
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(0);
+
+    for (const runId of [live, ending]) {
+      expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+        status: "started",
+      });
+    }
+  });
+
+  test("waits on a paused run, then gives up on one nobody answers", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const waiting = await staleRun(tt, accountId, cronId, "event-wait");
+    await insertEnvelope(
+      tt,
+      accountId,
+      "event-wait",
+      "completed",
+      STALE_AGE_MS,
+    );
+    await insertPolling(tt, accountId, "event-wait");
+    const abandoned = await staleRun(
+      tt,
+      accountId,
+      cronId,
+      "event-gone",
+      8 * DAY_MS,
+    );
+    await insertEnvelope(
+      tt,
+      accountId,
+      "event-gone",
+      "completed",
+      STALE_AGE_MS,
+    );
+    await insertPolling(tt, accountId, "event-gone");
+
+    expect(await tt.mutation(internal.agent.crons.sweepDeadRuns, {})).toBe(1);
+
+    expect(await tt.run((ctx) => ctx.db.get(waiting))).toMatchObject({
+      status: "started",
+    });
+    expect(await tt.run((ctx) => ctx.db.get(abandoned))).toMatchObject({
+      status: "failed",
+      error: "The run waited for an approval or an answer that never came.",
+    });
+  });
+
+  test("ends a row with no envelope id only once it is a day old", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const recent = await staleRun(tt, accountId, cronId, undefined);
+    const old = await staleRun(tt, accountId, cronId, undefined, DAY_MS + 1);
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+
+    expect(await tt.run((ctx) => ctx.db.get(recent))).toMatchObject({
+      status: "started",
+    });
+    expect(await tt.run((ctx) => ctx.db.get(old))).toMatchObject({
+      status: "failed",
+    });
+  });
+
+  test("pages past live rows to reach a dead run behind them", async () => {
+    vi.useFakeTimers();
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    for (let i = 0; i < 100; i += 1) {
+      await staleRun(
+        tt,
+        accountId,
+        cronId,
+        `live-${i}`,
+        STALE_AGE_MS + 1_000 + i,
+      );
+      await insertEnvelope(
+        tt,
+        accountId,
+        `live-${i}`,
+        "processing",
+        STALE_AGE_MS,
+      );
+    }
+    const dead = await staleRun(tt, accountId, cronId, "event-behind");
+    await insertEnvelope(tt, accountId, "event-behind", "expired", HOUR_MS + 1);
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+    await tt.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+
+    expect(await tt.run((ctx) => ctx.db.get(dead))).toMatchObject({
+      status: "failed",
+    });
+  });
+
+  test("pages through one window, so the cursor stays valid for the next page", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    for (let i = 0; i <= 100; i += 1) {
+      await staleRun(tt, accountId, cronId, undefined);
+    }
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+    const scheduled = await tt.run((ctx) =>
+      ctx.db.system.query("_scheduled_functions").collect(),
+    );
+
+    expect(
+      scheduled.find((job) => job.name.includes("sweepDeadRuns"))?.args[0],
+    ).toMatchObject({ now: expect.any(Number) });
+  });
+
+  test("retires a job only when the dead run fired it as one-time", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    await staleRun(tt, accountId, cronId, "event-edited");
+    await insertEnvelope(tt, accountId, "event-edited", "expired", HOUR_MS + 1);
+    await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { scheduleExpression: ONE_TIME },
+    });
+
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+    await settleScheduled(tt);
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).not.toBeNull();
+
+    const once = await oneTimeCron(tt, accountId);
+    const onceRun = await startRun(tt, accountId, once, Date.now());
+    await tt.run((ctx) =>
+      ctx.db.patch(onceRun, { ingressEventId: "event-once" }),
+    );
+    await insertEnvelope(tt, accountId, "event-once", "expired", 0);
+    vi.advanceTimersByTime(2 * HOUR_MS);
+    await tt.mutation(internal.agent.crons.sweepDeadRuns, {});
+    await settleScheduled(tt);
+    vi.useRealTimers();
+
+    expect(await tt.run((ctx) => ctx.db.get(once))).toBeNull();
+  });
+});
+
+describe("one-time jobs", () => {
+  test("a one-time job is removed when its run settles", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    const cronId = await oneTimeCron(tt, accountId);
+    const runId = await startRun(tt, accountId, cronId, Date.now());
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    await settleScheduled(tt);
+    vi.useRealTimers();
+
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
+  });
+
+  test("a one-time job paused while its run is open is removed when the run settles", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    const cronId = await oneTimeCron(tt, accountId);
+    const runId = await startRun(tt, accountId, cronId, Date.now());
+    await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { status: "paused" },
+    });
+
+    await tt.mutation(internal.agent.crons.completeRun, {
+      accountId: accountId,
+      cronId: cronId,
+      runId: runId,
+      result: "done",
+    });
+    const resumed = await tt.mutation(internal.agent.crons.update, {
+      accountId: accountId,
+      cronId: cronId,
+      patch: { status: "active" },
+    });
+    await settleScheduled(tt);
+    vi.useRealTimers();
+
+    expect(resumed).toBeNull();
+    expect(await tt.run((ctx) => ctx.db.get(cronId))).toBeNull();
+  });
+
+  test("a one-time job rescheduled while its run waits on an answer keeps its new schedule", async () => {
+    vi.useFakeTimers({ now: Date.UTC(2026, 0, 1) });
+    const tt = t();
+    const { accountId } = await seed(tt);
+    for (const [day, scheduleExpression] of [
+      [3, "rate(1 day)"],
+      [10, "at(2026-01-20T00:00:00)"],
+    ] as const) {
+      const cronId = await oneTimeCron(tt, accountId, day);
+      const runId = await startRun(tt, accountId, cronId, Date.now());
+      await tt.run((ctx) =>
+        ctx.db.patch(runId, {
+          ingressEventId: `event-${cronId}`,
+          ingressConversationKey: "scoped:cron",
+        }),
+      );
+      await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+        conversationKey: "scoped:cron",
+        ownerEventId: `event-${cronId}`,
+        answered: [],
+        waitingOn: [`approval-${cronId}`],
+        status: "completed",
+        result: { status: "awaiting_approval" },
+      });
+      vi.advanceTimersByTime(HOUR_MS);
+      await tt.mutation(internal.agent.crons.update, {
+        accountId: accountId,
+        cronId: cronId,
+        patch: { scheduleExpression: scheduleExpression },
+      });
+
+      await answer(tt, `approval-${cronId}`);
+      await settleScheduled(tt);
+
+      expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+        status: "completed",
+      });
+      expect(await tt.run((ctx) => ctx.db.get(cronId))).toMatchObject({
+        scheduleExpression: scheduleExpression,
+      });
+    }
+    vi.useRealTimers();
+  });
+});
+
+describe("getById", () => {
+  test("answers null for an id that is not a cron id", async () => {
+    const tt = t();
+    const { accountId } = await firstCron(tt);
+
+    expect(
+      await tt.query(internal.agent.crons.getById, {
+        accountId: accountId,
+        cronId: "cron_made_up",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("settleAnsweredRun", () => {
+  test("ends the paused run with the outcome of the turn that answered it", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await pausedRun(tt, accountId, cronId, "event-paused");
+
+    await answer(tt, "approval-event-paused");
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+      result: "approved and done",
+    });
+    expect(
+      await tt.run((ctx) => ctx.db.query("cronRunWaits").collect()),
+    ).toEqual([]);
+  });
+
+  test("finds the run that asked behind more than 100 newer paused runs", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const oldest = await pausedRun(tt, accountId, cronId, "event-0");
+    for (let fire = 1; fire <= 101; fire += 1) {
+      await pausedRun(tt, accountId, cronId, `event-${fire}`);
+    }
+
+    await answer(tt, "approval-event-0");
+
+    expect(await tt.run((ctx) => ctx.db.get(oldest))).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  test("an answer settles a run paused before waitingOn existed", async () => {
+    const tt = t();
+    const { accountId, cronId } = await firstCron(tt);
+    const runId = await staleRun(tt, accountId, cronId, "event-legacy");
+    await tt.run((ctx) =>
+      ctx.db.patch(runId, {
+        ingressConversationKey: "scoped:cron",
+        waitingOn: undefined,
+      }),
+    );
+
+    await answer(tt, "approval-legacy");
+
+    expect(await tt.run((ctx) => ctx.db.get(runId))).toMatchObject({
+      status: "completed",
+    });
+  });
+});
 
 describe("list", () => {
   test("returns only the named agent's jobs", async () => {
@@ -385,7 +767,6 @@ describe("create/update/remove", () => {
   });
 });
 
-/** One account whose two agents own one cron job each. */
 describe("CLI cron delete", () => {
   test("deletes only the route stage's job of that name", async () => {
     const tt = t();
@@ -475,7 +856,16 @@ describe("CLI cron delete", () => {
   });
 });
 
-/** Seeds an account and returns its agent's cron. */
+async function answer(tt: T, approvalId: string): Promise<void> {
+  await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+    conversationKey: "scoped:cron",
+    ownerEventId: `answer-${approvalId}`,
+    answered: [approvalId],
+    status: "completed",
+    result: "approved and done",
+  });
+}
+
 async function firstCron(
   tt: T,
 ): Promise<{ accountId: Id<"accounts">; cronId: Id<"crons"> }> {
@@ -486,6 +876,50 @@ async function firstCron(
   });
 
   return { accountId: accountId, cronId: cron!._id };
+}
+
+// Leaves the clock just past the job's at(...) time, so the next run started is its fire.
+async function oneTimeCron(
+  tt: T,
+  accountId: Id<"accounts">,
+  day: number = 3,
+): Promise<Id<"crons">> {
+  const [agent] = await tt.run((ctx) => ctx.db.query("agents").collect());
+  const created = (await tt.mutation(internal.agent.crons.create, {
+    accountId: accountId,
+    input: {
+      name: `once-${Date.now()}`,
+      agentId: agent!._id,
+      input: "run once",
+      scheduleExpression: `at(2026-01-${String(day).padStart(2, "0")}T00:00:00)`,
+    },
+  })) as { cronId: string };
+  vi.setSystemTime(Date.UTC(2026, 0, day, 1));
+
+  return created.cronId as Id<"crons">;
+}
+
+// A run whose own turn paused on the approval `approval-<ingressEventId>`.
+async function pausedRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  ingressEventId: string,
+): Promise<Id<"cronRuns">> {
+  const runId = await staleRun(tt, accountId, cronId, ingressEventId);
+  await tt.run((ctx) =>
+    ctx.db.patch(runId, { ingressConversationKey: "scoped:cron" }),
+  );
+  await tt.mutation(internal.agent.crons.settleAnsweredRun, {
+    conversationKey: "scoped:cron",
+    ownerEventId: ingressEventId,
+    answered: [],
+    waitingOn: [`approval-${ingressEventId}`],
+    status: "completed",
+    result: { status: "awaiting_approval" },
+  });
+
+  return runId;
 }
 
 async function seed(
@@ -531,6 +965,88 @@ async function seed(
 
     return { accountId: accountId, agentId: agentId };
   });
+}
+
+async function insertEnvelope(
+  tt: T,
+  accountId: Id<"accounts">,
+  eventId: string,
+  status: "completed" | "expired" | "processing",
+  ageMs: number,
+  extra: { result?: string } = {},
+): Promise<void> {
+  const updatedAt = Date.now() - ageMs;
+  await tt.run((ctx) =>
+    ctx.db.insert("runtimeIngressEnvelopes", {
+      accountId: accountId,
+      agentId: "agent",
+      conversationKey: "api:cron",
+      sequence: 1,
+      eventId: eventId,
+      runId: `run-${eventId}`,
+      identity: "cron",
+      idempotencyKey: eventId,
+      payloadDigest: "digest",
+      events: [],
+      delivery: {
+        kind: "http",
+        publicEventId: eventId,
+        publicConversationKey: "api:cron",
+      },
+      requestedMode: "reject",
+      status: status,
+      sizeBytes: 0,
+      createdAt: updatedAt,
+      updatedAt: updatedAt,
+      expiresAt: updatedAt,
+      statusExpiresAt: updatedAt + DAY_MS,
+      ...extra,
+    }),
+  );
+}
+
+async function insertPolling(
+  tt: T,
+  accountId: Id<"accounts">,
+  eventId: string,
+): Promise<void> {
+  await tt.run((ctx) =>
+    ctx.db.insert("runtimeAsyncAgentResults", {
+      accountId: accountId,
+      eventId: eventId,
+      conversationKey: "api:cron",
+      status: "awaiting_approval",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+      expiresAt: 4_000_000_000,
+    }),
+  );
+}
+
+// Runs work scheduled now, such as a removal, without reaching a fire days ahead.
+async function settleScheduled(tt: T): Promise<void> {
+  await tt.finishAllScheduledFunctions((): void => {
+    vi.advanceTimersByTime(1_000);
+  });
+}
+
+// A run old enough for the sweep to read.
+async function staleRun(
+  tt: T,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  ingressEventId: string | undefined,
+  ageMs: number = STALE_AGE_MS,
+): Promise<Id<"cronRuns">> {
+  const runId = await startRun(tt, accountId, cronId, Date.now());
+  await tt.run((ctx) =>
+    ctx.db.patch(runId, {
+      ingressEventId: ingressEventId,
+      startedAt: Date.now() - ageMs,
+    }),
+  );
+
+  return runId;
 }
 
 async function startRun(

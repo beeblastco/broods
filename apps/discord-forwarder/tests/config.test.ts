@@ -39,9 +39,6 @@ describe("config planes", () => {
     expect(() => parseConfigPlanes("[null]")).toThrow(/must be objects/);
   });
 
-  // A name becomes part of the env var its deploy key is read from, so anything
-  // that cannot appear there has to fail at startup rather than look up a key
-  // the operator never wrote.
   it("refuses a name that is not usable as an env var suffix", () => {
     expect(() =>
       parseConfigPlanes(JSON.stringify([{ ...DEV, name: "" }])),
@@ -65,7 +62,6 @@ describe("config planes", () => {
     ).toThrow(/missing convexUrl/);
   });
 
-  // Both entries would read one deploy key and forward the same rows twice.
   it("refuses two planes under one name", () => {
     expect(() => parseConfigPlanes(JSON.stringify([DEV, DEV]))).toThrow(
       /duplicate plane names/,

@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * The table-plus-detail split the monitoring, tracing, and sandbox tables
- * share: the table on the left, an optional detail column on the right with a
- * drag handle between them.
- */
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/app/components/ui/resizable";
 import {
   DETAIL_DEFAULT_WIDTH,
   DETAIL_MIN_WIDTH,
@@ -17,33 +7,35 @@ import {
 } from "@/app/lib/detailSplit";
 import { cn } from "@/app/lib/utils";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { observeResize } from "@/app/lib/observeResize";
+import { useCallback, useRef, useState, type ReactNode } from "react";
+
+const HANDLE_WIDTH_PX = 1;
+const KEY_STEP_PX = 16;
+
+// The separator's keys, as the detail width they move to; the detail is the primary pane.
+const KEY_MOVES: Partial<Record<string, (width: number) => number>> = {
+  ArrowLeft: (width) => width + KEY_STEP_PX,
+  ArrowRight: (width) => width - KEY_STEP_PX,
+  End: () => Infinity,
+  Home: () => DETAIL_MIN_WIDTH,
+};
 
 interface DetailPanelProps {
   title: ReactNode;
   meta?: ReactNode;
-  /** Buttons on the title line, between the title and the close button. */
   actions?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }
 
 interface DetailSplitProps {
-  /** The table. Scrolls on its own inside the left panel. */
   children: ReactNode;
-  /** The detail column's content, or nothing while no row is selected. */
   detail: ReactNode;
-  /** Drop the card frame, for a panel that fills the page edge to edge. */
   flush?: boolean;
-  /** The table panel's narrowest width, for tables wider than the default. */
   tableMinWidth?: number;
 }
 
-/**
- * The detail column's header, then a scrollable body. The title line holds
- * the title, the panel's actions and the close button, at the toolbar's
- * height when there are actions; `meta` is a second line under it.
- */
 export function DetailPanel({
   title,
   meta,
@@ -77,37 +69,101 @@ export function DetailPanel({
   );
 }
 
+// The table flexes above its floor; the detail keeps its width and shrinks only to its minimum.
 export function DetailSplit({
   children,
   detail,
   flush = false,
   tableMinWidth = TABLE_MIN_WIDTH,
 }: DetailSplitProps): React.JSX.Element {
+  const drag = useRef<number | null>(null);
+  const [width, setWidth] = useState(DETAIL_DEFAULT_WIDTH);
+  const [frameWidth, setFrameWidth] = useState(0);
+  if (!detail && width !== DETAIL_DEFAULT_WIDTH) setWidth(DETAIL_DEFAULT_WIDTH);
+  const measure = useCallback(
+    (el: HTMLDivElement | null) =>
+      el ? observeResize(el, () => setFrameWidth(el.clientWidth)) : undefined,
+    [],
+  );
+  const room = Math.max(
+    DETAIL_MIN_WIDTH,
+    frameWidth - HANDLE_WIDTH_PX - tableMinWidth,
+  );
+  // Unmeasured, it lays out side by side: no detail is open before the client has data.
+  const stacked =
+    frameWidth > 0 &&
+    frameWidth < tableMinWidth + HANDLE_WIDTH_PX + DETAIL_MIN_WIDTH;
+
+  const shown = Math.min(width, room);
+  const resize = (next: number): void =>
+    setWidth(Math.max(DETAIL_MIN_WIDTH, Math.min(next, room)));
+
   return (
-    <ResizablePanelGroup
+    <div
+      ref={measure}
+      data-slot="resizable-panel-group"
+      data-stacked={stacked || undefined}
+      style={{
+        "--detail-min": `${DETAIL_MIN_WIDTH}px`,
+        "--detail-width": `${width}px`,
+        "--table-min": `${tableMinWidth}px`,
+      }}
       className={cn(
-        "min-h-0 flex-1 overflow-hidden bg-card",
+        "group/split relative flex h-full min-h-0 w-full flex-1 overflow-hidden bg-card has-[>[data-slot=resizable-handle]:active]:cursor-col-resize has-[>[data-slot=resizable-handle]:active]:**:cursor-col-resize",
         !flush && "rounded-lg border border-border",
       )}
     >
-      <ResizablePanel
-        minSize={tableMinWidth}
-        className="min-h-0 min-w-0 overflow-auto"
+      <div
+        data-slot="resizable-panel"
+        className={cn(
+          "min-h-0 min-w-0 flex-1 overflow-auto",
+          // Too narrow for both, the table stays laid out under the open detail, so closing keeps
+          // its scroll; styled from an attribute, so nothing remounts across widths.
+          detail &&
+            "min-w-(--table-min) group-data-stacked/split:invisible group-data-stacked/split:absolute group-data-stacked/split:inset-0",
+        )}
       >
         {children}
-      </ResizablePanel>
+      </div>
       {detail && (
         <>
-          <ResizableHandle className="cursor-col-resize" />
-          <ResizablePanel
-            defaultSize={DETAIL_DEFAULT_WIDTH}
-            minSize={DETAIL_MIN_WIDTH}
-            className="flex min-h-0 flex-col bg-card"
+          <div
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a focusable splitter; lint bars handlers on an hr
+            role="separator"
+            aria-label="Resize details"
+            aria-orientation="vertical"
+            aria-valuemax={room}
+            aria-valuemin={DETAIL_MIN_WIDTH}
+            aria-valuenow={shown}
+            tabIndex={0}
+            data-slot="resizable-handle"
+            onKeyDown={(event) => {
+              const move = KEY_MOVES[event.key];
+              if (!move) return;
+              event.preventDefault();
+              resize(move(shown));
+            }}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              drag.current = event.clientX + shown;
+            }}
+            onPointerMove={(event) => {
+              if (drag.current !== null) resize(drag.current - event.clientX);
+            }}
+            onLostPointerCapture={() => {
+              drag.current = null;
+            }}
+            className="relative w-px shrink-0 cursor-col-resize bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-2.5 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden group-data-stacked/split:hidden"
+          />
+          <div
+            data-slot="resizable-panel"
+            className="flex min-h-0 min-w-(--detail-min) shrink basis-(--detail-width) flex-col overflow-hidden bg-card group-data-stacked/split:grow"
           >
             {detail}
-          </ResizablePanel>
+          </div>
         </>
       )}
-    </ResizablePanelGroup>
+    </div>
   );
 }

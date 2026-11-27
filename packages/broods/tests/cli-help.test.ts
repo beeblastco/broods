@@ -3,17 +3,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * Help is progressive: the bare command lists groups, and every command owns a
- * page. A grouped command with no subcommand must print that page rather than
- * guess a default and reach the network.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -47,17 +41,16 @@ async function runCli(
   return { exitCode: exitCode, stdout: stdout, stderr: stderr };
 }
 
-test("the bare CLI lists commands and points at per-command help", async () => {
+test("the bare CLI lists commands and points at per-command help", async (): Promise<void> => {
   const result = await runCli([]);
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("Usage: broods <command>");
   expect(result.stdout).toContain("Run `broods <command> --help`");
-  // Subcommands belong to the command's own page, not the top-level list.
   expect(result.stdout).not.toContain("org create");
 });
 
-test("the bare CLI shows where the next command acts, read from .env.local", async () => {
+test("the bare CLI shows where the next command acts, read from .env.local", async (): Promise<void> => {
   const result = await runCli(
     [],
     "BROODS_PROJECT=my-app\nBROODS_STAGE=staging\n",
@@ -69,7 +62,7 @@ test("the bare CLI shows where the next command acts, read from .env.local", asy
   expect(result.stdout).toContain("broods dev");
 });
 
-test("deploy help names production even when another stage is selected", async () => {
+test("deploy help names production even when another stage is selected", async (): Promise<void> => {
   const result = await runCli(
     ["deploy", "--help"],
     "BROODS_PROJECT=my-app\nBROODS_STAGE=staging\n",
@@ -80,14 +73,14 @@ test("deploy help names production even when another stage is selected", async (
   );
 });
 
-test("deploy help adds no note when no stage is selected", async () => {
+test("deploy help adds no note when no stage is selected", async (): Promise<void> => {
   const result = await runCli(["deploy", "--help"], "BROODS_PROJECT=my-app\n");
 
   expect(result.stdout).toContain("my-app → production");
   expect(result.stdout).not.toContain("ignores stage");
 });
 
-test("a grouped command with no subcommand leads its page with the target", async () => {
+test("a grouped command with no subcommand leads its page with the target", async (): Promise<void> => {
   const result = await runCli(
     ["env"],
     "BROODS_PROJECT=my-app\nBROODS_STAGE=qa\n",
@@ -98,7 +91,7 @@ test("a grouped command with no subcommand leads its page with the target", asyn
 
 test.each(["org", "stage", "env", "agent"])(
   "`broods %s` prints its own page instead of running a default",
-  async (command) => {
+  async (command): Promise<void> => {
     const result = await runCli([command]);
 
     expect(result.exitCode).toBe(0);
@@ -109,7 +102,7 @@ test.each(["org", "stage", "env", "agent"])(
 
 test.each(["deploy", "dev", "logs", "run", "update", "whoami"])(
   "`broods %s --help` prints its page without reaching the network",
-  async (command) => {
+  async (command): Promise<void> => {
     const result = await runCli([command, "--help"]);
 
     expect(result.exitCode).toBe(0);
@@ -117,7 +110,7 @@ test.each(["deploy", "dev", "logs", "run", "update", "whoami"])(
   },
 );
 
-test("an unknown subcommand names it and prints the command's page", async () => {
+test("an unknown subcommand names it and prints the command's page", async (): Promise<void> => {
   const result = await runCli(["org", "bogus"]);
 
   expect(result.exitCode).toBe(1);

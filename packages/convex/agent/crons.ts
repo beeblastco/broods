@@ -1,12 +1,5 @@
-/**
- * Cron job CRUD scoped to an account, and the schedules that fire them.
- * Mirrors broods's apps/core/src/shared/domain/cron.ts so the SaaS dashboard
- * can drive the same lifecycle through Convex live queries. Recurring jobs are
- * registered with the Convex crons component and one-time at(...) jobs with
- * the Convex scheduler, both in the same transaction as the row write, so a
- * schedule can never orphan the job that names it. Distinct from the root
- * `crons.ts`, which is the Convex platform cron registry.
- */
+// Account cron jobs, not the root `crons.ts` platform registry. A row and its schedule are
+// written in one transaction, so neither can orphan the other.
 
 import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
@@ -24,12 +17,15 @@ import { authKit } from "../auth";
 import { actorsOf, actorValidator } from "../model/actor";
 import { accountIdForProject } from "../model/auditEvents";
 import {
+  isOneTimeSchedule,
   normalizeCreateCronInput,
   normalizeUpdateCronInput,
+  translateScheduleExpression,
 } from "../model/cronRules";
 import {
   deleteCron,
   deleteRegistrationIfExists,
+  deleteRunWaits,
   registerSchedule,
   unregisterSchedule,
 } from "../model/cronSchedules";
@@ -39,16 +35,34 @@ import {
   cronsInProject,
   resourceStageScope,
 } from "../model/projectScope";
-import { toCronResponse } from "../model/responses";
+import {
+  cronResponseValidator,
+  toCronResponse,
+  type CronResponse,
+} from "../model/responses";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 import { cronRunsFields, cronsFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
 const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const CRON_RUN_PAGE_WINDOW = 1000;
-// Runs the scheduler's detail panel lists for one job.
 const DASHBOARD_RUN_LIMIT = 20;
 const PRUNE_BATCH_SIZE = 100;
+// A younger run may not have its envelope yet, or may be about to settle its own row.
+const DEAD_RUN_GRACE_MS = 5 * 60 * 1000;
+// A worker that outlives its lease on one long step still settles afterwards.
+const EXPIRED_RUN_GRACE_MS = 60 * 60 * 1000;
+// As long as the polling row that holds the open approval.
+const PAUSED_RUN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+// Rows from before `ingressEventId` have no envelope to read, so only age can end them.
+const UNTRACKED_RUN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DEAD_RUN_ERROR = "The run stopped before it recorded an outcome.";
+const UNANSWERED_RUN_ERROR =
+  "The run waited for an approval or an answer that never came.";
+
+type RunOutcome =
+  | { status: "completed"; result: unknown }
+  | { status: "failed"; error: string };
 
 const cronDoc = v.object({
   ...cronsFields,
@@ -56,8 +70,6 @@ const cronDoc = v.object({
   _creationTime: v.number(),
 });
 
-// The dashboard's shape: `lastRunId` is sync bookkeeping, not part of it, and
-// the creator comes resolved so the list can draw a name and an avatar.
 const projectCronDoc = v.object({
   ...cronDoc.omit("lastRunId").fields,
   creator: v.optional(actorValidator),
@@ -84,23 +96,15 @@ export const completeRun = internalMutation({
     settleRun(ctx, args, { status: "completed", result: args.result }),
 });
 
-/**
- * Create a cron job: validate the input, insert the crons row, and register
- * its schedule with the crons component (or the Convex scheduler for a
- * one-time at(...) job) in the same transaction. The row and the schedule
- * are one write, so neither can orphan the other.
- * @param accountId account id owning the cron job
- * @param input the create-cron request body
- * @returns the public cron record
- */
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
     input: v.record(v.string(), v.any()),
     createdBy: v.optional(v.id("users")),
+    managedBy: cronsFields.managedBy,
   },
-  returns: v.any(),
-  handler: async (ctx, args): Promise<Record<string, unknown>> => {
+  returns: cronResponseValidator,
+  handler: async (ctx, args): Promise<CronResponse> => {
     const normalized = normalizeCreateCronInput(args.input);
     const agent = await getOwnedAgent(ctx, args.accountId, normalized.agentId);
 
@@ -116,6 +120,7 @@ export const create = internalMutation({
       timezone: normalized.timezone,
       status: normalized.status ?? "active",
       createdBy: args.createdBy,
+      managedBy: args.managedBy,
       createdAt: now,
       updatedAt: now,
     });
@@ -132,15 +137,13 @@ export const create = internalMutation({
   },
 });
 
-/**
- * Creates a cron job run history row when a schedule fires, and makes it the
- * run the cron's last status follows unless a later fire already did.
- */
 export const createRun = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.id("crons"),
     eventId: v.string(),
+    ingressEventId: v.optional(v.string()),
+    ingressConversationKey: v.optional(v.string()),
     conversationKey: v.string(),
     firedAt: v.number(),
   },
@@ -156,6 +159,8 @@ export const createRun = internalMutation({
     const startedAt = Date.now();
     const runId = await ctx.db.insert("cronRuns", {
       ...args,
+      ...(isOneTimeSchedule(cron.scheduleExpression) ? { oneShot: true } : {}),
+      waitingOn: [],
       status: "started",
       startedAt: startedAt,
     });
@@ -173,13 +178,7 @@ export const createRun = internalMutation({
   },
 });
 
-/**
- * POST one fired cron job straight to core's in-cluster /v1/cron-runs leaf
- * (the gateway 404s that path), where core starts the configured agent. The
- * crons component (and the Convex scheduler for one-time jobs) invokes this
- * with the same {kind, accountId, cronId} payload EventBridge used to
- * deliver, so core is untouched.
- */
+// Posts to core's in-cluster leaf: the gateway 404s /v1/cron-runs.
 export const dispatch = internalAction({
   args: { accountId: v.id("accounts"), cronId: v.id("crons") },
   returns: v.null(),
@@ -189,9 +188,7 @@ export const dispatch = internalAction({
       cronId: args.cronId,
     });
     if (!live) {
-      // The row is gone (a cascade that could not reach the registration, or
-      // a crash between the two). Retire the schedule instead of firing it
-      // at a deleted job forever.
+      // The row is gone: retire the schedule rather than fire at a deleted job forever.
       await deleteRegistrationIfExists(ctx, args.cronId);
 
       return null;
@@ -230,17 +227,17 @@ export const failRun = internalMutation({
     settleRun(ctx, args, { status: "failed", error: args.error }),
 });
 
+// Takes any string: an id the model made up is a miss, not a validation error.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
-    cronId: v.id("crons"),
+    cronId: v.string(),
   },
   returns: v.union(cronDoc, v.null()),
   handler: (ctx, { accountId, cronId }): Promise<Doc<"crons"> | null> =>
-    getOwned(ctx, accountId, cronId),
+    getOwnedByString(ctx, accountId, cronId),
 });
 
-/** Whether the job still exists, without shipping its stored events. */
 export const isLive = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -251,7 +248,6 @@ export const isLive = internalQuery({
     (await getOwned(ctx, accountId, cronId)) !== null,
 });
 
-/** Every cron job of an account, or only one agent's when `agentId` is given. */
 export const list = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -277,45 +273,25 @@ export const list = internalQuery({
 export const listPage = internalQuery({
   args: {
     accountId: v.id("accounts"),
-    agentId: v.optional(v.id("agents")),
     paginationOpts: paginationOptsValidator,
   },
   returns: v.object({ page: v.array(cronDoc), ...paginationCursorFields }),
   handler: (
     ctx,
-    { accountId, agentId, paginationOpts },
+    { accountId, paginationOpts },
   ): Promise<PaginationResult<Doc<"crons">>> =>
-    agentId
-      ? ctx.db
-          .query("crons")
-          .withIndex("by_accountId_and_agentId", (q) =>
-            q.eq("accountId", accountId).eq("agentId", agentId),
-          )
-          .paginate(paginationOpts)
-      : ctx.db
-          .query("crons")
-          .withIndex("by_accountId_and_agentId", (q) =>
-            q.eq("accountId", accountId),
-          )
-          .paginate(paginationOpts),
+    ctx.db
+      .query("crons")
+      .withIndex("by_accountId_and_agentId", (q) =>
+        q.eq("accountId", accountId),
+      )
+      .paginate(paginationOpts),
 });
 
-/**
- * Lists the cron jobs whose agent belongs to `projectId`, for that project's
- * scheduler page.
- *
- * A cron has no projectId of its own. It points at an agent, and the agent's
- * project comes from `agentConfigs`. Deriving it rather than storing a copy is
- * what keeps a cron from ever claiming a different project than the agent it
- * runs. Crons whose agent has no config row belong to no project and
- * are absent here.
- * @param projectId the project to list cron jobs for
- */
 export const listForProject = query({
   args: { projectId: v.id("projects") },
   returns: v.array(projectCronDoc),
   handler: async (ctx, args): Promise<ProjectCron[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -340,13 +316,6 @@ export const listForProject = query({
   },
 });
 
-/**
- * The newest runs of one cron job for the dashboard's scheduler panel, without
- * the model result each row carries. A cron outside the project, or a project
- * the viewer has no role in, reads as no runs.
- * @param projectId the project the cron's agent belongs to
- * @param cronId the cron job
- */
 export const listRunsForProject = query({
   args: { projectId: v.id("projects"), cronId: v.id("crons") },
   returns: v.array(cronRunDoc.omit("result")),
@@ -375,7 +344,6 @@ export const listRunsForProject = query({
   },
 });
 
-/** Lists recent cron job runs newest-first for account-management APIs. */
 export const listRuns = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -386,9 +354,7 @@ export const listRuns = internalQuery({
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return [];
 
-    // Newest first, capped: 30 days of a per-minute cron is tens of thousands
-    // of rows carrying full model results, and reading them all exceeds the
-    // per-transaction limit. Paging happens over this window.
+    // Capped: a month of a per-minute cron's runs exceeds the per-transaction read limit.
     return await ctx.db
       .query("cronRuns")
       .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
@@ -410,8 +376,6 @@ export const listRunsPage = internalQuery({
     ctx,
     { accountId, cronId, paginationOpts },
   ): Promise<PaginationResult<Doc<"cronRuns">>> => {
-    // A cron the caller does not own reads as an empty page, never as someone
-    // else's run history.
     const cron = await getOwned(ctx, accountId, cronId);
     if (!cron) return { page: [], isDone: true, continueCursor: "" };
 
@@ -425,12 +389,6 @@ export const listRunsPage = internalQuery({
   },
 });
 
-/**
- * Deletes cron run history older than the retention window, one bounded batch
- * per invocation. Run rows carry the full model result and a listing only ever
- * pages over the newest `CRON_RUN_PAGE_WINDOW`, so older rows are pure storage
- * growth. The creation-index range reads nothing when nothing is due.
- */
 export const pruneExpiredRuns = internalMutation({
   args: {},
   returns: v.number(),
@@ -453,11 +411,7 @@ export const pruneExpiredRuns = internalMutation({
   },
 });
 
-/**
- * Records a fire that failed before it had a run row, such as a plan refusal,
- * unless a later fire already reported. It detaches the last run, so an older
- * run settling later leaves it alone.
- */
+// Clears lastRunId, so an older run that settles later leaves this failure alone.
 export const recordFailedFire = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -490,12 +444,6 @@ export const recordFailedFire = internalMutation({
   },
 });
 
-/**
- * Delete a cron job and its schedule in one transaction (`deleteCron`).
- * @param accountId account id owning the cron job
- * @param cronId the cron job id
- * @returns true when the job existed and was removed
- */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts"), cronId: v.string() },
   returns: v.boolean(),
@@ -508,12 +456,6 @@ export const remove = internalMutation({
   },
 });
 
-/**
- * Drains a deleted cron's run history: deletes one bounded batch per
- * invocation and reschedules itself until none remain. Scheduled by
- * `deleteCron`, which deletes the cron row in its own transaction; run rows
- * stay reachable through the account+cron index prefix.
- */
 export const removeRunsCascade = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -538,24 +480,103 @@ export const removeRunsCascade = internalMutation({
   },
 });
 
-/**
- * Update a cron job: patch the row and replace its registered schedule in the
- * same transaction whenever the schedule, timezone, or status changed.
- * @param accountId account id owning the cron job
- * @param cronId the cron job id
- * @param patch the update-cron request body
- * @returns the refreshed public cron record, or null when the job is missing
- */
+// A paused run records what it waits on; the turn that answers one of those ends it, or pauses
+// it again on what that turn asked in turn.
+export const settleAnsweredRun = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    answered: v.array(v.string()),
+    waitingOn: cronRunsFields.waitingOn,
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const run =
+      args.answered.length > 0
+        ? await runWaitingOn(ctx, args.conversationKey, args.answered)
+        : await ctx.db
+            .query("cronRuns")
+            .withIndex("by_ingressEventId", (q) =>
+              q.eq("ingressEventId", args.ownerEventId),
+            )
+            .first();
+    if (run?.status !== "started") return null;
+    if (args.waitingOn) {
+      await deleteRunWaits(ctx, run._id);
+      for (const promptId of args.waitingOn) {
+        await ctx.db.insert("cronRunWaits", {
+          conversationKey: args.conversationKey,
+          promptId: promptId,
+          runId: run._id,
+        });
+      }
+      await ctx.db.patch(run._id, { waitingOn: args.waitingOn });
+    } else {
+      await settleRun(
+        ctx,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
+        args.status === "completed"
+          ? { status: "completed", result: args.result ?? null }
+          : { status: "failed", error: args.error ?? DEAD_RUN_ERROR },
+      );
+    }
+
+    return null;
+  },
+});
+
+// Ends runs a killed pod can no longer settle; `settleRun` lets a real outcome win any race.
+// Every page reads up to the same `now`: a cursor is valid only for the query that made it.
+export const sweepDeadRuns = internalMutation({
+  args: {
+    now: v.optional(v.number()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const now = args.now ?? Date.now();
+    const page = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_status_and_startedAt", (q) =>
+        q.eq("status", "started").lt("startedAt", now - DEAD_RUN_GRACE_MS),
+      )
+      .paginate({ cursor: args.cursor ?? null, numItems: PRUNE_BATCH_SIZE });
+    let settled = 0;
+    for (const run of page.page) {
+      const outcome = await deadRunOutcome(ctx, run, now);
+      if (outcome === null) continue;
+      await settleRun(
+        ctx,
+        { accountId: run.accountId, cronId: run.cronId, runId: run._id },
+        outcome,
+      );
+      settled += 1;
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.agent.crons.sweepDeadRuns, {
+        now: now,
+        cursor: page.continueCursor,
+      });
+    }
+
+    return settled;
+  },
+});
+
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),
     cronId: v.string(),
     patch: v.record(v.string(), v.any()),
-    /** A stage-pinned role's stage: a new agentId must sit on it too. */
     pin: v.optional(v.object({ projectId: v.string(), stageId: v.string() })),
+    /** Set when code declares the job, which adopts one an agent made under that name. */
+    managedBy: cronsFields.managedBy,
   },
-  returns: v.any(),
-  handler: async (ctx, args): Promise<Record<string, unknown> | null> => {
+  returns: v.union(cronResponseValidator, v.null()),
+  handler: async (ctx, args): Promise<CronResponse | null> => {
     const existing = await getOwnedByString(ctx, args.accountId, args.cronId);
     if (!existing) return null;
     const patch = normalizeUpdateCronInput(args.patch);
@@ -580,21 +601,22 @@ export const update = internalMutation({
       }
     }
 
-    const defined = Object.fromEntries(
-      Object.entries(patch)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => [key, value === null ? undefined : value]),
-    );
+    const defined = {
+      ...Object.fromEntries(
+        Object.entries(patch)
+          .filter(([, value]) => value !== undefined)
+          .map(([key, value]) => [key, value === null ? undefined : value]),
+      ),
+      ...(args.managedBy ? { managedBy: args.managedBy } : {}),
+    };
     const updated: Doc<"crons"> = {
       ...existing,
       ...defined,
       updatedAt: Date.now(),
     };
 
-    // The registration encodes the schedule, timezone, and active state, so a
-    // patch changing any of their values replaces it; a patch resending the
-    // same values (a full-body `broods dev` sync) leaves it alone, keeping a
-    // rate(...) job's phase.
+    // Re-register only on a changed value: a `broods dev` sync resending the same ones
+    // must keep a rate(...) job's phase.
     const scheduleChanged =
       updated.scheduleExpression !== existing.scheduleExpression ||
       updated.timezone !== existing.timezone ||
@@ -618,6 +640,53 @@ export const update = internalMutation({
   },
 });
 
+// Null while the run may still settle itself, or waits on a person.
+async function deadRunOutcome(
+  ctx: QueryCtx,
+  run: Doc<"cronRuns">,
+  now: number,
+): Promise<RunOutcome | null> {
+  const dead: RunOutcome = { status: "failed", error: DEAD_RUN_ERROR };
+  if (run.ingressEventId === undefined) {
+    return run.startedAt < now - UNTRACKED_RUN_MAX_AGE_MS ? dead : null;
+  }
+  const eventId = run.ingressEventId;
+  const envelope = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .first();
+  if (!envelope) return dead;
+  const endedAgo = now - envelope.updatedAt;
+  switch (envelope.status) {
+    case "completed": {
+      const polling = await ctx.db
+        .query("runtimeAsyncAgentResults")
+        .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+        .first();
+      if (
+        polling?.status === "awaiting_approval" ||
+        polling?.status === "awaiting_input"
+      ) {
+        return now - run.startedAt > PAUSED_RUN_MAX_AGE_MS
+          ? { status: "failed", error: UNANSWERED_RUN_ERROR }
+          : null;
+      }
+
+      return endedAgo > DEAD_RUN_GRACE_MS
+        ? { status: "completed", result: envelope.result ?? null }
+        : null;
+    }
+    case "failed":
+      return endedAgo > DEAD_RUN_GRACE_MS
+        ? { status: "failed", error: envelope.error || DEAD_RUN_ERROR }
+        : null;
+    case "expired":
+      return endedAgo > EXPIRED_RUN_GRACE_MS ? dead : null;
+    default:
+      return null;
+  }
+}
+
 async function deleteRunsBatch(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -630,12 +699,14 @@ async function deleteRunsBatch(
       q.eq("accountId", accountId).eq("cronId", cronId),
     )
     .take(limit);
-  for (const run of runs) await ctx.db.delete(run._id);
+  for (const run of runs) {
+    await deleteRunWaits(ctx, run._id);
+    await ctx.db.delete(run._id);
+  }
 
   return runs.length;
 }
 
-/** Loads a cron job only when it belongs to the supplied account. */
 async function getOwned(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -646,7 +717,6 @@ async function getOwned(
   return cron && cron.accountId === accountId ? cron : null;
 }
 
-/** Resolves an agent id string to the account's agent row, or throws. */
 async function getOwnedAgent(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -661,9 +731,8 @@ async function getOwnedAgent(
   return agent;
 }
 
-/** Like getOwned, treating a malformed id string as missing. */
 async function getOwnedByString(
-  ctx: MutationCtx,
+  ctx: Ctx,
   accountId: Id<"accounts">,
   cronId: string,
 ): Promise<Doc<"crons"> | null> {
@@ -672,17 +741,49 @@ async function getOwnedByString(
   return normalized ? await getOwned(ctx, accountId, normalized) : null;
 }
 
-/** Whether a fire scheduled at `firedAt` is at least as late as the one the cron shows. */
 function isLatestFire(cron: Doc<"crons">, firedAt: number): boolean {
   return cron.lastInvokedAt === undefined || firedAt >= cron.lastInvokedAt;
 }
 
-/**
- * Records a run's outcome once, for `completeRun` and `failRun`, and on the
- * cron while it is still the cron's last run. A run already settled, or
- * drained with its one-time cron, is left alone; a run of another account or
- * cron is refused.
- */
+// A reschedule to a new at(...) must name a future time, so a time before the run is the one
+// that fired it; pausing keeps that time.
+function isSpentOneShot(cron: Doc<"crons">, run: Doc<"cronRuns">): boolean {
+  if (!run.oneShot) return false;
+  const schedule = translateScheduleExpression(
+    cron.scheduleExpression,
+    cron.timezone,
+  );
+
+  return schedule.kind === "at" && schedule.timestamp <= run.startedAt;
+}
+
+async function runWaitingOn(
+  ctx: QueryCtx,
+  conversationKey: string,
+  answered: string[],
+): Promise<Doc<"cronRuns"> | null> {
+  for (const promptId of answered) {
+    const wait = await ctx.db
+      .query("cronRunWaits")
+      .withIndex("by_conversationKey_and_promptId", (q) =>
+        q.eq("conversationKey", conversationKey).eq("promptId", promptId),
+      )
+      .first();
+    const run = wait ? await ctx.db.get(wait.runId) : null;
+    if (run?.status === "started") return run;
+  }
+  // Rows from before `waitingOn` keep the old rule. Delete 7 days after release: swept by then.
+  const newest = await ctx.db
+    .query("cronRuns")
+    .withIndex("by_ingressConversationKey_and_status", (q) =>
+      q.eq("ingressConversationKey", conversationKey).eq("status", "started"),
+    )
+    .order("desc")
+    .first();
+
+  return newest?.waitingOn === undefined ? newest : null;
+}
+
 async function settleRun(
   ctx: MutationCtx,
   ids: {
@@ -690,9 +791,7 @@ async function settleRun(
     cronId: Id<"crons">;
     runId: Id<"cronRuns">;
   },
-  outcome:
-    | { status: "completed"; result: unknown }
-    | { status: "failed"; error: string },
+  outcome: RunOutcome,
 ): Promise<null> {
   const run = await ctx.db.get(ids.runId);
   if (!run) return null;
@@ -703,6 +802,7 @@ async function settleRun(
   }
   if (run.status !== "started") return null;
   const now = Date.now();
+  await deleteRunWaits(ctx, ids.runId);
   await ctx.db.patch(ids.runId, { ...outcome, completedAt: now });
   const cron = await ctx.db.get(ids.cronId);
   if (cron?.lastRunId === ids.runId) {
@@ -711,6 +811,9 @@ async function settleRun(
       lastError: outcome.status === "failed" ? outcome.error : undefined,
       updatedAt: now,
     });
+  }
+  if (cron && isSpentOneShot(cron, run)) {
+    await deleteCron(ctx, cron);
   }
 
   return null;

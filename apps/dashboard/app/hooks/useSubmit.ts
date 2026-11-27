@@ -1,14 +1,10 @@
 import { toErrorMessage } from "@/app/lib/errors";
 import { useState } from "react";
 
-/**
- * One in-flight write at a time, for a dialog's submit or a row's action:
- * `pending` disables the button while it runs, `error` is the rejection in
- * words, and `run` resolves true when the write went through.
- */
 export function useSubmit(): {
   pending: boolean;
   error: string | null;
+  reset: () => void;
   run: (write: () => Promise<unknown>) => Promise<boolean>;
 } {
   const [pending, setPending] = useState(false);
@@ -17,6 +13,7 @@ export function useSubmit(): {
   return {
     pending: pending,
     error: error,
+    reset: (): void => setError(null),
     run: async (write) => {
       setPending(true);
       setError(null);

@@ -1,10 +1,4 @@
-/**
- * Workspace config CRUD scoped to an account. Mirrors sandboxConfigs.ts, but the
- * config object holds no secrets and is stored in plaintext. The doc _id is the
- * public workspaceId; every mutation revalidates ownership against the
- * caller-supplied accountId. Also mints an R2 workspace's scoped credentials,
- * since only Convex can decrypt the env vars its keys reference.
- */
+// Like sandboxConfigs.ts, but a workspace config holds no secrets, so it is stored in plaintext.
 
 import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
@@ -41,10 +35,7 @@ const storageRuleViolation = v.object({
   reason: v.string(),
 });
 
-/**
- * Look up a workspace config by the public string id. The validator accepts
- * `v.string()` (not `v.id`) so unknown ids resolve to `null` instead of throwing.
- */
+// v.string(), not v.id, so an unknown id resolves to null instead of throwing.
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -96,10 +87,7 @@ export const listPage = internalQuery({
   },
 });
 
-/**
- * One page of stored workspaces that today's config rules refuse. Rows written
- * before a rule existed are never rewritten, they fail to resolve.
- */
+// Stored rows are never rewritten when a rule lands; a row it refuses fails to resolve.
 export const listStorageRuleViolations = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
   returns: v.object({
@@ -241,12 +229,8 @@ export const remove = internalMutation({
   },
 });
 
-/**
- * Scoped one-hour credentials for an R2 workspace, for core's sandbox mounts
- * and harness reads and for the Convex file actions. `prefix` may narrow the
- * workspace prefix (a partitioned folder), never leave it. A mutation, not a
- * query: a cached query result would hand back expired credentials.
- */
+// Minted here because only Convex can decrypt the env vars the R2 keys reference.
+// A mutation, not a query: a cached query result would hand back expired credentials.
 export const r2Credentials = internalMutation({
   args: {
     accountId: v.string(),

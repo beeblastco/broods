@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A sandbox row's verified size: `setSpecs` patches in a size a provider reports
- * after the row exists, and `upsert` keeps a verified size across a reconnect
- * that knows none.
- */
 
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
@@ -26,10 +21,13 @@ afterEach(() => {
 });
 
 test("setSpecs bills the time so far at the old size, then only patches the same live machine", async () => {
-  vi.useFakeTimers({ now: NOW });
+  // Seed before NOW: each commit advances the clock, so the machine would start late.
+  vi.useFakeTimers({ now: NOW - 1000 });
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
   const otherId = await seedAccount(t, "other");
+  await reserve(t, accountId, "vm-1");
+  vi.setSystemTime(NOW);
   await upsert(t, accountId, "vm-1", { specs: CONFIG_SPECS });
 
   vi.setSystemTime(NOW + 10 * 60 * 1000);
@@ -80,6 +78,7 @@ test("a reconnect without a size keeps the verified one, and a new machine start
   vi.useFakeTimers({ now: NOW });
   const t = specsTest();
   const accountId = await seedAccount(t, "beeblast");
+  await reserve(t, accountId, "vm-1");
   await upsert(t, accountId, "vm-1", {
     specs: REPORTED,
     specsVerified: true,
@@ -88,13 +87,32 @@ test("a reconnect without a size keeps the verified one, and a new machine start
   await upsert(t, accountId, "vm-1", { specs: CONFIG_SPECS });
   expect(await row(t)).toMatchObject({ specs: REPORTED, specsVerified: true });
 
+  await reserve(t, accountId, "vm-2");
   await upsert(t, accountId, "vm-2", { specs: CONFIG_SPECS });
   const replaced = await row(t);
   expect(replaced?.specs).toEqual(CONFIG_SPECS);
   expect(replaced?.specsVerified).toBeUndefined();
 });
 
-// The one sandbox row these tests write.
+async function reserve(
+  t: T,
+  accountId: Id<"accounts">,
+  externalId: string,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    for (const held of await ctx.db.query("sandboxReservations").collect()) {
+      await ctx.db.delete(held._id);
+    }
+    await ctx.db.insert("sandboxReservations", {
+      accountId: accountId,
+      provider: "e2b",
+      reservationKey: "key-1",
+      externalId: externalId,
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+  });
+}
+
 async function row(t: T): Promise<Doc<"sandboxInstances"> | null> {
   return await t.run(async (ctx) => ctx.db.query("sandboxInstances").unique());
 }
@@ -120,7 +138,6 @@ async function seedAccount(t: T, name: string): Promise<Id<"accounts">> {
   });
 }
 
-// An e2b row under one reservation key, idling up to an hour.
 async function upsert(
   t: T,
   accountId: Id<"accounts">,

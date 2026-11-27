@@ -1,0 +1,66 @@
+kind	name	reason
+external	^new ClientError$	The shared ConvexError constructor preserves the supplied message and invalid_request data; callers determine when and what to throw.
+external	^request\.end$	Node HTTP accepts the supplied body and ends the request; the twin verifies body selection and arguments.
+external	^abortSignal\.addEventListener$	The platform EventTarget records registration; the twin checks the abort listener and once option.
+external	^child\.kill$	Node forwards the selected signal; the twin verifies SIGUSR2 and preserves the catch behavior.
+opaque	ChildProcess	Node process identity is only used as a receiver for verified signal calls.
+opaque	ClientRequest	Node HTTP request identity is only used as a receiver for verified end calls.
+opaque	ZodMiniArray	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniBoolean	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniEnum	Zod issue metadata is not inspected by the message formatter; issue code and values determine its answer.
+opaque	ZodMiniLiteral	Zod issue metadata is not inspected by the message formatter; issue code and values determine its answer.
+opaque	ZodMiniNumber	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniObject	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniRecord	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniString	Zod issue metadata is not inspected by the message formatter; issue code and expected type determine its answer.
+opaque	ZodMiniUnion	Zod issue metadata is not inspected by the message formatter; issue code determines its answer.
+opaque	$ZodCheckMinLength	Zod issue metadata is not inspected by the message formatter; issue code determines its answer.
+external	^Uint8Array\.fromBase64$	The platform decoder supplies standard base64url decoding; the twin verifies both the input and alphabet option.
+external	^crypto\.randomUUID$	Platform randomness is an explicit input; the twin determines when a new identifier is required.
+external	^new ProtocolError$	The MCP library constructs the specified protocol error; the twin verifies its code and message.
+external	^response \.json$	The Response parser supplies its body or parse failure; the twin computes the message and fallback.
+external	^requireEnv$	The shared environment reader supplies the required named setting; the twin verifies the bucket variable name.
+opaque	AccountCipher	The recordings expose accountId and currentKeyId, sufficient for the selected key and AAD functions; cryptographic internals are unused.
+external	^this\.child\.kill$	Node process signaling accepts the selected SIGKILL; the twin verifies the signal and catches failures.
+external	^optionalEnv$	The shared environment accessor supplies an operator setting; the twin selects the variable and computes its fallback.
+external	^positiveIntegerEnv$	The shared environment accessor supplies a validated positive integer; the twin verifies the variable and default, then computes limits.
+external	^crypto\.subtle\.digest$	WebCrypto supplies SHA-256 over the checked UTF-8 bytes; the twin checks algorithm and message rather than trusting a recorded digest directly.
+external	^hasTaskClientCapabilityV2$	The MCP SDK checks advertised task support; the twin supplies the request envelope and implements the refusal branch.
+external	^new MissingRequiredClientCapabilityError$	The MCP SDK builds its capability error from the checked required capability; the twin decides when it is thrown.
+external	^caller\.replay$	The authenticated replay transport supplies the response; callers determine method, path, and status handling.
+external	^response\.json$	The Response parser supplies decoded JSON; callers decide when a successful response body may be returned.
+external	^HARNESS_TYPE\.safeParse$	Zod validates the harness shape; the twin checks the input and uses the validated type only after success.
+opaque	IsolateWorker	The worker kill twin uses process signaling effects and returns no value; other worker state is not read.
+external	^createHmac$	Node crypto creates the HMAC; the twin verifies the algorithm and the key it is given.
+external	^createHmac\("sha256", key\) \.update$	Node crypto absorbs the checked message; the twin verifies exactly which path segments are signed.
+external	^createHmac\("sha256", key\) \.update\(parts\.slice\(0, 4\)\.join\("/"\)\) \.digest$	Node crypto supplies the HMAC digest of the checked message; the twin truncates and compares it itself.
+external	^timingSafeEqual$	Node compares two checked equal-length buffers byte for byte; the twin computes both inputs.
+external	^gunzipSync$	Node zlib decompresses the checked payload; the twin decodes and parses the bytes itself.
+external	^new Date$	The clock is an explicit input; the twin formats the instant itself.
+external	^emit$	The selected logger accepts the checked message and fields and returns nothing the code reads.
+external	^jsonSchema$	The AI SDK wraps the checked schema; the twin only places the wrapper in the tool definition.
+external	^tool$	The AI SDK builds the tool from the checked definition; the twin stores what it returns under the computed name.
+external	^resolver$	DNS lookup is an outside input; the twin checks the query and applies the deny policy to every answer.
+external	^ElicitResultV2Schema\.safeParse$	The MCP schema validates the checked answer; the twin computes each approval from its data.
+opaque	Hmac	Node HMAC state is only chained between verified update and digest calls.
+external	^crypto\.getRandomValues$	Platform randomness is an explicit input; the twin checks the requested length of the zeroed buffer.
+external	^WEB_CRYPTO\.seal$	WebCrypto AES-GCM seals the checked key, IV, AAD and plaintext; the twin computes those inputs.
+external	^primitive\.open$	The AEAD primitive authenticates and opens the checked inputs; failures propagate unchanged.
+external	^this\.primitive\.seal$	The AEAD primitive seals the checked inputs; the twin splits the tag from the output itself.
+external	^this\.primitive\.open$	The AEAD primitive authenticates and opens the checked inputs; failures propagate unchanged.
+external	^this\.primitive\.hmac$	The MAC primitive signs the checked key and message; the twin returns its hex form through the checked encoder.
+external	^fetchToken$	The HTTP transport supplies the token response; the twin checks the request and handles every status.
+external	^response\.text$	The Response reader supplies the body text; the twin parses and validates it.
+external	^Date\.now$	The clock is an explicit input; the twin computes deadlines and expiries from it.
+external	^toErrorMessage$	The shared formatter renders the caught error; the twin composes the wrapped message around it.
+external	^runtime\.mutate$	The Convex mutation performs the checked stop request; the twin decides when and with which keys.
+external	^started\.json$	The Response parser supplies the accepted body after the twin has checked the status.
+external	^setTimeout$	The platform timer is armed with the checked delay; its firing is an input.
+external	^clearTimeout$	The platform clears the checked timer and returns nothing the code reads.
+opaque	Timeout	Node timer identity is only handed back to the checked clearTimeout call.
+external	^options\.onRetry$	The caller-supplied callback is told the checked wait and its return value is unused.
+external	^randomUUID$	Platform randomness is an explicit input used only as the checked JSON-RPC id.
+external	^executor \.postReserved$	The sandbox transport carries the checked request; the twin handles its answer and failure.
+external	^isJSONRPCErrorResponse$	The MCP SDK classifies the checked reply; the twin reports its error message.
+external	^isJSONRPCResultResponse$	The MCP SDK classifies the checked reply; the twin returns its result only after success.
+external	^getSandboxReservationRecord$	Storage supplies the reservation row for the checked key; the twin decides liveness from it.

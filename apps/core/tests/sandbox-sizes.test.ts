@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { configuredSandboxSpecs } from "../src/harness/sandbox/utils.ts";
 import {
   resolveSandboxSpecs,
-  workdirSizeResources,
   SANDBOX_SIZES,
 } from "../src/shared/sandbox-sizes.ts";
 
@@ -53,10 +52,6 @@ describe("resolveSandboxSpecs", () => {
     });
   });
 
-  it("falls back to the xsmall default", () => {
-    expect(resolveSandboxSpecs({})).toEqual(SANDBOX_SIZES.xsmall);
-  });
-
   it("reports a lambda MicroVM's real size whatever the config asks for", () => {
     const real = { vcpu: 4, memoryMb: 8192, storageGb: 8 };
     expect(resolveSandboxSpecs({ provider: "lambda" })).toEqual(real);
@@ -67,6 +62,15 @@ describe("resolveSandboxSpecs", () => {
         options: { cpu: 1 },
       }),
     ).toEqual(real);
+  });
+
+  it("reports the one size a V8 Worker command runs in, whatever the config says", () => {
+    const fixed = { vcpu: 1, memoryMb: 128, storageGb: 0 };
+
+    expect(resolveSandboxSpecs({ provider: "worker" })).toEqual(fixed);
+    expect(resolveSandboxSpecs({ provider: "worker", size: "large" })).toEqual(
+      fixed,
+    );
   });
 
   it("reports the Cloudflare instance type a size starts", () => {
@@ -94,6 +98,9 @@ describe("resolveSandboxSpecs", () => {
       memoryMb: 512,
       storageGb: 8,
     });
+    expect(resolveSandboxSpecs({ provider: "sandbox", size: "large" })).toEqual(
+      { vcpu: 4, memoryMb: 8192, storageGb: 32 },
+    );
     expect(resolveSandboxSpecs({ provider: "sandbox" })).toEqual(
       SANDBOX_SIZES.xsmall,
     );
@@ -109,21 +116,5 @@ describe("resolveSandboxSpecs", () => {
     expect(
       resolveSandboxSpecs({ provider: "sandbox", options: { cpu: 0 } }),
     ).toEqual(SANDBOX_SIZES.xsmall);
-  });
-});
-
-describe("workdirSizeResources", () => {
-  it("clamps vcpu up to workdir's allowed set", () => {
-    // tiny is 0.25 vCPU; workdir's smallest choice is 0.5.
-    expect(workdirSizeResources("tiny")).toEqual({
-      cpu: 0.5,
-      memoryMb: 512,
-      diskGb: 8,
-    });
-    expect(workdirSizeResources("large")).toEqual({
-      cpu: 4,
-      memoryMb: 8192,
-      diskGb: 32,
-    });
   });
 });

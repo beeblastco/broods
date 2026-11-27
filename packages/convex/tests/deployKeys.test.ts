@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** A project key is minted with its `bpdk_` prefix and resolves to its stage by hash. */
 
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";

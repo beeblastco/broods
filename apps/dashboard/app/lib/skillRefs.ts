@@ -1,4 +1,3 @@
-/** Returns true when an allowed skill entry names the local path directly or by trailing segment. */
 export function matchesSkillRef(
   allowedRef: string,
   skillPath: string,

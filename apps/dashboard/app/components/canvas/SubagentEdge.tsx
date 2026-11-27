@@ -16,11 +16,7 @@ import { useState } from "react";
 
 const ARROW_ID_PREFIX = "subagent-arrow";
 
-/**
- * Edge for agent→agent subagent relationships. Renders via side handles in a distinct
- * violet, with a single arrowhead pointing at the callee (source can call target). Like
- * every other edge, a code-managed or undeletable link shows a lock, never a trash.
- */
+/** Agent→agent sub-agent edge; the arrowhead points at the callee. */
 export function SubagentEdge({
   id,
   source,
@@ -41,7 +37,6 @@ export function SubagentEdge({
   const locked = useCodeManagedEdge(id, source, target) || deletable === false;
   const deleteHover = hovered && !locked;
 
-  // Fan parallel subagent edges apart so their trunks don't stack (horizontal flow → offset Y).
   const [sourceFan, targetFan] = useEdgeFanOffset(
     id,
     source,
@@ -51,8 +46,7 @@ export function SubagentEdge({
     "subagent",
   );
 
-  // Bezier (not orthogonal) so dense agent↔agent webs spread as smooth curves between fanned
-  // endpoints, with no shared-center jog to collide the way blocky routing does.
+  // Bezier, not orthogonal: fanned agent webs curve apart with no shared-centre jog to collide.
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX: sourceX,
     sourceY: sourceY + sourceFan,
@@ -66,7 +60,7 @@ export function SubagentEdge({
 
   return (
     <>
-      {/* Inline marker def so each subagent edge owns its arrowhead in its own color */}
+      {/* Per-edge marker, so the arrowhead turns red with its own line on delete hover. */}
       <defs>
         <marker
           id={arrowId}
@@ -90,10 +84,8 @@ export function SubagentEdge({
         <BaseEdge
           id={id}
           path={edgePath}
-          // Keep the violet stroke but honor focus-mode dimming: pull only `opacity` from the
-          // incoming style (which also carries the gray default stroke we must not apply).
-          // xyflow's unlayered edge-path rule outranks utilities, so the stroke is important
-          // and the width goes through xyflow's own variable.
+          // Only `opacity` from `style`, which also carries the gray stroke. xyflow's unlayered
+          // edge rule outranks utilities, hence the `!` and the width through its variable.
           className={cn(
             "opacity-(--edge-opacity)",
             deleteHover

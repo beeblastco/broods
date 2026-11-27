@@ -1,11 +1,3 @@
-/**
- * Core storage backed by Convex. All calls go through ConvexHttpClient with a
- * deploy-key admin auth header.
- *
- * Hosted account lifecycle normally runs through orgLifecycle. The admin-only
- * core POST /v1/accounts path remains supported for standalone accounts.
- */
-
 import type { ModelMessage } from "ai";
 import type { AccountHookRecord } from "../domain/account-hooks.ts";
 import type {
@@ -37,25 +29,12 @@ import type {
   WorkspaceConfig,
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
-import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
-import type {
-  AgentDeploymentScope,
-  Storage,
-  StoredConnection,
-} from "../storage.ts";
+import type { Storage } from "../storage.ts";
 import { budgets } from "./budgets.ts";
 import { decryptAccountBlob } from "./account-keys.ts";
-import { getConvexClient } from "./client.ts";
+import { adminMutation, adminQuery, internal } from "./client.ts";
 import { auditLedger } from "./audit-ledger.ts";
 import { taskUsage } from "./usage.ts";
-
-// ConvexHttpClient's typed `query`/`mutation` only accept public function
-// refs; the backend package exposes internalQuery / internalMutation, so we
-// cast at the boundary. Deploy-key auth permits calling these at runtime.
-// require() (not import) keeps the backend's generated types out of this
-// package's typecheck program, since its own tsconfig checks those sources,
-// while Bun still resolves and bundles the module statically.
-const internal: any = require("@broods/convex/_generated/api").internal;
 
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 const DELETE_CONCURRENCY = 20;
@@ -93,6 +72,7 @@ interface ConvexAgentDoc {
   encryptedConfig?: string;
   encryptionIv?: string;
   encryptionTag?: string;
+  requireUserToken?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -116,6 +96,7 @@ async function agentFromConvex(
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config: config,
+    ...(doc.requireUserToken === true ? { requireUserToken: true } : {}),
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -165,57 +146,57 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
 
 const accounts: Storage["accounts"] = {
   getById: async function (accountId) {
-    const doc = await getConvexClient().query(
-      internal.account.accounts.getById,
-      {
-        accountId: accountId,
-      },
-    );
+    const doc = await adminQuery(internal.account.accounts.getById, {
+      accountId: accountId,
+    });
 
-    return accountFromConvex(doc as ConvexAccountDoc | null);
+    return accountFromConvex(doc);
   },
   getBySecretHash: async function (secretHash) {
-    const doc = await getConvexClient().query(
-      internal.account.accounts.getBySecretHash,
-      {
-        secretHash: secretHash,
-      },
-    );
+    const doc = await adminQuery(internal.runtimeLookups.accountBySecretHash, {
+      secretHash: secretHash,
+    });
 
-    return accountFromConvex(doc as ConvexAccountDoc | null);
+    return accountFromConvex(doc);
+  },
+  getForUser: async function (authId, org) {
+    const login = await adminQuery(internal.cli.auth.resolveUserLogin, {
+      authId: authId,
+      ...(org ? { org: org } : {}),
+    });
+    if ("refused" in login) return login;
+    const account = accountFromConvex(login.account);
+
+    return account
+      ? { account: account }
+      : { refused: "The organization has no active API account" };
   },
   create: async function (input) {
     const normalized = normalizeCreateAccountInput(input);
     const secret = createAccountSecret();
-    const doc = (await getConvexClient().mutation(
-      internal.account.accounts.create,
-      {
-        orgId: `admin:${createAccountId()}`,
-        username: normalized.username,
-        description: normalized.description,
-        secretHash: hashAccountSecret(secret),
-        status: "active",
-      },
-    )) as ConvexAccountDoc;
+    const doc = await adminMutation(internal.account.accounts.create, {
+      orgId: `admin:${createAccountId()}`,
+      username: normalized.username,
+      description: normalized.description,
+      secretHash: hashAccountSecret(secret),
+      status: "active",
+    });
     const account = accountFromConvex(doc);
     if (!account) throw new Error("Failed to fetch created account");
 
     return { account: account, secret: secret };
   },
   disable: async function (accountId) {
-    const doc = await getConvexClient().mutation(
-      internal.account.accounts.update,
-      {
-        accountId: accountId,
-        status: "disabled",
-      },
-    );
+    const doc = await adminMutation(internal.account.accounts.update, {
+      accountId: accountId,
+      status: "disabled",
+    });
 
-    return accountFromConvex(doc as ConvexAccountDoc | null);
+    return accountFromConvex(doc);
   },
   remove: async function (accountId) {
     for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {
-      const complete = await getConvexClient().mutation(
+      const complete = await adminMutation(
         internal.account.accounts.removeBatch,
         {
           accountId: accountId,
@@ -231,38 +212,43 @@ const accounts: Storage["accounts"] = {
 
 const agents: Storage["agents"] = {
   getById: async function (accountId, agentId) {
-    const doc = await getConvexClient().query(internal.agent.agents.getById, {
+    const doc = await adminQuery(internal.runtimeLookups.agentById, {
       accountId: accountId,
       agentId: agentId,
     });
 
-    return await agentFromConvex(doc as ConvexAgentDoc | null);
+    return await agentFromConvex(doc);
+  },
+  listForAccount: async function (accountId) {
+    const docs = await adminQuery(internal.agent.agents.list, {
+      accountId: accountId,
+    });
+
+    return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
+      (record) => record !== null,
+    );
   },
   listForEndpoint: async function (accountId, endpointId) {
-    const docs = (await getConvexClient().query(
-      internal.agent.agents.listForEndpoint,
-      {
-        accountId: accountId,
-        endpointId: endpointId,
-      },
-    )) as ConvexAgentDoc[];
+    const docs = await adminQuery(internal.agent.agents.listForEndpoint, {
+      accountId: accountId,
+      endpointId: endpointId,
+    });
 
     return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
       (record) => record !== null,
     );
   },
   listForProduction: async function (accountId) {
-    const docs = (await getConvexClient().query(
-      internal.agent.agents.listForProduction,
-      { accountId: accountId },
-    )) as ConvexAgentDoc[];
+    const docs = await adminQuery(internal.agent.agents.listForProduction, {
+      accountId: accountId,
+    });
 
     return (await Promise.all(docs.map((doc) => agentFromConvex(doc)))).filter(
       (record) => record !== null,
     );
   },
   listForStage: async function (accountId, projectId, stageId) {
-    const docs: ConvexAgentDoc[] = await getConvexClient().query(
+    const docs: ConvexAgentDoc[] = await adminQuery(
       internal.agent.agents.listForStage,
       { accountId: accountId, projectId: projectId, stageId: stageId },
     );
@@ -271,12 +257,27 @@ const agents: Storage["agents"] = {
       (record) => record !== null,
     );
   },
+  scopes: async function (agents) {
+    const [first] = agents;
+    if (!first) return new Map();
+    const scopes = await adminQuery(internal.agent.agents.scopes, {
+      accountId: first.accountId,
+      agentIds: agents.map(({ agentId }) => agentId),
+    });
+
+    return new Map(
+      scopes.map(({ agentId, project, stage }) => [
+        agentId,
+        { project: project, stage: stage },
+      ]),
+    );
+  },
   removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.agent.agents.list, {
+    const docs = await adminQuery(internal.agent.agents.list, {
       accountId: accountId,
-    })) as ConvexAgentDoc[];
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.agent.agents.remove, {
+      adminMutation(internal.agent.agents.remove, {
         accountId: accountId,
         agentId: doc._id,
       }),
@@ -288,80 +289,70 @@ const agents: Storage["agents"] = {
 
 const agentDeployments: Storage["agentDeployments"] = {
   getByApiKeyHash: async function (apiKeyHash) {
-    const doc = (await getConvexClient().query(
-      internal.agent.deployments.getByApiKeyHash,
+    const doc = await adminQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
       {
         apiKeyHash: apiKeyHash,
       },
-    )) as (AgentDeploymentScope & { account: ConvexAccountDoc }) | null;
+    );
     const account = accountFromConvex(doc?.account ?? null);
 
     return doc && account ? { ...doc, account: account } : null;
   },
   touchLastUsed: async function (apiKeyHash, usedAt) {
-    await getConvexClient().mutation(internal.agent.deployments.touchLastUsed, {
+    await adminMutation(internal.agent.deployments.touchLastUsed, {
       apiKeyHash: apiKeyHash,
       usedAt: usedAt,
     });
   },
   getByAgentId: async function (accountId, agentId) {
-    const doc = (await getConvexClient().query(
-      internal.agent.deployments.getByAgentId,
-      {
-        accountId: accountId,
-        agentId: agentId,
-      },
-    )) as AgentDeploymentScope | null;
+    const doc = await adminQuery(internal.agent.deployments.getByAgentId, {
+      accountId: accountId,
+      agentId: agentId,
+    });
 
     return doc;
   },
 };
 
 const crons: Storage["crons"] = {
-  // agent/crons.create inserts the row and registers its schedule in one
-  // transaction, so neither can orphan the other.
   create: async function (accountId, input) {
-    return (await getConvexClient().mutation(internal.agent.crons.create, {
+    return await adminMutation(internal.agent.crons.create, {
       accountId: accountId,
       input: input,
-    })) as CronRecord;
+    });
   },
   getById: async function (accountId, cronId) {
-    const doc = await getConvexClient().query(internal.agent.crons.getById, {
+    const doc = await adminQuery(internal.agent.crons.getById, {
       accountId: accountId,
       cronId: cronId,
     });
 
-    return cronFromConvex(doc as ConvexCronDoc | null);
+    return cronFromConvex(doc);
   },
   list: async function (accountId, agentId) {
-    const docs = (await getConvexClient().query(internal.agent.crons.list, {
+    const docs = await adminQuery(internal.agent.crons.list, {
       accountId: accountId,
       ...(agentId ? { agentId: agentId } : {}),
-    })) as ConvexCronDoc[];
+    });
 
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
-  // agent/crons.remove drops the registered schedule and the row together, so
-  // a schedule can never outlive the cron row that names it.
   remove: async function (accountId, cronId) {
-    return (await getConvexClient().mutation(internal.agent.crons.remove, {
+    return await adminMutation(internal.agent.crons.remove, {
       accountId: accountId,
       cronId: cronId,
-    })) as boolean;
+    });
   },
-  // agent/crons.update patches the row and replaces the registered schedule
-  // in one transaction, so a schedule the scheduler rejects never reaches the
-  // stored job.
   update: async function (accountId, cronId, patch) {
-    return (await getConvexClient().mutation(internal.agent.crons.update, {
+    return await adminMutation(internal.agent.crons.update, {
       accountId: accountId,
       cronId: cronId,
       patch: patch,
-    })) as CronRecord | null;
+    });
   },
   markFailed: async function (accountId, cronId, error, firedAt) {
-    await getConvexClient().mutation(internal.agent.crons.recordFailedFire, {
+    await adminMutation(internal.agent.crons.recordFailedFire, {
       accountId: accountId,
       cronId: cronId,
       error: error,
@@ -369,16 +360,15 @@ const crons: Storage["crons"] = {
     });
   },
   createRun: async function (input, firedAt) {
-    const runId = (await getConvexClient().mutation(
-      internal.agent.crons.createRun,
-      {
-        accountId: input.accountId,
-        cronId: input.cronId,
-        eventId: input.eventId,
-        conversationKey: input.conversationKey,
-        firedAt: firedAt.getTime(),
-      },
-    )) as string;
+    const runId = await adminMutation(internal.agent.crons.createRun, {
+      accountId: input.accountId,
+      cronId: input.cronId,
+      eventId: input.eventId,
+      ingressEventId: input.ingressEventId,
+      ingressConversationKey: input.ingressConversationKey,
+      conversationKey: input.conversationKey,
+      firedAt: firedAt.getTime(),
+    });
 
     return {
       ...input,
@@ -388,7 +378,7 @@ const crons: Storage["crons"] = {
     };
   },
   completeRun: async function (accountId, cronId, runId, result) {
-    await getConvexClient().mutation(internal.agent.crons.completeRun, {
+    await adminMutation(internal.agent.crons.completeRun, {
       accountId: accountId,
       cronId: cronId,
       runId: runId,
@@ -396,7 +386,7 @@ const crons: Storage["crons"] = {
     });
   },
   failRun: async function (accountId, cronId, runId, error) {
-    await getConvexClient().mutation(internal.agent.crons.failRun, {
+    await adminMutation(internal.agent.crons.failRun, {
       accountId: accountId,
       cronId: cronId,
       runId: runId,
@@ -474,9 +464,10 @@ function workspaceConfigFromConvex(
     workspaceId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    // An R2 mount mints its credentials per workspace, so it carries the row's identity.
+    // assumeRole sends the account's external id and R2 mints per workspace: both need the owner.
     config:
-      config.storage?.auth?.type === "r2"
+      config.storage?.auth?.type === "r2" ||
+      config.storage?.auth?.type === "assumeRole"
         ? {
             ...config,
             storage: {
@@ -526,46 +517,29 @@ function channelRecordFromConvex(
 
 const channelRecords: Storage["channelRecords"] = {
   getById: async function (accountId, channelRecordId) {
-    const doc = await getConvexClient().query(
-      internal.channel.records.getById,
-      {
-        accountId: accountId,
-        channelRecordId: channelRecordId,
-      },
-    );
+    const doc = await adminQuery(internal.channel.records.getById, {
+      accountId: accountId,
+      channelRecordId: channelRecordId,
+    });
 
-    return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
+    return channelRecordFromConvex(doc);
   },
   getByExternalId: async function (accountId, platform, externalId) {
-    const doc = await getConvexClient().query(
-      internal.channel.records.getByExternalId,
-      {
-        accountId: accountId,
-        platform: platform,
-        externalId: externalId,
-      },
-    );
+    const doc = await adminQuery(internal.channel.records.getByExternalId, {
+      accountId: accountId,
+      platform: platform,
+      externalId: externalId,
+    });
 
-    return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
-  },
-  list: async function (accountId) {
-    const docs = (await getConvexClient().query(
-      internal.channel.records.listActive,
-      {
-        accountId: accountId,
-      },
-    )) as ConvexChannelRecordDoc[];
-
-    return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
+    return channelRecordFromConvex(doc);
   },
   removeAllForAccount: async function (accountId) {
-    // The full list on purpose: soft-deleted tombstones must go with the
-    // account, and listActive never returns them.
-    const docs = (await getConvexClient().query(internal.channel.records.list, {
+    // Not listActive: soft-deleted tombstones go with the account too.
+    const docs = await adminQuery(internal.channel.records.list, {
       accountId: accountId,
-    })) as ConvexChannelRecordDoc[];
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.channel.records.remove, {
+      adminMutation(internal.channel.records.remove, {
         accountId: accountId,
         channelRecordId: doc._id,
       }),
@@ -577,31 +551,28 @@ const channelRecords: Storage["channelRecords"] = {
 
 const sandboxConfigs: Storage["sandboxConfigs"] = {
   getById: async function (accountId, sandboxId) {
-    const doc = await getConvexClient().query(
-      internal.sandbox.configs.getById,
-      {
-        accountId: accountId,
-        sandboxId: sandboxId,
-      },
-    );
+    const doc = await adminQuery(internal.runtimeLookups.sandboxConfigById, {
+      accountId: accountId,
+      sandboxId: sandboxId,
+    });
 
-    return await sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
+    return await sandboxConfigFromConvex(doc);
   },
   list: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
+    const docs = await adminQuery(internal.sandbox.configs.list, {
       accountId: accountId,
-    })) as ConvexSandboxConfigDoc[];
+    });
 
     return (
       await Promise.all(docs.map((doc) => sandboxConfigFromConvex(doc)))
     ).filter((record) => record !== null);
   },
   removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.sandbox.configs.list, {
+    const docs = await adminQuery(internal.sandbox.configs.list, {
       accountId: accountId,
-    })) as ConvexSandboxConfigDoc[];
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.sandbox.configs.remove, {
+      adminMutation(internal.sandbox.configs.remove, {
         accountId: accountId,
         sandboxId: doc._id,
       }),
@@ -611,43 +582,52 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
   },
 };
 
+// Never changes once minted, so it is fetched once per process.
+const storageExternalIds = new Map<string, string>();
+
 const workspaceConfigs: Storage["workspaceConfigs"] = {
   getById: async function (accountId, workspaceId) {
-    const doc = await getConvexClient().query(
-      internal.workspace.configs.getById,
-      {
-        accountId: accountId,
-        workspaceId: workspaceId,
-      },
-    );
+    const doc = await adminQuery(internal.workspace.configs.getById, {
+      accountId: accountId,
+      workspaceId: workspaceId,
+    });
 
-    return workspaceConfigFromConvex(doc as ConvexWorkspaceConfigDoc | null);
+    return workspaceConfigFromConvex(doc);
   },
   list: async function (accountId) {
-    const docs = (await getConvexClient().query(
-      internal.workspace.configs.list,
-      {
-        accountId: accountId,
-      },
-    )) as ConvexWorkspaceConfigDoc[];
+    const docs = await adminQuery(internal.workspace.configs.list, {
+      accountId: accountId,
+    });
 
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
+  storageExternalId: async function (accountId) {
+    const known = storageExternalIds.get(accountId);
+    if (known) return known;
+    // Off the mutation FIFO so a mount never waits behind other runs' writes.
+    const externalId = await adminMutation(
+      internal.account.storageTrust.externalId,
+      { accountId: accountId },
+      { skipQueue: true },
+    );
+    storageExternalIds.set(accountId, externalId);
+
+    return externalId;
+  },
   mintR2Credentials: async function (accountId, workspaceId, prefix) {
-    return await getConvexClient().mutation(
+    // Off the FIFO too: a mint writes nothing shared.
+    return await adminMutation(
       internal.workspace.configs.r2Credentials,
       { accountId: accountId, workspaceId: workspaceId, prefix: prefix },
+      { skipQueue: true },
     );
   },
   removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(
-      internal.workspace.configs.list,
-      {
-        accountId: accountId,
-      },
-    )) as ConvexWorkspaceConfigDoc[];
+    const docs = await adminQuery(internal.workspace.configs.list, {
+      accountId: accountId,
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.workspace.configs.remove, {
+      adminMutation(internal.workspace.configs.remove, {
         accountId: accountId,
         workspaceId: doc._id,
       }),
@@ -674,6 +654,7 @@ interface ConvexMcpDoc {
   sha256?: string;
   headers?: Record<string, string>;
   oauth?: McpOauth;
+  connection?: object;
   allowedTools?: string[];
   disabled?: boolean;
   status: "active" | "deleted";
@@ -706,6 +687,7 @@ function mcpFromConvex(doc: ConvexMcpDoc | null): McpRecord | null {
     ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
     ...(doc.headers !== undefined ? { headers: doc.headers } : {}),
     ...(doc.oauth !== undefined ? { oauth: doc.oauth } : {}),
+    ...(doc.connection ? { connected: true } : {}),
     ...(doc.allowedTools !== undefined
       ? { allowedTools: doc.allowedTools }
       : {}),
@@ -785,30 +767,30 @@ function accountHookFromConvex(
 
 const agentPolicies: Storage["agentPolicies"] = {
   getById: async function (accountId, policyId) {
-    const doc = await getConvexClient().query(internal.agent.policies.getById, {
+    const doc = await adminQuery(internal.runtimeLookups.policyById, {
       accountId: accountId,
       policyId: policyId,
     });
 
-    return agentPolicyFromConvex(doc as ConvexAgentPolicyDoc | null);
+    return agentPolicyFromConvex(doc);
   },
 };
 
 const mcp: Storage["mcp"] = {
   getById: async function (accountId, serverId) {
-    const doc = await getConvexClient().query(internal.account.mcp.getById, {
+    const doc = await adminQuery(internal.account.mcp.getById, {
       accountId: accountId,
       serverId: serverId,
     });
 
-    return mcpFromConvex(doc as ConvexMcpDoc | null);
+    return mcpFromConvex(doc);
   },
   removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.account.mcp.list, {
+    const docs = await adminQuery(internal.account.mcp.list, {
       accountId: accountId,
-    })) as ConvexMcpDoc[];
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.account.mcp.remove, {
+      adminMutation(internal.account.mcp.remove, {
         accountId: accountId,
         serverId: doc._id,
       }),
@@ -816,23 +798,52 @@ const mcp: Storage["mcp"] = {
 
     return docs.length;
   },
+  loadConnection: async function (accountId, serverId) {
+    return await adminQuery(internal.account.mcp.loadConnection, {
+      accountId: accountId,
+      serverId: serverId,
+    });
+  },
+  setConnection: async function (connection) {
+    return await adminMutation(internal.account.mcp.setConnection, connection);
+  },
+  saveRefreshedConnection: async function (
+    accountId,
+    serverId,
+    loaded,
+    refreshed,
+  ) {
+    return await adminMutation(internal.account.mcp.saveRefreshedConnection, {
+      accountId: accountId,
+      serverId: serverId,
+      loadedUpdatedAt: loaded.updatedAt,
+      ...refreshed,
+      ...(loaded.clientSecret ? { clientSecret: loaded.clientSecret } : {}),
+    });
+  },
+  disconnect: async function (accountId, serverId) {
+    return await adminMutation(internal.account.mcp.disconnect, {
+      accountId: accountId,
+      serverId: serverId,
+    });
+  },
 };
 
 const accountHooks: Storage["accountHooks"] = {
   getById: async function (accountId, hookId) {
-    const doc = await getConvexClient().query(internal.account.hooks.getById, {
+    const doc = await adminQuery(internal.account.hooks.getById, {
       accountId: accountId,
       hookId: hookId,
     });
 
-    return accountHookFromConvex(doc as ConvexAccountHookDoc | null);
+    return accountHookFromConvex(doc);
   },
   removeAllForAccount: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.account.hooks.list, {
+    const docs = await adminQuery(internal.account.hooks.list, {
       accountId: accountId,
-    })) as ConvexAccountHookDoc[];
+    });
     await removeInBatches(docs, (doc) =>
-      getConvexClient().mutation(internal.account.hooks.remove, {
+      adminMutation(internal.account.hooks.remove, {
         accountId: accountId,
         hookId: doc._id,
       }),
@@ -844,56 +855,63 @@ const accountHooks: Storage["accountHooks"] = {
 
 const machineConnections: Storage["machineConnections"] = {
   connected: async function (connection) {
-    await getConvexClient().mutation(
-      internal.sandbox.machines.connected,
-      connection,
-    );
+    await adminMutation(internal.sandbox.machines.connected, connection);
   },
   disconnected: async function (ref) {
-    await getConvexClient().mutation(
-      internal.sandbox.machines.disconnected,
-      ref,
-    );
+    await adminMutation(internal.sandbox.machines.disconnected, ref);
   },
   seen: async function (ref) {
-    await getConvexClient().mutation(internal.sandbox.machines.seen, ref);
+    await adminMutation(internal.sandbox.machines.seen, ref);
   },
 };
 
 const connections: Storage["connections"] = {
   load: async function (accountId, type) {
-    return (await getConvexClient().query(internal.account.connections.load, {
+    return await adminQuery(internal.account.connections.load, {
       accountId: accountId,
       type: type,
-    })) as StoredConnection | null;
+    });
   },
   saveRefreshed: async function (accountId, type, loaded, refreshed) {
-    return (await getConvexClient().mutation(
-      internal.account.connections.saveRefreshed,
-      {
-        accountId: accountId,
-        type: type,
-        loadedUpdatedAt: loaded.updatedAt,
-        ...refreshed,
-      },
-    )) as boolean;
+    return await adminMutation(internal.account.connections.saveRefreshed, {
+      accountId: accountId,
+      type: type,
+      loadedUpdatedAt: loaded.updatedAt,
+      ...refreshed,
+    });
   },
 };
 
 const roleSessions: Storage["roleSessions"] = {
   resolveByTokenHash: async function (tokenHash) {
-    return (await getConvexClient().query(
-      internal.account.roles.resolveSession,
-      {
-        tokenHash: tokenHash,
-      },
-    )) as RolePrincipal | null;
+    return await adminQuery(internal.runtimeLookups.roleSessionByTokenHash, {
+      tokenHash: tokenHash,
+    });
+  },
+};
+
+const accountApiKeys: Storage["accountApiKeys"] = {
+  resolveByKeyHash: async function (keyHash) {
+    const key = await adminQuery(internal.account.apiKeys.resolve, {
+      keyHash: keyHash,
+      now: Date.now(),
+    });
+    const account = accountFromConvex(key?.account ?? null);
+
+    return key && account ? { ...key, account: account } : null;
+  },
+  touchLastUsed: async function (keyId, usedAt) {
+    await adminMutation(internal.account.apiKeys.touchLastUsed, {
+      keyId: keyId,
+      usedAt: usedAt,
+    });
   },
 };
 
 export const convexStorage: Storage = {
   auditLedger: auditLedger,
   accounts: accounts,
+  accountApiKeys: accountApiKeys,
   agents: agents,
   budgets: budgets,
   agentDeployments: agentDeployments,

@@ -57,8 +57,6 @@ describe("agent config codec", () => {
   });
 
   test("drops the removed workspace branch on read, rejects it on write", () => {
-    // Rows saved before the branch was removed still carry the blob. Reading one
-    // has to work, or an old agent cannot be opened to be fixed.
     expect(
       toNestedAgentConfig({
         extraConfig: {
@@ -68,17 +66,12 @@ describe("agent config codec", () => {
       }),
     ).toEqual({ workspaces: [{ name: "notes", workspaceId: "ws_a" }] });
 
-    // Writing it is a mistake worth naming: nothing reads it, so a silent drop
-    // would look like it saved.
     expect(() =>
       fromNestedAgentConfig({ workspace: { namespace: "legacy" } }),
     ).toThrow("config.workspace is no longer supported");
   });
 
   test("an old row clears its dead workspace branch on the next save", () => {
-    // The path a stale agent actually takes: read drops the branch, so writing the
-    // read output back is what removes it from storage. Without this the codec only
-    // claims to be self-cleaning.
     const stale = {
       extraConfig: {
         workspace: { namespace: "legacy" },
@@ -89,7 +82,6 @@ describe("agent config codec", () => {
     const saved = fromNestedAgentConfig(toNestedAgentConfig(stale));
 
     expect(saved.extraConfig).not.toHaveProperty("workspace");
-    // Unrelated branches must survive the trip, or "self-cleaning" means data loss.
     expect(saved.extraConfig).toEqual({
       workspaces: [{ name: "notes", workspaceId: "ws_a" }],
       skills: { research: { enabled: true } },
@@ -119,22 +111,21 @@ describe("model reasoning codec", () => {
     });
   });
 
-  test("maps OpenAI effort to reasoningEffort", () => {
+  test("writes a portable effort to model.reasoning, as defineAgent does", () => {
     const model = applyModelReasoning({}, "openai", { effort: "high" });
 
-    expect(model).toEqual({
-      providerOptions: { openai: { reasoningEffort: "high" } },
-    });
+    expect(model).toEqual({ reasoning: "high" });
     expect(readModelReasoning(model)).toEqual({ effort: "high" });
+    expect(readModelReasoning({ reasoning: "low" })).toEqual({ effort: "low" });
+    expect(readModelReasoning({ reasoning: "none" })).toEqual({});
   });
 
-  test("maps OpenAI max effort to reasoningEffort", () => {
-    const model = applyModelReasoning({}, "openai", { effort: "max" });
+  test("keeps Anthropic max effort in providerOptions", () => {
+    const model = applyModelReasoning({}, "anthropic", { effort: "max" });
 
     expect(model).toEqual({
-      providerOptions: { openai: { reasoningEffort: "max" } },
+      providerOptions: { anthropic: { effort: "max" } },
     });
-    expect(readModelReasoning(model)).toEqual({ effort: "max" });
   });
 
   test("maps Google budget to thinkingConfig.thinkingBudget", () => {
@@ -172,9 +163,7 @@ describe("model reasoning codec", () => {
   });
 
   test("deep-merges reasoning providerOptions with sibling options from the flat column", () => {
-    // Reasoning lives in extraConfig.model.providerOptions; an unrelated
-    // Anthropic option lives in the flat providerOptions column. Both must
-    // survive the projection instead of one clobbering the other.
+    // Reasoning sits in extraConfig.model.providerOptions, cacheControl in the flat column.
     const nested = toNestedAgentConfig({
       providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
       extraConfig: {
@@ -199,6 +188,7 @@ describe("model reasoning codec", () => {
   test("toggling reasoning off clears every reasoning key", () => {
     const model = applyModelReasoning(
       {
+        reasoning: "low",
         providerOptions: {
           anthropic: { thinking: { type: "enabled", budgetTokens: 4096 } },
         },

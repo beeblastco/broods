@@ -1,5 +1,7 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import { requireActiveOrgAccount } from "../activeAccount";
+import { ClientError } from "../clientError";
 import {
   getOrgMembership,
   orgRoleMeets,
@@ -15,9 +17,7 @@ export async function getProjectForRole(
 ): Promise<Doc<"projects"> | null> {
   const project = await ctx.db.get(projectId);
   if (!project) return null;
-  // The org owner and the membership rows are the sole authority, so a
-  // removed or demoted project creator loses access the moment their role
-  // changes.
+  // Owner and memberships only: a removed or demoted project creator loses access at once.
   const org = await ctx.db.get(project.orgId);
   if (!org) return null;
   if (org.ownerAuthId === authId) return project;
@@ -30,4 +30,38 @@ export async function getProjectForRole(
   if (!orgRoleMeets(membership.role, requiredRole)) return null;
 
   return project;
+}
+
+// A suspended account stays readable but takes no change, as on the config HTTP API.
+export async function getProjectForWrite(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  projectId: Id<"projects">,
+  requiredRole?: OrgRole,
+): Promise<Doc<"projects"> | null> {
+  const project = await getProjectForRole(ctx, authId, projectId, requiredRole);
+  if (project) await requireActiveOrgAccount(ctx, project.orgId);
+
+  return project;
+}
+
+// Refuses as not found unless the caller can see the project, so no refusal confirms an id.
+export async function requireProjectForWrite(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  projectId: Id<"projects">,
+  requiredRole: OrgRole,
+  refusal: { forbidden: string; notFound: string },
+): Promise<Doc<"projects">> {
+  const project = await getProjectForWrite(
+    ctx,
+    authId,
+    projectId,
+    requiredRole,
+  );
+  if (project) return project;
+  if (await getProjectForRole(ctx, authId, projectId)) {
+    throw new ClientError(refusal.forbidden, "forbidden");
+  }
+  throw new ClientError(refusal.notFound, "not_found");
 }

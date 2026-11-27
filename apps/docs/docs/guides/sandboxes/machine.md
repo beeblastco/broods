@@ -37,7 +37,7 @@ broods machine my-mac
 broods machine my-mac --cwd ~/Projects/app
 ```
 
-It needs a `broods login` and a deployed stage, like `broods logs`. The daemon trades your login for a fifteen-minute stage ticket and mints a new one before each reconnect. The machine socket also accepts an account key or a [role session](../security.md), which needs `sandboxes:write` on the sandbox. It never accepts the runtime key, which is meant for frontends.
+It needs a `broods login` and a deployed stage, like `broods logs`. The daemon trades your login for a fifteen-minute stage ticket and hands core a fresh one on the open socket before it expires, so a long command is never cut off by the ticket; each reconnect mints a fresh one too. The machine socket also accepts an account key or a [role session](../security.md), which needs `sandboxes:write` on the sandbox. It never accepts the runtime key, which is meant for frontends.
 
 The daemon prints each command with its exit code and reconnects after a network drop. While it holds the record, any other daemon on any computer is refused, and the refusal names the host that holds it:
 
@@ -58,7 +58,8 @@ broods machine my-mac --computer
 
 - macOS only for now. The first start compiles a small helper with `swiftc` from the Xcode Command Line Tools into `~/.broods/desktop/`. Both permissions belong to the terminal that runs the daemon.
 - Coordinates are pixels in the screenshot, which is the display scaled to 1280 on its long edge. Retina displays need no setup. Every result names the frontmost app.
-- `screenshot`, `zoom`, `cursor_position` and `wait` never ask for approval. Every other action asks unless `permissionMode` is `bypass`.
+- `screenshot`, `zoom`, `cursor_position` and `wait` never ask for approval on their own. Every other action asks unless `permissionMode` is `bypass`.
+- Actions run in the order the model gave them. One that comes after an action waiting for approval in the same step never runs ahead of it: it is asked for in the same round, even a screenshot, and runs after that action, so it sees its result.
 - The tool tells the model that text on screen is data, not instructions, and to ask before CAPTCHAs, payments or security settings.
 - Ctrl+C on the daemon stops everything.
 
@@ -68,8 +69,8 @@ An agent drives every `machine` sandbox in its `sandboxes`, wherever it sits in 
 
 ```ts
 defineAgent({
-  name: "tracy",
-  sandboxes: [kienMac, phicksMac],
+  name: "support",
+  sandboxes: [laptopMac, officeMac],
 });
 ```
 
@@ -77,7 +78,7 @@ With one computer reachable, `computer` takes just the action. With several, it 
 
 ## Local MCP servers
 
-Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run on your computer for your agents. The file uses the `.mcp.json` shape that Claude Code, Cursor and Codex read, so existing setups work as they are.
+Start the daemon with `--mcp <file>` and the stdio MCP servers in that file run on your computer for your agents. The file uses the `.mcp.json` shape that Claude Code, Cursor and Codex read. Each server must speak MCP 2026-07-28: a server built on a 2025-era SDK is refused when the daemon first starts it, with an error naming the version. Starting a server also runs its command once more, briefly, to ask which version it speaks.
 
 ```json title=".mcp.json"
 {

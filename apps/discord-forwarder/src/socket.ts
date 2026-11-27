@@ -1,17 +1,3 @@
-/**
- * One Discord Gateway socket, keyed by bot token.
- *
- * One socket per token is the only configuration that delivers each event once:
- * Discord permits several connections with identical shard tuples and sends
- * every event to all of them. So this class owns the token for the life of the
- * process, and `supervisor.ts` guarantees exactly one instance per token.
- *
- * It reconnects itself, RESUMEs from the last sequence number when Discord still
- * accepts the session, and refuses to dial at all on a close code that cannot
- * start succeeding without a config change. Retrying those is what spends the
- * per-token IDENTIFY allowance towards a token reset.
- */
-
 import { backoffDelayMs } from "./backoff.ts";
 import { GATEWAY_INTENTS, type ForwarderConfig } from "./config.ts";
 import {
@@ -29,18 +15,13 @@ import {
 import type { IdentifyBudget } from "./identify-budget.ts";
 import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 
-// Discord sends HELLO within about a second of the socket opening. Well past
-// that and the connection is not going to start working on its own. See the
-// watchdog in `dial`.
 const CONNECT_DEADLINE_MS = 30_000;
 
-// Discord asks for a random 1-5s wait after INVALID_SESSION before the next
-// IDENTIFY or RESUME.
+// Discord asks for a random 1-5s wait after INVALID_SESSION before the next dial.
 const INVALID_SESSION_MIN_WAIT_MS = 1_000;
 const INVALID_SESSION_WAIT_SPREAD_MS = 4_000;
 
-// Sent when we close a socket ourselves and mean to RESUME. 1000 and 1001 tell
-// Discord the session is finished, which makes the next connect a fresh IDENTIFY.
+// Closing with 1000 or 1001 tells Discord the session is over, forcing a fresh IDENTIFY.
 const RESUMABLE_CLOSE_CODE = 4000;
 
 export type SocketState =
@@ -59,7 +40,6 @@ export interface GatewaySocketOptions {
 }
 
 export class GatewaySocket {
-  /** The bot's own Discord user id, learned from READY. Null before then. */
   botIdentity: string | null = null;
   state: SocketState = "stopped";
 
@@ -92,16 +72,10 @@ export class GatewaySocket {
     this.clearTimers();
     const socket = this.socket;
     this.socket = null;
-    // 1000, not 4000: this token is going away, so the session should end rather
-    // than be held open for a RESUME that will never come.
     socket?.close(1000, "forwarder shutting down");
   }
 
-  /**
-   * Closes `socket` and schedules the re-dial now instead of waiting for its
-   * close event, which a partitioned socket may never deliver. The late close
-   * event, if it comes, fails the `socket !== this.socket` guard.
-   */
+  /** Re-dials now rather than wait on a close event a partitioned socket may never deliver. */
   private abandon(socket: WebSocket, reason: string, minDelayMs = 0): void {
     socket.close(RESUMABLE_CLOSE_CODE, reason);
     this.handleClose(socket, RESUMABLE_CLOSE_CODE, reason, minDelayMs);
@@ -118,11 +92,7 @@ export class GatewaySocket {
 
   private dial(): void {
     if (this.state === "stopped") return;
-    // Rebuilt again even though the field already holds a rebuilt value: the
-    // RESUME frame carries the bot token, so the host is re-proved at the point
-    // of use rather than resting on every assignment staying clean. A session
-    // whose URL fails the rebuild is no session, so one nullable decides both
-    // whether to reserve an IDENTIFY and whether to send RESUME.
+    // Re-proved at the point of use, since RESUME carries the token; failing it means no session.
     const resumeUrl =
       this.sessionId && this.resumeUrl
         ? resumeGatewayUrl(this.resumeUrl)
@@ -135,9 +105,7 @@ export class GatewaySocket {
     );
     this.socket = socket;
 
-    // A throw inside a socket listener escapes as an uncaught exception and
-    // kills the process, which restarts and spends another IDENTIFY. One
-    // malformed frame is not worth that, so it is logged and dropped.
+    // Uncaught, a throw here restarts the process and spends an IDENTIFY on one bad frame.
     socket.addEventListener("message", (event: MessageEvent): void => {
       try {
         this.handlePayload(socket, Boolean(resumeUrl), String(event.data));
@@ -151,13 +119,10 @@ export class GatewaySocket {
     socket.addEventListener("close", (event: CloseEvent): void => {
       this.handleClose(socket, event.code, event.reason);
     });
-    // An error is always followed by a close, so let the close handler decide.
+    // An error is always followed by a close, so the close handler decides.
     socket.addEventListener("error", (): void => socket.close());
 
-    // Every other timer here is armed by an event that must arrive first, the
-    // heartbeat by HELLO and the reconnect by a close. A socket that opens and
-    // then goes silent holds no timer at all, so it would stay half-open for the
-    // life of the process.
+    // Every other timer waits on an event, so without this a silent socket stays half-open.
     this.connectTimer = setTimeout((): void => {
       if (this.socket !== socket) return;
       logWarn("Discord gateway never became ready, reconnecting", {
@@ -216,11 +181,9 @@ export class GatewaySocket {
       const hello = payload.d as GatewayHello;
       this.awaitingAck = false;
       const intervalMs = heartbeatIntervalMs(hello.heartbeat_interval);
-      // Discord sends one HELLO per connection, but a second would orphan the
-      // first timer past `clearTimers`, leaving it beating on a dead socket.
+      // A second HELLO would otherwise orphan the first timer past `clearTimers`.
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-      // Discord wants the first beat jittered across one interval so sockets
-      // that reconnected together do not beat in lockstep.
+      // Discord wants the first beat jittered across one interval.
       this.heartbeatTimer = setTimeout((): void => {
         // Armed before the beat, so a beat that abandons the socket clears it.
         this.heartbeatTimer = setInterval(
@@ -237,8 +200,6 @@ export class GatewaySocket {
       return;
     }
 
-    // Op 1 from the server asks for a beat now; the ack still has to arrive, so
-    // the zombie check stays armed.
     if (payload.op === GatewayOpcode.Heartbeat) {
       this.awaitingAck = true;
       this.send(socket, { op: GatewayOpcode.Heartbeat, d: this.sequence });
@@ -252,8 +213,6 @@ export class GatewaySocket {
       return;
     }
 
-    // 7 asks for a reconnect and keeps the session. 9 says the session is gone
-    // unless `d` is true, and asks for a 1-5s wait before the next dial.
     if (payload.op === GatewayOpcode.Reconnect) {
       this.abandon(socket, "gateway asked for a reconnect");
 
@@ -276,8 +235,6 @@ export class GatewaySocket {
       this.botIdentity = ready.user.id;
       this.resumeUrl = resumeGatewayUrl(ready.resume_gateway_url);
       if (!this.resumeUrl) {
-        // Dropping it costs one IDENTIFY on the next reconnect. Following it
-        // would post the bot token to whoever named the host.
         logWarn("Discord named a resume host outside Discord, ignoring it", {
           tokenHint: this.hint,
         });
@@ -297,11 +254,6 @@ export class GatewaySocket {
     }
   }
 
-  /**
-   * An interval tick that finds the previous beat still unacknowledged means the
-   * socket is a zombie: open, but nothing is coming back. Abandon it and re-dial
-   * with a RESUME.
-   */
   private heartbeat(socket: WebSocket): void {
     if (this.awaitingAck) {
       logWarn("Discord gateway heartbeat unacknowledged, reconnecting", {
@@ -342,11 +294,6 @@ export class GatewaySocket {
     });
   }
 
-  /**
-   * Claims one IDENTIFY from the token's allowance, or parks the socket until the
-   * window has room. Parking rather than retrying is the whole point: a thousand
-   * IDENTIFYs in 24 hours resets the bot token and emails its owner.
-   */
   private reserveIdentify(): boolean {
     const { botToken, budget } = this.options;
     if (budget.consume(botToken)) return true;

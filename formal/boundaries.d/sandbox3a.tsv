@@ -1,0 +1,68 @@
+kind	name	reason
+external	^run$	The caller supplies the sandbox runner; the trace checks the exact shell text before releasing its result.
+external	^runtime\.query$	Persistence read; the trace checks the query name and arguments.
+external	^executor \.snapshotStatus$	Provider SDK status read; the trace checks the image id and the twin follows the answer.
+external	^upsertSandboxSnapshot$	Persistence write; the trace checks the whole row before releasing its result.
+external	^toErrorMessage$	Formats an error for a log line; its result never reaches the return value.
+external	^findSandboxSnapshot$	Persistence read; the trace checks the account and the image id.
+external	^getSandboxExternalId$	Persistence read; the trace checks the provider and the reservation key.
+external	^deleteSandboxInstance$	Persistence write whose failure the code ignores; the trace checks provider, key and id.
+external	^this\.#client\.sandboxes\.get$	Workdir SDK lookup; the trace checks the sandbox id and the twin reads only its recorded state.
+external	^sandbox\.(delete|pause|resume|snapshot)$	Workdir SDK verb on the sandbox the twin just looked up.
+external	^new Client$	Workdir SDK constructor; the trace checks base URL and key and the token is returned unchanged.
+external	^options\.abortSignal\?\.throwIfAborted$	Host abort signal; an abort reaches the twin as this effect's throw.
+external	^this\.#sandbox( \.|\.)(exec|writeFile)$	Workdir SDK transport; the trace checks the exact command or upload before releasing its answer.
+external	^randomUUID$	Host randomness; the twin only embeds it in a temporary file name.
+external	^dirname$	Node's path.posix.dirname; the trace checks the path and the twin quotes the answer.
+external	^this\.#shell\.exec$	The session's shell executor; the trace checks the exact command before releasing its answer.
+external	^process\.wait$	Harness process exit; its internal twin lives with the process class and the trace pairs it with both stream reads.
+external	^Bun\.sleep$	Host timer; the trace checks the requested back-off delay.
+external	^new (GetObjectCommand|ListObjectsV2Command|DeleteObjectsCommand)$	AWS SDK command constructors; the trace checks the exact input and the token goes only to send.
+external	^(awsClient\(access\)|client)\.send$	AWS S3 transport; the trace checks which command token is sent and supplies the service answer.
+external	^result\.Body\.transformToWebStream(\(\)\.cancel)?$	AWS response stream; the twin only cancels it on the over-limit path.
+external	^body\.(transformToString|transformToByteArray)$	AWS response body decoder; the twin returns its answer unchanged.
+external	^schema\.safeParse$	The caller supplies a Zod schema; the trace checks the JSON-decoded frame before releasing the result.
+internal	apps/core/src/harness/sandbox/utils.ts#isSandboxGoneError	Its first test is instanceof an unexported class, invisible in a recording; the trace checks the exact error it classifies.
+opaque	Sandbox	Workdir SDK handle; twins read only its recorded data and pass it unchanged.
+opaque	Client	Workdir SDK client token returned unchanged.
+opaque	HarnessShellProcess	Passed back to its own wait and stream reads and never inspected beyond its recorded streams.
+opaque	ReadableStream	Stream token handed unchanged to readHarnessStream.
+opaque	MicrovmSandboxExecutor	Token from providerExecutor, used only through snapshotStatus.
+opaque	ListObjectsV2Command	AWS command token, only passed to send.
+opaque	DeleteObjectsCommand	AWS command token, only passed to send.
+opaque	GetObjectCommand	AWS command token, only passed to send.
+opaque	ZodDiscriminatedUnion	Schema passed unchanged and used only through its recorded safeParse.
+opaque	ZodMiniRecord	Module-level schema token handed to parseOr unchanged.
+opaque	ZodMiniObject	Module-level schema token handed to parseOr unchanged.
+opaque	Http	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	AgentRuns	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Images	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Nodes	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Sandboxes	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Secrets	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Templates	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	Volumes	Part of a Workdir SDK client or sandbox token; twins carry it unchanged and read no field of it.
+opaque	$ZodCheckGreaterThan	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	$ZodCheckLengthEquals	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	$ZodCheckLessThan	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodArray	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodBoolean	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodCatch	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodEnum	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodLiteral	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodNullable	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodNumber	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodNumberFormat	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodOptional	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodRecord	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodString	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodUnknown	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+opaque	ZodMiniOptional	Part of a Zod schema token passed unchanged; validation is answered by the recorded safeParse or parseOr.
+external	^new (CopyObjectCommand|DeleteObjectCommand|HeadObjectCommand|PutObjectCommand)$	AWS SDK command constructors; the trace checks the exact input and the token goes only to send.
+external	^awsClient\(\)\.send$	AWS S3 transport for the default client; the trace checks which command token is sent.
+external	^awsClient\(options\.access\)\.send$	AWS S3 transport; the trace checks which command token is sent.
+external	^getSignedUrl$	AWS presigner; the trace checks client, command and expiry before releasing the URL.
+external	^Date\.now$	The clock is an input supplied by the host; the trace records the instant at the call site.
+external	^admin(Mutation|Query)$	Convex admin transport; the trace checks the function name and the whole argument object.
+external	^runtime\.mutate$	Persistence write; the trace checks the mutation name and the whole argument object.
+opaque	FakeS3Client	The offline test's stand-in for the AWS client, only passed to send and the presigner.

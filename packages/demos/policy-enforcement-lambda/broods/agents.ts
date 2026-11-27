@@ -20,8 +20,7 @@ export const lambdaSandbox = defineSandbox({
   timeout: 60,
 });
 
-// Mode rides on the policy, so comparing the two rollout stages means two
-// policies over one shared rule set rather than one policy read two ways.
+// Mode rides on the policy, so the two rollout modes are two policies over one rule set.
 const denySmokeCommandRules: PolicyDefinitionConfig["rules"] = [
   {
     id: "deny-policy-smoke-command",

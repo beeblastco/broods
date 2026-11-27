@@ -3,39 +3,44 @@
 import { DataTableFooter } from "@/app/components/DataTable";
 import { Button } from "@/app/components/ui/button";
 
-/**
- * The footer under a paged list: how many rows show of how many are held,
- * and a button for the next page while older rows remain.
- */
 export function LoadMore({
   shown,
   total,
   noun,
+  detail,
   pageSize,
   remaining,
   onLoad,
+  hasOlder = false,
+  loading = false,
 }: {
   shown: number;
   total: number;
-  /** The rows' name, singular and plural: `["line", "lines"]`. */
   noun: [string, string];
+  detail?: string;
   pageSize: number;
   remaining: number;
   onLoad: () => void;
+  hasOlder?: boolean;
+  loading?: boolean;
 }): React.JSX.Element {
   return (
-    <DataTableFooter shown={shown} total={total} noun={noun}>
-      {remaining > 0 && (
+    <DataTableFooter shown={shown} total={total} noun={noun} detail={detail}>
+      {(remaining > 0 || hasOlder) && (
         <Button
           type="button"
           variant="ghost"
           size="xs"
           tone="muted"
           onClick={onLoad}
-          className="cursor-pointer"
+          disabled={loading}
+          className="cursor-pointer disabled:cursor-not-allowed"
         >
-          Load {Math.min(pageSize, remaining)} more ·{" "}
-          {remaining.toLocaleString()} older
+          {loading
+            ? "Loading history…"
+            : hasOlder && remaining === 0
+              ? "Load older results"
+              : `Load ${Math.min(pageSize, remaining)} more · ${remaining.toLocaleString()} older`}
         </Button>
       )}
     </DataTableFooter>

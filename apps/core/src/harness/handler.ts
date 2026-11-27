@@ -1,8 +1,4 @@
-/**
- * Harness-processing request handler for the Bun container runtime.
- * Keep request orchestration, session setup, and response shaping here.
- */
-
+import { APPLY_RUN_PATH, handleApplyRunRequest } from "./apply-runs.ts";
 import type {
   JSONValue,
   SystemModelMessage,
@@ -10,14 +6,17 @@ import type {
   ToolModelMessage,
   ToolSet,
 } from "ai";
-import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
-import { extractBearerToken, isServiceToken } from "../shared/auth.ts";
+import { stripUndefined } from "@broods/convex/model/objects";
+import {
+  extractBearerToken,
+  isServiceToken,
+  type AuthContext,
+} from "../shared/auth.ts";
 import {
   extractText,
   formatChannelErrorText,
   sendChannelFailure,
 } from "../shared/channels.ts";
-import { markHandlerEntry } from "../shared/cold-start.ts";
 import {
   executeCommand,
   queuedCommand,
@@ -41,17 +40,13 @@ import {
   directPrincipalChain,
   runPrincipal,
 } from "../shared/domain/principal.ts";
-import {
-  booleanEnv,
-  getHarnessPublicUrl,
-  positiveIntegerEnv,
-  WORKER_TIMEOUT_BUDGET_MS,
-} from "../shared/env.ts";
+import { booleanEnv, optionalEnv } from "../shared/env.ts";
 import { toErrorMessage } from "../shared/errors.ts";
 import {
   errorResponse,
   jsonResponse,
   methodNotAllowed,
+  normalizePath,
   parseJsonBody,
   type CoreRequest,
   type RequestContext,
@@ -75,6 +70,7 @@ import {
   publicEventIdForScope,
   scopedDirectConversationKey,
   scopedDirectEventId,
+  subagentTaskNonce,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
 import { resolveAgentRuntime } from "../shared/workspaces.ts";
@@ -86,45 +82,44 @@ import {
 } from "./async-agent-result.ts";
 import {
   getAsyncToolResult,
+  askingEventId,
+  asyncToolContinuationEventId,
+  rootEventId,
   settleAsyncToolResultFromCallback,
   verifyAsyncToolCompletionToken,
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import {
-  AsyncToolCoordinator,
-  completionToParentMessage,
-} from "./async-tools.ts";
+import { completionToParentMessage } from "./async-tools.ts";
 import {
   readAgentFullStream,
   recordFailedTurn,
-  runAgentLoop,
-  USER_STOP_MESSAGE,
-  type AgentLoopStream,
+  runCompactCommand,
   type ToolApprovalSummary,
 } from "./harness.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
-  type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import {
   acceptIngress,
-  DEFAULT_CONVERSATION_LEASE_TTL_MS,
   getConversationDispatchTarget,
   getIngressStatusByEventId,
+  INGRESS_RETRY_HEADERS,
   loadAppliedIngressConfig,
   loadChannelSessionConfig,
   outcomeSettlement,
   prepareSessionMessage,
-  renewIngressOwner,
+  releaseIngressOwner,
   takeNextIngress,
   type AppliedIngress,
   type IngressAdmission,
+  type IngressCandidate,
   type IngressConfigRef,
   type IngressDelivery,
+  type IngressMode,
   type IngressSettlement,
-  type LiveOwner,
+  type PublicDeploymentIngress,
   type SessionMessageInput,
   type SessionMessageResult,
 } from "./ingress.ts";
@@ -134,24 +129,39 @@ import {
   routeIncomingEvent,
   sendChannelReply,
   type AsyncDirectInboundEvent,
+  type IntegrationRoutingOptions,
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
   type IngressDispatchScope,
+  type ReentryTarget,
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
+import {
+  handleMcpConnectionRequest,
+  routesToMcpConnection,
+} from "./mcp/connection.ts";
+import {
+  handleProtectedResourceRequest,
+  MCP_PATH,
+  routesToProtectedResource,
+} from "./mcp/authkit.ts";
+import { handleMcpRequest } from "./mcp-tasks.ts";
 import { LiveNatsPublisher } from "./nats-publisher.ts";
 import {
   admitRun,
   refundRun,
   planRefusalResponse,
+  planRefusalText,
+  type Admission,
   type PlanRefusal,
 } from "./plan-limits.ts";
 import {
   ingestChannelAttachments,
   Session,
   type ConversationIngressEvent,
+  type IngressUserMessage,
 } from "./session.ts";
 import {
   ASK_QUESTIONS_TOOL_NAME,
@@ -161,51 +171,61 @@ import {
   openQuestion,
   settleQuestion,
   type OpenQuestion,
-  type PendingQuestionSummary,
   type QuestionAnswerResult,
 } from "./questions.ts";
-import { SubagentCoordinator } from "./subagents.ts";
+import {
+  acceptedAsyncResponse,
+  continuationResponse,
+  CONVERSATION_BUSY,
+  directAdmissionResponse,
+  directStatusUrl,
+  emptySseResponse,
+  errorSseResponse,
+  natsStartResponse,
+  pipeAgentStream,
+  type ContinuationOutcome,
+} from "./responses.ts";
+import {
+  SubagentCoordinator,
+  type SubagentParent,
+  type SubagentResumeOutcome,
+} from "./subagents.ts";
+import {
+  dispatchInProcessWorker,
+  WORKER_QUEUE_FULL,
+  withQueuePlace,
+} from "./worker-queue.ts";
+import {
+  AGENT_PROCESSING_FAILED,
+  isRunnableModelInput,
+  runAgentLoopUntilSubagentsIdle,
+  runParentContinuationLoop,
+  turnSettlement,
+  waitUntilMs,
+  type ContinuationDependencies,
+} from "./continuation.ts";
 
-// A queue at capacity drains on the order of seconds, not minutes.
-const INGRESS_RETRY_HEADERS = { "Retry-After": "5" };
-const AGENT_PROCESSING_FAILED = "Agent processing failed";
-// The one user turn a "Continue" adds; the history it lands on already ends
-// in the tool results of the cut-off step.
 const CONTINUE_TURN_TEXT =
   "Your previous turn was cut off before it finished. Continue the task from where you left off.";
-// Channel admissions that start no run, so they give back their rate count.
 const NO_RUN_OUTCOMES: ReadonlySet<IngressAdmission["outcome"]> = new Set([
   "duplicate",
   "rejected",
   "capacity",
   "conflict",
 ]);
-const CONVERSATION_BUSY =
-  "Conversation is already processing another turn. Try again when the current turn finishes.";
 const CHANNEL_APPROVAL_DENIAL_REASON =
   "Tool approval is only supported through the direct API.";
+// Each re-run after a denial is a paid model pass.
+const MAX_CHANNEL_APPROVAL_RETRIES = 2;
+const CHANNEL_APPROVAL_LIMIT_ERROR =
+  "Stopped: the agent kept choosing tools that need approval, which a channel cannot give.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
-// What a subagent or async-tool wait leaves of the request budget, so the parent
-// still has time for the turn that reads the results before the deadline.
-const WAIT_DEADLINE_MARGIN_MS = 60 * 1000;
-const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_SLOT_GRACE_MS = 5_000;
-const WORKER_DEADLINE_MESSAGE = "Run exceeded the worker deadline";
 // Well under the server's 255s idleTimeout and the gateway's own idle limit.
 const SSE_KEEPALIVE_INTERVAL_MS = 30_000;
-const MAX_PENDING_WORKER_RUNS = 1000;
-// A queued run holds its lease from admission, so the queue renews it well
-// inside the TTL until a slot starts the run.
-const QUEUED_LEASE_RENEW_INTERVAL_MS = DEFAULT_CONVERSATION_LEASE_TTL_MS / 3;
-const QUEUED_LEASE_RENEW_CONCURRENCY = 16;
-// Chunks arrive faster than a Convex round trip, so a streamed chunk checks
-// ownership on the session's OWNER_CHECK_INTERVAL_MS clock. A frame the client
-// acts on checks exactly: a stale run must not land one in a stream the next
-// owner is writing to. `waiting` is the heartbeat: it fires on a timer, not per
-// token, so exact costs nothing.
+// A stale run must not land a frame the client acts on in the next owner's stream.
+// `waiting` fires on a timer, not per token, so checking it exactly costs nothing.
 const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "done",
   "error",
@@ -215,22 +235,10 @@ const OWNER_CHECK_EXACT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "waiting",
 ]);
 const textEncoder = new TextEncoder();
-const inProcessWorkers = new Set<Promise<void>>();
-type PendingWorkerRun = [
-  kind: string,
-  run: InProcessWorkerRun,
-  lease: LiveOwner | undefined,
-];
-const pendingWorkerRuns: PendingWorkerRun[] = [];
-
-let activeInProcessWorkers = 0;
-let queuedLeaseTimer: ReturnType<typeof setInterval> | undefined;
-let renewingQueuedLeases = false;
-
-type ContinuationOutcome =
-  | { kind: "ready"; invoked: boolean; publicEventId: string }
-  | { kind: "skip" };
-type InProcessWorkerRun = (context: RequestContext) => Promise<unknown>;
+const CONTINUATION_DEPENDENCIES: ContinuationDependencies = {
+  dispatchSessionMessage: dispatchSessionMessage,
+  subagents: { resumeParent: resumeAfterSubagentResult },
+};
 
 interface AsyncWorkerInvocation {
   kind: "direct-api-async-worker";
@@ -246,112 +254,12 @@ interface CronInvocation {
   kind: "cron";
   accountId: string;
   cronId: string;
-  // The dispatch instant, stamped by agent/crons.dispatch in Convex when the
-  // schedule fires; the run framing tells the agent this is when it fired.
   scheduledTime?: string;
 }
 
 interface DirectTurn {
   session: Session;
   turnContext: Awaited<ReturnType<Session["createTurnContext"]>>;
-}
-
-interface ParentContinuationResult {
-  didFail: boolean;
-  failureText: string | null;
-  finalResponse?: JSONValue;
-  traceId?: string;
-  approvals: ToolApprovalSummary[];
-  questions: PendingQuestionSummary[];
-}
-
-/**
- * Runs one agent turn on the pod's worker pool, or queues it FIFO while every
- * slot is busy. Every background run goes through here, channel turns
- * included, so MAX_INPROCESS_WORKERS bounds what the pod runs at once.
- * @param kind a label for logs
- * @param lease the conversation lease the run already holds, renewed while it waits
- */
-export function dispatchInProcessWorker(
-  kind: string,
-  run: InProcessWorkerRun,
-  lease?: LiveOwner,
-): void {
-  if (activeInProcessWorkers >= MAX_INPROCESS_WORKERS) {
-    if (pendingWorkerRuns.length >= MAX_PENDING_WORKER_RUNS) {
-      // Load-shed: the awaiting caller surfaces the error instead of the queue
-      // growing without bound.
-      throw new Error("In-process worker queue is full");
-    }
-    pendingWorkerRuns.push([kind, run, lease]);
-    if (!queuedLeaseTimer) {
-      queuedLeaseTimer = setInterval(
-        () => void renewQueuedLeases(),
-        QUEUED_LEASE_RENEW_INTERVAL_MS,
-      );
-      queuedLeaseTimer.unref();
-    }
-
-    return;
-  }
-
-  activeInProcessWorkers += 1;
-  const slotAbort = new AbortController();
-  const execution = run({
-    requestId: crypto.randomUUID(),
-    deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
-    // Workers run detached; they never emit an HTTP response, so there is no
-    // post-response tail to defer.
-    waitUntil: () => {},
-    abortSignal: slotAbort.signal,
-  }).then(
-    () => undefined,
-    (err) => {
-      logError("In-process worker failed", {
-        kind: kind,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    },
-  );
-  // A few stuck workers would otherwise pin every slot for every tenant on the
-  // pod. An overrun frees the slot and aborts the run, so the pod never runs
-  // more than MAX_INPROCESS_WORKERS model passes at once.
-  let slotTimer: ReturnType<typeof setTimeout> | undefined;
-  const guarded = Promise.race([
-    execution,
-    new Promise<void>((resolve) => {
-      slotTimer = setTimeout(() => {
-        logError("In-process worker exceeded deadline; reclaiming slot", {
-          kind: kind,
-          budgetMs: WORKER_TIMEOUT_BUDGET_MS,
-        });
-        slotAbort.abort(new Error(WORKER_DEADLINE_MESSAGE));
-        resolve();
-      }, WORKER_TIMEOUT_BUDGET_MS + WORKER_SLOT_GRACE_MS);
-      slotTimer.unref?.();
-    }),
-  ]);
-  const worker: Promise<void> = guarded.finally(() => {
-    if (slotTimer) clearTimeout(slotTimer);
-    activeInProcessWorkers -= 1;
-    inProcessWorkers.delete(worker);
-    const next = pendingWorkerRuns.shift();
-    if (pendingWorkerRuns.length === 0 && queuedLeaseTimer) {
-      clearInterval(queuedLeaseTimer);
-      queuedLeaseTimer = undefined;
-    }
-    if (next) {
-      dispatchInProcessWorker(next[0], next[1], next[2]);
-    }
-  });
-  inProcessWorkers.add(worker);
-}
-
-/** Awaited by the container bootstrap on shutdown so queued work is not lost. */
-export async function drainInProcessWorkers(): Promise<void> {
-  while (inProcessWorkers.size > 0) {
-    await Promise.allSettled(inProcessWorkers);
-  }
 }
 
 export async function handler(
@@ -362,21 +270,16 @@ export async function handler(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  // Each HTTP request or in-process worker gets a request-private observability
-  // scope so concurrent tenants in the shared container process cannot clobber
-  // each other's log redaction secrets or NATS routing tags.
+  // Request-private, so concurrent tenants never share log redaction secrets or NATS tags.
   return runWithObservabilityScope(() => handleRequest(event, context));
 }
 
-/**
- * One per stream. The returned check runs before each frame goes out: exact
- * for `OWNER_CHECK_EXACT_FRAME_TYPES`; for the rest, only when the session's
- * last ownership proof (a read or a fenced write) is older than the interval.
- */
 export function ownerCheckForStream(
   session: Pick<Session, "assertCurrentOwner" | "assertRecentOwner">,
 ): (frame: Record<string, unknown>) => Promise<void> {
   return async (frame): Promise<void> => {
+    // The SDK emits `start` before any step proves the owner, and it carries no model output.
+    if (frame.type === "start") return;
     const exact =
       typeof frame.type === "string" &&
       OWNER_CHECK_EXACT_FRAME_TYPES.has(frame.type);
@@ -384,11 +287,6 @@ export function ownerCheckForStream(
   };
 }
 
-/**
- * Records a cron run's outcome, and retires a one-time job with it: its
- * scheduled run is spent, so the row can never fire again. A run waiting on
- * approval or input leaves its cron run open.
- */
 export async function settleCronRun(
   accountId: string,
   cronRun: DirectInboundEvent["cronRun"],
@@ -410,10 +308,7 @@ export async function settleCronRun(
       cronRun.runId,
       outcome.response,
     );
-  } else {
-    return;
   }
-  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
 }
 
 export async function settleFailedIngressAndDrain(
@@ -438,10 +333,6 @@ async function handleRequest(
     | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
-  // First entry in this execution environment marks the end of the cold-start
-  // init window so the first agent run can surface it as a phase span.
-  markHandlerEntry(Date.now());
-
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
 
@@ -463,13 +354,56 @@ async function handleRequest(
   if (event.path === "/v1/cron-runs") {
     return handleCronHttpRequest(event);
   }
+  if (event.path === APPLY_RUN_PATH) {
+    return handleApplyRunRequest(event);
+  }
+  if (routesToMcpConnection(event.path)) {
+    return handleMcpConnectionRequest(event);
+  }
+  if (routesToProtectedResource(normalizePath(event.path))) {
+    return handleProtectedResourceRequest();
+  }
+  if (normalizePath(event.path) === MCP_PATH) {
+    // `/mcp` already resolved the caller: its replays skip a second lookup, and an AuthKit token
+    // stays good only here.
+    return handleMcpRequest(event, (replayed, auth): Promise<Response> =>
+      routeCoreRequest(
+        replayed,
+        context,
+        async (): Promise<AuthContext> => auth,
+      ),
+    );
+  }
 
+  return routeCoreRequest(event, context);
+}
+
+function routeCoreRequest(
+  event: CoreRequest,
+  context: RequestContext | undefined,
+  authResolver?: IntegrationRoutingOptions["authResolver"],
+): Promise<Response> {
   return routeIncomingEvent(
     event,
     {
-      handleDirectRequest: (directEvent) =>
-        handleDirectRequest(directEvent, context),
-      handleAsyncRequest: handleAsyncRequest,
+      // Refused before the plan counts it or ingress records it: a same-eventId retry starts anew.
+      handleDirectRequest: async (event): Promise<Response> =>
+        (await withQueuePlace(() => handleDirectRequest(event))) ??
+        queueFullResponse(event.accountId, (): Response =>
+          (event.connectionId || event.answers?.length || event.continuation
+            ? errorResponse
+            : errorSseResponse)(
+            503,
+            WORKER_QUEUE_FULL,
+            {},
+            INGRESS_RETRY_HEADERS,
+          ),
+        ),
+      handleAsyncRequest: async (event): Promise<Response> =>
+        (await withQueuePlace(() => handleAsyncRequest(event))) ??
+        queueFullResponse(event.accountId, (): Response =>
+          errorResponse(503, WORKER_QUEUE_FULL, {}, INGRESS_RETRY_HEADERS),
+        ),
       handleStatusRequest: handleStatusRequest,
       handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: handleChannelRequest,
@@ -478,11 +412,22 @@ async function handleRequest(
     {
       directApiEnabled: ENABLE_DIRECT_API,
       cacheAgentLists: true,
+      ...(authResolver ? { authResolver: authResolver } : {}),
       ...(context?.waitUntil
         ? { waitUntil: context.waitUntil.bind(context) }
         : {}),
     },
   );
+}
+
+// A plan refusal (402/429) wins over the queue's 503, which the client would only retry.
+async function queueFullResponse(
+  accountId: string,
+  full: () => Response,
+): Promise<Response> {
+  const { refusal } = await admitRun(accountId, { count: false });
+
+  return refusal ? planRefusalResponse(refusal) : full();
 }
 
 async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
@@ -515,10 +460,6 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
     : new Response(null, { status: 204 });
 }
 
-/**
- * Handle scheduled cron jobs dispatched by the Convex crons component.
- * @returns the plan-limit refusal when the fire was not admitted, else null
- */
 async function handleScheduledCron(
   event: CronInvocation,
 ): Promise<PlanRefusal | null> {
@@ -541,15 +482,19 @@ async function handleScheduledCron(
     return null;
   }
   const firedAt = scheduledFireTime(event.scheduledTime);
-  const { refusal } = await admitRun(job.accountId);
-  if (refusal) {
-    // A refused fire is spent like a failed one, one-shot included.
-    await crons.markFailed(job.accountId, job.cronId, refusal.message, firedAt);
+  const plan = await admitRun(job.accountId);
+  if (plan.refusal) {
+    await crons.markFailed(
+      job.accountId,
+      job.cronId,
+      plan.refusal.message,
+      firedAt,
+    );
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
 
-    return refusal;
+    return plan.refusal;
   }
 
   try {
@@ -562,6 +507,7 @@ async function handleScheduledCron(
       conversationKey: result.conversationKey,
     });
   } catch (err) {
+    refundRun(plan, job.accountId);
     const error = err instanceof Error ? err.message : String(err);
     logError("Cron agent run failed", {
       accountId: job.accountId,
@@ -569,8 +515,6 @@ async function handleScheduledCron(
       agentId: job.agentId,
       error: error,
     });
-    // The schedule is spent whether or not the run started, so retire the job
-    // here too. The settle path never reached it.
     if (isOneTimeSchedule(job.scheduleExpression)) {
       await removeOneShotCron(job.accountId, job.cronId);
     }
@@ -580,12 +524,7 @@ async function handleScheduledCron(
   return null;
 }
 
-/**
- * Handle a background-job completion posted by the detached job itself.
- * Authenticated by the per-job token (matched against the stored row), so the
- * sandbox never needs an account key. Reuses the same settle → continuation
- * path as the account-auth async-tool completion endpoint.
- */
+// Authed by the per-job token on the stored row, so a sandbox never holds an account key.
 async function handleSandboxJobCompletionRequest(
   event: SandboxJobCompletionInboundEvent,
 ): Promise<Response> {
@@ -627,12 +566,7 @@ async function handleSandboxJobCompletionRequest(
   );
 }
 
-/**
- * The secret values the run that started this row scrubbed with: its agent's
- * config and the sandboxes and workspaces that config names. A job callback
- * arrives outside any run, so it resolves them from the row. An agent whose
- * sandbox or workspace no longer resolves still gives its config's values.
- */
+// A job callback arrives outside any run, so rebuild the redaction set that run used.
 async function asyncToolRowSecretValues(
   row: AsyncToolResultRecord,
 ): Promise<string[]> {
@@ -661,46 +595,144 @@ async function asyncToolRowSecretValues(
   }
 }
 
-/**
- * After a detached tool row settles, resume the conversation with its result.
- * Derives the account/agent from the (scoped) parentEventId so it serves both
- * the account-authed and token-authed completion paths.
- */
-async function continueAfterAsyncToolSettlement(
+export async function continueAfterAsyncToolSettlement(
   settled: AsyncToolResultRecord,
 ): Promise<ContinuationOutcome> {
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
-  if (!scope) {
+  // Stored by async_status or the parent's append: resuming would answer it twice.
+  if (
+    !scope ||
+    settled.status === "processing" ||
+    settled.handback === "stored"
+  ) {
     return { kind: "skip" };
   }
-  const agent = await getStorage().agents.getById(
-    scope.accountId,
-    scope.agentId,
-  );
-  if (!agent) {
-    return { kind: "skip" };
-  }
+  const publicEventId = `async-tools-${settled.resultId}`;
+  const question = settled.toolName === ASK_QUESTIONS_TOOL_NAME;
+  // The continuation keeps the asking turn's stage, so a runtime key can still read it.
+  const asking =
+    settled.delivery?.kind === "channel"
+      ? null
+      : await getIngressStatusByEventId({
+          ...scope,
+          eventId: askingEventId(settled),
+        });
 
-  // A result the model already pulled via async_status would be answered twice.
-  if (settled.status === "processing" || settled.observed === true) {
-    return { kind: "skip" };
+  return resumeConversation({
+    ...scope,
+    ...(asking?.publicDeploymentIngress
+      ? { publicDeploymentIngress: asking.publicDeploymentIngress }
+      : {}),
+    eventId: asyncToolContinuationEventId(settled),
+    publicEventId: publicEventId,
+    toolResultId: settled.resultId,
+    conversationKey: settled.conversationKey,
+    // An answer streams under the id its response names; other jobs keep the parent's for replay.
+    delivery:
+      question && settled.delivery?.kind === "nats"
+        ? { ...settled.delivery, publicEventId: publicEventId }
+        : settled.delivery,
+    ...(settled.delivery?.kind === "async"
+      ? { asyncResultEventId: settled.parentEventId }
+      : {}),
+    message: completionToParentMessage({
+      resultId: settled.resultId,
+      toolName: settled.toolName,
+      input: settled.input,
+      status: settled.status,
+      ...(settled.response !== undefined ? { response: settled.response } : {}),
+      ...(settled.error ? { error: settled.error } : {}),
+    }),
+    requestedMode: question ? "steer" : "followup",
+  });
+}
+
+// Resumes the parent once per task id, and never once it read `resultEventId` itself.
+// A note has no row: it steers a live parent at its next step.
+export async function resumeAfterSubagentResult(
+  parent: SubagentParent,
+  taskId: string,
+  message: IngressUserMessage,
+  resultEventId: string | undefined,
+  target?: ReentryTarget,
+): Promise<SubagentResumeOutcome> {
+  // Root event + nonce, so a chain of late results never nests each earlier id in the next.
+  const nonce = subagentTaskNonce(taskId);
+  if (!parent.accountId || !parent.agentId || !nonce) {
+    return "skip";
   }
-  const publicConversationKey = eventPublicConversationKey(
-    settled.conversationKey,
-    scope.accountId,
-    scope.agentId,
-  );
-  // A channel session resumes on its record-narrowed config, as a cron does.
-  const target = await resolveReentryTarget({
-    accountId: scope.accountId,
-    agentId: scope.agentId,
-    publicConversationKey: publicConversationKey,
-    agentConfig: toRuntimeAgentConfig(agent.config),
+  const outcome = await resumeConversation({
+    accountId: parent.accountId,
+    agentId: parent.agentId,
+    eventId: `${rootEventId(parent.eventId)}:async-subagent:${nonce}`,
+    publicEventId: `async-subagent-${nonce}`,
+    conversationKey: parent.conversationKey,
+    delivery: parent.delivery,
+    message: message,
+    requestedMode: resultEventId === undefined ? "steer" : "followup",
+    resultEventId: resultEventId,
+    target: target,
   });
 
+  return outcome.kind === "skip" ? "skip" : outcome.admission;
+}
+
+export async function loadReentryTarget(
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+): Promise<ReentryTarget | null> {
+  const agent = await getStorage().agents.getById(accountId, agentId);
+  if (!agent) {
+    return null;
+  }
+
+  return await resolveReentryTarget({
+    accountId: accountId,
+    agentId: agentId,
+    publicConversationKey: publicConversationKeyFromScoped(
+      conversationKey,
+      accountId,
+      agentId,
+    ),
+    agentConfig: toRuntimeAgentConfig(agent.config),
+  });
+}
+
+async function resumeConversation(options: {
+  accountId: string;
+  agentId: string;
+  eventId: string;
+  publicEventId: string;
+  conversationKey: string;
+  delivery: AsyncToolDelivery | undefined;
+  asyncResultEventId?: string;
+  publicDeploymentIngress?: PublicDeploymentIngress;
+  message: IngressUserMessage;
+  requestedMode: IngressMode;
+  resultEventId?: string;
+  toolResultId?: string;
+  target?: ReentryTarget;
+}): Promise<ContinuationOutcome> {
+  const target =
+    options.target ??
+    (await loadReentryTarget(
+      options.accountId,
+      options.agentId,
+      options.conversationKey,
+    ));
+  if (!target) {
+    return { kind: "skip" };
+  }
+  const publicConversationKey = publicConversationKeyFromScoped(
+    options.conversationKey,
+    options.accountId,
+    options.agentId,
+  );
+
   const continuationEvent: DirectInboundEvent = {
-    accountId: scope.accountId,
-    agentId: scope.agentId,
+    accountId: options.accountId,
+    agentId: options.agentId,
     runId: createRunId(),
     agentConfig: target.agentConfig,
     configRef: target.configRef,
@@ -708,116 +740,78 @@ async function continueAfterAsyncToolSettlement(
     endpointId: target.endpointId,
     projectSlug: target.projectSlug,
     stageSlug: target.stageSlug,
-    eventId: asyncToolContinuationEventId(settled.parentEventId),
-    ...(settled.delivery?.kind === "async"
-      ? { asyncResultEventId: settled.parentEventId }
+    eventId: options.eventId,
+    ...(options.asyncResultEventId
+      ? { asyncResultEventId: options.asyncResultEventId }
       : {}),
-    ...(settled.delivery?.kind === "channel"
+    ...(options.publicDeploymentIngress
+      ? { publicDeploymentIngress: options.publicDeploymentIngress }
+      : {}),
+    ...(options.delivery?.kind === "channel"
       ? {
           replyTarget: {
-            channelName: settled.delivery.channelName,
-            ...(settled.delivery.identity
-              ? { identity: settled.delivery.identity }
+            channelName: options.delivery.channelName,
+            ...(options.delivery.identity
+              ? { identity: options.delivery.identity }
               : {}),
-            source: settled.delivery.source,
+            source: options.delivery.source,
           },
         }
       : {}),
-    publicEventId: `async-tools-${settled.resultId}`,
-    conversationKey: settled.conversationKey,
+    publicEventId: options.publicEventId,
+    conversationKey: options.conversationKey,
     publicConversationKey: publicConversationKey,
-    events: [
-      completionToParentMessage({
-        resultId: settled.resultId,
-        toolName: settled.toolName,
-        input: settled.input,
-        status: settled.status,
-        ...(settled.response !== undefined
-          ? { response: settled.response }
-          : {}),
-        ...(settled.error ? { error: settled.error } : {}),
-      }),
-    ],
-    // An answer joins a live run at its next step boundary; a finished job
-    // waits its turn behind the current one.
-    requestedMode:
-      settled.toolName === ASK_QUESTIONS_TOOL_NAME ? "steer" : "followup",
-    idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
+    events: [options.message],
+    requestedMode: options.requestedMode,
+    idempotencyKey: options.eventId,
   };
 
-  const { owned: ownedContinuation } = await admitInternalContinuation(
-    continuationEvent,
-    continuationDelivery(continuationEvent),
-  );
+  const { admission, owned: ownedContinuation } =
+    await admitInternalContinuation(
+      continuationEvent,
+      continuationDelivery(onSocket(continuationEvent, options.delivery)),
+      {
+        ...(options.resultEventId
+          ? { resultEventId: options.resultEventId }
+          : {}),
+        ...(options.toolResultId ? { toolResultId: options.toolResultId } : {}),
+      },
+    );
   if (!ownedContinuation) {
     return {
       kind: "ready",
+      admission: admission.outcome,
       invoked: false,
       publicEventId: continuationEvent.publicEventId,
+      ...(admission.runId ? { runId: admission.runId } : {}),
     };
   }
-  await createPendingAsyncAgentResult({
-    eventId: ownedContinuation.eventId,
-    conversationKey: ownedContinuation.conversationKey,
-  });
-  await invokeAsyncToolContinuationWorker(ownedContinuation, settled);
+  try {
+    await createPendingAsyncAgentResult({
+      eventId: ownedContinuation.eventId,
+      conversationKey: ownedContinuation.conversationKey,
+    });
+    await invokeContinuationWorker(ownedContinuation, options.delivery);
+  } catch (err) {
+    const error =
+      err instanceof Error ? err.message : "Failed to start continuation";
+    await recordAsyncRun(ownedContinuation, { status: "failed", error: error });
+    await failOwnedIngress(ownedContinuation, error);
+    throw err;
+  }
 
   return {
     kind: "ready",
+    admission: admission.outcome,
     invoked: true,
     publicEventId: continuationEvent.publicEventId,
+    ...(admission.runId ? { runId: admission.runId } : {}),
   };
 }
 
-function continuationResponse(
-  settled: AsyncToolResultRecord,
-  outcome: ContinuationOutcome,
-): Response {
-  if (outcome.kind === "skip") {
-    return jsonResponse(202, {
-      status: "accepted",
-      resultId: settled.resultId,
-      invoked: false,
-    });
-  }
-
-  return jsonResponse(202, {
-    status: "accepted",
-    resultId: settled.resultId,
-    eventId: outcome.publicEventId,
-    invoked: outcome.invoked,
-  });
-}
-
-/** The 202 a socket turn gets: the NATS scope the gateway streams the run from. */
-function natsStartResponse(
-  event: DirectInboundEvent,
-  publicEventId: string,
-  statusUrl: string | null,
-): Response {
-  return jsonResponse(202, {
-    eventId: publicEventId,
-    // Always sent, so the gateway can poll status in-cluster even when no
-    // public statusUrl exists (PUBLIC_BASE_URL unset).
-    runId: event.runId,
-    conversationKey: event.publicConversationKey,
-    status: "processing",
-    requestedMode: event.requestedMode,
-    ...(statusUrl ? { statusUrl: statusUrl } : {}),
-    nats: {
-      accountId: event.accountId,
-      agentId: event.agentId,
-      conversationKey: event.publicConversationKey,
-    },
-  });
-}
-
-/**
- * Settle open ask_questions prompts from a direct API body and resume the
- * conversation, answering with the last continuation's outcome.
- */
 async function handleDirectAnswers(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const answers = event.answers ?? [];
   const open = await Promise.all(
@@ -830,6 +824,8 @@ async function handleDirectAnswers(
   );
   const missing = open.findIndex((question) => question === undefined);
   if (missing >= 0) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       404,
       `No open question ${answers[missing]!.statusId} on this conversation`,
@@ -846,15 +842,23 @@ async function handleDirectAnswers(
   );
   let last: AsyncToolResultRecord | null = null;
   let outcome: ContinuationOutcome = { kind: "skip" };
+  let resumed = false;
   for (const row of settled) {
     if (!row) continue;
     last = row;
-    outcome = await continueAfterAsyncToolSettlement(row);
+    const next = await continueAfterAsyncToolSettlement(row);
+    const started =
+      next.kind === "ready" && !NO_RUN_OUTCOMES.has(next.admission);
+    // A later answer that starts nothing must not hide the turn an earlier one started.
+    if (started || !resumed) outcome = next;
+    resumed ||= started;
   }
+  if (!resumed) refundRun(plan, event.accountId);
   const alreadyAnswered = open
     .filter((_question, index) => settled[index] === null)
     .map((question) => question!.record.resultId);
-  if (alreadyAnswered.length > 0) {
+  // Once one answer resumed the run, a 409 would tell the client nothing started.
+  if (!last && alreadyAnswered.length > 0) {
     return errorResponse(
       409,
       `Questions already answered: ${alreadyAnswered.join(", ")}`,
@@ -862,8 +866,7 @@ async function handleDirectAnswers(
     );
   }
 
-  // A socket turn needs a stream to follow or a terminal status. Only a ready
-  // continuation streams; otherwise the answer is saved and the turn is over.
+  // A socket client needs a stream to follow, or a terminal status when none starts.
   if (event.connectionId && last) {
     return outcome.kind === "ready"
       ? natsStartResponse(event, outcome.publicEventId, null)
@@ -871,19 +874,16 @@ async function handleDirectAnswers(
   }
 
   return last
-    ? continuationResponse(last, outcome)
+    ? continuationResponse(last, outcome, alreadyAnswered)
     : errorResponse(400, "Request body must include answers", {
         param: "answers",
       });
 }
 
-/**
- * A channel message while a prompt is open is its answer, not a turn. A
- * button click names its prompt; typed text answers the oldest open one.
- * True when a prompt settled and the conversation is resuming.
- */
+// True when the message was an answer: a click names its prompt, typed text takes the oldest.
 async function settleChannelQuestion(
   event: ChannelInboundEvent,
+  accountId: string,
 ): Promise<boolean> {
   const click = event.answer;
   const open = click
@@ -906,12 +906,25 @@ async function settleChannelQuestion(
     ? { status: "answered", answers: chosen }
     : answersFromText(open.pending, extractText(event.content));
   if (!answer) return false;
+  const plan = await admitRun(accountId);
+  if (plan.refusal) {
+    await event.channel.sendText(planRefusalText(plan.refusal));
+
+    return true;
+  }
   const settled = await settleQuestion(open.record, {
     ...answer,
     ...(event.identity ? { answeredBy: event.identity } : {}),
   });
-  if (!settled) return false;
+  if (!settled) {
+    refundRun(plan, accountId);
+
+    return false;
+  }
   const outcome = await continueAfterAsyncToolSettlement(settled);
+  if (outcome.kind === "skip" || NO_RUN_OUTCOMES.has(outcome.admission)) {
+    refundRun(plan, accountId);
+  }
   logInfo("Question answered", {
     channel: event.channelName,
     conversationKey: event.conversationKey,
@@ -924,19 +937,20 @@ async function settleChannelQuestion(
 
 async function handleDirectRequest(
   event: DirectInboundEvent,
-  context?: RequestContext,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return emptySseResponse();
   }
 
@@ -980,6 +994,7 @@ async function handleDirectRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(
       event,
@@ -1012,71 +1027,150 @@ async function handleDirectRequest(
     );
   }
 
-  return directTurnResponse(ownedEvent, context);
+  return directTurnResponse(ownedEvent);
 }
 
-/**
- * The sync SSE answer for a run that owns its conversation: a queued command's
- * reply, or the model turn streaming.
- */
+// On a worker slot like any other run, so MAX_INPROCESS_WORKERS bounds streamed runs too.
 async function directTurnResponse(
   ownedEvent: DirectInboundEvent,
-  context?: RequestContext,
 ): Promise<Response> {
-  const command = queuedCommand(ownedEvent.events);
-  if (command) {
-    return commandSseResponse(ownedEvent, command);
-  }
-  try {
-    const turn = await prepareDirectTurn(ownedEvent);
-    if (!turn) {
-      return emptySseResponse();
-    }
+  // A queued run starts inside whichever run frees the slot; it must keep this request's context.
+  const observability = getObservabilityContext();
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    start: (controller): void => {
+      // Bun closes a silent response after idleTimeout; SSE parsers ignore comment lines.
+      keepalive = setInterval((): void => {
+        try {
+          controller.enqueue(textEncoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(keepalive);
+        }
+      }, SSE_KEEPALIVE_INTERVAL_MS);
+      const frame = (chunk: unknown): Uint8Array =>
+        textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`);
+      try {
+        dispatchInProcessWorker(
+          "direct-sse",
+          (context): Promise<void> =>
+            runWithObservabilityScope(async (): Promise<void> => {
+              try {
+                if (cancelled) {
+                  await failOwnedIngress(
+                    ownedEvent,
+                    "The client disconnected before the run started",
+                  );
 
-    const { session, turnContext } = turn;
-    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await settleFailedIngressAndDrain(
-        session,
-        "Request did not produce pending model input",
-        () => dispatchNextIngress(session, ownedEvent),
-      );
+                  return;
+                }
+                const command = queuedCommand(ownedEvent.events);
+                if (command) {
+                  await runCommandTurn({
+                    event: ownedEvent,
+                    command: command,
+                    send: async (chunk): Promise<void> => {
+                      try {
+                        controller.enqueue(frame(chunk));
+                      } catch {}
+                    },
+                  });
 
-      return emptySseResponse();
-    }
+                  return;
+                }
+                const turn = await prepareDirectTurn(ownedEvent).catch(
+                  (err: unknown): null => {
+                    // prepareDirectTurn already settled the run as failed.
+                    const error =
+                      err instanceof Error ? err.message : String(err);
+                    logError("Direct request pre-processing failed", {
+                      eventId: ownedEvent.eventId,
+                      error: error,
+                    });
+                    controller.enqueue(frame({ type: "error", error: error }));
 
-    return new Response(
-      createDirectContinuationSseBody(
-        ownedEvent,
-        session,
-        turnContext,
-        context,
-      ),
-      { status: 200, headers: { "content-type": "text/event-stream" } },
-    );
-  } catch (err) {
-    logError("Direct request pre-processing failed", {
-      eventId: ownedEvent.eventId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  }
+                    return null;
+                  },
+                );
+                if (!turn) return;
+                const { session, turnContext } = turn;
+                if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+                  await settleFailedIngressAndDrain(
+                    session,
+                    "Request did not produce pending model input",
+                    () => dispatchNextIngress(session, ownedEvent),
+                  );
+
+                  return;
+                }
+                await streamDirectContinuation(
+                  ownedEvent,
+                  session,
+                  turnContext,
+                  controller,
+                  context,
+                );
+              } finally {
+                clearInterval(keepalive);
+                try {
+                  controller.close();
+                } catch {}
+              }
+            }, observability),
+          ownedEvent.ownerGeneration === undefined
+            ? undefined
+            : {
+                conversationKey: ownedEvent.conversationKey,
+                ownerEventId: ownedEvent.eventId,
+                ownerGeneration: ownedEvent.ownerGeneration,
+              },
+        );
+      } catch (err) {
+        // A recovered envelope dispatched first can take this request's queue place.
+        const error = err instanceof Error ? err.message : String(err);
+        clearInterval(keepalive);
+        controller.enqueue(frame({ type: "error", error: error }));
+        controller.close();
+        failOwnedIngress(ownedEvent, error).catch(
+          (settleErr: unknown): void => {
+            logError("Streamed run failure was not settled", {
+              eventId: ownedEvent.eventId,
+              error:
+                settleErr instanceof Error
+                  ? settleErr.message
+                  : String(settleErr),
+            });
+          },
+        );
+      }
+    },
+    cancel: (): void => {
+      cancelled = true;
+    },
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
 }
 
-/** Answer a direct async request with 202 and hand it to an in-process worker. */
 async function handleAsyncRequest(
   event: AsyncDirectInboundEvent,
 ): Promise<Response> {
-  const { refusal } = await admitRun(event.accountId);
-  if (refusal) {
-    return planRefusalResponse(refusal);
+  const plan = await admitRun(event.accountId);
+  if (plan.refusal) {
+    return planRefusalResponse(plan.refusal);
   }
   if (event.answers?.length) {
-    return handleDirectAnswers(event);
+    return handleDirectAnswers(event, plan);
   }
   if (event.continuation) {
-    return handleContinueRequest(event);
+    return handleContinueRequest(event, plan);
   }
   if (!hasRunnableDirectEvents(event)) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(
       400,
       "Request must include at least one user event or tool approval response",
@@ -1107,8 +1201,9 @@ async function handleAsyncRequest(
       : {}),
   });
   await dispatchRecoveredIngress(event, admission);
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome !== "owner") {
-    return asyncAdmissionResponse(event, admission);
+    return directAdmissionResponse(event, admission, true);
   }
   await startOwnedAsyncRun({
     ...event,
@@ -1123,15 +1218,10 @@ async function handleAsyncRequest(
   );
 }
 
-/**
- * Re-enter a conversation whose last turn stopped short (step cap, provider
- * fault) with one nudge turn on top of the persisted history, which already
- * ends in the tool results of the cut-off step. Replies where the conversation
- * replies: a live channel session answers in its channel, anything else is an
- * async run polled by its status URL. Always 202, whatever `background` said.
- */
+// Always 202, whatever `background` said: a live channel session replies in its channel.
 async function handleContinueRequest(
   event: DirectInboundEvent,
+  plan: Admission,
 ): Promise<Response> {
   const target = await resolveReentryTarget({
     accountId: event.accountId,
@@ -1140,9 +1230,10 @@ async function handleContinueRequest(
     agentConfig: event.agentConfig,
     configRef: event.configRef,
   });
-  // The key the caller named must be the session it resolves to: a scoped
-  // channel key with no live session behind it is not something to continue.
+  // A scoped channel key with no live session behind it has nothing to continue.
   if (event.conversationKey !== target.conversationKey) {
+    refundRun(plan, event.accountId);
+
     return errorResponse(404, "Conversation not found", {
       code: "conversation_not_found",
       param: "conversationKey",
@@ -1159,6 +1250,7 @@ async function handleContinueRequest(
     continuation,
     continuationDelivery(continuation),
   );
+  if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (owned) {
     await startOwnedAsyncRun(owned);
   }
@@ -1170,20 +1262,16 @@ async function handleContinueRequest(
   );
 }
 
-/** Run an in-process async worker request and publish its final result to storage. */
 async function handleAsyncWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
-  // The outcome the run produced; once recorded, the catch never overwrites it.
   let outcome: AsyncAgentOutcome | undefined;
   let recorded = false;
   let cronSettled = false;
-  // Records the run's outcome on its envelope and polling rows. The first
-  // outcome wins, as in Convex: an earlier pass's final text replays after a
-  // later pass asks questions, and retries a failed write of those questions.
+  // The first outcome wins, as in Convex; a later call only retries a write that failed.
   const finish = async (result: AsyncAgentOutcome): Promise<void> => {
     if (recorded) {
       return;
@@ -1203,10 +1291,6 @@ async function handleAsyncWorkerRequest(
       await finish(await commandOutcome(session, command));
     } else {
       const turn = await prepareDirectTurn(event);
-      if (!turn) {
-        return;
-      }
-
       ({ session } = turn);
       const { turnContext } = turn;
       if (!isRunnableModelInput(turnContext.messages.at(-1))) {
@@ -1223,13 +1307,8 @@ async function handleAsyncWorkerRequest(
           {
             onFinalText: async (response, traceId) => {
               await finish({ status: "completed", response: response });
-              // An empty final text means the run already delivered its output
-              // through a channel tool; pushing it would post a blank message.
-              const responseText =
-                typeof response === "string"
-                  ? response
-                  : JSON.stringify(response, null, 2);
-              if (responseText.trim() === "") {
+              const responseText = channelReplyText(response);
+              if (responseText === null) {
                 return;
               }
               await pushReplyToChannel(
@@ -1268,11 +1347,11 @@ async function handleAsyncWorkerRequest(
               await finish({ status: "awaiting_input", questions: questions });
             },
           },
+          CONTINUATION_DEPENDENCIES,
         );
       }
     }
-    // The harness swallows a callback's throw, so a write that failed there
-    // shows up only as an outcome that was never recorded.
+    // The harness swallows a callback's throw: a failed write shows only as no recorded outcome.
     if (!recorded || !outcome) {
       throw new Error("Async run ended without recording its outcome");
     }
@@ -1290,8 +1369,7 @@ async function handleAsyncWorkerRequest(
       error: error,
     };
     if (!recorded) {
-      // Without the lease the envelope is not ours to settle, but its polling
-      // rows still are.
+      // Without the lease the envelope is not ours to settle, but its polling rows still are.
       await settleAsyncRun(session, event, produced)
         .catch((): Promise<void> => recordAsyncRun(event, produced))
         .catch((writeErr: unknown): void => {
@@ -1325,7 +1403,6 @@ async function handleAsyncWorkerRequest(
   }
 }
 
-/** Run an in-process NATS worker request, publishing stream parts to its subject. */
 async function handleNatsWorkerRequest(
   event: DirectInboundEvent,
   context?: RequestContext,
@@ -1333,15 +1410,17 @@ async function handleNatsWorkerRequest(
   if (!hasRunnableDirectEvents(event)) {
     return;
   }
-  if (!ENABLE_WEBSOCKET) {
-    throw new Error("NATS worker requires ENABLE_WEBSOCKET=true");
-  }
-  const connectionId = event.connectionId?.trim();
-  if (!connectionId) {
-    throw new Error("NATS worker event must include connectionId");
-  }
-  if (!process.env.NATS_URL?.trim()) {
-    throw new Error("NATS worker requires NATS_URL");
+  const connectionId = event.connectionId?.trim() ?? "";
+  const unavailable = !ENABLE_WEBSOCKET
+    ? "NATS worker requires ENABLE_WEBSOCKET=true"
+    : !connectionId
+      ? "NATS worker event must include connectionId"
+      : !process.env.NATS_URL?.trim()
+        ? "NATS worker requires NATS_URL"
+        : null;
+  if (unavailable) {
+    await failOwnedIngress(event, unavailable);
+    throw new Error(unavailable);
   }
 
   const publisher = new LiveNatsPublisher(
@@ -1374,14 +1453,6 @@ async function handleNatsWorkerRequest(
   let transferred = false;
   try {
     const turn = await prepareDirectTurn(event);
-    if (!turn) {
-      // Both early returns skip the inner finally, so close the request-scoped
-      // publisher here instead of leaking it.
-      await publisher.close();
-
-      return;
-    }
-
     ({ session } = turn);
     const { turnContext } = turn;
     const checkOwner = ownerCheckForStream(session);
@@ -1407,21 +1478,17 @@ async function handleNatsWorkerRequest(
       const subagentCoordinator = new SubagentCoordinator(
         session,
         event.agentConfig,
-        waitUntilMs(context),
-        { dispatchNextIngress: dispatchNextIngress },
-      );
-      const asyncToolCoordinator = new AsyncToolCoordinator(
-        session,
-        waitUntilMs(context),
+        (): number => waitUntilMs(context),
+        CONTINUATION_DEPENDENCIES.subagents,
       );
 
       const result = await runParentContinuationLoop({
         session: session,
         subagentCoordinator: subagentCoordinator,
-        asyncToolCoordinator: asyncToolCoordinator,
         initialTurnContext: turnContext,
         agentConfig: event.agentConfig,
-        ...(context?.abortSignal ? { abortSignal: context?.abortSignal } : {}),
+        dependencies: CONTINUATION_DEPENDENCIES,
+        ...(context ? { context: context } : {}),
         consumeStream: (stream) =>
           pipeAgentStream(stream, (chunk): Promise<void> =>
             fencedPublisher.publish(chunk),
@@ -1432,8 +1499,7 @@ async function handleNatsWorkerRequest(
             .catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
-          // Sent as its own event, on top of the stream part, so the WebSocket
-          // gateway can pick the approvals out without parsing the stream.
+          // Also its own event, so the gateway picks approvals out without parsing the stream.
           fencedPublisher
             .publish({ type: "tool-approval-request", approvals: approvals })
             .catch(() => {});
@@ -1458,8 +1524,7 @@ async function handleNatsWorkerRequest(
       await session.settleIngress(settlement.status, settlement);
       await fencedPublisher.publish({ type: "done" });
       transferred = await dispatchNextIngress(session, event);
-      // Release here, not in the finally: the crash path must settle the
-      // envelope first, and settling requires still holding the lease.
+      // Not in a finally: the crash path must settle first, which needs the lease.
       if (!transferred) {
         await session.releaseConversationLease().catch(() => {});
       }
@@ -1468,8 +1533,7 @@ async function handleNatsWorkerRequest(
     }
   } catch (err) {
     await publisher.close().catch(() => {});
-    // Terminal settlement on the crash path: without it the envelope stays
-    // processing and the queue never drains for this conversation.
+    // Unsettled, the envelope stays processing and this conversation's queue never drains.
     if (session && !transferred) {
       const error =
         err instanceof Error ? err.message : "NATS worker processing failed";
@@ -1489,19 +1553,34 @@ async function handleNatsWorkerRequest(
   }
 }
 
-/**
- * Admit one channel message and hand its turn to the worker pool. Resolves once
- * the message is durably admitted (or answered as a command, an answer, or a
- * refusal), so the webhook can ack after it; the agent run itself happens on a
- * worker slot and replies through the channel's ChannelActions.
- */
+// Resolves once durably admitted, so the webhook can ack. An at-once command takes no queue
+// place, so `/stop` still reaches a run while the queue is full.
 export async function handleChannelRequest(
   event: ChannelInboundEvent,
 ): Promise<void> {
+  if (resolveChannelCommand(event).kind === "reply") {
+    return admitChannelMessage(event);
+  }
+  if (
+    await withQueuePlace(async (): Promise<true> => {
+      await admitChannelMessage(event);
+
+      return true;
+    })
+  ) {
+    return;
+  }
+  const { refusal } = event.accountId
+    ? await admitRun(event.accountId, { count: false })
+    : { refusal: null };
+  if (!refusal) throw new Error(WORKER_QUEUE_FULL);
+  await event.channel.sendText(planRefusalText(refusal));
+}
+
+async function admitChannelMessage(event: ChannelInboundEvent): Promise<void> {
   const outcome = resolveChannelCommand(event);
   if (outcome.kind === "reply") {
-    // A forwarder retry redelivers the same event, and a second `/clear` would
-    // drop what was said between the two deliveries.
+    // Claimed, so a forwarder retry cannot run `/clear` twice and drop what came between.
     if (
       event.accountId &&
       !(await claimSession(
@@ -1545,11 +1624,12 @@ export async function handleChannelRequest(
     throw new Error("Channel ingress requires account and agent scope");
   }
   const command = queuedCommand(event.events, event.channelName);
-  if (!command && (await settleChannelQuestion(event))) return;
+  if (!command && (await settleChannelQuestion(event, event.accountId))) {
+    return;
+  }
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
-  // A provider redelivery of an admitted message must not store its files a
-  // second time. Only a message with files pays for this read.
+  // A provider redelivery must not store its files twice; only messages with files pay this read.
   if (
     event.attachments?.length &&
     (await getIngressStatusByEventId({
@@ -1566,20 +1646,14 @@ export async function handleChannelRequest(
 
     return;
   }
-  // The provider gets its usual ack either way; an error status would only
-  // make it redeliver. The refusal and the 80% notice are said in the channel.
+  // Refusals are said in the channel: an error status would only make the provider redeliver.
   const plan = await admitRun(event.accountId, { claimWarning: true });
   if (plan.refusal) {
-    await event.channel.sendText(
-      plan.refusal.retryAfterSeconds === undefined
-        ? plan.refusal.message
-        : `${plan.refusal.message} Try again in ${plan.refusal.retryAfterSeconds} seconds.`,
-    );
+    await event.channel.sendText(planRefusalText(plan.refusal));
 
     return;
   }
-  // Best-effort: the notice is already claimed, and failing it here would drop
-  // the message it rode in on.
+  // Best effort: throwing would drop the message the already-claimed notice rode in on.
   if (plan.warning) {
     await event.channel.sendText(plan.warning).catch((err: unknown): void => {
       logWarn("Budget warning delivery failed", {
@@ -1588,9 +1662,7 @@ export async function handleChannelRequest(
       });
     });
   }
-  // Before admission, so a turn that lands in the queue still carries its
-  // media: the queued record holds only these events, and the drain loop
-  // replays exactly what was queued.
+  // Before admission: a queued turn replays only its stored events, so they must hold the media.
   const ingested = await ingestChannelAttachments(
     event.events,
     event.attachments,
@@ -1607,7 +1679,6 @@ export async function handleChannelRequest(
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
-    // A channel turn is never polled by run id, but every envelope carries one.
     runId: createRunId(),
     conversationKey: event.conversationKey,
     events: ingested.events,
@@ -1628,7 +1699,7 @@ export async function handleChannelRequest(
     accountId: event.accountId,
     agentId: event.agentId,
     conversationKey: event.conversationKey,
-    publicConversationKey: eventPublicConversationKey(
+    publicConversationKey: publicConversationKeyFromScoped(
       event.conversationKey,
       event.accountId,
       event.agentId,
@@ -1638,8 +1709,7 @@ export async function handleChannelRequest(
     stageSlug: event.stageSlug,
   };
   await dispatchRecoveredIngress(scope, admission);
-  // Only a new envelope starts a run; a redelivery or a refusal gives its
-  // count back, so a provider's retries cannot spend the per-minute limit.
+  // A provider's retries must not spend the per-minute run limit.
   if (NO_RUN_OUTCOMES.has(admission.outcome)) refundRun(plan, event.accountId);
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
@@ -1702,9 +1772,7 @@ export async function handleChannelRequest(
       channelPrincipalChain(event.identity, event.channelName),
     ),
   });
-  // A queued worker starts later, from whichever run frees its slot, so it
-  // takes this message's observability context rather than inheriting that one.
-  // The webhook acked long ago, so a failure outside a turn is said here.
+  // A queued worker starts inside whichever run frees the slot; it must keep this context.
   const observability = getObservabilityContext();
   try {
     dispatchInProcessWorker(
@@ -1746,12 +1814,7 @@ export async function handleChannelRequest(
   }
 }
 
-/**
- * The owned channel turn, then every queued follow-up after it, on one worker
- * slot. Each turn settles its envelope before the queue drains on.
- * @param incoming the live turn's events, with the transient byte-backed parts
- *   admission never saw; a follow-up taken off the queue brings its own
- */
+// `incoming` keeps the byte-backed parts admission never stored; queued turns bring their own.
 async function runChannelTurns(
   event: ChannelInboundEvent,
   scope: IngressDispatchScope,
@@ -1763,6 +1826,7 @@ async function runChannelTurns(
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
+  let approvalRetries = 0;
   const hooks = await createAgentHookDispatcher(
     event.accountId,
     event.agentConfig ?? {},
@@ -1770,9 +1834,6 @@ async function runChannelTurns(
 
   try {
     for (;;) {
-      // The turn's outcome, settled in the same mutation that takes the next
-      // message. A thrown turn still settles failed; otherwise accepted work
-      // is stranded in processing.
       let settlement: IngressSettlement | undefined;
       try {
         const command = queuedCommand(incoming, event.channelName);
@@ -1809,9 +1870,7 @@ async function runChannelTurns(
                   ? {
                       streamMessage: async (stream) => {
                         await session.assertCurrentOwner();
-                        // A channel that cannot post a live stream stops reading
-                        // and hands the reply back as text, so the run keeps
-                        // going and the drain below finishes it.
+                        // Falsy: the channel could not stream, so drain and reply as text.
                         const streamedResult = await event.channel.stream!(
                           readAgentFullStream(stream, false),
                         );
@@ -1825,14 +1884,8 @@ async function runChannelTurns(
                   terminal = "completed";
                   finalResult = response;
                   if (streamed && typeof response === "string") return;
-                  // An empty final text means the run already delivered its
-                  // output through a channel tool; sending it would post a
-                  // blank message.
-                  const responseText =
-                    typeof response === "string"
-                      ? response
-                      : JSON.stringify(response, null, 2);
-                  if (responseText.trim() === "") return;
+                  const responseText = channelReplyText(response);
+                  if (responseText === null) return;
                   const formatted = formatChannelFinalText(
                     responseText,
                     traceId,
@@ -1850,8 +1903,6 @@ async function runChannelTurns(
                 onErrorText: async (error, traceId) => {
                   await session.assertCurrentOwner();
                   terminal = "failed";
-                  // The failure goes through the same outbound hook as a reply,
-                  // so it can be rewritten or dropped too.
                   const text = await applyMessageSendingHook(
                     hooks,
                     event.channelName,
@@ -1881,16 +1932,33 @@ async function runChannelTurns(
                   });
                 },
               },
+              CONTINUATION_DEPENDENCIES,
               hooks,
             );
-            if (approvalRequired) {
+            if (
+              approvalRequired &&
+              approvalRetries < MAX_CHANNEL_APPROVAL_RETRIES
+            ) {
+              approvalRetries += 1;
               incoming = [];
               incomingEphemeral = [];
               continue;
             }
             if (result.didFail) terminal = "failed";
-            if (awaitingInput) {
-              // Settled in the hook; the answer resumes the conversation.
+            if (approvalRequired) {
+              await session.assertCurrentOwner();
+              const text = await applyMessageSendingHook(
+                hooks,
+                event.channelName,
+                CHANNEL_APPROVAL_LIMIT_ERROR,
+              );
+              if (text !== null) await event.channel.sendText(text);
+              settlement = {
+                status: "failed",
+                error: CHANNEL_APPROVAL_LIMIT_ERROR,
+              };
+            } else if (awaitingInput) {
+              // Settled in onQuestionsPending; the answer resumes the conversation.
             } else if (terminal === "failed") {
               settlement = {
                 status: "failed",
@@ -1916,9 +1984,8 @@ async function runChannelTurns(
         };
       }
 
-      // The envelope stores no config: its ref rebuilds one from the live
-      // rows, so a key rotated while it waited applies to this turn. One whose
-      // config cannot load is failed as the queue moves on past it.
+      approvalRetries = 0;
+      // Envelopes hold only a config ref; rebuilding from live rows picks up a rotated key.
       let next = await session.takeNextIngress(settlement);
       while (next) {
         try {
@@ -1955,8 +2022,7 @@ async function runChannelTurns(
         next.delivery.kind === "channel"
           ? (next.delivery.source ?? event.source)
           : event.source;
-      // The queued sender, never the first one: policy reads userId and roles
-      // from here, and the envelope is the only place the sender survived.
+      // The queued sender, not the first: policy reads userId and roles from this identity.
       const identity =
         next.delivery.kind === "channel" ? next.delivery.identity : undefined;
       session = new Session({
@@ -2031,8 +2097,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     return;
   }
 
-  // Context is stored, never run, so only the durable parts matter here.
-  // Persistence would drop byte-backed parts anyway.
+  // Context is stored, never run, so only the durable `events` matter.
   await session.appendIngressEvents(
     (
       await ingestChannelAttachments(event.events, event.attachments, {
@@ -2057,71 +2122,65 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 async function handleStatusRequest(
   event: StatusInboundEvent,
 ): Promise<Response> {
-  // The envelope is already resolved: the route looked it up by run id to
-  // learn which agent owns this run before authorizing the read.
   const result = event.ingress;
   const asyncResult = await getAsyncAgentResult(event.eventId);
 
-  // The async agent record keeps the public approval contract: while it is
-  // nonterminal its status (processing/awaiting_approval) overrides the
-  // envelope's terminal settle so pollers keep waiting and see approvals
-  // top-level, exactly as before durable ingress statuses existed.
+  // Pollers keep waiting while the async record is nonterminal, even past the envelope's settle.
   const status =
     asyncResult &&
     (asyncResult.status === "awaiting_approval" ||
       asyncResult.status === "awaiting_input" ||
-      (asyncResult.status === "processing" && result.status !== "failed"))
+      (asyncResult.status === "processing" &&
+        result.status !== "failed" &&
+        result.status !== "expired"))
       ? asyncResult.status
       : result.status;
-  const conversationKey = result.conversationKey;
 
-  return jsonResponse(200, {
-    runId: event.runId,
-    eventId: event.publicEventId,
-    agentId: event.agentId,
-    conversationKey: eventPublicConversationKey(
-      conversationKey,
-      event.accountId,
-      event.agentId,
-    ),
-    status: status,
-    ...(result?.requestedMode !== undefined
-      ? { requestedMode: result.requestedMode }
-      : {}),
-    ...(result?.appliedMode !== undefined
-      ? { appliedMode: result.appliedMode }
-      : {}),
-    ...(result?.appliedToEventId !== undefined
-      ? {
-          appliedToEventId: publicEventIdForScope(
-            result.appliedToEventId,
-            event.accountId,
-            event.agentId,
-            event.publicEventId,
-          ),
-        }
-      : {}),
-    ...(result?.result !== undefined ? { result: result.result } : {}),
-    ...(result?.stoppedByUser ? { stoppedByUser: true } : {}),
-    ...(asyncResult?.response !== undefined
-      ? { response: asyncResult.response }
-      : {}),
-    ...(asyncResult?.approvals !== undefined
-      ? { approvals: asyncResult.approvals }
-      : {}),
-    ...(asyncResult?.questions !== undefined
-      ? { questions: asyncResult.questions }
-      : {}),
-    ...((result?.error ?? asyncResult?.error)
-      ? { error: result?.error ?? asyncResult?.error }
-      : {}),
-  });
+  return jsonResponse(
+    200,
+    stripUndefined({
+      runId: event.runId,
+      eventId: event.publicEventId,
+      agentId: event.agentId,
+      conversationKey: publicConversationKeyFromScoped(
+        result.conversationKey,
+        event.accountId,
+        event.agentId,
+      ),
+      status: status,
+      requestedMode: result.requestedMode,
+      appliedMode: result.appliedMode,
+      appliedToEventId:
+        result.appliedToEventId !== undefined
+          ? publicEventIdForScope(
+              result.appliedToEventId,
+              event.accountId,
+              event.agentId,
+              event.publicEventId,
+            )
+          : undefined,
+      result: result.result,
+      stoppedByUser: result.stoppedByUser ? true : undefined,
+      response: asyncResult?.response,
+      approvals: asyncResult?.approvals,
+      questions: asyncResult?.questions,
+      error: (result.error ?? asyncResult?.error) || undefined,
+      createdAt: new Date(result.createdAt).toISOString(),
+      // The polling row moves on its own while the envelope rests: an answered
+      // question or a hand-back updates only the row.
+      lastUpdatedAt: new Date(
+        Math.max(
+          result.updatedAt,
+          asyncResult ? Date.parse(asyncResult.updatedAt) : 0,
+        ),
+      ).toISOString(),
+    }),
+  );
 }
 
-/** Appends a direct run's input and builds its turn context; settles and drains on failure. */
 async function prepareDirectTurn(
   event: DirectInboundEvent,
-): Promise<DirectTurn | null> {
+): Promise<DirectTurn> {
   const session = directSession(event);
   const turnStartedAt = Date.now();
   try {
@@ -2142,12 +2201,9 @@ async function prepareDirectTurn(
   }
 }
 
-/** The owner session a direct, async or WebSocket run works under. */
 function directSession(event: DirectInboundEvent): Session {
-  // A WebSocket-origin turn carries a connectionId; a background job it launches
-  // republishes to the durable conversation stream so a reconnecting client
-  // replays it. Plain direct/async API turns have no delivery target (poll only).
-  const delivery: AsyncToolDelivery | undefined = event.connectionId
+  // Where a background job this turn launches reports back; plain API turns report by polling.
+  const delivery: AsyncToolDelivery = event.connectionId
     ? {
         kind: "nats",
         connectionId: event.connectionId,
@@ -2163,7 +2219,7 @@ function directSession(event: DirectInboundEvent): Session {
             : {}),
           source: event.replyTarget.source,
         }
-      : undefined;
+      : { kind: "async" };
   if (event.ownerGeneration === undefined) {
     throw new Error("Direct turn is missing its durable owner generation");
   }
@@ -2188,6 +2244,7 @@ function directSession(event: DirectInboundEvent): Session {
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
     principal: runPrincipal(event, directPrincipalChain(event)),
+    userCredential: event.userCredential,
   });
 }
 
@@ -2215,8 +2272,7 @@ async function failOwnedIngress(
     stageSlug: event.stageSlug,
     ownerGeneration: event.ownerGeneration,
   });
-  // A scheduling failure recurses back through dispatchAppliedIngress; each
-  // level consumes one envelope, so the queue bound terminates it.
+  // A failed schedule recurses via dispatchAppliedIngress, one envelope per level, so it ends.
   await settleFailedIngressAndDrain(session, error, () =>
     dispatchNextIngress(session, event),
   );
@@ -2230,6 +2286,14 @@ async function claimSession(session: Session): Promise<boolean> {
   }
 
   return true;
+}
+
+// Null when a channel tool already delivered the reply, so nothing blank gets posted.
+function channelReplyText(response: JSONValue): string | null {
+  const text =
+    typeof response === "string" ? response : JSON.stringify(response, null, 2);
+
+  return text.trim() === "" ? null : text;
 }
 
 function formatChannelFinalText(
@@ -2264,9 +2328,7 @@ function dashboardTraceUrl(
     return null;
   }
   const dashboardUrl = (
-    process.env.BROODS_DASHBOARD_URL ??
-    process.env.DASHBOARD_URL ??
-    DEFAULT_DASHBOARD_URL
+    optionalEnv("BROODS_DASHBOARD_URL") ?? DEFAULT_DASHBOARD_URL
   ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,
@@ -2278,11 +2340,6 @@ function dashboardTraceUrl(
   return `${dashboardUrl}?${params.toString()}`;
 }
 
-/**
- * Push a continuation's final text back to the chat channel it came from (a
- * background job launched from Telegram/Slack/etc.). Best-effort: the row is
- * already settled, so a delivery failure is logged, not thrown.
- */
 async function pushReplyToChannel(
   session: Session,
   event: DirectInboundEvent,
@@ -2310,29 +2367,19 @@ async function pushReplyToChannel(
 }
 
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
+  const invocation: AsyncWorkerInvocation = {
     kind: "direct-api-async-worker",
     event: event,
-  } satisfies AsyncWorkerInvocation);
+  };
+  await invokeHarnessWorker(invocation);
 }
 
-/** Continues an async-tool completion on the worker its original request came in on. */
-async function invokeAsyncToolContinuationWorker(
+async function invokeContinuationWorker(
   event: DirectInboundEvent,
-  settled: AsyncToolResultRecord,
+  delivery: AsyncToolDelivery | undefined,
 ): Promise<void> {
-  if (settled.delivery?.kind === "nats") {
-    await invokeNatsWorker({
-      ...event,
-      // An answered question streams under its own id, the one the answer
-      // response names. Any other job keeps the parent's, so a reconnect that
-      // attaches to the parent replays it.
-      ...(settled.toolName === ASK_QUESTIONS_TOOL_NAME
-        ? {}
-        : { publicEventId: settled.delivery.publicEventId }),
-      publicConversationKey: settled.delivery.publicConversationKey,
-      connectionId: settled.delivery.connectionId,
-    });
+  if (delivery?.kind === "nats") {
+    await invokeNatsWorker(onSocket(event, delivery));
 
     return;
   }
@@ -2340,19 +2387,31 @@ async function invokeAsyncToolContinuationWorker(
   await invokeAsyncWorker(event);
 }
 
-async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
-  await invokeHarnessWorker({
-    kind: "nats-worker",
-    event: event,
-  } satisfies NatsWorkerInvocation);
+function onSocket(
+  event: DirectInboundEvent,
+  delivery: AsyncToolDelivery | undefined,
+): DirectInboundEvent {
+  if (delivery?.kind !== "nats") {
+    return event;
+  }
+
+  return {
+    ...event,
+    publicEventId: delivery.publicEventId,
+    publicConversationKey: delivery.publicConversationKey,
+    connectionId: delivery.connectionId,
+  };
 }
 
-/**
- * Schedules one durably applied envelope on its worker. The envelope's own
- * config ref and ephemeralSystem win over the base event's so a queued
- * request never inherits a previous request's overrides; the config itself is
- * rebuilt from the live rows here, since the envelope never stores it.
- */
+async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
+  const invocation: NatsWorkerInvocation = {
+    kind: "nats-worker",
+    event: event,
+  };
+  await invokeHarnessWorker(invocation);
+}
+
+// Only the envelope's own overrides: a queued request must never inherit a previous one's.
 export async function dispatchAppliedIngress(
   base: IngressDispatchScope,
   next: AppliedIngress,
@@ -2367,14 +2426,10 @@ export async function dispatchAppliedIngress(
   const event: DirectInboundEvent = {
     accountId: base.accountId,
     agentId: base.agentId,
-    // This rebuild re-runs an envelope that was already admitted, and its
-    // delivery (status URL included) is the stored one, so this id is never
-    // published. It exists only because every direct event carries one.
+    // Never published: the stored delivery already carries the admitted run's status URL.
     runId: createRunId(),
-    // Loaded below; an envelope whose config cannot load settles on this.
     agentConfig: {},
     configRef: next.configRef,
-    ...(base.subagentConfig ? { subagentConfig: base.subagentConfig } : {}),
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
@@ -2401,13 +2456,10 @@ export async function dispatchAppliedIngress(
       : {}),
   };
   try {
-    // An agent deleted while the envelope waited fails it here, and so does
-    // an envelope with no ref that is not a subagent's.
     event.agentConfig = await loadAppliedIngressConfig({
       accountId: base.accountId,
       agentId: base.agentId,
       configRef: next.configRef,
-      subagentConfig: base.subagentConfig,
     });
     if (delivery.kind === "websocket") {
       await invokeNatsWorker(event);
@@ -2419,12 +2471,26 @@ export async function dispatchAppliedIngress(
       await invokeAsyncWorker(event);
     }
   } catch (error) {
-    await failOwnedIngress(
-      event,
-      error instanceof Error
-        ? error.message
-        : "Failed to schedule queued ingress",
-    );
+    const owner = {
+      conversationKey: event.conversationKey,
+      ownerEventId: event.eventId,
+      ownerGeneration: next.ownerGeneration,
+    };
+    const requeued =
+      error instanceof Error &&
+      error.message === WORKER_QUEUE_FULL &&
+      (await releaseIngressOwner(owner, true).then(
+        (): boolean => true,
+        (): boolean => false,
+      ));
+    if (!requeued) {
+      await failOwnedIngress(
+        event,
+        error instanceof Error
+          ? error.message
+          : "Failed to schedule queued ingress",
+      );
+    }
     throw error;
   }
   logInfo("Queued ingress transferred to follow-up worker", {
@@ -2436,12 +2502,7 @@ export async function dispatchAppliedIngress(
   });
 }
 
-/**
- * Transfers the fenced owner to the next durable FIFO application and schedules
- * it. With `settle`, the current event is settled in the same mutation; when
- * that throws, the settle has been retried on its own, so a caller's failure
- * settle normally leaves the real outcome in place.
- */
+// A throwing hand-off has retried `settle` alone, so a caller's failure settle keeps the outcome.
 async function dispatchNextIngress(
   session: Session,
   previous: IngressDispatchScope,
@@ -2456,10 +2517,7 @@ async function dispatchNextIngress(
   return true;
 }
 
-/**
- * Best-effort dispatch of an application that admission recovered from an
- * expired owner. Never throws: the caller's own admission response must win.
- */
+// Never throws: the caller's own admission response must win.
 async function dispatchRecoveredIngress(
   base: Parameters<typeof dispatchAppliedIngress>[0],
   admission: IngressAdmission,
@@ -2511,7 +2569,6 @@ async function dispatchSessionMessage(
       channelName: delivery.channel,
       source: delivery.source ?? {},
     },
-    // The sending run asked, so the run it starts records that agent.
     ...(senderChain ? { principalChain: senderChain } : {}),
   };
   const admission = await acceptIngress(candidate);
@@ -2553,11 +2610,14 @@ async function dispatchSessionMessage(
   };
 }
 
+// `fence`: admission refuses a result the conversation already has, and stores it otherwise.
 async function admitInternalContinuation(
   event: DirectInboundEvent,
   delivery: IngressDelivery,
+  fence: Pick<IngressCandidate, "resultEventId" | "toolResultId"> = {},
 ): Promise<{ admission: IngressAdmission; owned: DirectInboundEvent | null }> {
   const admission = await acceptIngress({
+    ...fence,
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
@@ -2588,7 +2648,6 @@ async function admitInternalContinuation(
   };
 }
 
-/** Maps an existing run's delivery target onto the durable ingress envelope. */
 function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
   if (event.connectionId) {
     return {
@@ -2597,6 +2656,9 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
       publicConversationKey: event.publicConversationKey,
       connectionId: event.connectionId,
       ...(directStatusUrl(event) ? { statusUrl: directStatusUrl(event)! } : {}),
+      ...(event.publicDeploymentIngress
+        ? { publicDeploymentIngress: event.publicDeploymentIngress }
+        : {}),
     };
   }
   if (event.replyTarget) {
@@ -2617,10 +2679,12 @@ function continuationDelivery(event: DirectInboundEvent): IngressDelivery {
     publicEventId: event.publicEventId,
     publicConversationKey: event.publicConversationKey,
     statusUrl: statusUrl,
+    ...(event.publicDeploymentIngress
+      ? { publicDeploymentIngress: event.publicDeploymentIngress }
+      : {}),
   };
 }
 
-/** Fire-and-forget background work on the in-process worker pool. */
 async function invokeHarnessWorker(
   payload: AsyncWorkerInvocation | NatsWorkerInvocation,
 ): Promise<void> {
@@ -2638,64 +2702,6 @@ async function invokeHarnessWorker(
   );
 }
 
-/**
- * The queue's timer: renews every waiting run's lease, so a long wait does not
- * hand its conversation to `maintain`. A few renewals at a time, so a full
- * queue does not fire a thousand mutations at once, and one sweep at a time. A
- * lease that comes back stale or stopped is no longer renewed: the run finds
- * that out on its own first renewal once a slot starts it.
- */
-async function renewQueuedLeases(): Promise<void> {
-  if (renewingQueuedLeases) return;
-  renewingQueuedLeases = true;
-  try {
-    const waiting = pendingWorkerRuns.filter((entry) => entry[2]);
-    for (
-      let offset = 0;
-      offset < waiting.length;
-      offset += QUEUED_LEASE_RENEW_CONCURRENCY
-    ) {
-      await Promise.all(
-        waiting
-          .slice(offset, offset + QUEUED_LEASE_RENEW_CONCURRENCY)
-          .map(renewQueuedLease),
-      );
-    }
-  } finally {
-    renewingQueuedLeases = false;
-  }
-}
-
-async function renewQueuedLease(entry: PendingWorkerRun): Promise<void> {
-  const [kind, , lease] = entry;
-  if (!lease) return;
-  try {
-    const renewal = await renewIngressOwner(lease);
-    if (renewal === "renewed") return;
-    entry[2] = undefined;
-    logWarn("Queued worker lease was not renewed", {
-      kind: kind,
-      conversationKey: lease.conversationKey,
-      renewal: renewal,
-    });
-  } catch (err) {
-    logError("Queued worker lease renewal failed", {
-      kind: kind,
-      conversationKey: lease.conversationKey,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-function asyncToolContinuationEventId(parentEventId: string): string {
-  return `${parentEventId}:async-tools`;
-}
-
-/**
- * Creates the pending result row and hands the owned event to the worker. A
- * replayed event whose row already exists is a no-op, so a retried request
- * never starts a second run.
- */
 async function startOwnedAsyncRun(
   ownedEvent: DirectInboundEvent,
 ): Promise<void> {
@@ -2726,7 +2732,6 @@ async function startScheduledAgentRun(
 ): Promise<{ eventId: string; conversationKey: string }> {
   const { event, run } = await openCronRun(job, firedAt).catch(
     async (err: unknown): Promise<never> => {
-      // With no run row to settle, the failure lands on the cron itself.
       await getStorage().crons.markFailed(
         job.accountId,
         job.cronId,
@@ -2739,13 +2744,13 @@ async function startScheduledAgentRun(
   event.cronRun = {
     cronId: job.cronId,
     runId: run.runId,
-    ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
   };
+  let ownedEvent: DirectInboundEvent | null = null;
   try {
-    const { owned: ownedEvent } = await admitInternalContinuation(
+    ({ owned: ownedEvent } = await admitInternalContinuation(
       event,
       continuationDelivery(event),
-    );
+    ));
     if (!ownedEvent) {
       throw new Error("Cron conversation is already processing another turn");
     }
@@ -2755,12 +2760,22 @@ async function startScheduledAgentRun(
     });
     await invokeAsyncWorker(ownedEvent);
   } catch (err) {
-    await getStorage().crons.failRun(
-      job.accountId,
-      job.cronId,
-      run.runId,
-      err instanceof Error ? err.message : "Failed to start cron async worker",
-    );
+    const error =
+      err instanceof Error ? err.message : "Failed to start cron async worker";
+    await getStorage()
+      .crons.failRun(job.accountId, job.cronId, run.runId, error)
+      .catch((markErr: unknown): void => {
+        logError("Cron run failure was not recorded", {
+          accountId: job.accountId,
+          cronId: job.cronId,
+          runId: run.runId,
+          error: markErr instanceof Error ? markErr.message : String(markErr),
+        });
+      });
+    if (ownedEvent) {
+      await recordAsyncRun(ownedEvent, { status: "failed", error: error });
+      await failOwnedIngress(ownedEvent, error);
+    }
     throw err;
   }
 
@@ -2770,20 +2785,14 @@ async function startScheduledAgentRun(
   };
 }
 
-/**
- * When the schedule was meant to fire, falling back to now when the payload
- * carries no usable instant, including the unsubstituted template literal.
- */
+// Now when the payload has no usable instant, e.g. an unsubstituted template literal.
 function scheduledFireTime(scheduledTime: string | undefined): Date {
   const parsed = scheduledTime ? new Date(scheduledTime) : null;
 
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
 }
 
-/**
- * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
- * throw here would cost the run its reply.
- */
+// Best effort: a stranded row is fixable in the dashboard; a throw would cost the reply.
 async function removeOneShotCron(
   accountId: string,
   cronId: string,
@@ -2799,7 +2808,6 @@ async function removeOneShotCron(
     });
 }
 
-/** Builds a fire's event and its run row, the row the cron's status follows. */
 async function openCronRun(
   job: CronRecord,
   firedAt: Date,
@@ -2810,6 +2818,8 @@ async function openCronRun(
       accountId: job.accountId,
       cronId: job.cronId,
       eventId: event.publicEventId,
+      ingressEventId: event.eventId,
+      ingressConversationKey: event.conversationKey,
       conversationKey: event.publicConversationKey,
     },
     firedAt,
@@ -2852,31 +2862,13 @@ async function createCronDirectEvent(
   };
 }
 
-/**
- * Where a re-entered conversation (cron, continue, a settled background job)
- * runs and answers. A live channel session keeps its key and reply target, and
- * runs on its record-narrowed config rebuilt from live rows; anything else is
- * the direct `api:` conversation on the given config. The deployment scope is
- * what puts the run's trace on the dashboard stream.
- */
 async function resolveReentryTarget(options: {
   accountId: string;
   agentId: string;
   publicConversationKey: string;
   agentConfig: AgentConfig;
   configRef?: IngressConfigRef;
-}): Promise<
-  Pick<
-    DirectInboundEvent,
-    | "agentConfig"
-    | "configRef"
-    | "conversationKey"
-    | "replyTarget"
-    | "endpointId"
-    | "projectSlug"
-    | "stageSlug"
-  >
-> {
+}): Promise<ReentryTarget> {
   const sessionConversationKey = accountAgentScopedKey(
     options.accountId,
     options.agentId,
@@ -2929,390 +2921,88 @@ async function resolveReentryTarget(options: {
   };
 }
 
-function createDirectContinuationSseBody(
+async function streamDirectContinuation(
   event: DirectInboundEvent,
   session: Session,
   initialTurnContext: DirectTurn["turnContext"],
-  context?: RequestContext,
-): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    // This callback runs during stream consumption, after handler() has already
-    // returned and its observability scope has closed, so open a fresh one here
-    // to keep the continuation's redaction/routing tenant-private.
-    start: function (controller) {
-      return runWithObservabilityScope(async () => {
-        const subagentCoordinator = new SubagentCoordinator(
-          session,
-          event.agentConfig,
-          waitUntilMs(context),
-          { dispatchNextIngress: dispatchNextIngress },
-        );
-        const asyncToolCoordinator = new AsyncToolCoordinator(
-          session,
-          waitUntilMs(context),
-        );
-        let transferred = false;
-        let terminalFailureDrained = false;
-        const checkOwner = ownerCheckForStream(session);
-        // Bun closes a response that writes nothing for its idleTimeout, and one
-        // bash call can run silent for longer. A comment line is ignored by
-        // every SSE parser.
-        const keepalive = setInterval((): void => {
-          try {
-            controller.enqueue(textEncoder.encode(": keepalive\n\n"));
-          } catch {
-            clearInterval(keepalive);
-          }
-        }, SSE_KEEPALIVE_INTERVAL_MS);
-        // Once the client is gone the enqueue below throws about its closed
-        // controller, which says nothing about the run. The run's own reason is
-        // the one worth storing and logging.
-        let streamFailureText: string | null = null;
-
-        try {
-          const result = await runParentContinuationLoop({
-            session: session,
-            subagentCoordinator: subagentCoordinator,
-            asyncToolCoordinator: asyncToolCoordinator,
-            initialTurnContext: initialTurnContext,
-            agentConfig: event.agentConfig,
-            consumeStream: async (stream): Promise<void> => {
-              try {
-                await pipeAgentStream(stream, async (chunk): Promise<void> => {
-                  await checkOwner(chunk);
-                  controller.enqueue(
-                    textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-                  );
-                });
-              } finally {
-                streamFailureText = stream.failureText();
-              }
-            },
-            onHeartbeat: async (pendingCount) => {
-              await session.assertCurrentOwner();
-              controller.enqueue(
-                textEncoder.encode(
-                  `: waiting for async work pending=${pendingCount}\n\n`,
-                ),
-              );
-            },
-          });
-          transferred = await dispatchNextIngress(
-            session,
-            event,
-            turnSettlement(result),
-          );
-        } catch (err) {
-          const error =
-            streamFailureText ??
-            (err instanceof Error ? err.message : String(err));
-          logError("Direct continuation stream failed", {
-            eventId: event.eventId,
-            error: error,
-          });
-          // Emit before draining: promoting queued work moves the owner
-          // generation, so a later assertCurrentOwner() would drop this frame.
-          await session
-            .assertCurrentOwner()
-            .then(() => {
-              controller.enqueue(
-                textEncoder.encode(
-                  `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
-                ),
-              );
-            })
-            .catch(() => {});
-          transferred = await settleFailedIngressAndDrain(session, error, () =>
-            dispatchNextIngress(session, event),
-          );
-          terminalFailureDrained = true;
-        } finally {
-          clearInterval(keepalive);
-          if (!terminalFailureDrained && !transferred) {
-            await session.releaseConversationLease().catch(() => {});
-          }
-          controller.close();
-        }
-      });
-    },
-  });
-}
-
-async function runAgentLoopUntilSubagentsIdle(
-  session: Session,
-  initialTurnContext: DirectTurn["turnContext"],
-  agentConfig: DirectInboundEvent["agentConfig"],
-  context: RequestContext | undefined,
-  reply: {
-    onFinalText(response: JSONValue, traceId?: string): Promise<void>;
-    onErrorText(error: string, traceId?: string): Promise<void>;
-    onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-    onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-    streamMessage?(stream: AgentLoopStream): Promise<void>;
-  },
-  hooks?: HookDispatcher,
-): Promise<{
-  didFail: boolean;
-  failureText: string | null;
-  traceId?: string;
-  questions: PendingQuestionSummary[];
-}> {
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  context: RequestContext,
+): Promise<void> {
   const subagentCoordinator = new SubagentCoordinator(
     session,
-    agentConfig,
-    waitUntilMs(context),
-    { dispatchNextIngress: dispatchNextIngress },
+    event.agentConfig,
+    (): number => waitUntilMs(context),
+    CONTINUATION_DEPENDENCIES.subagents,
   );
-  const asyncToolCoordinator = new AsyncToolCoordinator(
-    session,
-    waitUntilMs(context),
-  );
-  const result = await runParentContinuationLoop({
-    session: session,
-    subagentCoordinator: subagentCoordinator,
-    asyncToolCoordinator: asyncToolCoordinator,
-    initialTurnContext: initialTurnContext,
-    agentConfig: agentConfig,
-    ...(hooks ? { hooks: hooks } : {}),
-    ...(context?.abortSignal ? { abortSignal: context.abortSignal } : {}),
-    ...(reply.onQuestionsPending
-      ? { onQuestionsPending: reply.onQuestionsPending.bind(reply) }
-      : {}),
-    consumeStream:
-      reply.streamMessage?.bind(reply) ??
-      (async (stream) => {
-        await stream.consumeStream();
-      }),
-  });
-  if (result.approvals.length > 0) {
-    await reply.onApprovalRequired?.(result.approvals);
+  let transferred = false;
+  let terminalFailureDrained = false;
+  const checkOwner = ownerCheckForStream(session);
+  // Wins over the closed-controller error a gone client causes: store the run's own reason.
+  let streamFailureText: string | null = null;
 
-    return {
-      didFail: false,
-      failureText: null,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-      questions: [],
-    };
-  }
-
-  if (result.didFail) {
-    await reply.onErrorText(
-      result.failureText ?? AGENT_PROCESSING_FAILED,
-      result.traceId,
-    );
-
-    return {
-      didFail: true,
-      failureText: result.failureText,
-      ...(result.traceId ? { traceId: result.traceId } : {}),
-      questions: [],
-    };
-  }
-
-  if (result.finalResponse !== undefined) {
-    await reply.onFinalText(result.finalResponse, result.traceId);
-  }
-
-  return {
-    didFail: false,
-    failureText: null,
-    ...(result.traceId ? { traceId: result.traceId } : {}),
-    questions: result.questions,
-  };
-}
-
-/**
- * Runs parent model passes until there is no runnable injected work.
- *
- * Heartbeats are emitted only while this request or worker waits on
- * in-process subagents and async tools. Detached sandbox background jobs
- * settle through their completion callback, not through pending work here.
- */
-async function runParentContinuationLoop(options: {
-  session: Session;
-  subagentCoordinator: SubagentCoordinator;
-  asyncToolCoordinator: AsyncToolCoordinator;
-  initialTurnContext: DirectTurn["turnContext"];
-  agentConfig: DirectInboundEvent["agentConfig"];
-  hooks?: HookDispatcher;
-  // Aborts the model pass and skips the wait on async work it left running.
-  abortSignal?: AbortSignal;
-  consumeStream(stream: AgentLoopStream): Promise<void>;
-  onLoopErrorText?(error: string): Promise<void>;
-  onApprovalRequired?(approvals: ToolApprovalSummary[]): Promise<void>;
-  onQuestionsPending?(questions: PendingQuestionSummary[]): Promise<void>;
-  onHeartbeat?(pendingCount: number): void | Promise<void>;
-}): Promise<ParentContinuationResult> {
-  let turnContext = options.initialTurnContext;
-  let finalResponse: JSONValue | undefined;
-  let traceId: string | undefined;
-
-  // One hook dispatcher for the whole parent request: every loop iteration and
-  // the subagent-finish fire-points share a single ctx.state and one storage load.
-  const hooks =
-    options.hooks ??
-    (await createAgentHookDispatcher(
-      options.session.accountId,
-      options.agentConfig,
-    ));
-  options.subagentCoordinator.attachHooks(hooks);
-
-  for (;;) {
-    let approvals: ToolApprovalSummary[] = [];
-    const stream = await runAgentLoop(
-      options.session,
-      turnContext,
-      options.agentConfig,
-      {
-        onFinalText: async (response) => {
-          finalResponse = response;
-        },
-        onErrorText: async (error) => {
-          await options.onLoopErrorText?.(error);
-        },
-        onApprovalRequired: async (approvalSummaries) => {
-          approvals = approvalSummaries;
-          await options.onApprovalRequired?.(approvalSummaries);
-        },
-        onQuestionsPending: async (questions) => {
-          await options.onQuestionsPending?.(questions);
-        },
+  try {
+    const result = await runParentContinuationLoop({
+      session: session,
+      subagentCoordinator: subagentCoordinator,
+      initialTurnContext: initialTurnContext,
+      agentConfig: event.agentConfig,
+      dependencies: CONTINUATION_DEPENDENCIES,
+      context: context,
+      consumeStream: async (stream): Promise<void> => {
+        try {
+          await pipeAgentStream(stream, async (chunk): Promise<void> => {
+            await checkOwner(chunk);
+            controller.enqueue(
+              textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+            );
+          });
+        } finally {
+          streamFailureText = stream.failureText();
+        }
       },
-      {
-        dispatchAppliedIngress: dispatchAppliedIngress,
-        dispatchSubagents: options.subagentCoordinator.dispatch,
-        subagentWatch: options.subagentCoordinator,
-        dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
-        dispatchSessionMessage: (
-          input: SessionMessageInput,
-        ): Promise<SessionMessageResult> =>
-          dispatchSessionMessage(options.session, input),
-        pendingWork: (): TaskWaitingOn | undefined =>
-          options.subagentCoordinator.pendingCount > 0
-            ? "subagent"
-            : options.asyncToolCoordinator.pendingCount > 0
-              ? "tool"
-              : undefined,
-        hooks: hooks,
-        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+      onHeartbeat: async (pendingCount) => {
+        await session.assertCurrentOwner();
+        controller.enqueue(
+          textEncoder.encode(
+            `: waiting for async work pending=${pendingCount}\n\n`,
+          ),
+        );
       },
+    });
+    transferred = await dispatchNextIngress(
+      session,
+      event,
+      turnSettlement(result),
     );
-    traceId = stream.traceId();
-
-    await options.consumeStream(stream);
-    // Only a clean pass leads to another pass that can answer a subagent.
-    if (
-      approvals.length > 0 ||
-      stream.questionSummaries().length > 0 ||
-      stream.didFail()
-    ) {
-      options.subagentCoordinator.closeQuestions();
-    }
-    if (approvals.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: approvals,
-        questions: [],
-      };
-    }
-    // Like an approval: the answer resumes the conversation later, so nothing
-    // waits for injected work now.
-    const questions = stream.questionSummaries();
-    if (questions.length > 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: questions,
-      };
-    }
-    // A stop means stop: nothing waits on the work it left running.
-    if (
-      stream.didFail() &&
-      stream.failureText() !== USER_STOP_MESSAGE &&
-      !options.abortSignal?.aborted
-    ) {
-      // Subagents and async tools from earlier steps may still be running or
-      // already done. Wait for them and write their results into the history,
-      // so the next turn ("try again") sees them instead of redoing the work.
-      await waitAndDrainAsyncWork(
-        options.subagentCoordinator,
-        options.asyncToolCoordinator,
-        {
-          onHeartbeat: (pendingCount: number): void | Promise<void> =>
-            options.onHeartbeat?.(pendingCount),
-        },
-      ).catch((error: unknown) =>
-        logError("Failed run could not keep its async results", {
-          eventId: options.session.eventId,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
-    }
-    if (stream.didFail()) {
-      return {
-        didFail: true,
-        failureText: stream.failureText(),
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
-    }
-
-    const injected = await waitAndDrainAsyncWork(
-      options.subagentCoordinator,
-      options.asyncToolCoordinator,
-      {
-        onHeartbeat: (pendingCount: number): void | Promise<void> =>
-          options.onHeartbeat?.(pendingCount),
-      },
+  } catch (err) {
+    const error =
+      streamFailureText ?? (err instanceof Error ? err.message : String(err));
+    logError("Direct continuation stream failed", {
+      eventId: event.eventId,
+      error: error,
+    });
+    // Before draining: promoting queued work moves the owner generation and would drop the frame.
+    await session
+      .assertCurrentOwner()
+      .then(() => {
+        controller.enqueue(
+          textEncoder.encode(
+            `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
+          ),
+        );
+      })
+      .catch(() => {});
+    transferred = await settleFailedIngressAndDrain(session, error, () =>
+      dispatchNextIngress(session, event),
     );
-    if (injected === 0) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
-    }
-
-    turnContext = await options.session.createTurnContext();
-    if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      return {
-        didFail: false,
-        failureText: null,
-        ...(finalResponse !== undefined
-          ? { finalResponse: finalResponse }
-          : {}),
-        ...(traceId ? { traceId: traceId } : {}),
-        approvals: [],
-        questions: [],
-      };
+    terminalFailureDrained = true;
+  } finally {
+    if (!terminalFailureDrained && !transferred) {
+      await session.releaseConversationLease().catch(() => {});
     }
   }
 }
 
-/**
- * A queued command on a sync HTTP or WebSocket run, in place of its model
- * turn: replies through `send`, settles the envelope, and hands the lease on.
- * Never throws; a failure settles the run as failed.
- */
 async function runCommandTurn(options: {
   event: DirectInboundEvent;
   command: QueuedCommand;
@@ -3336,8 +3026,6 @@ async function runCommandTurn(options: {
       .send({ type: "error", error: outcome.error })
       .catch((): void => {});
   }
-  // Settled in the hand-off mutation, which retries the settle on its own
-  // when the hand-off throws.
   const transferred = await dispatchNextIngress(
     session,
     event,
@@ -3358,11 +3046,6 @@ async function runCommandTurn(options: {
   return outcome;
 }
 
-/**
- * Runs a command the queue held until the turn before it ended, in place of a
- * model turn and under the session's lease. Its reply goes to the session's
- * channel and through `send` when given. Never throws; a failure fails the run.
- */
 async function commandOutcome(
   session: Session,
   command: QueuedCommand,
@@ -3377,7 +3060,7 @@ async function commandOutcome(
       eventId: session.eventId,
       text: command.text,
       compact: (instructions: string): Promise<number> =>
-        session.compactConversation(instructions),
+        runCompactCommand(session, command.text, instructions),
     });
     const reply = result?.reply ?? "";
     if (send) {
@@ -3397,178 +3080,9 @@ async function commandOutcome(
   }
 }
 
-/**
- * Bridges one completed parent model pass to the next continuation pass: waits
- * for outstanding in-process work, heartbeats while waiting, and injects
- * parent-visible completions plus timeout notices near the request or worker
- * deadline. Detached sandbox background jobs add no in-memory pending work, so
- * waiting here only holds the caller for subagents and async tools.
- */
-async function waitAndDrainAsyncWork(
-  subagentCoordinator: SubagentCoordinator,
-  asyncToolCoordinator: AsyncToolCoordinator,
-  options: {
-    onHeartbeat?: (pendingCount: number) => void | Promise<void>;
-  } = {},
-): Promise<number> {
-  if (
-    subagentCoordinator.pendingCount === 0 &&
-    asyncToolCoordinator.pendingCount === 0
-  ) {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-
-  const onHeartbeat = (): void | Promise<void> =>
-    options.onHeartbeat?.(
-      subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
-    );
-  // A subagent's question wakes the parent before the rest finish, so its
-  // answer can unblock the child. The async tools keep running meanwhile.
-  const subagentStatus = await subagentCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-  if (subagentStatus === "question") {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-  const asyncToolStatus = await asyncToolCoordinator.waitForIdle({
-    onHeartbeat: onHeartbeat,
-  });
-
-  if (subagentStatus === "idle" && asyncToolStatus === "idle") {
-    const [subagentCount, asyncToolCount] = await Promise.all([
-      subagentCoordinator.drainCompletionsToParent(),
-      asyncToolCoordinator.drainCompletionsToParent(),
-    ]);
-
-    return subagentCount + asyncToolCount;
-  }
-
-  const [subagentCount, asyncToolCount] = await Promise.all([
-    subagentStatus === "idle"
-      ? subagentCoordinator.drainCompletionsToParent()
-      : subagentCoordinator.drainCompletionsAndTimeoutsToParent(),
-    asyncToolStatus === "idle"
-      ? asyncToolCoordinator.drainCompletionsToParent()
-      : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),
-  ]);
-
-  return subagentCount + asyncToolCount;
-}
-
-// The SSE body and the NATS worker share this pump; only `send` differs.
-async function pipeAgentStream(
-  stream: AgentLoopStream,
-  send: (chunk: Record<string, unknown>) => Promise<void>,
-): Promise<void> {
-  let emittedErrorChunk = false;
-  for await (const value of readAgentFullStream(stream)) {
-    if (isErrorStreamChunk(value)) {
-      emittedErrorChunk = true;
-    }
-    await send(value as Record<string, unknown>);
-  }
-
-  const failureText = stream.failureText();
-  if (failureText && !emittedErrorChunk) {
-    await send({ type: "error", error: failureText });
-  }
-  const finalResponse = stream.finalResponse();
-  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
-    await send({ type: "structured-output", output: finalResponse });
-  }
-}
-
-function waitUntilMs(context: RequestContext | undefined): number {
-  if (context?.deadlineMs && Number.isFinite(context.deadlineMs)) {
-    return Math.max(Date.now(), context.deadlineMs - WAIT_DEADLINE_MARGIN_MS);
-  }
-
-  return Date.now() + DEFAULT_PARENT_WAIT_MS;
-}
-
-function isErrorStreamChunk(chunk: unknown): boolean {
-  return Boolean(
-    chunk &&
-    typeof chunk === "object" &&
-    (chunk as { type?: unknown }).type === "error",
-  );
-}
-
-/** A sync HTTP run whose input is a queued command: streams its reply. */
-function commandSseResponse(
-  event: DirectInboundEvent,
-  command: QueuedCommand,
-): Response {
-  return new Response(
-    new ReadableStream({
-      start: async function (controller): Promise<void> {
-        // A client that left takes nothing more; the command already ran, so
-        // its outcome stays the run's own.
-        const send = (
-          chunk: TextStreamPart<ToolSet> | { type: "error"; error: string },
-        ): void => {
-          try {
-            controller.enqueue(
-              textEncoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
-            );
-          } catch {}
-        };
-        await runCommandTurn({
-          event: event,
-          command: command,
-          send: async (chunk): Promise<void> => send(chunk),
-        });
-        try {
-          controller.close();
-        } catch {}
-      },
-    }),
-    { status: 200, headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function emptySseResponse(): Response {
-  return new Response(
-    new ReadableStream({
-      start: function (controller) {
-        controller.close();
-      },
-    }),
-    { status: 200, headers: { "content-type": "text/event-stream" } },
-  );
-}
-
-function errorSseResponse(error: string, statusCode = 200): Response {
-  return new Response(
-    new ReadableStream({
-      start: function (controller) {
-        controller.enqueue(
-          textEncoder.encode(
-            `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
-          ),
-        );
-        controller.close();
-      },
-    }),
-    { status: statusCode, headers: { "content-type": "text/event-stream" } },
-  );
-}
-
 function createChannelApprovalDenial(
   approvals: ToolApprovalSummary[],
 ): ToolModelMessage {
-  // TODO: Allow channel webhooks to complete approval requests instead of
-  // auto-denying them once channel-safe approval UX is available.
   return {
     role: "tool",
     content: approvals.map((approval) => ({
@@ -3578,140 +3092,6 @@ function createChannelApprovalDenial(
       reason: CHANNEL_APPROVAL_DENIAL_REASON,
     })),
   };
-}
-
-function acceptedAsyncResponse(
-  runId: string,
-  statusUrl: string,
-  event: Pick<
-    DirectInboundEvent,
-    "publicEventId" | "publicConversationKey" | "requestedMode"
-  >,
-  status: string,
-): Response {
-  return jsonResponse(202, {
-    runId: runId,
-    eventId: event.publicEventId,
-    conversationKey: event.publicConversationKey,
-    status: status,
-    requestedMode: event.requestedMode,
-    statusUrl: statusUrl,
-  });
-}
-
-function directStatusUrl(
-  event: Pick<DirectInboundEvent, "runId">,
-): string | null {
-  const baseUrl = getHarnessPublicUrl();
-  if (!baseUrl) return null;
-
-  return `${baseUrl}/v1/runs/${encodeURIComponent(event.runId)}`;
-}
-
-function publicEventIdFromScoped(
-  value: string | undefined,
-  event: DirectInboundEvent,
-): string {
-  return publicEventIdForScope(
-    value,
-    event.accountId,
-    event.agentId,
-    event.publicEventId,
-  );
-}
-
-function directAdmissionResponse(
-  event: DirectInboundEvent,
-  admission: IngressAdmission,
-  jsonOnly: boolean,
-): Response {
-  if (admission.outcome === "rejected") {
-    return jsonOnly
-      ? errorResponse(409, CONVERSATION_BUSY, { code: "conversation_busy" })
-      : errorSseResponse(CONVERSATION_BUSY, 409);
-  }
-  if (admission.outcome === "capacity") {
-    const message = "Conversation ingress queue is at capacity";
-
-    return jsonOnly
-      ? errorResponse(
-          429,
-          message,
-          { code: "ingress_capacity" },
-          INGRESS_RETRY_HEADERS,
-        )
-      : errorSseResponse(message, 429);
-  }
-  if (admission.outcome === "conflict") {
-    const message =
-      "Idempotency key is already bound to a different ingress payload";
-
-    return jsonOnly
-      ? errorResponse(409, message, { code: "idempotency_conflict" })
-      : errorSseResponse(message, 409);
-  }
-  const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  // A duplicate answers with the first admission's run id, never the one this
-  // retry minted, so an idempotent POST keeps pointing at one run.
-  const runId = admission.runId ?? event.runId;
-  const statusUrl = directStatusUrl({ runId: runId });
-
-  return jsonResponse(202, {
-    runId: runId,
-    eventId: publicEventId,
-    conversationKey: event.publicConversationKey,
-    status: admission.status ?? "queued",
-    requestedMode: event.requestedMode,
-    ...(statusUrl ? { statusUrl: statusUrl } : {}),
-  });
-}
-
-function asyncAdmissionResponse(
-  event: AsyncDirectInboundEvent,
-  admission: IngressAdmission,
-): Response {
-  if (admission.outcome === "rejected") {
-    return errorResponse(409, CONVERSATION_BUSY, { code: "conversation_busy" });
-  }
-  if (admission.outcome === "capacity") {
-    return errorResponse(
-      429,
-      "Conversation ingress queue is at capacity",
-      { code: "ingress_capacity" },
-      INGRESS_RETRY_HEADERS,
-    );
-  }
-  if (admission.outcome === "conflict") {
-    return errorResponse(
-      409,
-      "Idempotency key is already bound to a different ingress payload",
-      {
-        code: "idempotency_conflict",
-      },
-    );
-  }
-  const publicEventId = publicEventIdFromScoped(admission.eventId, event);
-  const runId = admission.runId ?? event.runId;
-  const statusUrl = directStatusUrl({ runId: runId }) ?? event.statusUrl;
-
-  return acceptedAsyncResponse(
-    runId,
-    statusUrl,
-    {
-      publicEventId: publicEventId,
-      publicConversationKey: event.publicConversationKey,
-      requestedMode: event.requestedMode,
-    },
-    admission.status ?? "queued",
-  );
-}
-
-function eventPublicConversationKey(
-  conversationKey: string,
-  accountId: string,
-  agentId?: string,
-): string {
-  return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
 }
 
 function parseAccountAgentFromScopedKey(
@@ -3754,26 +3134,6 @@ function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
   return event.events.some(isRunnableModelInput);
 }
 
-// A persisted tool result is history, not new model input. Only user turns and
-// AI SDK approval responses should start or resume a model run.
-function isRunnableModelInput(
-  message:
-    | DirectInboundEvent["events"][number]
-    | DirectTurn["turnContext"]["messages"][number]
-    | undefined,
-): boolean {
-  return (
-    message?.role === "user" ||
-    (message?.role === "tool" &&
-      message.content.length > 0 &&
-      message.content.every((part) => part.type === "tool-approval-response"))
-  );
-}
-
-/**
- * Records an async run's outcome: the envelope and its polling rows settle in
- * one mutation, and without an owned envelope only the rows are written.
- */
 async function settleAsyncRun(
   session: Session | undefined,
   event: DirectInboundEvent,
@@ -3787,7 +3147,6 @@ async function settleAsyncRun(
   if (!settled) await recordAsyncRun(event, outcome);
 }
 
-/** Records an async run's outcome on its polling rows only. */
 async function recordAsyncRun(
   event: DirectInboundEvent,
   outcome: AsyncAgentOutcome,
@@ -3803,33 +3162,4 @@ function asyncResultEventIds(event: DirectInboundEvent): string[] {
   return [
     ...new Set([event.asyncResultEventId ?? event.eventId, event.eventId]),
   ];
-}
-
-/** The terminal envelope outcome of a finished parent turn, for settle or takeNext. */
-function turnSettlement(result: ParentContinuationResult): IngressSettlement {
-  if (result.didFail) {
-    return {
-      status: "failed",
-      error: result.failureText ?? AGENT_PROCESSING_FAILED,
-    };
-  }
-  if (result.approvals.length > 0) {
-    return outcomeSettlement({
-      status: "awaiting_approval",
-      approvals: result.approvals,
-    });
-  }
-  if (result.questions.length > 0) {
-    return outcomeSettlement({
-      status: "awaiting_input",
-      questions: result.questions,
-    });
-  }
-
-  return {
-    status: "completed",
-    ...(result.finalResponse !== undefined
-      ? { result: result.finalResponse }
-      : {}),
-  };
 }

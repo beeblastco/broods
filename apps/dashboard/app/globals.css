@@ -40,10 +40,12 @@
   --color-card: var(--card);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  /* The pool's part the owner's other organizations used: muted, faded toward the empty track. */
+  --color-usage-other-orgs: var(--usage-other-orgs);
   --color-needs-input: var(--needs-input);
   --color-info: var(--info);
   --color-folder: var(--folder);
-  --color-run-subagent: var(--run-subagent);
+  --color-canvas-edge: var(--canvas-edge);
   --color-run-reasoning: var(--run-reasoning);
   --color-span-task: var(--span-task);
   --color-span-cron: var(--span-cron);
@@ -65,6 +67,7 @@
   /* Dense panels sit below text-xs. No line-height token, so the text keeps its parent's. */
   --text-2xs: 0.6875rem;
   --text-3xs: 0.625rem;
+  --text-terminal: 0.8125rem;
 
   --color-stage-development: oklch(0.696 0.17 162.48);
   --color-stage-production: oklch(0.606 0.25 292.717);
@@ -80,7 +83,6 @@
   --color-usage-reasoning: #a78bfa;
   --color-usage-cache-read: #fbbf24;
   --color-usage-cache-write: #fb7185;
-  --color-usage-runtime: #818cf8;
   --color-usage-agent-sandbox: #2dd4bf;
   --color-usage-mcp-sandbox: #fb923c;
   --color-usage-tasks: #22d3ee;
@@ -115,6 +117,7 @@
   --color-terminal-error: oklch(0.808 0.114 19.571);
   --color-terminal-warning: oklch(0.924 0.12 95.746);
 
+  --color-brand-gray: #aaaaaa;
   --color-brand-ink: #0a0903;
   --color-brand-paper: #f7f3f3;
 
@@ -129,6 +132,79 @@
   --color-avatar-8: #f97316;
 }
 
+/* Motion: `duration-fast` (hover, tooltips), `duration-base` (menus, panels),
+   `duration-slow` (dialogs, sheets), all on `ease-snappy`. MOTION_MS in
+   app/lib/motion.ts mirrors the durations for timers. */
+@theme {
+  --transition-duration-fast: 120ms;
+  --transition-duration-base: 160ms;
+  --transition-duration-slow: 200ms;
+  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-duration: var(--transition-duration-fast);
+  --default-transition-timing-function: var(--ease-snappy);
+}
+
+/* Only opacity, translate and scale animate: a width, height or inset
+   transition relays out the canvas on every frame. A `duration-*` or
+   `ease-*` class next to one of these overrides its default. */
+@utility motion-fade {
+  transition-property: opacity;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+}
+
+/* Base UI popups (menus, selects, tooltips, dialogs) fade and settle from
+   their anchor; pair with `origin-(--transform-origin)` where Base UI sets it. */
+@utility motion-pop {
+  transition-property: opacity, scale;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    scale: 0.97;
+  }
+
+  /* A submenu opens under the pointer: a scale would move its items as they are aimed at. */
+  &[data-slot$="sub-content"] {
+    scale: none;
+  }
+}
+
+/* A sheet slides from its edge; the side's `data-starting-style:translate-*`
+   says how far. */
+@utility motion-slide {
+  transition-property: translate;
+  transition-duration: var(--tw-duration, var(--transition-duration-slow));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+}
+
+/* A docked right panel's content (usePresence): fades in from the edge each
+   time it is shown, out while `data-closing`, and never moves while it stays
+   open, so switching what it shows replays nothing. */
+@utility motion-panel {
+  transition-property: opacity, translate;
+  transition-duration: var(--tw-duration, var(--transition-duration-base));
+  transition-timing-function: var(--tw-ease, var(--ease-snappy));
+
+  @starting-style {
+    opacity: 0;
+    translate: 0.5rem 0;
+  }
+
+  &[data-closing] {
+    opacity: 0;
+    translate: 0.5rem 0;
+    pointer-events: none;
+  }
+}
+
 @utility clip-hex {
   clip-path: polygon(
     25% 6.7%,
@@ -140,6 +216,26 @@
   );
 }
 
+/* A scroller with a hidden scrollbar fades its inline end so cut-off items show
+   there is more; the end padding lets the last item scroll clear of the fade. */
+@utility fade-inline-end {
+  --fade-size: 1.5rem;
+  padding-inline-end: var(--fade-size);
+  mask-image: linear-gradient(
+    to right,
+    black calc(100% - var(--fade-size)),
+    transparent
+  );
+
+  &:dir(rtl) {
+    mask-image: linear-gradient(
+      to left,
+      black calc(100% - var(--fade-size)),
+      transparent
+    );
+  }
+}
+
 html,
 body {
   height: 100%;
@@ -147,6 +243,7 @@ body {
 }
 
 :root {
+  color-scheme: light;
   --header-height: 3rem;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -165,7 +262,8 @@ body {
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  /* 3:1 on the white and muted surfaces a field sits on. */
+  --input: oklch(0.64 0 0);
   --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
@@ -182,10 +280,13 @@ body {
   --sidebar-ring: oklch(0.708 0 0);
   --success: oklch(0.596 0.145 163.225);
   --warning: oklch(0.666 0.179 58.318);
+  --usage-other-orgs: oklch(0.784 0 0);
   --needs-input: oklch(0.558 0.288 302.321);
   --info: oklch(0.546 0.245 262.881);
   --folder: oklch(0.554 0.135 66.442);
-  --run-subagent: oklch(0.609 0.126 221.723);
+  --canvas-edge: rgba(0, 0, 0, 0.35);
+  --canvas-grid: rgba(0, 0, 0, 0.16);
+  --canvas-bg: transparent;
   --run-reasoning: oklch(0.558 0.288 302.321);
   /* Trace bar hues, tuned for protan/deutan separation; see KIND_THEME in TracingPanel. */
   --span-task: oklch(0.606 0.25 292.717);
@@ -197,6 +298,7 @@ body {
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -230,10 +332,13 @@ body {
   --sidebar-ring: oklch(0.556 0 0);
   --success: oklch(0.765 0.177 163.223);
   --warning: oklch(0.828 0.189 84.429);
+  --usage-other-orgs: oklch(0.467 0 0);
   --needs-input: oklch(0.714 0.203 305.504);
   --info: oklch(0.707 0.165 254.624);
   --folder: oklch(0.852 0.199 91.936);
-  --run-subagent: oklch(0.789 0.154 211.53);
+  --canvas-edge: rgba(255, 255, 255, 0.4);
+  --canvas-grid: rgba(255, 255, 255, 0.3);
+  --canvas-bg: #000;
   --run-reasoning: oklch(0.714 0.203 305.504);
   --span-task: oklch(0.606 0.25 292.717);
   --span-cron: oklch(0.879 0.169 91.605);
@@ -243,11 +348,39 @@ body {
   --span-phase: oklch(0.704 0.14 182.503);
 }
 
-/* React Flow writes a node's box inline, so a frame that grows around an open
-   chip transitions those two properties. `transition-all` would catch the
-   transform a drag writes and leave the frame trailing the cursor. */
-@utility transition-box {
-  transition-property: width, height;
+@media (prefers-contrast: more) {
+  :root {
+    --border: oklch(0.708 0 0);
+    --input: oklch(0.5 0 0);
+    --muted-foreground: oklch(0.45 0 0);
+  }
+
+  .dark {
+    --border: oklch(1 0 0 / 30%);
+    --input: oklch(1 0 0 / 50%);
+    --muted-foreground: oklch(0.82 0 0);
+  }
+}
+
+/* A picked or linked run's first row in the trace waterfall rings once and
+   fades, so it is easy to find in a chain; a ring that stayed would read as a
+   second selection. A color fade, so it stays under reduced motion. */
+@keyframes trace-flash {
+  from {
+    background-color: color-mix(in oklab, var(--color-info) 10%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklab, var(--color-info) 40%, transparent);
+  }
+}
+
+@utility animate-trace-flash {
+  animation: trace-flash 1.5s ease-out;
+}
+
+/* A row of a long list skips layout and paint off screen; `auto` keeps its measured height. */
+@utility render-lazy {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 1lh;
 }
 
 @layer base {
@@ -297,4 +430,17 @@ body {
    turns red over a card that will not take it. CanvasRefusal outlines the card. */
 .react-flow__connection.invalid .react-flow__connection-path {
   stroke: var(--color-destructive);
+}
+
+/* Reduced motion: every transition and animation ends where it starts.
+   Unlayered, so it beats any utility. The trace flash is a color fade only. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-trace-flash),
+  ::before,
+  ::after {
+    transition-duration: 0s;
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+  }
 }

@@ -1,16 +1,11 @@
 "use client";
 
-/**
- * JSON editor for a single nested branch of an AgentConfig. Owns its own
- * dirty/error/saved state so the side panel can stack multiple editors that
- * each save an isolated slice.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Textarea } from "@/app/components/ui/textarea";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Check } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
 
 const EMPTY_DEFAULT = "{}";
@@ -18,23 +13,19 @@ const EMPTY_DEFAULT = "{}";
 export function BranchEditor({
   title,
   value,
-  placeholder = EMPTY_DEFAULT,
   onSave,
-  disabled,
 }: {
   title: string;
   value: unknown;
-  placeholder?: string;
   onSave: (parsed: unknown) => Promise<void> | void;
-  disabled?: boolean;
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const serialized = useMemo(
     () =>
       value === undefined || value === null
-        ? placeholder
+        ? EMPTY_DEFAULT
         : JSON.stringify(value, null, 2),
-    [value, placeholder],
+    [value],
   );
 
   const [draft, setDraft] = useState(serialized);
@@ -42,9 +33,8 @@ export function BranchEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncedSource, setSyncedSource] = useState(serialized);
+  const errorId = useId();
 
-  // Reset the draft when the upstream serialized value changes (set during
-  // render rather than in an effect to avoid a cascading re-render).
   if (serialized !== syncedSource) {
     setSyncedSource(serialized);
     setDraft(serialized);
@@ -89,19 +79,25 @@ export function BranchEditor({
           setSaved(false);
         }}
         spellCheck={false}
+        aria-label={title}
+        aria-invalid={error !== null}
+        aria-describedby={error !== null ? errorId : undefined}
         rows={8}
         className="min-h-32 resize-y"
-        disabled={disabled}
         readOnly={!canWrite}
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p id={errorId} role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         {canWrite && (
           <Button
             size="sm"
             variant="outline"
             className="h-8 cursor-pointer text-xs"
-            disabled={disabled || !dirty || isSaving}
+            disabled={!dirty || isSaving}
             onClick={handleSave}
           >
             {isSaving ? "Saving…" : "Save"}

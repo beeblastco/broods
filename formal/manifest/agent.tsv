@@ -1,0 +1,62 @@
+path	class	status	lean	replay	note
+apps/core/src/harness/ai-sdk-harness/adapters/claude-code.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/adapters/codex.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/adapters/deepagents.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/adapters/index.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/adapters/opencode.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/adapters/pi.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/index.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/harness/ai-sdk-harness/provider.ts	decision	open	Spec.Agent.Model		Single-wrapper retry bound and item stripping boundary modelled; remaining: recovery predicates/transforms, provider composition/settings, stream normalization, cache behavior and exported middleware replay.
+apps/core/src/harness/ai-sdk-harness/runtime.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/sandbox.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/ai-sdk-harness/session.ts	decision	open	Spec.Agent.Model		Projection and raw append kernels modelled; remaining: full stored-event sanitization, fencing/retry batches, compaction/history projection, pruning, ingress/media and system-context construction; no exported Session replay yet.
+apps/core/src/harness/chatgpt.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/compaction.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Trigger replayed; splitting kernel modelled; remaining: actual summarizeConversation split/merge/failure usage/persistence replay and prompt construction.
+apps/core/src/harness/conversation-files.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/harness/deadline-policy.ts	decision	replayed	Spec.Agent.Model.deadline	formal/replay/agent.test.ts	deadline and withdrawYield cover the exported state machine.
+apps/core/src/harness/harness.ts	decision	open	Spec.Agent.Model		Stop predicates and finite fuel modelled; remaining: full run orchestration, stream terminal/error paths, approval persistence, hook application, finalization and adapter branch.
+apps/core/src/harness/hook-dispatcher.ts	decision	open	Spec.Agent.Model		Remaining: dispatcher queue, event index, shallow merge, state propagation, sending hooks and execution wrappers.
+apps/core/src/harness/hook-runner.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Mutable-field whitelist replayed; remaining: state size/error fallback, bundle digest/cache and runner outcome model/replay.
+apps/core/src/harness/lifecycle.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/harness/plan-limits.ts	decision	open	Spec.Agent.Model		Admission precedence modelled; remaining: TTL/window/cache/refund/warning behavior, recordUsage and response formatting replay.
+apps/core/src/harness/policy.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Gate order/computer waiting replayed; remaining: complete target resolution/input sanitization, policy loading/outages and channel invoke exported replay.
+apps/core/src/harness/provider.ts	decision	open	Spec.Agent.Model		Single-wrapper retry bound and item stripping boundary modelled; remaining: recovery predicates/transforms, provider composition/settings, stream normalization, cache behavior and exported middleware replay.
+apps/core/src/harness/pruning.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+apps/core/src/harness/session.ts	decision	open	Spec.Agent.Model		Projection and raw append kernels modelled; remaining: full stored-event sanitization, fencing/retry batches, compaction/history projection, pruning, ingress/media and system-context construction; no exported Session replay yet.
+apps/core/src/harness/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+apps/core/src/harness/subagents.ts	decision	open	Spec.Agent.Model		Principal/trigger/flag inheritance and caps modelled; remaining: complete coordinator dispatch/resume/message/outbox/detach/recovery state machine and exported replay.
+apps/core/src/harness/tool-execute.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+apps/core/src/harness/transcribe.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/harness/usage-metering.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	TaskTotals replayed; remaining: cache-write extraction, CPU ledger, timing tracker and attribute projection model/replay.
+apps/core/src/shared/cache-digest.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/discord-wire.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/account-hooks.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/accounts.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/agent-config.ts	decision	open			Reclassified: contains runtime config/override decisions as well as types; full modelling and replay remain.
+apps/core/src/shared/domain/agents.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/cron.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/mcp.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/policy.ts	glue	excluded		formal/replay/agent.test.ts	Type-only policy records and decision input/output shapes; PolicyDocument lives in Contracts.
+apps/core/src/shared/domain/sandbox-config.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/domain/workspace-config.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/env.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/errors.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/in-flight.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/log.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/mcp-protocol.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/media-types.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/node-aead.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/otel.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/paths.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+apps/core/src/shared/sandbox.ts	adapter	contract	Spec.Agent.Contracts		External harness/provider/sandbox effects supplied through HarnessAdapter or ProviderAdapter; implementations and service internals not proved.
+apps/core/src/shared/skills.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+apps/core/src/shared/webhook.ts	glue	excluded			Manifest-classified wiring, formatting, constants or type declarations; no decision model claimed.
+packages/convex/model/accountHooks.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+packages/convex/model/harnessSessionEntries.ts	decision	replayed	Spec.Agent.Model	formal/replay/agent.test.ts	Pure byte/row batch decisions replayed; indexed lookup is EntryStore.find under trusted Convex contract.
+packages/convex/model/modelPricing.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Cost numerator and canonical provider modelled; remaining: model-id/date-alias lookup and absent-rates/canonical-provider replay.
+packages/convex/model/modelProviders.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+packages/convex/model/planLimits.ts	decision	open	Spec.Agent.Model	formal/replay/agent.test.ts	Budget levels replayed and caps modelled; remaining: plan constants, accountOrg contract, managed-service flag and cap replay.
+packages/convex/model/policyDocument.ts	protocol	modelled	Spec.Agent.Contracts.PolicyDocument		Data/validator shape represented independently; Convex validation engine is external and not replayed.
+packages/convex/model/policyRules.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+packages/convex/model/pricing.ts	decision	open			Remaining: complete function-level model and exported replay; no file-level model claimed; twins are credited separately in coverage.json.
+packages/convex/model/subagentResults.ts	protocol	replayed	Spec.Agent.Model	formal/replay/agent.test.ts	Dedupe formatting/parser replayed; handback/status sets represented by parser terminalStatus; Convex validators are external shape contracts.

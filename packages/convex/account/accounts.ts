@@ -1,66 +1,36 @@
-/**
- * Account CRUD + secret-hash lookup. Called by broods's
- * Convex core store (via deploy key) and by the dashboard's org lifecycle.
- */
-
-import { v } from "convex/values";
+import { v, type ObjectType } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
-import { internalMutation, internalQuery } from "../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "../_generated/server";
 import { deleteAccountContentsBatch } from "../model/cascade";
 import { accountDoc } from "../model/accountDoc";
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
-/**
- * @returns the complete persisted account document
- */
+const createArgs = {
+  orgId: v.string(),
+  username: v.string(),
+  description: v.optional(v.string()),
+  secretHash: v.string(),
+  secretHint: v.optional(v.string()),
+  secretRotatedBy: v.optional(v.id("users")),
+  status: v.optional(statusValidator),
+};
+
 export const create = internalMutation({
-  args: {
-    orgId: v.string(),
-    username: v.string(),
-    description: v.optional(v.string()),
-    secretHash: v.string(),
-    secretHint: v.optional(v.string()),
-    secretRotatedBy: v.optional(v.id("users")),
-    status: v.optional(statusValidator),
-  },
+  args: createArgs,
   returns: accountDoc,
   handler: async (ctx, args): Promise<Doc<"accounts">> => {
-    const existing = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
-      .unique();
-    if (existing) {
-      throw new Error(`Account already exists for orgId=${args.orgId}`);
-    }
-
-    const now = Date.now();
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: args.orgId,
-      username: args.username,
-      description: args.description,
-      secretHash: args.secretHash,
-      secretHint: args.secretHint,
-      secretRotatedAt: args.secretHint ? now : undefined,
-      secretRotatedBy: args.secretRotatedBy,
-      status: args.status ?? "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    const account = await ctx.db.get(accountId);
-    if (!account) {
-      throw new Error("Failed to read created account");
-    }
-
-    return account;
+    return await insertAccount(ctx, args);
   },
 });
 
-// Takes a string, not v.id: the caller is a URL segment. A v.id validator
-// rejects an unissued id by throwing, which reaches the webhook as a 500 and
-// makes a provider retry a webhook that will never work. normalizeId turns
-// "not an account id" into null, so it answers 404 and a real outage still throws.
+// A string, not v.id: an unissued id from a URL must answer 404, not a 500 that makes the
+// webhook provider retry forever.
 export const getById = internalQuery({
   args: { accountId: v.string() },
   returns: v.union(accountDoc, v.null()),
@@ -82,17 +52,6 @@ export const getByOrgId = internalQuery({
   },
 });
 
-export const getBySecretHash = internalQuery({
-  args: { secretHash: v.string() },
-  returns: v.union(accountDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"accounts"> | null> => {
-    return await ctx.db
-      .query("accounts")
-      .withIndex("by_secretHash", (q) => q.eq("secretHash", args.secretHash))
-      .unique();
-  },
-});
-
 export const list = internalQuery({
   args: {},
   returns: v.array(accountDoc),
@@ -101,13 +60,7 @@ export const list = internalQuery({
   },
 });
 
-/**
- * Removes an account and cascade-deletes its agents, sandbox/workspace configs,
- * conversations, messages, skills, async results, and cron jobs. Deletes one
- * bounded batch per invocation and reschedules itself until the account row is
- * gone, so a high-volume account never exceeds one transaction. S3 cleanup is
- * the caller's responsibility.
- */
+// One bounded batch per call, rescheduled until gone. S3 cleanup is the caller's job.
 export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.null(),
@@ -131,9 +84,6 @@ export const removeBatch = internalMutation({
   },
 });
 
-/**
- * @returns the updated document, or null when the account does not exist
- */
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -174,3 +124,37 @@ export const update = internalMutation({
     return await ctx.db.get(accountId);
   },
 });
+
+// The dashboard's provision and the CLI's org creation both make an org's account here.
+export async function insertAccount(
+  ctx: MutationCtx,
+  args: ObjectType<typeof createArgs>,
+): Promise<Doc<"accounts">> {
+  const existing = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+    .unique();
+  if (existing) {
+    throw new Error(`Account already exists for orgId=${args.orgId}`);
+  }
+
+  const now = Date.now();
+  const accountId = await ctx.db.insert("accounts", {
+    orgId: args.orgId,
+    username: args.username,
+    description: args.description,
+    secretHash: args.secretHash,
+    secretHint: args.secretHint,
+    secretRotatedAt: args.secretHint ? now : undefined,
+    secretRotatedBy: args.secretRotatedBy,
+    status: args.status ?? "active",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const account = await ctx.db.get(accountId);
+  if (!account) {
+    throw new Error("Failed to read created account");
+  }
+
+  return account;
+}

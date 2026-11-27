@@ -1,9 +1,3 @@
-/**
- * mcp-service rpc tests (#331 dashboard phase): the service-auth'd verbs the
- * Convex mcpService actions call. Network edge stubbed via setMcpForTests;
- * the full chain runs in the local-stack E2E.
- */
-
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { handleMcpServiceRpc } from "../src/accounts/mcp-service.ts";
 import { setMcpForTests } from "../src/harness/mcp/client.ts";
@@ -56,16 +50,12 @@ const CHATS_WORKSPACE: WorkspaceConfigRecord = {
   updatedAt: CREATED_AT,
 };
 
-/** The stores a test stubs, each with only the methods the code under test calls. */
 type StorageStubs = { [Store in keyof Storage]?: Partial<Storage[Store]> };
 
-/**
- * A stage agent and its reservation row on the `web` sandbox, if any:
- * `expiresIn` is seconds from now, so a negative one is past its idle deadline.
- */
 interface StageAgent {
   agentId: string;
   config: AgentConfig;
+  // `expiresIn` is seconds from now; a negative one is past its idle deadline.
   reservation?: { claimedAt: number; expiresIn: number };
 }
 
@@ -78,10 +68,6 @@ function rpcRequest(body: unknown): CoreRequest {
   } as CoreRequest;
 }
 
-/**
- * Lists the saved obscura row on the `web` lambda sandbox with the given stage
- * agents, and returns the reservation the explorer reached it on.
- */
 async function explorerReservation(
   agents: StageAgent[],
 ): Promise<SandboxMcpTarget["reservation"]> {
@@ -114,8 +100,7 @@ async function explorerReservation(
     },
   };
   setStorageForTests(stubs as Storage);
-  // The reservation row as Convex stores it, `expiresAt` in unix seconds, so
-  // the explorer's own idle rule decides what is live.
+  // As Convex stores it, `expiresAt` in unix seconds, so the explorer's own idle rule decides.
   spyOn(instanceStore, "getSandboxReservationRecord").mockImplementation(
     async (_provider, reservationKey) => {
       const owner = agents.find(
@@ -161,7 +146,6 @@ async function explorerReservation(
   return reached[0]!.reservation;
 }
 
-/** The reservation an agent's own run reserves on the `web` sandbox. */
 function agentReservation(agentId: string): { reservationKey: string } {
   return {
     reservationKey: agentSandboxReservationKey("acct_test", agentId, "sb_web"),

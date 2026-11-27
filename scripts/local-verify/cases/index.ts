@@ -1,59 +1,117 @@
 import type { VerifyCase } from "../harness.ts";
 import { agentRun } from "./agent-run.ts";
+import { cronRun } from "./cron-run.ts";
+import { asyncToolHandback } from "./async-tool-handback.ts";
 import { auditLedger } from "./audit-ledger.ts";
+import { authFailures } from "./auth-failures.ts";
 import { autoCompaction } from "./auto-compaction.ts";
+import { bashTimeout } from "./bash-timeout.ts";
 import { browserSandbox } from "./browser-sandbox.ts";
 import { cloudflareSandbox } from "./cloudflare-sandbox.ts";
 import { connections } from "./connections.ts";
+import { conversationFiles } from "./conversation-files.ts";
 import { credentialPrefixes } from "./credential-prefixes.ts";
-import { customSandbox } from "./custom-sandbox.ts";
+import { devWatch } from "./dev-watch.ts";
 import { edgeHeaders } from "./edge-headers.ts";
+import { githubRepo } from "./github-repo.ts";
+import { workerSandbox } from "./worker-sandbox.ts";
+import { largeSkillSync } from "./large-skill-sync.ts";
 import { manifestSync } from "./manifest-sync.ts";
+import { stageSource } from "./stage-source.ts";
+import { applyTicket } from "./apply-ticket.ts";
+import { observabilityTicket } from "./observability-ticket.ts";
 import { mcpCommand } from "./mcp-command.ts";
 import { mcpHeaderEnv } from "./mcp-header-env.ts";
-import { lambdaSnapshot } from "./lambda-snapshot.ts";
+import { mcpTasks } from "./mcp-tasks.ts";
 import { machineSandbox } from "./machine-sandbox.ts";
+import { modelPrices } from "./model-prices.ts";
+import { modelTimeout } from "./model-timeout.ts";
+import { orgSeatBilling } from "./org-seat-billing.ts";
 import { ownBucketSandbox } from "./own-bucket-sandbox.ts";
-import { providerSnapshot } from "./provider-snapshot.ts";
+import { productionRegion } from "./production-region.ts";
+import { projectUsage } from "./project-usage.ts";
+import { providerTools } from "./provider-tools.ts";
 import { queuedCompact } from "./queued-compact.ts";
 import { queuedFollowup } from "./queued-followup.ts";
-import { r2Workspace } from "./r2-workspace.ts";
-import { sandboxImage } from "./sandbox-image.ts";
 import { runToken } from "./run-token.ts";
-import { sdkClient } from "./sdk-client.ts";
+import { scopedAccountKey } from "./scoped-account-key.ts";
+import { snapshotStage } from "./snapshot-stage.ts";
+import { statusReadHandback } from "./status-read-handback.ts";
 import { steerAtBoundary } from "./steer-at-boundary.ts";
+import { streamedBurst } from "./streamed-burst.ts";
+import { streamedRefusal } from "./streamed-refusal.ts";
+import {
+  subagentMessageAgents,
+  subagentNoReplyWake,
+} from "./subagent-message-agents.ts";
+import { subagentModel } from "./subagent-model.ts";
+import { subagentResume } from "./subagent-resume.ts";
+import { subagentStop } from "./subagent-stop.ts";
+import { traceFetch } from "./trace-fetch.ts";
 import { trailingSlash } from "./trailing-slash.ts";
+import { userToken } from "./user-token.ts";
+import { vercelSandbox } from "./vercel-sandbox.ts";
 import { webhookHandshake } from "./webhook-handshake.ts";
+import { websocketAttachAbort } from "./websocket-attach-abort.ts";
+import { websocketRuntimeKey } from "./websocket-runtime-key.ts";
 import { workToolWebhooks } from "./work-tool-webhooks.ts";
 import { workspaceIsolation } from "./workspace-isolation.ts";
 
-/** Every case `local-stack.ts verify` runs, in order. A new end-to-end feature adds one here. */
 export const verifyCases: readonly VerifyCase[] = [
   agentRun,
-  sdkClient,
+  cronRun,
+  websocketAttachAbort,
+  websocketRuntimeKey,
+  traceFetch,
+  userToken,
   queuedFollowup,
   queuedCompact,
   steerAtBoundary,
+  streamedBurst,
+  streamedRefusal,
+  subagentStop,
+  subagentModel,
+  subagentResume,
+  subagentMessageAgents,
+  subagentNoReplyWake,
+  asyncToolHandback,
+  mcpTasks,
+  statusReadHandback,
   autoCompaction,
   machineSandbox,
+  bashTimeout,
+  providerTools,
   ownBucketSandbox,
-  sandboxImage,
-  lambdaSnapshot,
-  providerSnapshot,
+  snapshotStage,
   browserSandbox,
   mcpCommand,
-  customSandbox,
   cloudflareSandbox,
+  workerSandbox,
+  conversationFiles,
+  vercelSandbox,
   trailingSlash,
   edgeHeaders,
   credentialPrefixes,
+  scopedAccountKey,
   manifestSync,
+  largeSkillSync,
+  stageSource,
+  applyTicket,
+  observabilityTicket,
+  devWatch,
+  githubRepo,
+  productionRegion,
+  projectUsage,
+  modelPrices,
+  modelTimeout,
   mcpHeaderEnv,
-  r2Workspace,
   workToolWebhooks,
   webhookHandshake,
   connections,
   auditLedger,
   runToken,
   workspaceIsolation,
+  orgSeatBilling,
+  // Last: it blocks a source address on the config plane for 15 minutes.
+  authFailures,
 ];

@@ -6,24 +6,15 @@ import type { ComponentProps, ReactNode } from "react";
 // The tallest bar stops here, so the label above it stays readable.
 const BAR_MAX_PERCENT = 70;
 
-/** One bar of the strip. */
 export interface StripBar {
   key: string | number;
   /** 0 to 1, against the tallest bar. */
   height: number;
-  /** The bar's background class, such as `bg-muted` or `bg-destructive/70`. */
   tone: string;
   title?: string;
-  /** Faded, for a bar outside the current selection. */
   dimmed?: boolean;
 }
 
-/**
- * A row of thin bars with a label in the top right corner: the volume strip
- * under the Monitoring toolbar and the run history in a scheduler's panel
- * draw with it. Overlays such as a selection or a marker go in `children`;
- * pointer handlers and the ref come through the div props.
- */
 export function BarStrip({
   bars,
   label,

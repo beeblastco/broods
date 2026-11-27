@@ -1,8 +1,5 @@
-/**
- * The `accounts` row as functions return it. A leaf of its own so
- * `agent/deployments` can name it without importing `account/accounts`,
- * whose cascade reaches `stage`, which reaches `agent/deployments` again.
- */
+// A leaf so `agent/deployments` can use it without importing `account/accounts`, whose
+// cascade imports `agent/deployments` back.
 
 import { v } from "convex/values";
 import { accountsFields } from "../schema";

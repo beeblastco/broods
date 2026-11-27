@@ -1,5 +1,6 @@
 "use client";
 
+import { useHydrated } from "@/app/hooks/useHydrated";
 import type { MachineConnection } from "@/app/lib/machineConnection";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { SandboxInstancesTable } from "../(main)/[projectId]/sandbox/components/SandboxInstancesTable";
@@ -10,7 +11,6 @@ const PROJECT_ID = "p57cse242n9pww5nknkyzpk1w98fw859" as Id<"projects">;
 const ACCOUNT_ID = "a00000000000000000000000000000001" as Id<"accounts">;
 const CONFIG_ID = "c00000000000000000000000000000001" as Id<"sandboxConfigs">;
 
-/** A cloud instance with the facts a row and its panel read; `patch` sets the rest. */
 function instance(
   id: string,
   patch: Partial<Doc<"sandboxInstances">> & {
@@ -58,6 +58,17 @@ const INSTANCES: Doc<"sandboxInstances">[] = [
     suspendedAt: NOW - 59 * MINUTE,
     lastUsedTraceId: "77be02d1a91f3c8e4b2d7e6f0c1a2b3c",
   }),
+  // A V8 Worker has no machine size: the row shows `?` and says why.
+  instance("s2b", {
+    name: "jq-runner",
+    provider: "worker",
+    status: "suspended",
+    specsVerified: undefined,
+    agentId: "agent-support",
+    createdAt: NOW - 90 * MINUTE,
+    lastUsedAt: NOW - 20 * MINUTE,
+    lastUsedTraceId: "88cf13e2a91f3c8e4b2d7e6f0c1a2b3c",
+  }),
   instance("s3", {
     name: "data-lab",
     provider: "lambda",
@@ -88,14 +99,14 @@ const MACHINES: MachineConnection[] = [
     projectId: PROJECT_ID,
     sandboxConfigId: CONFIG_ID,
     connectionId: "conn-1",
-    hostname: "phicks-mbp.local",
+    hostname: "office-mbp.local",
     platform: "darwin",
     computer: true,
     mcp: [],
     specs: { vcpu: 10, memoryMb: 32768 },
     connectedAt: NOW - 300 * MINUTE,
     lastSeenAt: NOW,
-    name: "phicks-mbp",
+    name: "office-mbp",
   },
 ];
 
@@ -121,15 +132,14 @@ const SNAPSHOTS: Doc<"sandboxSnapshots">[] = [
   },
 ];
 
-/**
- * The sandbox list with cloud instances in every state and a connected
- * computer, so a spec can open the panel and the dock with no provider behind
- * them. Actions that need the backend (connect, snapshot, terminate) fail
- * here, which is fine: the fixture is about layout.
- */
 export function SandboxInstancesStandIn(): React.JSX.Element {
+  const hydrated = useHydrated();
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div
+      data-hydrated={hydrated ? "true" : undefined}
+      className="flex h-screen flex-col overflow-hidden"
+    >
       <SandboxInstancesTable
         instances={INSTANCES}
         machines={MACHINES}

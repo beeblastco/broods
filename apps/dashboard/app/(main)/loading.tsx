@@ -3,6 +3,7 @@ import { Skeleton } from "@/app/components/ui/skeleton";
 export default function DashboardLoading(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col">
+      <output className="sr-only">Loading</output>
       <div className="shrink-0 px-6 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
           <div className="flex flex-col gap-2">
@@ -17,6 +18,7 @@ export default function DashboardLoading(): React.JSX.Element {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <div
+                // oxlint-disable-next-line react/no-array-index-key -- fixed skeleton placeholders
                 key={i}
                 className="rounded-lg border border-border overflow-hidden"
               >

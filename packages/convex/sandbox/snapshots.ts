@@ -1,88 +1,137 @@
-/**
- * Sandbox snapshot/image registry scoped to an account. Mirrors broods's image
- * build state so the dashboard can list snapshots with their unified build status.
- * `listForActiveOrg` is the dashboard read; `upsert` is the create-or-refresh
- * writer broods calls when a snapshot is captured (or its build status changes);
- * `findByImage` is how core checks an account owns the image it pins.
- */
-
 import { v } from "convex/values";
-import { internalMutation, internalQuery, query } from "../_generated/server";
-import type { Doc } from "../_generated/dataModel";
-import { getActiveAccountForUser } from "../org/orgs";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
+import { getActiveAccountForUser } from "../model/activeCaller";
 import { ClientError } from "../model/clientError";
-import { sandboxSnapshotsFields } from "../schema";
+import { lockImage } from "../model/snapshotLocks";
+import { snapshotBootRefusal, type SandboxScope } from "../model/sandboxRules";
+import {
+  sandboxSnapshotScopeValidator,
+  sandboxSnapshotsFields,
+} from "../schema";
 
-const sandboxSnapshotDoc = v.object({
+const sandboxSnapshotListRow = v.object({
   ...sandboxSnapshotsFields,
   _id: v.id("sandboxSnapshots"),
   _creationTime: v.number(),
+  stageName: v.optional(v.string()),
 });
 
-/**
- * Public query: lists sandbox snapshots/images for the caller's active org.
- * Used by the dashboard Sandbox tab's Snapshots view.
- * @returns the account's snapshot rows, or `[]` when no org/account resolves.
- */
 export const listForActiveOrg = query({
   args: {},
-  returns: v.array(sandboxSnapshotDoc),
-  handler: async (ctx): Promise<Doc<"sandboxSnapshots">[]> => {
+  returns: v.array(sandboxSnapshotListRow),
+  handler: async (
+    ctx,
+  ): Promise<Array<Doc<"sandboxSnapshots"> & { stageName?: string }>> => {
     const account = await getActiveAccountForUser(ctx);
     if (!account) return [];
 
-    return await ctx.db
+    const rows = await ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) => q.eq("accountId", account._id))
       .collect();
+    const stageIds = new Set(
+      rows.flatMap((row) =>
+        typeof row.scope === "object" ? [row.scope.stageId] : [],
+      ),
+    );
+    const stageNames = new Map(
+      await Promise.all(
+        [...stageIds].map(
+          async (stageId) =>
+            [stageId, (await ctx.db.get(stageId))?.name] as const,
+        ),
+      ),
+    );
+
+    return rows.map((row) => {
+      const stageName =
+        typeof row.scope === "object"
+          ? stageNames.get(row.scope.stageId)
+          : undefined;
+
+      return stageName ? { ...row, stageName: stageName } : row;
+    });
   },
 });
 
-/**
- * Internal query: the account's snapshot row for one provider image, so core can
- * refuse to boot another account's snapshot and read the variant it was built from.
- * @returns the row's base image and status, or null when the account has none
- */
+// Another account's row comes back too: core must refuse it, not boot it as a provider
+// image. null means no account registered the image.
 export const findByImage = internalQuery({
-  args: { accountId: v.id("accounts"), externalImageId: v.string() },
+  args: {
+    accountId: v.optional(v.id("accounts")),
+    externalImageId: v.string(),
+  },
   returns: v.union(
     v.null(),
     v.object({
+      accountId: v.id("accounts"),
+      scope: v.optional(sandboxSnapshotScopeValidator),
       baseImage: v.string(),
       status: sandboxSnapshotsFields.status,
     }),
   ),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<Pick<Doc<"sandboxSnapshots">, "baseImage" | "status"> | null> => {
-    const row = await ctx.db
-      .query("sandboxSnapshots")
-      .withIndex("by_accountId_and_externalImageId", (q) =>
-        q
-          .eq("accountId", args.accountId)
-          .eq("externalImageId", args.externalImageId),
-      )
-      .first();
+  handler: async (ctx, args): Promise<SnapshotImage | null> => {
+    const row = await snapshotByImage(
+      ctx,
+      args.accountId,
+      args.externalImageId,
+    );
 
-    return row ? { baseImage: row.baseImage, status: row.status } : null;
+    return row
+      ? {
+          accountId: row.accountId,
+          ...(row.scope ? { scope: row.scope } : {}),
+          baseImage: row.baseImage,
+          status: row.status,
+        }
+      : null;
   },
 });
 
-/**
- * Create-or-refresh a snapshot/image row, keyed by (account, name). Called by
- * broods when a snapshot is captured from a running sandbox or when the image
- * pipeline reports a build-status transition.
- * @param accountId the owning account.
- * @param name the snapshot name (unique per account).
- * @param provider the sandbox compute backend the image targets.
- * @param baseImage the base image/template the snapshot derived from.
- * @param externalImageId the provider-side image id/ARN.
- * @param status the unified build status; defaults to `active`.
- */
+export const assertInScope = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    scope: sandboxSnapshotScopeValidator,
+    snapshot: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await assertSnapshotInScope(ctx, args.accountId, args.scope, args.snapshot);
+
+    return null;
+  },
+});
+
+// A name no account registered is a provider image and passes.
+export async function assertSnapshotInScope(
+  ctx: QueryCtx | MutationCtx,
+  accountId: Id<"accounts">,
+  scope: SandboxScope,
+  snapshot: unknown,
+): Promise<void> {
+  if (typeof snapshot !== "string" || !snapshot) return;
+  // A MicroVM image is registered by name, whatever version its ARN pins.
+  const image = snapshot.includes(":microvm-image:")
+    ? snapshot.split(":").slice(0, 7).join(":")
+    : snapshot;
+  const row = await snapshotByImage(ctx, accountId, image);
+  const refusal = row
+    ? snapshotBootRefusal(row, { accountId: accountId, scope: scope })
+    : null;
+  if (refusal) throw new ClientError(refusal);
+}
+
 export const upsert = internalMutation({
   args: {
     accountId: v.id("accounts"),
+    scope: sandboxSnapshotScopeValidator,
     name: v.string(),
     provider: sandboxSnapshotsFields.provider,
     baseImage: v.string(),
@@ -91,15 +140,22 @@ export const upsert = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const existing = await ctx.db
+    const named = await ctx.db
       .query("sandboxSnapshots")
       .withIndex("by_accountId_and_name", (q) =>
         q.eq("accountId", args.accountId).eq("name", args.name),
       )
-      .unique();
+      .collect();
+    // The same name on another stage is another snapshot: dev must never repoint prod's.
+    const existing = named.find(
+      (row) =>
+        snapshotBootRefusal(row, {
+          accountId: args.accountId,
+          scope: args.scope,
+        }) === null,
+    );
 
-    // Pinned configs name the provider image, so repointing a name at another
-    // provider's image would strand every sandbox booting the old one.
+    // Configs pin the provider image: another provider's would strand their sandboxes.
     if (existing && existing.provider !== args.provider) {
       throw new ClientError(
         `snapshot name "${args.name}" is already a ${existing.provider} snapshot; pick another name`,
@@ -108,6 +164,14 @@ export const upsert = internalMutation({
     }
     const now = Date.now();
     const status = args.status ?? "active";
+    // A re-capture moves the row to the new image; the old one keeps its lock.
+    if (existing && existing.externalImageId !== args.externalImageId) {
+      await lockImage(ctx, {
+        ...existing,
+        scope: args.scope,
+      });
+    }
+    await lockImage(ctx, args);
     if (existing) {
       await ctx.db.patch(existing._id, {
         provider: args.provider,
@@ -122,6 +186,7 @@ export const upsert = internalMutation({
 
     await ctx.db.insert("sandboxSnapshots", {
       accountId: args.accountId,
+      scope: args.scope,
       name: args.name,
       provider: args.provider,
       baseImage: args.baseImage,
@@ -135,3 +200,42 @@ export const upsert = internalMutation({
     return null;
   },
 });
+
+type SnapshotImage = Pick<
+  Doc<"sandboxSnapshots">,
+  "accountId" | "scope" | "baseImage" | "status"
+>;
+
+// The caller's own row first, should two accounts share an id. An image whose row moved
+// on, or whose account is gone, still answers from its lock, as inactive.
+async function snapshotByImage(
+  ctx: QueryCtx | MutationCtx,
+  accountId: Id<"accounts"> | undefined,
+  externalImageId: string,
+): Promise<SnapshotImage | null> {
+  const own = accountId
+    ? await ctx.db
+        .query("sandboxSnapshots")
+        .withIndex("by_externalImageId_and_accountId", (q) =>
+          q.eq("externalImageId", externalImageId).eq("accountId", accountId),
+        )
+        .first()
+    : null;
+  const row =
+    own ??
+    (await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_externalImageId_and_accountId", (q) =>
+        q.eq("externalImageId", externalImageId),
+      )
+      .first());
+  if (row) return row;
+  const lock = await ctx.db
+    .query("sandboxSnapshotImages")
+    .withIndex("by_externalImageId", (q) =>
+      q.eq("externalImageId", externalImageId),
+    )
+    .first();
+
+  return lock ? { ...lock, status: "inactive" } : null;
+}

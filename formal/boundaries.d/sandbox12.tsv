@@ -1,0 +1,2 @@
+kind	name	reason
+external	^client\.get$	The Daytona SDK fetches a sandbox by the id the trace checks; its state is provider data.

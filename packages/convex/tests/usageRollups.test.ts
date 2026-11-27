@@ -23,9 +23,8 @@ const DAY_MS = 24 * HOUR_MS;
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-// fetchUsageStats itself needs the WorkOS AuthKit component that convex-test
-// does not register here (see projectScope.test.ts), so the reader test hits
-// the exported grain-selection and row-collection helpers it delegates to.
+// fetchUsageStats needs the WorkOS component convex-test does not register, so the reader
+// test hits the grain-selection and row-collection helpers it delegates to.
 
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
@@ -81,8 +80,7 @@ test("recordTaskUsage folds each sample into 5m, hour, and day buckets", async (
     internal.usage.recordTaskUsage,
     taskUsageArgs(accountId, "task-1", FINISHED_AT),
   );
-  // Same hour, different 5-minute window: must open a second 5m bucket but
-  // accumulate into the existing hour and day buckets.
+  // Same hour, new 5-minute window: a second 5m bucket, but the same hour and day buckets.
   await tt.mutation(
     internal.usage.recordTaskUsage,
     taskUsageArgs(accountId, "task-2", FINISHED_AT + 10 * 60 * 1000),
@@ -164,12 +162,24 @@ test("each range reads only its own grain", async () => {
 
   const startMs = FINISHED_AT - 30 * DAY_MS;
   const dayRows = await tt.run(
-    async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, grain, startMs),
+    async (ctx) =>
+      await collectUsageRollups(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        grain,
+        startMs,
+      ),
   );
   expect(dayRows.map((row) => row.grain)).toEqual(["day"]);
 
   const fiveMinuteRows = await tt.run(
-    async (ctx) => await collectUsageRollups(ctx, ENDPOINT_ID, "5m", startMs),
+    async (ctx) =>
+      await collectUsageRollups(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        "5m",
+        startMs,
+      ),
   );
   expect(fiveMinuteRows.map((row) => row.grain)).toEqual(["5m"]);
 });
@@ -193,7 +203,13 @@ test("collectUsageTasks reads only tasks that finished inside the bin", async ()
 
   const rows = await tt.run(
     async (ctx) =>
-      await collectUsageTasks(ctx, ENDPOINT_ID, binStart, binEnd, 10),
+      await collectUsageTasks(
+        ctx,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
+        binStart,
+        binEnd,
+        10,
+      ),
   );
   expect(rows.map((row) => row.taskId)).toEqual(["first#t1", "last#t2"]);
   expect(rows[0].inputPreview).toBe("prompt for first#t1");
@@ -218,7 +234,7 @@ test("collectUsageTasks for one model skips other models before the limit", asyn
     async (ctx) =>
       await collectUsageTasks(
         ctx,
-        ENDPOINT_ID,
+        { accountId: accountId, endpointId: ENDPOINT_ID },
         binStart,
         binStart + HOUR_MS,
         1,

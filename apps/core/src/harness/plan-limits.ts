@@ -1,51 +1,43 @@
-/**
- * Plan enforcement in core: the monthly resource caps and burst protection.
- * Every new run (API, channel message, cron fire) asks `admitRun` before it
- * touches a model or a sandbox; every sandbox launch asks
- * `assertSandboxBudget`. Usage only core sees (hosted-MCP invokes, media
- * egress, attachment ingress) goes to the meter through `recordUsage`.
- * Nothing is enforced unless
- * the Convex deployment is the managed service (`BROODS_MANAGED_SERVICE`).
- */
-
 import { rateLimitHeaders } from "@broods/convex/model/httpJson";
 import {
   BUDGET_EXHAUSTED,
   BUDGET_WARNING_RATIO,
+  capsReached,
   PLAN_LIMIT_EXCEEDED,
+  PLAN_LIMITS,
 } from "@broods/convex/model/planLimits";
 import type { BudgetStatus } from "@broods/convex/model/usageMeter";
 import { errorResponse } from "../shared/http.ts";
 import { waitUntil } from "../shared/in-flight.ts";
 import { logWarn } from "../shared/log.ts";
-import { getStorage, type Storage } from "../shared/storage.ts";
+import {
+  getStorage,
+  type Storage,
+  type UsageSource,
+} from "../shared/storage.ts";
 
 const WINDOW_MS = 60_000;
-// How stale a budget read may be. Usage that lands inside it can take an
-// account a little past its budget, never far.
+// Usage landing inside this TTL can take an account a little past its budget, never far.
 const BUDGET_TTL_MS = 30_000;
+// One write per account and source every few seconds: a Convex write costs the same CPU
+// whatever it adds, and parallel writes on one account collide on its usage rows.
+const USAGE_FLUSH_MS = 5_000;
 
-/** Why a run was refused, and what the HTTP caller gets for it. */
 export interface PlanRefusal {
   kind: "budget" | "rate";
   message: string;
-  /** Rate refusals only: the per-minute limit and when the window turns over. */
   limit?: number;
   retryAfterSeconds?: number;
 }
 
 export interface Admission {
   refusal: PlanRefusal | null;
-  /** This month's 80% notice, for the one channel run that claimed it. */
   warning: string | null;
-  /** When the run was counted: the start of the window it was counted in. */
   countedIn?: number;
 }
 
-/** A sandbox launch refused because a monthly cap is used up. */
 export class BudgetExhaustedError extends Error {}
 
-/** One account's fixed one-minute window of admitted runs. */
 interface AccountWindow {
   startedAt: number;
   runs: number;
@@ -56,19 +48,30 @@ interface CachedBudget {
   expiresAt: number;
 }
 
-// Core runs a single replica (apps/core AGENTS.md), so this process sees every
-// run and an in-memory window is the whole count. A restart forgets at most
-// one window. A second replica would split it and double the burst limit.
+type MeterUsage = Parameters<Storage["budgets"]["record"]>[1];
+
+interface PendingUsage {
+  usage: MeterUsage;
+  source: UsageSource | undefined;
+}
+
+interface ScheduledFlush {
+  timer: ReturnType<typeof setTimeout>;
+  settle: (flush: Promise<void>) => void;
+}
+
+// Exact only while core is a single replica (apps/core AGENTS.md); two would double the burst.
 const windows = new Map<string, AccountWindow>();
 const budgets = new Map<string, CachedBudget>();
+// Per account, then per source.
+const pendingUsage = new Map<string, Map<string, PendingUsage>>();
+let scheduledFlush: ScheduledFlush | null = null;
+// Each account's last queued write: its next one waits for it, other accounts do not.
+const accountWrites = new Map<string, Promise<void>>();
 
-/**
- * Admit one run for the account and count it.
- * @param options.claimWarning claim the 80% notice for this run (channel intake)
- */
 export async function admitRun(
   accountId: string,
-  options: { claimWarning?: boolean } = {},
+  options: { claimWarning?: boolean; count?: boolean } = {},
 ): Promise<Admission> {
   const status = await budgetFor(accountId);
   if (!status?.enforced) return { refusal: null, warning: null };
@@ -76,7 +79,7 @@ export async function admitRun(
     return { refusal: budgetRefusal(status), warning: null };
   }
   const now = Date.now();
-  const window = currentWindow(accountId, now);
+  const window = currentWindow(accountId, now, options.count !== false);
   if (window.runs >= status.runsPerMinute) {
     return {
       refusal: {
@@ -90,6 +93,7 @@ export async function admitRun(
       warning: null,
     };
   }
+  if (options.count === false) return { refusal: null, warning: null };
   window.runs += 1;
 
   return {
@@ -101,11 +105,6 @@ export async function admitRun(
   };
 }
 
-/**
- * Give back a run `admitRun` counted when the intake started nothing after all:
- * a provider redelivery deduplicated by ingress, or a refused admission. Only
- * the window it was counted in gives it back; a later one is left alone.
- */
 export function refundRun(admission: Admission, accountId: string): void {
   const window = windows.get(accountId);
   if (window && window.startedAt === admission.countedIn && window.runs > 0) {
@@ -113,7 +112,6 @@ export function refundRun(admission: Admission, accountId: string): void {
   }
 }
 
-/** Throws `BudgetExhaustedError` when the account may not start compute. */
 export async function assertSandboxBudget(accountId: string): Promise<void> {
   const status = await budgetFor(accountId);
   if (status?.enforced && status.usedPercent >= 100) {
@@ -121,11 +119,7 @@ export async function assertSandboxBudget(accountId: string): Promise<void> {
   }
 }
 
-/**
- * 402 `budget_exhausted`, or 429 `plan_limit_exceeded` with `Retry-After`.
- * 402, not 429 or 403: waiting a minute does not help and the key is fine;
- * the account has to upgrade or wait for next month.
- */
+// 402, not 429 or 403, for a budget: waiting a minute will not help and the key is fine.
 export function planRefusalResponse(refusal: PlanRefusal): Response {
   if (refusal.kind === "budget") {
     return errorResponse(402, refusal.message, { code: BUDGET_EXHAUSTED });
@@ -139,24 +133,66 @@ export function planRefusalResponse(refusal: PlanRefusal): Response {
   );
 }
 
-/**
- * Add usage core measured to the account's meter, in the background. The write
- * is registered with `waitUntil`, so shutdown drains it before the process exits.
- */
+export function planRefusalText(refusal: PlanRefusal): string {
+  return refusal.retryAfterSeconds === undefined
+    ? refusal.message
+    : `${refusal.message} Try again in ${refusal.retryAfterSeconds} seconds.`;
+}
+
+export async function flushUsage(): Promise<void> {
+  const due = scheduledFlush;
+  scheduledFlush = null;
+  if (due) clearTimeout(due.timer);
+  const written = Promise.all(
+    [...pendingUsage.keys()].map(queueAccountWrite),
+  ).then((): void => {});
+  due?.settle(written);
+  await written;
+}
+
 export function recordUsage(
   accountId: string,
-  usage: Parameters<Storage["budgets"]["record"]>[1],
+  usage: MeterUsage,
+  source?: UsageSource,
 ): void {
-  waitUntil(getStorage().budgets.record(accountId, usage));
+  const sources =
+    pendingUsage.get(accountId) ?? new Map<string, PendingUsage>();
+  pendingUsage.set(accountId, sources);
+  const key = JSON.stringify([
+    source?.projectId,
+    source?.agentId,
+    source?.workspaceId,
+  ]);
+  const pending = sources.get(key);
+  if (pending) {
+    for (const field of Object.keys(usage) as (keyof MeterUsage)[]) {
+      pending.usage[field] = (pending.usage[field] ?? 0) + (usage[field] ?? 0);
+    }
+  } else {
+    sources.set(key, { usage: { ...usage }, source: source });
+  }
+  if (scheduledFlush) return;
+  const flushed = Promise.withResolvers<void>();
+  scheduledFlush = {
+    timer: setTimeout((): void => void flushUsage(), USAGE_FLUSH_MS),
+    settle: flushed.resolve,
+  };
+  waitUntil(flushed.promise);
 }
 
 export function resetPlanLimitsForTests(): void {
   windows.clear();
   budgets.clear();
+  pendingUsage.clear();
+  if (scheduledFlush) {
+    clearTimeout(scheduledFlush.timer);
+    scheduledFlush.settle(Promise.resolve());
+    scheduledFlush = null;
+  }
+  accountWrites.clear();
 }
 
-// A failed lookup admits: enforcement is a cost ceiling, not an auth check,
-// and a run cannot get far while Convex is unreachable anyway.
+// Fails open: a cost ceiling, not an auth check, and a run stalls without Convex anyway.
 async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
   const cached = budgets.get(accountId);
   if (cached && cached.expiresAt > Date.now()) return cached.status;
@@ -179,10 +215,23 @@ async function budgetFor(accountId: string): Promise<BudgetStatus | null> {
 }
 
 function budgetRefusal(status: BudgetStatus): PlanRefusal {
+  const reached = capsReached(status.shares);
+  const storage = `its storage limit of ${storageLimit(status)}`;
+  const monthly = `one of its monthly resource caps for ${status.month}`;
+  const canUpgrade = status.plan === "free";
+
   return {
     kind: "budget",
-    message: `This account has reached one of its monthly resource caps for ${status.month} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`,
+    message: !reached.storage
+      ? `This account has reached ${monthly} on the ${status.plan} plan. Upgrade to keep running agents, or wait for next month.`
+      : reached.monthly
+        ? `This account has reached ${storage} and ${monthly} on the ${status.plan} plan. Delete files, then ${canUpgrade ? "upgrade or " : ""}wait for next month, to keep running agents; storage is measured once a day.`
+        : `This account has reached ${storage} on the ${status.plan} plan. Delete files${canUpgrade ? " or upgrade" : ""} to keep running agents; storage is measured once a day.`,
   };
+}
+
+function storageLimit(status: BudgetStatus): string {
+  return `${PLAN_LIMITS[status.plan].caps.storageGb} GB of workspaces and files`;
 }
 
 async function claimWarning(
@@ -191,9 +240,7 @@ async function claimWarning(
 ): Promise<string | null> {
   if (status.warned || status.usedPercent < BUDGET_WARNING_RATIO * 100)
     return null;
-  // Whoever loses the race sees `warned` on its next read.
   status.warned = true;
-  // The notice is optional: a failed claim skips it and never fails the run.
   const claimed = await getStorage()
     .budgets.claimWarning(accountId)
     .catch((err: unknown): boolean => {
@@ -206,14 +253,53 @@ async function claimWarning(
     });
   if (!claimed) return null;
 
-  return `This account has used ${Math.floor(BUDGET_WARNING_RATIO * 100)}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
+  const percent = Math.floor(BUDGET_WARNING_RATIO * 100);
+
+  return capsReached(status.shares, percent).storage
+    ? `This account has used ${percent}% of its storage limit of ${storageLimit(status)} on the ${status.plan} plan. Runs stop when it is full.`
+    : `This account has used ${percent}% of one of its monthly resource caps on the ${status.plan} plan. Runs stop when a cap is reached.`;
 }
 
-function currentWindow(accountId: string, now: number): AccountWindow {
+function currentWindow(
+  accountId: string,
+  now: number,
+  open: boolean,
+): AccountWindow {
   const existing = windows.get(accountId);
   if (existing && now - existing.startedAt < WINDOW_MS) return existing;
   const fresh: AccountWindow = { startedAt: now, runs: 0 };
-  windows.set(accountId, fresh);
+  if (open) windows.set(accountId, fresh);
 
   return fresh;
+}
+
+// One account's sources share its usage rows in Convex, so its writes go one after another. A
+// write takes what is waiting when its turn comes, so a slow Convex gets bigger writes, not more.
+function queueAccountWrite(accountId: string): Promise<void> {
+  const written = (accountWrites.get(accountId) ?? Promise.resolve())
+    .then(async (): Promise<void> => {
+      const sources = pendingUsage.get(accountId);
+      pendingUsage.delete(accountId);
+      for (const pending of sources?.values() ?? []) {
+        await getStorage().budgets.record(
+          accountId,
+          pending.usage,
+          pending.source,
+        );
+      }
+    })
+    .catch((err: unknown): void => {
+      logWarn("Usage flush failed", {
+        accountId: accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally((): void => {
+      if (accountWrites.get(accountId) === written) {
+        accountWrites.delete(accountId);
+      }
+    });
+  accountWrites.set(accountId, written);
+
+  return written;
 }

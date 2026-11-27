@@ -49,7 +49,7 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
   });
   await t.mutation(internal.sandbox.machines.connected, {
     ...second,
-    hostname: "phicks-mbp",
+    hostname: "office-mbp",
     platform: "darwin",
     computer: true,
     mcp: ["echo"],
@@ -70,7 +70,7 @@ test("a replaced connection's late heartbeat and disconnect leave its successor'
   expect(held?.lastSeenAt).toBe(afterSecond?.lastSeenAt);
   expect(held).toMatchObject({
     connectionId: "second",
-    hostname: "phicks-mbp",
+    hostname: "office-mbp",
     computer: true,
     mcp: ["echo"],
     specs: { vcpu: 10, memoryMb: 32768, storageGb: 926 },

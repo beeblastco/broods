@@ -1,11 +1,4 @@
-/**
- * The `custom` provider: a server the account runs that speaks the sandbox
- * exec contract (`SandboxExecRequest` in, `SandboxExecResponse` out) on
- * `POST <endpoint>/exec`, the same contract as the lambda-sandbox image.
- * Stateless by design: one run is one request, so there is no reservation,
- * workspace mount, lifecycle or background job here.
- */
-
+import { ClientError } from "@broods/convex/model/clientError";
 import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "@broods/convex/model/envRefs";
 import type { SandboxExecRequest } from "../../shared/domain/sandbox-config.ts";
 import {
@@ -31,7 +24,6 @@ import {
 
 const PROVIDER = "custom" as const;
 
-/** Test seams: the pinned fetch's injectable options and a shorter client grace. */
 export interface HttpSandboxExecutorSeams {
   transport?: PinnedFetchTransport;
   graceMs?: number;
@@ -54,38 +46,30 @@ export class HttpSandboxExecutor implements SandboxExecutor {
     const options = this.#config.options ?? {};
     const endpoint = configString(options.endpoint);
     if (!endpoint) {
-      throw new Error("custom sandbox needs options.endpoint");
+      throw new ClientError("custom sandbox needs options.endpoint");
     }
     assertPublicHttpsUrl(endpoint, "custom sandbox endpoint");
     const token = configString(options.token);
     const headers = stringRecord(options.headers);
-    // Refs resolve when the sandbox syncs from code. One left over would go out
-    // as the credential itself.
+    // A ref left over would go out as the credential itself.
     if (
       [token ?? "", ...Object.values(headers)].some((value): boolean =>
         ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(value),
       )
     ) {
-      throw new Error(
+      throw new ClientError(
         "custom sandbox token or header still carries a ${NAME} ref: refs resolve when the sandbox syncs from code, not through the API",
       );
     }
     const payload: SandboxExecRequest = {
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       code: request.code,
       timeout_ms: request.timeoutSeconds * 1000,
-      ...(request.args && request.args.length > 0
-        ? { args: request.args }
-        : {}),
-      env: mergeSandboxEnv(
-        this.#config.envVars,
-        request.envVars,
-        request.principal,
-      ),
+      env: mergeSandboxEnv(this.#config.envVars, {
+        principal: request.principal,
+      }),
     };
-    // The address is the boundary: `guardedFetch` refuses every private and
-    // metadata address the name resolves to and pins the socket to the one it
-    // validated. No redirects, so the token goes to the host named or nowhere.
+    // No redirects: the token reaches the public address guardedFetch pinned, or nowhere.
     const response = await guardedFetch(
       `${endpoint.replace(/\/+$/, "")}/exec`,
       {

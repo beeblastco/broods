@@ -1,14 +1,6 @@
-/**
- * The policy document as the `agentPolicies` and `accountRoles` tables
- * store it: a version, a mode, and rules over actions with optional
- * resource selectors and conditions. Only `convex/values` is imported here,
- * so the schema can read it without a cycle; the normalizer and the
- * evaluators live beside it in `policyRules.ts`.
- */
-
+// Imports only `convex/values`, so the schema can read it without a cycle.
 import { v, type Infer } from "convex/values";
 
-/** The condition operators a rule may use, with the word the lists print. */
 export const POLICY_CONDITION_OPERATORS = [
   { value: "equals", label: "=" },
   { value: "notEquals", label: "≠" },
@@ -17,6 +9,58 @@ export const POLICY_CONDITION_OPERATORS = [
   { value: "prefix", label: "starts with" },
   { value: "contains", label: "contains" },
 ] as const;
+
+export const AGENT_POLICY_ACTIONS = [
+  // Gates admitting the turn; the rest gate one action inside an admitted turn.
+  "agent.invoke",
+  "tool.call",
+  "workspace.read",
+  "workspace.write",
+  "workspace.exec",
+  "subagent.run",
+  "skill.load",
+] as const;
+
+export const API_POLICY_ACTIONS = [
+  "account:read",
+  "account:write",
+  "agents:read",
+  "agents:write",
+  "audit:read",
+  "audit:write",
+  "channels:read",
+  "channels:write",
+  "crons:read",
+  "crons:write",
+  "env:read",
+  "env:write",
+  "hooks:read",
+  "hooks:write",
+  "mcp:read",
+  "mcp:write",
+  "policies:read",
+  "policies:write",
+  "sandboxes:read",
+  "sandboxes:write",
+  "skills:read",
+  "skills:write",
+  "workspaces:read",
+  "workspaces:write",
+] as const;
+
+export const DASHBOARD_POLICY_ACTIONS = [
+  "keys:read",
+  "keys:write",
+  "members:write",
+  "access:write",
+] as const;
+
+export const DASHBOARD_DESCRIPTIONS: Record<DashboardPolicyAction, string> = {
+  "keys:read": "See keys",
+  "keys:write": "Make, rotate and revoke keys",
+  "members:write": "Change members and their roles",
+  "access:write": "Change permissions, policies and roles",
+};
 
 export type PolicyConditionOperator =
   (typeof POLICY_CONDITION_OPERATORS)[number]["value"];
@@ -36,10 +80,9 @@ const policyConditionValidator = v.object({
   ),
 });
 
-/** Which things a rule's actions reach; `resourceIds` is for API-action rules, "*" matching every id. */
+// `resourceIds` is for API-action rules, where "*" matches every id.
 const policyResourceSelectorValidator = v.object({
   toolNames: v.optional(v.array(v.string())),
-  /** MCP registration ids, for scoping tool.call rules per server (#331). */
   mcpIds: v.optional(v.array(v.string())),
   workspaceIds: v.optional(v.array(v.string())),
   workspaceNames: v.optional(v.array(v.string())),
@@ -57,16 +100,33 @@ const policyRuleValidator = v.object({
   conditions: v.optional(v.array(policyConditionValidator)),
 });
 
-/**
- * Versioned policy document accepted by account-management CRUD, as the
- * `agentPolicies` and `accountRoles` tables store it. `mode` says how hard
- * the policy bites where it is attached; omitted reads as `audit`.
- */
+// An omitted `mode` reads as "audit".
 export const policyDocumentValidator = v.object({
   version: v.literal(1),
   mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),
   rules: v.array(policyRuleValidator),
 });
+
+export const rolePrincipalValidator = v.object({
+  accountId: v.id("accounts"),
+  roleId: v.string(),
+  policy: policyDocumentValidator,
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+});
+
+export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
+
+export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
+
+export type DashboardPolicyAction = (typeof DASHBOARD_POLICY_ACTIONS)[number];
+
+// `string & {}` admits a custom permission (`tool.stripe.refund`) yet keeps built-ins suggested.
+export type PolicyAction =
+  | AgentPolicyAction
+  | ApiPolicyAction
+  | DashboardPolicyAction
+  | (string & {});
 
 export type PolicyCondition = Infer<typeof policyConditionValidator>;
 

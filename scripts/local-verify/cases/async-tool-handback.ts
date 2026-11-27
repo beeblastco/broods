@@ -1,0 +1,134 @@
+import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
+import {
+  API_SCOPE_MARKER,
+  MODEL_KEY_HINT,
+  assertStep,
+  convexResult,
+  pollUntil,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
+
+const CONTINUATION_TIMEOUT_MS = 120_000;
+const QUESTION_ID = "color";
+const ANSWER = "Blue";
+
+interface AsyncToolRow {
+  parentEventId: string;
+  status: string;
+  handback?: string;
+}
+
+export async function asyncToolHandback(context: VerifyContext): Promise<void> {
+  if (!context.hasModelKey) {
+    console.log(`  skip async tool hand-back (${MODEL_KEY_HINT})`);
+    return;
+  }
+  const key = `tool-handback-${context.runId}`;
+  const { agentId } = await context.account.createAgent({
+    name: key,
+    config: {
+      ...context.model,
+      agent: {
+        system: `On the first user message call ask_questions exactly once, with blocking true and one question: id "${QUESTION_ID}", header "Color", question "Which color?", options "Red" and "Blue". Then end your turn with no other tool call. Never call ask_questions again in this conversation: once the answer arrives, call no tool and reply with exactly the chosen color and nothing else.`,
+      },
+    },
+  });
+  const asked = await context.measure(
+    "turn that asks",
+    (): Promise<AsyncStatus> =>
+      runToTerminal(context, {
+        agentId: agentId,
+        conversationKey: key,
+        eventId: `${key}-ask`,
+        text: "Pick a color for me.",
+      }),
+  );
+  const statusId = asked.questions?.[0]?.statusId;
+  assertStep(
+    "the plain HTTP run asked with ask_questions",
+    asked.status === "awaiting_input" && statusId !== undefined,
+    JSON.stringify(asked),
+  );
+
+  const accepted = await context.client.answer({
+    agentId: agentId,
+    conversationKey: key,
+    eventId: `${key}-answer`,
+    answers: [{ statusId: statusId, answers: { [QUESTION_ID]: [ANSWER] } }],
+  });
+  assertStep(
+    "the SDK's answer resumed the conversation",
+    accepted.invoked === true,
+    JSON.stringify(accepted),
+  );
+
+  // Admission stores the row in its own transaction, so no sweep delivers it twice.
+  const row = convexResult(
+    context,
+    "runtime:getAsyncToolResult",
+    { resultId: statusId },
+    "read the question's result row",
+  ) as AsyncToolRow | null;
+  assertStep(
+    "the answered row is stored with its conversation",
+    row?.status === "completed" && row.handback === "stored",
+    JSON.stringify(row),
+  );
+
+  // The resumed turn runs under the event that asked, once per result.
+  const scope = row.parentEventId.slice(
+    0,
+    row.parentEventId.indexOf(API_SCOPE_MARKER),
+  );
+  const askEventId = `${scope}${API_SCOPE_MARKER}${key}-ask`;
+  const resumed = await pollUntil(
+    {
+      initialIntervalMs: 500,
+      maxIntervalMs: 5_000,
+      timeoutMs: CONTINUATION_TIMEOUT_MS,
+    },
+    async (): Promise<{ status: string; response?: unknown } | null> => {
+      const continuation = convexResult(
+        context,
+        "runtime:getAsyncAgentResult",
+        { eventId: `${askEventId}:async-tools:${statusId}` },
+        "read the resumed turn's row",
+      ) as { status: string; response?: unknown } | null;
+
+      return continuation?.status === "completed" ||
+        continuation?.status === "failed"
+        ? continuation
+        : null;
+    },
+  );
+  assertStep(
+    "the resumed turn answered from the delivered result",
+    resumed?.status === "completed" &&
+      JSON.stringify(resumed.response ?? "").includes(ANSWER),
+    JSON.stringify(resumed),
+  );
+  const followed = accepted.runId
+    ? await context.client.getAsyncStatus(accepted.runId)
+    : null;
+  assertStep(
+    "the answer's runId polls the resumed turn",
+    followed?.status === "completed",
+    JSON.stringify({ accepted: accepted, followed: followed }),
+  );
+
+  const history = convexResult(
+    context,
+    "runtime:listConversationEvents",
+    { conversationKey: `${scope}${API_SCOPE_MARKER}${key}` },
+    "read the conversation",
+  ) as { page: Array<{ event: unknown }> };
+  const injected = history.page.filter((entry): boolean =>
+    JSON.stringify(entry.event).includes(`statusId: ${statusId}`),
+  );
+  assertStep(
+    "the conversation holds the answer once",
+    injected.length === 1,
+    JSON.stringify(injected),
+  );
+}

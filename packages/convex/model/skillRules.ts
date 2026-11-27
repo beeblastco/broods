@@ -1,41 +1,31 @@
-/**
- * Pure skill validation rules shared by the Convex config plane. Mirrors the
- * rule set in core's `src/shared/skills.ts` (no runtime or AWS dependencies,
- * safe for any Convex runtime). Keep S3-backed skill storage in model/skills.ts.
- */
+// Core imports this too and mirrors its rules in src/shared/skills.ts: no runtime imports.
 
 import { ClientError } from "./clientError";
 
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
+// Core reads only this head of each SKILL.md for the per-turn skill list.
+export const MAX_SKILL_METADATA_BYTES = 64 * 1024;
 
-/**
- * Assert a skill name is lowercase kebab-case without reserved words.
- * @param value candidate skill name
- * @throws when the name violates the naming rules
- */
+export function isValidSkillName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_SKILL_NAME_LENGTH &&
+    /^[a-z0-9-]+$/.test(value) &&
+    !value.includes("anthropic") &&
+    !value.includes("claude")
+  );
+}
+
 export function validateSkillName(value: unknown): asserts value is string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_SKILL_NAME_LENGTH ||
-    !/^[a-z0-9-]+$/.test(value) ||
-    value.includes("anthropic") ||
-    value.includes("claude") ||
-    /<[^>]*>/.test(value)
-  ) {
+  if (typeof value !== "string" || !isValidSkillName(value)) {
     throw new ClientError(
       "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
     );
   }
 }
 
-/**
- * Assert a skill description is non-empty, bounded, and tag-free.
- * @param value candidate description
- * @throws when the description violates the rules
- */
 export function validateSkillDescription(
   value: unknown,
 ): asserts value is string {
@@ -51,12 +41,6 @@ export function validateSkillDescription(
   }
 }
 
-/**
- * Normalize a bundle-relative file path, rejecting traversal and absolutes.
- * @param value candidate path
- * @returns the trimmed safe path
- * @throws when the path is unsafe
- */
 export function normalizeBundlePath(value: string): string {
   if (typeof value !== "string") {
     throw new ClientError("Skill file path must be a string");
@@ -76,11 +60,6 @@ export function normalizeBundlePath(value: string): string {
   return trimmed;
 }
 
-/**
- * @param markdown the SKILL.md contents
- * @returns the skill's name and description
- * @throws when frontmatter is missing or fields are invalid
- */
 export function parseSkillMarkdown(markdown: string): {
   name: string;
   description: string;
@@ -99,21 +78,12 @@ export function parseSkillMarkdown(markdown: string): {
   return { name: name, description: description };
 }
 
-/**
- * @param filePath bundle-relative path
- * @returns the S3 content type
- */
 export function contentTypeForSkillPath(filePath: string): string {
   return filePath.toLowerCase().endsWith(".json")
     ? "application/json"
     : "text/plain; charset=utf-8";
 }
 
-/**
- * @param value candidate URL
- * @returns owner, repo, ref, subdirectory, and codeload archive URL
- * @throws when the URL is not a safe github.com tree URL
- */
 export function parseGitHubSkillUrl(value: unknown): {
   owner: string;
   repo: string;
@@ -157,11 +127,6 @@ export function parseGitHubSkillUrl(value: unknown): {
   };
 }
 
-/**
- * Parse flat `key: value` YAML frontmatter lines.
- * @param frontmatter the frontmatter body
- * @returns the key/value map with scalar quotes stripped
- */
 function parseSimpleYamlFrontmatter(
   frontmatter: string,
 ): Record<string, string> {
@@ -177,11 +142,6 @@ function parseSimpleYamlFrontmatter(
   return result;
 }
 
-/**
- * Strip a single layer of matching quotes from a YAML scalar.
- * @param value the raw scalar
- * @returns the unquoted scalar
- */
 function stripYamlScalarQuotes(value: string): string {
   const trimmed = value.trim();
   if (
@@ -194,11 +154,6 @@ function stripYamlScalarQuotes(value: string): string {
   return trimmed;
 }
 
-/**
- * @param value the segment
- * @param name which segment, for the error message
- * @throws when the segment has unsupported characters
- */
 function assertSafeGitHubSegment(value: string, name: string): void {
   if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
     throw new ClientError(`GitHub ${name} contains unsupported characters`);

@@ -1,0 +1,27 @@
+kind	name	reason
+opaque	AssumeRoleCommand	The AWS SDK command token is passed unchanged to send; its input is checked at the constructor.
+opaque	STSClient	The AWS SDK client is only used to send the checked command.
+opaque	ZodNever	Tool schemas in the recorded tool set are carried by reference and never inspected.
+opaque	ReadableStream	The stream is read only through its recorded reader.
+opaque	ReadableStreamDefaultReader	The reader's chunks are recorded per read call.
+opaque	ZodMiniObject	The schema is handed to parseInput, whose own twin validates against it.
+opaque	ZodMiniRecord	The schema is handed to parseInput, whose own twin validates against it.
+external	^new STSClient$	The AWS SDK builds a client; the trace checks the empty configuration.
+external	^new AssumeRoleCommand$	The AWS SDK wraps the request; the trace checks every field of the scoped policy.
+external	^new STSClient\(\{\}\)\.send$	STS answers the checked command; credentials are external input.
+external	^stream\.getReader$	The Web Streams API gives a reader over the caller's stream.
+external	^reader\.read$	The next chunk comes from the caller's stream and is recorded per call.
+external	^reader\.releaseLock$	The Web Streams API frees the reader; the trace checks it runs on every exit.
+external	^executor\.exec$	The sandbox executor is the caller's; the trace checks the exact script and options.
+external	^pending\.resolve$	The promise callback is the caller's; the trace checks the exact reply passed.
+external	^executor\.runBackground$	The sandbox provider starts the job; the trace checks the complete request.
+external	^createSandboxExecutor$	The provider factory returns the executor for the checked configuration.
+external	^workspaceRootFor$	Resolves the sandbox workspace root from the checked configuration.
+external	^Math\.random$	The host supplies randomness; the trace records the value used.
+external	^setTimeout$	The host timer API arms the checked callback and delay.
+external	^setInterval$	The host timer API arms the checked callback and period.
+external	^clearInterval$	The host timer API cancels the checked timer.
+external	^firstSweep\.unref$	The host timer API lets the process exit; no value is used.
+external	^sweeper\.unref$	The host timer API lets the process exit; no value is used.
+external	^crypto\.subtle\.digest$	Web Crypto hashes the checked bytes; the digest is external input.
+external	^new ClientError$	The error class builds the Convex error from the checked message.

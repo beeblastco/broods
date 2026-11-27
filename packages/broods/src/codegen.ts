@@ -1,7 +1,3 @@
-/**
- * Writes deterministic generated resource references for app code.
- */
-
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { CliManifest, GeneratedIds } from "./contracts.ts";
@@ -9,18 +5,12 @@ import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import type { ResourceAliases } from "./manifest.ts";
 import type { CompiledChannel } from "./manifest.ts";
 
-/**
- * The stage's deployment endpoint, used to embed the scoped invoke URL
- * (`/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}`) into each generated
- * agent reference so the SDK posts to the same path the dashboard shows.
- */
 export type GeneratedEndpoint =
   | {
       accountId: string;
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-      /** Absent is treated as production, which keeps the bare webhook path. */
       stageKind?: "development" | "production" | "custom";
     }
   | null
@@ -82,8 +72,8 @@ function idsForManifest(
 function namesForKind(manifest: CliManifest, kind: string): Set<string> {
   return new Set(
     manifest.resources
-      .filter((resource) => resource.kind === kind)
-      .map((resource) => resource.name),
+      .filter((resource): boolean => resource.kind === kind)
+      .map((resource): string => resource.name),
   );
 }
 
@@ -92,7 +82,7 @@ function pickIds(
   names: Set<string>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(values ?? {}).filter(([name]) => names.has(name)),
+    Object.entries(values ?? {}).filter(([name]): boolean => names.has(name)),
   );
 }
 
@@ -104,23 +94,20 @@ function apiFile(
   channels: CompiledChannel[],
 ): string {
   const agents = Object.keys(ids.agents);
-  // When the stage has a runtime key, embed its authoritative slugs +
-  // endpointId so the SDK posts to the scoped /v1 URL the dashboard advertises.
   const scope = endpoint
     ? `, endpointId: ${JSON.stringify(endpoint.endpointId)}, projectSlug: ${JSON.stringify(endpoint.projectSlug)}, stageSlug: ${JSON.stringify(endpoint.stageSlug)}`
     : "";
   const agentEntries = agents
     .map(
-      (name) =>
+      (name): string =>
         `    ${propertyKey(aliases.agent?.[name] ?? name)}: { kind: "agent", name: ${JSON.stringify(name)}, id: ids.agents[${JSON.stringify(name)}], project: ${JSON.stringify(manifest.project)}, stage: ${JSON.stringify(manifest.stage)}${scope} },`,
     )
     .join("\n");
   const channelEntries = endpoint
     ? channels
-        .map((channel) => {
+        .map((channel): string => {
           const account = encodeURIComponent(endpoint.accountId);
-          // Only production keeps the bare path; any other stage is addressed
-          // through its own endpointId so the two never contend.
+          // Non-production stages get their own endpointId path so stages never contend.
           const path =
             endpoint.stageKind === undefined ||
             endpoint.stageKind === "production"
@@ -137,7 +124,7 @@ function apiFile(
     `import type { ResourceApi } from "broods";\n` +
     `import { ids } from "./ids";\n\n` +
     `/** Typed references for resources defined in broods/. */\n` +
-    `export const api = {\n` +
+    `export const api = resourceApi({\n` +
     `  agents: {\n${agentEntries}\n  },\n` +
     `  channels: {\n${channelEntries}\n  },\n` +
     `  workspaces: ${aliasedIdMap("workspaces", ids.workspaces, aliases.workspace)},\n` +
@@ -145,7 +132,12 @@ function apiFile(
     `  crons: ${aliasedIdMap("crons", ids.crons, aliases.cron)},\n` +
     `  skills: ${aliasedIdMap("skills", ids.skills, aliases.skill)},\n` +
     `  policies: ${aliasedIdMap("policies", ids.policies, aliases.policy)},\n` +
-    `} as const satisfies ResourceApi;\n`
+    `} as const);\n\n` +
+    `/** Fails the build when generated output drifts from the SDK's contract,\n` +
+    ` * keeping the exact resource keys an annotation would widen. */\n` +
+    `function resourceApi<T extends ResourceApi>(resources: T): T {\n` +
+    `  return resources;\n` +
+    `}\n`
   );
 }
 
@@ -176,13 +168,6 @@ function resourcesFile(manifest: CliManifest): string {
   );
 }
 
-/**
- * Renders an `{ alias: ids.<idsKey>[name], ... }` block keyed by each resource's
- * exported variable name (falling back to its resource name), mirroring how agent
- * references are keyed so app code uses dot access instead of bracket lookups.
- * The api property may differ from the ids key (e.g. `crons` reads `ids.crons`,
- * which mirrors the server's deploy-response contract).
- */
 function aliasedIdMap(
   idsKey: string,
   values: Record<string, string>,
@@ -192,7 +177,7 @@ function aliasedIdMap(
   if (names.length === 0) return "{}";
   const entries = names
     .map(
-      (name) =>
+      (name): string =>
         `    ${propertyKey(alias?.[name] ?? name)}: ids.${idsKey}[${JSON.stringify(name)}],`,
     )
     .join("\n");

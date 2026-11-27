@@ -10,8 +10,7 @@ export const e2bSandbox = defineSandbox({
   envVars: {
     SANDBOX_SMOKE_VAR: env("SANDBOX_SMOKE_VAR"),
   },
-  // An E2B template or snapshot to boot instead of E2B's base template.
-  // snapshot: "my-template",
+  // Optional: snapshot: "my-template" boots that E2B template instead of the base one.
   options: {
     apiKey: env("E2B_API_KEY"),
   },

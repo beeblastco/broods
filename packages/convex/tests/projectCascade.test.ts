@@ -178,8 +178,7 @@ test("project deletion drains cron run history in scheduled batches", async () =
         createdAt: now,
         updatedAt: now,
       });
-      // More runs than one deletion batch holds, so the drain must reschedule
-      // itself at least once to finish.
+      // More runs than one deletion batch holds, so the drain must reschedule.
       for (let index = 0; index < 120; index += 1) {
         await ctx.db.insert("cronRuns", {
           accountId: accountId,
@@ -198,8 +197,7 @@ test("project deletion drains cron run history in scheduled batches", async () =
       await purgeProject(ctx, projectId);
     });
 
-    // The cron row dies inside the purge transaction; its run history drains
-    // through scheduled batches afterwards.
+    // The cron row goes in the purge transaction; its run history drains afterwards.
     await t.run(async (ctx) => {
       expect(await ctx.db.get(cronId)).toBeNull();
     });

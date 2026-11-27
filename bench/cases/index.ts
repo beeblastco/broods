@@ -1,9 +1,4 @@
-/**
- * Every case the suite runs, in report order. A case belongs here only if it is
- * on a path that executes per request, per turn, or per streamed line, or is
- * something a developer waits on every time they use the CLI. The suite is a
- * regression gate, not a catalogue.
- */
+// Only paths run per request, turn or streamed line, or a CLI wait: a gate, not a catalogue.
 
 import type { BenchCase } from "../runner.ts";
 import { cliCases } from "./cli.ts";

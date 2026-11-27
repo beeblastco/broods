@@ -1,10 +1,4 @@
-/**
- * Account deletion cleanup across Convex runtime state and the account's S3
- * prefixes (workspaces, attachment store, skills, hook and MCP bundles). CRUD for
- * these resources lives in the Convex config plane; only the deletion sweep
- * belongs here.
- */
-
+import { ClientError } from "@broods/convex/model/clientError";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -39,10 +33,6 @@ interface SandboxReservationPage {
   isDone: boolean;
 }
 
-/**
- * Deletes the account's inbound chat media, kept outside every workspace mount.
- * The conversations go with the Convex cascade; this is the bytes.
- */
 export async function deleteAccountAttachments(
   accountId: string,
 ): Promise<number> {
@@ -52,10 +42,6 @@ export async function deleteAccountAttachments(
   return deleteS3Prefix(bucket, attachmentStorePrefix(accountId));
 }
 
-/**
- * Deletes the account's hook and hosted MCP bundle bytes from S3; their
- * metadata lives in Convex.
- */
 export async function deleteAccountBundles(accountId: string): Promise<number> {
   const bucket = requireEnv("TOOL_BUNDLES_BUCKET_NAME");
   const encodedAccountId = encodeURIComponent(accountId);
@@ -67,20 +53,13 @@ export async function deleteAccountBundles(accountId: string): Promise<number> {
   return hooks + mcp;
 }
 
-/**
- * Account-delete sweep of runtime state: releases reserved sandboxes, clears
- * Convex runtime rows and workspace files, then drops sandbox and workspace
- * configs. Called by deleteAccountResponse.
- */
 export async function deleteAccountRuntimeData(
   account: AccountRecord,
 ): Promise<AccountCleanupSummary> {
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
-  // Read the stored rows before the cascade drops them: a key derived from
-  // today's configs misses an isolated namespace or a harness key. The query
-  // pages because one account can hold more rows than a query may read.
+  // Stored keys, read before the cascade: keys derived from configs miss isolated and harness ones.
   const reservationKeys = new Set<string>();
   let cursor: string | null = null;
   do {
@@ -111,15 +90,10 @@ export async function deleteAccountRuntimeData(
   };
 }
 
-/** Deletes the account's skill files from the skills bucket. */
 export async function deleteAccountSkills(accountId: string): Promise<number> {
   return deleteS3Prefix(skillsBucketName(), `${accountId}/`);
 }
 
-/**
- * Repeats the batched deleteAccountRuntimeData Convex mutation until it deletes
- * nothing, summing the per-table counts.
- */
 async function deleteConvexRuntimeRows(
   accountId: string,
 ): Promise<
@@ -140,9 +114,9 @@ async function deleteConvexRuntimeRows(
     batchNumber < ACCOUNT_RUNTIME_DELETE_MAX_BATCHES;
     batchNumber += 1
   ) {
-    const batch = await runtime.mutate<
-      typeof totals & { totalDeleted: number }
-    >("deleteAccountRuntimeData", { accountId: accountId });
+    const batch = await runtime.mutate("deleteAccountRuntimeData", {
+      accountId: accountId,
+    });
     totals.conversationsDeleted += batch.conversationsDeleted;
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
@@ -151,15 +125,12 @@ async function deleteConvexRuntimeRows(
     if (batch.totalDeleted === 0) return totals;
   }
 
-  throw new Error(
+  throw new ClientError(
     `Account runtime cleanup exceeded ${ACCOUNT_RUNTIME_DELETE_MAX_BATCHES} Convex batches; retry deletion to continue`,
+    "conflict",
   );
 }
 
-/**
- * Deletes one workspace's S3 prefix (its own bucket or the shared filesystem
- * bucket); used per workspace during account cleanup.
- */
 async function deleteWorkspaceFilesystem(
   accountId: string,
   workspaceId: string,
@@ -173,10 +144,6 @@ async function deleteWorkspaceFilesystem(
   return deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
-/**
- * Deletes the S3 files of every workspace the account had, one after another,
- * returning the object count.
- */
 async function deleteWorkspaceFilesystems(
   accountId: string,
   workspaces: Array<{

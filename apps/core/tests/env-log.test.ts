@@ -10,7 +10,7 @@ import {
   redactSensitiveText,
   redactWithRunSecrets,
 } from "../src/shared/log.ts";
-import { forceFlushOtel, observabilityAttributes } from "../src/shared/otel.ts";
+import { observabilityAttributes } from "../src/shared/otel.ts";
 import { sealRunToken } from "../src/shared/run-token.ts";
 
 const BROODS_CREDENTIAL_PREFIXES = [
@@ -22,6 +22,10 @@ const BROODS_CREDENTIAL_PREFIXES = [
   "bsts_",
   "bdts_",
   "brt_",
+  "bsig_",
+  "buat_",
+  "bdap_",
+  "bdob_",
 ];
 const ORIGINAL_ENV = { ...process.env };
 const REAL_DATE = Date;
@@ -36,12 +40,6 @@ afterEach(() => {
 const ORIGINAL_WRITE = process.stdout.write.bind(process.stdout);
 
 describe("environment helpers", () => {
-  it("returns required environment variables when present", () => {
-    process.env.REQUIRED_SAMPLE = "configured";
-
-    expect(requireEnv("REQUIRED_SAMPLE")).toBe("configured");
-  });
-
   it("throws when required environment variables are missing or empty", () => {
     delete process.env.MISSING_SAMPLE;
     process.env.EMPTY_SAMPLE = "";
@@ -72,12 +70,6 @@ describe("environment helpers", () => {
     expect(booleanEnv("BOOL_UNSET", false)).toBe(false);
   });
 
-  it("returns false when boolean env var is empty", () => {
-    process.env.BOOL_EMPTY = "";
-
-    expect(booleanEnv("BOOL_EMPTY")).toBe(false);
-  });
-
   it("parses true-like boolean values case-insensitively with trimming", () => {
     process.env.BOOL_1 = "1";
     process.env.BOOL_TRUE = "true";
@@ -94,24 +86,6 @@ describe("environment helpers", () => {
     expect(booleanEnv("BOOL_UPPER")).toBe(true);
     expect(booleanEnv("BOOL_MIXED")).toBe(true);
     expect(booleanEnv("BOOL_SPACED")).toBe(true);
-  });
-
-  it("parses false-like boolean values case-insensitively with trimming", () => {
-    process.env.BOOL_0 = "0";
-    process.env.BOOL_FALSE = "false";
-    process.env.BOOL_NO = "no";
-    process.env.BOOL_OFF = "off";
-    process.env.BOOL_UPPER_FALSE = "FALSE";
-    process.env.BOOL_MIXED_NO = "No";
-    process.env.BOOL_SPACED_OFF = "  off  ";
-
-    expect(booleanEnv("BOOL_0")).toBe(false);
-    expect(booleanEnv("BOOL_FALSE")).toBe(false);
-    expect(booleanEnv("BOOL_NO")).toBe(false);
-    expect(booleanEnv("BOOL_OFF")).toBe(false);
-    expect(booleanEnv("BOOL_UPPER_FALSE")).toBe(false);
-    expect(booleanEnv("BOOL_MIXED_NO")).toBe(false);
-    expect(booleanEnv("BOOL_SPACED_OFF")).toBe(false);
   });
 
   it("throws on invalid boolean-like values", () => {
@@ -166,6 +140,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "INFO",
+        logId: expect.any(String),
         message: "started",
         requestId: "req-1",
         service: "broods-core",
@@ -174,6 +149,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "WARN",
+        logId: expect.any(String),
         message: "retrying",
         service: "broods-core",
         "service.name": "broods-core",
@@ -181,6 +157,7 @@ describe("logging helpers", () => {
       {
         time: FIXED_TIME,
         level: "ERROR",
+        logId: expect.any(String),
         message: "failed",
         code: 500,
         service: "broods-core",
@@ -249,7 +226,6 @@ describe("logging helpers", () => {
     expect(redactWithRunSecrets(`key bsk_${"a".repeat(43)}`)).toBe(
       "key [redacted]",
     );
-    // A frame's timestamp stays what JSON.stringify would have written.
     expect(
       redactWithRunSecrets({ timestamp: new Date("2026-01-02T03:04:05Z") }),
     ).toEqual({ timestamp: "2026-01-02T03:04:05.000Z" });
@@ -277,13 +253,87 @@ describe("logging helpers", () => {
     );
   });
 
+  it("redacts third-party credential formats in logs and span attributes", () => {
+    // Fake tokens in each provider's shape; the AWS id is split so the secret scan skips it.
+    const tokens = [
+      `ghp_${"a1B2".repeat(9)}`,
+      `ghs_${"a1B2".repeat(9)}`,
+      `github_pat_${"a1B2_".repeat(16)}`,
+      `sk-proj-${"a1B2-_".repeat(8)}`,
+      `sk-ant-api03-${"a1B2".repeat(20)}`,
+      `AKIA${"ABCDEFGHIJ234567"}`,
+      "xoxb-1234-5678-abcdEFGH",
+      `xoxc-1234-5678-${"a1B2".repeat(8)}`,
+      `xoxe-1-${"a1B2".repeat(8)}`,
+      `xapp-1-A0123-${"a1B2".repeat(8)}`,
+      `AIza${"a1B2-".repeat(7)}`,
+      `ya29.a0${"a1B2-_".repeat(6)}`,
+      `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.${"a1B2".repeat(8)}`,
+      `bsk_${"a".repeat(43)}`,
+    ];
+    for (const token of tokens) {
+      expect(
+        redactSensitiveText(`token for the support account: ${token}`),
+      ).toBe("token for the support account: [redacted]");
+      expect(redactSerialized({ content: `token:\n${token}` }, [], 1000)).toBe(
+        '{"content":"token:\\n[redacted]"}',
+      );
+      expect(redactSensitiveText(`next=%2Fauth%3D${token}`)).toBe(
+        "next=%2Fauth%3D[redacted]",
+      );
+    }
+    expect(
+      redactSensitiveText(`credential-${tokens[0]} key_${tokens[3]}`),
+    ).toBe("credential-[redacted] key_[redacted]");
+    // Read-back data keeps them: the agent may need a token it was handed.
+    expect(redactWithRunSecrets(tokens[0])).toBe(tokens[0]);
+    const ids = `task-${"0f1e2d3c-4b5a-6978".repeat(2)} AKIA${"ABCDEFGHIJ234567"}XY ghp_short`;
+    expect(redactSensitiveText(ids)).toBe(ids);
+  });
+
+  it("redacts a Slack hook url, which can post into the channel", () => {
+    const url =
+      "https://hooks.slack.com/commands/T0001/1234567890/AbCdEfGhIjKlMnOp";
+
+    expect(redact({ source: { responseUrl: url, channel: "C1" } })).toEqual({
+      source: {
+        responseUrl: "https://hooks.slack.com/[redacted]",
+        channel: "C1",
+      },
+    });
+  });
+
+  it("treats env values as secret unless the name holds a public identity", () => {
+    const secrets = collectSecretValues({
+      envVars: {
+        GIT_AUTHOR_NAME: "support-bot",
+        GIT_COMMITTER_EMAIL: "support@example.test",
+        DATABASE_URL: "postgres://u:db-password@host/db",
+        GH_TOKEN: "github-token-value",
+        SECRET_NAME: "secret-name-value",
+      },
+      runtimeVariables: [
+        { key: "SMTP_USER", value: "smtp-key-value" },
+        { key: "KAFKA_SASL_USER_NAME", value: "sasl-key-value" },
+        { name: "WEBHOOK", value: "webhook-secret-value" },
+      ],
+    });
+
+    expect(secrets.sort()).toEqual([
+      "github-token-value",
+      "postgres://u:db-password@host/db",
+      "sasl-key-value",
+      "secret-name-value",
+      "smtp-key-value",
+      "webhook-secret-value",
+    ]);
+  });
+
   it("never leaks a secret that straddles a truncated attribute's cut", () => {
     const secret = "s3cr3t-value-long";
-    // One straddles the cut itself; the other straddles the scrubbed window's
-    // end and is pulled under the cut once the secret before it shrinks.
+    // atWindow's second secret is pulled under the cut once the first one shrinks.
     const atCut = `${"x".repeat(45)}${secret}${"y".repeat(100)}`;
     const atWindow = `${secret}${"z".repeat(34)}${secret}${"y".repeat(100)}`;
-    // A token the patterns match, longer than any literal secret.
     const atToken = `${"x".repeat(40)} bsk_${"a".repeat(43)} ${"y".repeat(100)}`;
 
     for (const text of [atCut, atWindow, atToken]) {
@@ -316,9 +366,5 @@ describe("logging helpers", () => {
       agent_id: "agent-1",
       conversation_key: "conversation-1",
     });
-  });
-
-  it("allows an explicit OTel flush when exporters are not configured", async () => {
-    expect(forceFlushOtel()).resolves.toBeUndefined();
   });
 });

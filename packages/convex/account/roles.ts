@@ -1,10 +1,3 @@
-/**
- * Account role CRUD and assume-role session storage. Roles are scoped API
- * credentials: their policy is a PolicyDocument over the API action namespace,
- * and a role is exchanged for a short-lived bsts_ session via
- * `POST /v1/account/assume-role`. Only session-token hashes are stored.
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internal } from "../_generated/api";
@@ -13,7 +6,6 @@ import {
   internalMutation,
   internalQuery,
   type MutationCtx,
-  type QueryCtx,
 } from "../_generated/server";
 import { accountIdForProject } from "../model/auditEvents";
 import {
@@ -28,6 +20,7 @@ import {
 import { createRoleId } from "../model/roleRules";
 import { accountRolesFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
+import { getOwnedRole } from "../runtimeLookups";
 
 const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
@@ -39,21 +32,6 @@ const roleDoc = v.object({
 
 const roleFields = v.object(accountRolesFields);
 
-const rolePolicyValidator = v.object({
-  version: v.number(),
-  mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),
-  rules: v.array(v.any()),
-});
-
-const rolePrincipalValidator = v.object({
-  accountId: v.id("accounts"),
-  roleId: v.string(),
-  policy: rolePolicyValidator,
-  projectId: v.optional(v.id("projects")),
-  stageId: v.optional(v.id("stages")),
-});
-
-/** Scope ids arrive as strings from the HTTP route and are validated here. */
 export const createInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -90,7 +68,6 @@ export const createInternal = internalMutation({
   },
 });
 
-/** Record an assumed session. Only the SHA-256 hash of the token is stored. */
 export const createSession = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -148,10 +125,6 @@ export const listPage = internalQuery({
   },
 });
 
-/**
- * Delete expired role sessions. Expiry is already checked inline on every
- * resolve, so this only bounds table growth.
- */
 export const pruneExpiredSessions = internalMutation({
   args: {
     now: v.optional(v.number()),
@@ -186,7 +159,6 @@ export const pruneExpiredSessions = internalMutation({
   },
 });
 
-/** Delete a role and every session assumed from it. Null when unknown/foreign. */
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), roleId: v.string() },
   returns: v.union(roleDoc, v.null()),
@@ -206,41 +178,10 @@ export const removeInternal = internalMutation({
   },
 });
 
-/**
- * Resolve a bsts_ token hash to its role principal. Null for unknown or
- * expired sessions and disabled or deleted roles; the caller loads the
- * account and checks its status.
- */
-export const resolveSession = internalQuery({
-  args: { tokenHash: v.string() },
-  returns: v.union(rolePrincipalValidator, v.null()),
-  handler: async (ctx, args) => {
-    const session = await ctx.db
-      .query("roleSessions")
-      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
-      .unique();
-    if (!session || session.expiresAt <= Date.now()) return null;
-    const role = await getOwnedRole(ctx, session.accountId, session.roleId);
-    if (!role || role.status !== "active") return null;
-
-    return {
-      accountId: role.accountId,
-      roleId: role.roleId,
-      policy: role.policy,
-      ...(role.projectId !== undefined ? { projectId: role.projectId } : {}),
-      ...(role.stageId !== undefined ? { stageId: role.stageId } : {}),
-    };
-  },
-});
-
 const stageScopedTypeValidator = v.union(
   ...STAGE_SCOPED_RESOURCE_TYPES.map((type) => v.literal(type)),
 );
 
-/**
- * The stage a config-plane resource lives in, for a stage-pinned role session.
- * Null when it has none or is not this account's.
- */
 export const resourceScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -255,7 +196,6 @@ export const resourceScope = internalQuery({
     await resourceStageScope(ctx, args.accountId, args.type, args.id),
 });
 
-/** The refs a stage-pinned role's write names that sit off its stage. */
 export const refsOutsidePin = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -269,7 +209,6 @@ export const refsOutsidePin = internalQuery({
     await refsOutsideStage(ctx, args.accountId, args.pin, args.refs),
 });
 
-/** Null when the role is unknown or belongs to another account. */
 export const updateInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -297,28 +236,14 @@ export const updateInternal = internalMutation({
   },
 });
 
-async function getOwnedRole(
-  ctx: QueryCtx,
-  accountId: Id<"accounts">,
-  roleId: string,
-): Promise<Doc<"accountRoles"> | null> {
-  const role = await ctx.db
-    .query("accountRoles")
-    .withIndex("by_roleId", (q) => q.eq("roleId", roleId))
-    .unique();
-
-  return role && role.accountId === accountId ? role : null;
-}
-
-async function resolveRoleScope(
+export async function resolveRoleScope(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   projectId: string | undefined,
   stageId: string | undefined,
 ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> {
   if (projectId === undefined && stageId === undefined) return null;
-  // Structural scope is the deployKeys shape: a stage inside a project, or
-  // account-wide. Half a scope would silently widen what a runtime key can assume.
+  // Half a scope would silently widen what a runtime key can assume.
   if (projectId === undefined || stageId === undefined) {
     throw new ClientError("projectId and stageId must be provided together");
   }

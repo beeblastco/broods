@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * What a drag says about the group under it: the frame two loose cards would
- * become, or the reason the group it is over will not take the card. A frame that
- * will take it opens its own slot, so this draws nothing over one. A child of
- * `<ReactFlow>`, like the connection refusal it shares its notice with.
- */
 import {
   CanvasNotice,
   CanvasNoticeHint,
@@ -38,8 +32,7 @@ export function CanvasDropPreview({
       </>
     );
   }
-  // An existing frame answers for itself: it grows and marks the slot. Anything
-  // else here would be a group of one, which is the only shape that forms.
+  // An existing frame marks its own slot; only a group of one forms a new frame.
   if (drop.frameId !== null || drop.memberIds.length !== 1) return null;
 
   return (
@@ -52,14 +45,6 @@ export function CanvasDropPreview({
   );
 }
 
-/**
- * The frame two loose cards would form: its box, at the size and place it will
- * really take, with the slot the dragged card would fill.
- *
- * A new frame takes the origin of the card already in the group, which is what
- * `reconcileFramePositions` gives it, so the preview is the outcome rather than a
- * box drawn around wherever the two cards happen to be.
- */
 function FormingFrame({
   kind,
   label,

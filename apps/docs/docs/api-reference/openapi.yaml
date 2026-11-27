@@ -11,13 +11,17 @@ info:
     >
     > - Runtime invocation (`POST /v1/runs`, `GET /v1/runs/{runId}`) from the TypeScript SDK, curl, or Python client
     > - Advanced integrations that need direct account-management access
-    > - Admin operations using `AdminAccountSecret`
+    > - Admin operations using `ADMIN_ACCOUNT_SECRET`
 
     Every core and config-plane response carries `X-Request-Id`. Every non-2xx body from core and the config plane is `{ error: { message, type, code, param? } }`; branch on `code`, never on `message`. Every 405 carries `Allow`. Every 429 carries `Retry-After`, and core and config-plane 429s also carry the IETF `RateLimit-*` fields. The edge may also limit requests per client address, and answers its own 429 as plain text with only `Retry-After`.
 
-    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket.
+    Observability history subscribes accept an optional `range` with inclusive `from` and exclusive `to` in epoch milliseconds (at most 30 days). Bounded pages search at most one hour and their closing backfill frame includes `nextTo` when older coverage remains. Continue with the original `from` and `nextTo` as `to`; retry the same range after an error.
 
-    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy.
+    WebSocket endpoints are not expressible here. The gateway, behind the same host, terminates `/v1/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/ws`, `/v1/projects/{projectSlug}/stages/{stageSlug}/observability/ws`, `/v1/sandboxes/terminal/ws` and `/v1/machines/ws`; the credential rides the `broods.token.<key>` subprotocol. The agent sockets take the stage's runtime key or a stage session ticket for their own stage, and check every frame like the matching HTTP call, so a runtime key reaches only agents with `publicAccess: true` there. The observability socket takes only a stage session ticket (`bdts_...`, see `POST /v1/account/stage-session`), never the runtime key, because logs and traces carry every end user's chats and tool payloads. `/v1/machines/ws` is the `broods machine` daemon's socket; it takes the account key, a role session or a stage session ticket from `POST /v1/account/stage-session` (which claims only its own stage's or an account-level record), never the runtime key or a dashboard member's ticket. A socket opened with a stage session ticket closes when the ticket expires, with close code `4419` (`Stage session expired` on the observability socket, `Credential expired` on the machine socket); reconnect with a fresh ticket. The machine socket can instead be kept open: its `ready` frame carries `expiresInMs`, and a daemon that sends `{ "type": "credential", "token": "bdts_..." }` with a fresh ticket for the same account and stage before then moves the deadline (core answers with another `ready`); a ticket for anything else closes it with `4401`. A credential that stops resolving while the socket is open (account suspended, key rotated, role session ended) closes it with `4401` within a minute.
+
+    **End-user tokens.** The runtime key (`bsk_...`) is embeddable, so on its own it cannot say which of your users is calling, and any visitor who guesses another user's `conversationKey` could read and steer that conversation. Your backend signs a short-lived user token (`buat_...`) with the stage's signing secret (`bsig_...`, shown once: `broods dev` and `broods deploy` write it through `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`, and the dashboard's Runtime key tab rotates it too) and your frontend sends it beside the runtime key in the `X-Broods-User-Token` header, or as a `broods.user.<token>` subprotocol entry on an agent socket. The SDK's `signUserToken` signs one. A request with a valid token runs every conversation key and event id it names under that user's namespace (`bsu:<userId>:<key>`, answered back in `conversationKey` and `eventId`), so one user can never name another's conversation; runs, steering, approvals, `continue` and run reads all go through the same check. A forged or expired token is a 401 like a bad key. An agent with the user-token requirement on (every agent created since this shipped; an existing agent once its owner turns it on) refuses the runtime key without a token with 403 `user_token_required`. Account keys and stage session tickets are not affected.
+
+    The config plane serves account metadata and account key rotation behind the same gateway host. Account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Admins reach account creation, administration, and rotate-secret with the deployment's `ADMIN_ACCOUNT_SECRET` as bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. The config plane also serves agents, env vars, skills, MCP servers, workspace files, crons, workspaces, sandboxes, policies, and roles, none of which have admin path variants. Exchange an account role (`brole_...` ids under `/v1/roles*`) at `/v1/account/assume-role` for a short-lived `bsts_...` session token. A session token authenticates like the account key but is limited to the role's policy. A scoped account key (a `bask_...` made on the dashboard's Organization › API access) authenticates the same way, limited to its own permissions, project/stage scope and expiry; like a session it cannot assume roles, manage roles or rotate the account key.
   version: 0.1.0
 
 servers:
@@ -92,16 +96,10 @@ paths:
                   status:
                     type: string
                     example: ok
-                  activeWebSockets:
-                    type: integer
-                  maxWebSockets:
-                    type: integer
               examples:
                 healthy:
                   value:
                     status: ok
-                    activeWebSockets: 3
-                    maxWebSockets: 1000
 
   /v1/runs:
     post:
@@ -197,13 +195,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or an `answers` entry names a prompt that was already answered (`question_already_answered`). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the first SSE `error` frame.
+          description: Conversation busy in reject mode (`conversation_busy`), the idempotency key is bound to a different payload (`idempotency_conflict`), or every `answers` entry names a prompt that was already answered (`question_already_answered`; when some landed, the request answers `202` for those). JSON envelope on a background run; on a streamed run the busy and idempotency errors arrive as the only SSE `error` frame (`StreamRefusal`), with the same `code`.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation is already processing another turn. Try again when the current turn finishes.","code":"conversation_busy","errorType":"conflict_error"}
         "429":
-          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After` on a background run; on a streamed run it arrives as the first SSE `error` frame. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
+          description: Per-conversation ingress queue at capacity (`ingress_capacity`). Carries `Retry-After`; on a streamed run it arrives as the only SSE `error` frame (`StreamRefusal`), with the same `code`. Or a burst past the plan's runs per minute (`plan_limit_exceeded`), always a JSON envelope with `Retry-After`.
           headers:
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
@@ -211,8 +214,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+              example: |
+                data: {"type":"error","error":"Conversation ingress queue is at capacity","code":"ingress_capacity","errorType":"rate_limit_error"}
+        "503":
+          description: The deployment's run queue is full (`service_unavailable`). A run waits for a free worker slot, a streamed one with keepalive comments meanwhile. This POST checks the queue before ingress records anything and before the plan counts the run, and only a full queue answers 503, so a retry after `Retry-After` with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` even while the queue is full, never a 503 it would only retry into. A streamed run gets one SSE `error` frame (`StreamRefusal`) with the same `code`; a background POST (or `answers`, `continue`) a JSON envelope. A run that passed the check and owns its conversation is never failed for capacity later; it queues. One queued behind another turn of its conversation (status `queued`) can still fail for capacity if the queue is full when that turn ends.
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help; the account must upgrade or wait for the next UTC month. Only the managed BeeBlast service enforces caps.
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`). Refused before any model call or sandbox start, as a JSON envelope. Retrying does not help. A monthly cap clears with an upgrade or at the next UTC month. Storage is a size measured once a day that a new month does not free, so the message names a full storage limit, and it clears once files are deleted (seen at the next daily measurement) or the plan is upgraded. Only the managed BeeBlast service enforces caps.
           content:
             application/json:
               schema:
@@ -224,13 +244,32 @@ paths:
                       message: This account has reached one of its monthly resource caps for 2026-09 on the free plan. Upgrade to keep running agents, or wait for next month.
                       type: invalid_request_error
                       code: budget_exhausted
+                storageFull:
+                  value:
+                    error:
+                      message: "This account has reached its storage limit of 10 GB of workspaces and files on the free plan. Delete files or upgrade to keep running agents; storage is measured once a day."
+                      type: invalid_request_error
+                      code: budget_exhausted
         "403":
-          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, or the credential is a run token, which does not start runs yet
+          description: Agent has not opted into public access (secure by default), a runtime key sent run overrides the agent does not allow, the agent requires a user token and the runtime key came without one (`user_token_required`), the user token does not list the conversation (`user_token_conversation`), or the credential is a run token, which does not start runs yet
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
               examples:
+                userTokenRequired:
+                  value:
+                    error:
+                      message: "Agent agent_... requires a signed user token with the runtime key. Send it in the X-Broods-User-Token header (signUserToken in the broods SDK), or turn the requirement off for this agent."
+                      type: permission_error
+                      code: user_token_required
+                userTokenConversation:
+                  value:
+                    error:
+                      message: The user token does not list this conversationKey.
+                      type: permission_error
+                      code: user_token_conversation
+                      param: conversationKey
                 runTokenScope:
                   value:
                     error:
@@ -282,7 +321,9 @@ paths:
         has to be named here. Every accepted request reaches completed, failed,
         or expired. The embeddable runtime key reads runs of public agents only;
         a member's stage ticket also reads runs of its stage's private agents,
-        as it may start them.
+        as it may start them. With a user token the runtime key reads only runs
+        of that user's own conversations; without one it reads no run of any
+        user's conversation.
       parameters:
         - name: runId
           in: path
@@ -344,7 +385,7 @@ paths:
                     status: failed
                     error: Model provider returned 503
         "403":
-          description: Deployment-key caller polling an agent that has not opted into public access, or a run token reading a run of another agent
+          description: Deployment-key caller polling an agent that has not opted into public access, polling an agent that requires a user token without one (`user_token_required`), polling a run of another user's conversation (`status_access_denied`), or a run token reading a run of another agent
           content:
             application/json:
               schema:
@@ -388,6 +429,102 @@ paths:
                       message: Unauthorized
                       type: authentication_error
                       code: unauthorized
+
+  /mcp:
+    post:
+      tags:
+        - Direct API
+      summary: MCP Tasks server
+      description: |
+        A Model Context Protocol server (revision 2026-07-28, stateless HTTP)
+        with the `io.modelcontextprotocol/tasks` extension. The tools are the same
+        for every caller: `list_agents` (`{project?, stage?}`) returns each
+        agent the credential can run with its description, project, stage and
+        id, and `ask_agent` (`{agent, prompt, conversationId?}`) runs one by
+        name or id. With the tasks
+        extension, `ask_agent` starts a background
+        run and answers a task handle (`resultType:
+        "task"`) whose `taskId` is the run id; `tasks/get`, `tasks/update` and
+        `tasks/cancel` follow it. Without it, `ask_agent` answers directly
+        within 50 seconds and the list adds `get_run` and a `continue_run` tool for longer runs and
+        questions; `tasks/*` then gets `-32021`. Run reads and writes go
+        through `/v1/runs`, so the same credential rules apply: an account
+        key lists every agent of the account, a member's stage ticket its
+        stage, the runtime key its stage's public agents. A run token lists no
+        agents yet. With `WORKOS_AUTHKIT_DOMAIN` set, a 401 names
+        `/.well-known/oauth-protected-resource/mcp`, and an AuthKit access
+        token for an org owner or admin acts as that org's account. 2025-era
+        (`initialize`) traffic is refused with `-32022`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: One JSON-RPC 2.0 request with the per-request `_meta` envelope.
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  type: string
+                  enum: ["2.0"]
+                id:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                method:
+                  type: string
+                  enum:
+                    [
+                      server/discover,
+                      tools/list,
+                      tools/call,
+                      tasks/get,
+                      tasks/update,
+                      tasks/cancel,
+                    ]
+                params:
+                  type: object
+            examples:
+              callTool:
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: tools/call
+                  params:
+                    name: support_bot
+                    arguments:
+                      prompt: Summarize yesterday's support tickets.
+                    _meta:
+                      io.modelcontextprotocol/protocolVersion: "2026-07-28"
+                      io.modelcontextprotocol/clientCapabilities:
+                        extensions:
+                          io.modelcontextprotocol/tasks: {}
+      responses:
+        "200":
+          description: The JSON-RPC response; a protocol error is in its `error`.
+          content:
+            application/json:
+              schema:
+                type: object
+              examples:
+                task:
+                  value:
+                    jsonrpc: "2.0"
+                    id: 1
+                    result:
+                      resultType: task
+                      taskId: run_8c1d4a9e2f1b40d7a3c65e90b7412fda
+                      status: working
+                      createdAt: "2026-11-01T12:00:00.000Z"
+                      lastUpdatedAt: "2026-11-01T12:00:00.000Z"
+                      ttlMs: null
+                      pollIntervalMs: 2000
+        "401":
+          description: Missing or unknown credential, or the admin secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}:
     post:
@@ -453,6 +590,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+        "503":
+          description: The deployment's run queue is full, as for `POST /v1/runs`
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: The runtime key does not match this project and stage
           content:
@@ -466,7 +618,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "402":
-          description: The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`
+          description: The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`
           content:
             application/json:
               schema:
@@ -481,6 +633,63 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}/files:
+    parameters:
+      - {
+          name: projectSlug,
+          in: path,
+          required: true,
+          schema: { type: string },
+        }
+      - { name: stageSlug, in: path, required: true, schema: { type: string } }
+      - { name: endpointId, in: path, required: true, schema: { type: string } }
+      - { name: agentId, in: query, required: true, schema: { type: string } }
+      - name: conversationKey
+        in: query
+        required: true
+        description: The end user's conversation, namespaced under their user token like a run's.
+        schema: { type: string }
+      - name: workspace
+        in: query
+        description: The workspace by its name on the agent. Defaults to the first one with a sandbox.
+        schema: { type: string }
+    get:
+      tags:
+        - Direct API
+      summary: Read an end user's conversation folder
+      description: Every file in the folder a run of this conversation mounts (`users/<hash>` under the workspace). Needs the runtime key plus the user's token (`X-Broods-User-Token`); without a token it answers 403 `user_token_required`, since the workspace root is the owner's. The workspace needs a sandbox.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The folder's files.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationFiles" }
+        "403": { description: No user token, or the agent is not public. }
+        "404": { description: No such agent, or no workspace with a sandbox. }
+    put:
+      tags:
+        - Direct API
+      summary: Replace an end user's conversation folder
+      description: Deletes everything in the conversation's folder and writes these files, in one sandbox command, so the next run starts from them. Same credentials as the GET. The body is capped at 6 MiB.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConversationFiles" }
+      responses:
+        "200":
+          description: How many files were written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { files: { type: integer } }
+        "403": { description: No user token, or the agent is not public. }
+        "413": { description: The body is over 6 MiB. }
   /v1/sandbox-jobs/{resultId}/complete:
     post:
       tags:
@@ -558,7 +767,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, matrix, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, linear, slack, discord, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger). This is the production URL form and it is not pinned to a stage. Every agent of the account is a candidate, so only `/v1/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent. Whichever of the account's agents holds credentials that verify the request is the one that receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -577,7 +786,6 @@ paths:
                 linear,
                 slack,
                 discord,
-                matrix,
                 pancake,
                 zalo,
                 whatsapp,
@@ -594,6 +802,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no agent holds credentials for it
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed. The second clears on its own, so the provider should redeliver.
 
   /v1/webhooks/{accountId}/dev/{endpointId}/{channelName}:
     get:
@@ -654,7 +864,6 @@ paths:
                 linear,
                 slack,
                 discord,
-                matrix,
                 pancake,
                 zalo,
                 whatsapp,
@@ -671,6 +880,8 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
+        "503":
+          description: No agent of the account configures this channel, or the lookup of which agent holds it failed. The second clears on its own, so the provider should redeliver.
 
   /v1/accounts:
     post:
@@ -732,7 +943,7 @@ paths:
       tags:
         - Accounts
       summary: List all accounts (admin)
-      description: Admin-only endpoint. Requires `AdminAccountSecret` from SST secrets.
+      description: Admin-only endpoint. Requires the deployment's `ADMIN_ACCOUNT_SECRET`.
       security:
         - AdminAuth: []
       responses:
@@ -858,6 +1069,8 @@ paths:
                       skillObjectsDeleted: 4
                       bundleObjectsDeleted: 0
                       attachmentObjectsDeleted: 3
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
 
   /v1/accounts/{accountId}/rotate-secret:
     post:
@@ -979,6 +1192,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeleteResponse"
+        "409":
+          description: Cleanup ran out of batches before it finished. The account stays disabled; send the same delete again to continue.
+
+  /v1/account/auth/token:
+    delete:
+      tags:
+        - Accounts
+      summary: Revoke own CLI login
+      description: Revokes the `bcli_` login token sent as the bearer. `broods logout` calls it.
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: Login revoked
+        "401":
+          description: Not a `bcli_` login, unknown, lent to an agent, or already revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /v1/account/rotate-secret:
     post:
@@ -1009,6 +1242,50 @@ paths:
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: bask_new...
+
+  /v1/account/storage-trust:
+    get:
+      tags:
+        - Accounts
+      summary: Read storage trust
+      description: >-
+        What an `assumeRole` workspace's IAM role must trust. Broods assigns
+        `externalId` to the account (minted on the first read or mount, then
+        fixed) and sends it as `sts:ExternalId` every time it assumes one of
+        the account's roles; a workspace config cannot set it.
+        `principalArn` and `trustPolicy` are omitted on a deployment with no
+        AWS account. Role sessions need read access to the account.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The account's storage trust
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [storageTrust]
+                properties:
+                  storageTrust:
+                    type: object
+                    required: [externalId]
+                    properties:
+                      externalId:
+                        type: string
+                        description: The `sts:ExternalId` your role's trust policy must require.
+                      principalArn:
+                        type: string
+                        description: The Broods AWS principal your role must trust.
+                      trustPolicy:
+                        type: string
+                        description: A ready-to-paste role trust policy (JSON) naming both.
+              examples:
+                trust:
+                  value:
+                    storageTrust:
+                      externalId: broods-3q2b1Zk9vT0sWmXyLp8eA4cRuHnD6fGj
+                      principalArn: arn:aws:iam::999988887777:root
+                      trustPolicy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::999988887777:root"},"Action":"sts:AssumeRole","Condition":{"StringEquals":{"sts:ExternalId":"broods-3q2b1Zk9vT0sWmXyLp8eA4cRuHnD6fGj"}}}]}'
 
   /v1/account/connections:
     get:
@@ -1179,6 +1456,54 @@ paths:
           description: Role disabled, or not scoped to the caller's stage
         "404": { description: Role not found }
 
+  /v1/account/observability-session:
+    post:
+      tags:
+        - Accounts
+      summary: Mint a read-only logs ticket
+      description: >-
+        Exchange a CLI login token (`bcli_...`) for a ticket (`bdob_...`) that
+        opens one stage's observability WebSocket and nothing else. It lasts
+        five minutes at most and never outlives the login. A login lent to the
+        agent must belong to a conversation, and its conversation can no longer
+        write once this is called.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project, stage]
+              properties:
+                project:
+                  type: string
+                  description: Project name or slug
+                stage:
+                  type: string
+                  description: Stage name, e.g. `development`
+      responses:
+        "200":
+          description: Ticket minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: integer
+                    description: Expiry in epoch milliseconds
+                  projectSlug:
+                    type: string
+                  stageSlug:
+                    type: string
+        "400":
+          description: The body is missing a project or stage
+        "403":
+          description: This login cannot read that stage's logs
   /v1/account/stage-session:
     post:
       tags:
@@ -1241,6 +1566,66 @@ paths:
           description: Missing token, or the token is not a `broods login` token
         "404":
           description: The project or stage does not exist, or has no deployment yet
+
+  /v1/account/projects/{project}/stages/{stage}/user-token-secret:
+    post:
+      tags:
+        - Accounts
+      summary: Rotate the stage's user token signing secret
+      description: >-
+        Mint a new user token signing secret (`bsig_...`) for one deployed
+        project stage, replacing any earlier one, and return it this once.
+        Tokens the previous secret signed stop opening at once. Your server
+        signs user tokens with it (`signUserToken` in the SDK reads
+        `BROODS_USER_TOKEN_SECRET`); `broods dev` and `broods deploy` call this
+        route and write the secret to `.env.local` when the checkout lacks it.
+        Authenticate with the account key, a project key (`bpdk_...`) for this
+        stage, or a `broods login` token (`bcli_...`) whose member holds
+        `keys:write` on the stage. The rotation is recorded in the audit ledger
+        as `user-token-secret-rotated`; the secret never is.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: Project name or slug
+          schema:
+            type: string
+        - name: stage
+          in: path
+          required: true
+          description: Stage name, e.g. `development`
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Secret rotated. Shown only in this response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, hint]
+                properties:
+                  secret:
+                    type: string
+                    description: The new `bsig_...` signing secret. Keep it on your server
+                  hint:
+                    type: string
+                    description: Masked form the dashboard and later syncs show
+              examples:
+                rotated:
+                  value:
+                    secret: bsig_abc...
+                    hint: bsig_…wxyz
+        "401":
+          description: Missing token, an unknown key, or a project key for another project or stage
+        "403":
+          description: The `broods login` token's member lacks `keys:write` on the stage
+        "404":
+          description: The project or stage does not exist, or has no runtime key yet
+        "405":
+          description: Any method but `POST`
 
   /v1/env:
     get:
@@ -1536,7 +1921,7 @@ paths:
       description: |
         The same request and responses as `POST /v1/runs`, addressed by the agent's deployment endpoint id and authenticated with the runtime key rather than an account key. `agentId` still rides in the body and must name an agent of the key's own stage; an agent of another stage answers `404` like an unknown one. With the runtime key the agent must have `publicAccess: true`; a stage session ticket (`bdts_...`) from a member of the stage's project may run any agent of the stage.
 
-        A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session.
+        A runtime key is safe to embed, so it carries three limits an account key does not. It reaches only agents of its stage. It may send `system` messages and `model` overrides only when the agent sets `allowRunOverrides: true`, otherwise the request is a `403` with code `run_overrides_disabled`. With `continue: true` it re-enters only conversations the direct API opened, never a channel session. With a user token (`X-Broods-User-Token`) every conversation and event id lands under that user, and an agent that requires one refuses the key without it (`403 user_token_required`).
 
         The path segment is the stage's deployment endpoint id, not an agent id, although this path item names it `{agentId}` because it shares the URL with `GET`, `PATCH` and `DELETE /v1/agents/{agentId}`. Prefer `/v1/runs` unless the caller only holds a runtime key.
       security:
@@ -1585,6 +1970,21 @@ paths:
         "409":
           description: "`conversation_busy`, `idempotency_conflict` or `question_already_answered`, as for `POST /v1/runs`."
           content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
+        "503":
+          description: The deployment's run queue is full, as for `POST /v1/runs`
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/StreamRefusal"
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
@@ -1695,11 +2095,12 @@ paths:
                             daytona,
                             vercel,
                             cloudflare,
+                            worker,
                             machine,
                             custom,
                           ],
                         default: lambda,
-                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
+                        description: "Compute backend. Defaults to lambda (AWS MicroVM). The sandbox provider (the workdir backend) is not on the hosted platform yet; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node. `worker` is bash in a V8 isolate on Cloudflare Workers (just-bash, 81 built-in commands, no processes), on or off networking, a 60 s timeout, files kept in storage when persistent, metered per command. `custom` is your own server on the sandbox exec contract (POST options.endpoint/exec), stateless and on your compute, so never metered; see the Your own server guide for what it refuses.",
                       }
                     network:
                       type: object
@@ -1723,7 +2124,7 @@ paths:
                       {
                         type: string,
                         enum: [tiny, xsmall, small, medium, large],
-                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
+                        description: "Predefined compute size (vcpu/memory/disk). Sizes the machine on sandbox (workdir create-time resources) and cloudflare (nearest instance type, standard-1 to standard-4). Ignored on lambda, where every MicroVM is 4 vCPU, 8 GB and an 8 GB disk, and on daytona/e2b/vercel, which size themselves; the dashboard shows the size those providers report, and `?` when they report none (a size is shown only when known to be true). Ignored on worker too, where every command gets the same 128 MB. Rejected on machine and custom. Defaults to the provider's own default when unset. tiny and xsmall are the free-tier size names; usage counts at the machine a name starts, so on cloudflare both start a 0.5 vCPU / 4 GB instance.",
                       }
                     image:
                       {
@@ -1734,7 +2135,7 @@ paths:
                     snapshot:
                       {
                         type: string,
-                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row.",
+                        description: "What the sandbox boots from, in its provider's own format (see the Sandboxes guide, Images). On lambda, a MicroVM image ARN in the same AWS account and region as the default image; any other ARN fails the run. Rejected on cloudflare, worker, machine and custom. A snapshot boots only on the provider that made it. Unset boots the provider's default. On daytona it cannot be set with `options.image`, which builds the sandbox from a Docker image instead. The launched-from id is mirrored onto the dashboard instance row. A snapshot taken with the Snapshot action is locked to the stage of the sandbox it was taken from (a sandbox with no stage, as this API creates, boots only snapshots of a sandbox with no stage): naming one from another stage or account answers 400, and a run never boots it. A snapshot taken before snapshots recorded their stage boots nowhere and must be taken again.",
                       }
                     persistent:
                       {
@@ -1745,7 +2146,15 @@ paths:
                       {
                         type: string,
                         enum:
-                          [sandbox, lambda, e2b, daytona, vercel, cloudflare],
+                          [
+                            sandbox,
+                            lambda,
+                            e2b,
+                            daytona,
+                            vercel,
+                            cloudflare,
+                            worker,
+                          ],
                         description: "Provider an ephemeral run moves to when `provider` refuses the create for capacity (MicroVM memory quota, workdir admission ceiling, no Daytona runner). Must differ from provider and be able to enforce the same network policy and limits. Rejected beside persistent: true, since a reserved sandbox belongs to one provider. Cannot be machine or custom. `options` and `snapshot` are the primary's and do not carry over to the fallback.",
                       }
                     lifecycle:
@@ -1755,7 +2164,7 @@ paths:
                         idleTimeoutSeconds:
                           {
                             type: integer,
-                            description: "scale down / stop after this idle (default 900)",
+                            description: "scale down / stop after this idle (default 900). At most 7 days; 6 hours on cloudflare, 24 hours on vercel",
                           }
                         maxLifetimeSeconds:
                           {
@@ -1776,7 +2185,7 @@ paths:
                     timeout:
                       {
                         type: integer,
-                        description: "per-call seconds (max 600 for every provider)",
+                        description: "per-call seconds (max 600; 60 on worker)",
                       }
                     outputLimitBytes: { type: integer }
                     envVars:
@@ -1784,7 +2193,7 @@ paths:
                     options:
                       {
                         type: object,
-                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers). The image is picked by `snapshot`, so daytona `snapshot`, e2b `template` and `templateId`, and vercel `image` and `runtime` are rejected here.",
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot). mountAwsS3Buckets is a boolean read only by daytona (mount workspaces; the snapshot must ship mount-s3) and sandbox; vercel mounts any attached workspace and rejects it. reservationKey pins the reserved machine a workspace-less persistent run reconnects to; omit it and one is derived per agent. Keys are scoped to the account. On custom: endpoint (public https URL, required), token (sent as a bearer) and headers (extra static headers). The image is picked by `snapshot`, so daytona `snapshot`, e2b `template` and `templateId`, and vercel `image` and `runtime` are rejected here. On vercel, networkId attaches the sandbox to a Secure Compute network (Enterprise teams); other providers reject it.",
                       }
             examples:
               lambda:
@@ -1824,6 +2233,10 @@ paths:
                     onCreate: ["npm install"]
       responses:
         "201": { description: Sandbox created }
+        "400":
+          {
+            description: "Invalid config, including a `snapshot` taken on a staged sandbox or on another account",
+          }
     get:
       tags: [Sandboxes]
       summary: List sandboxes
@@ -1889,6 +2302,10 @@ paths:
                   description: Deep-merged into the stored config, same shape as create. Set a field to `null` to delete it; arrays are replaced whole.
       responses:
         "200": { description: Updated }
+        "400":
+          {
+            description: "Invalid config, including a `snapshot` taken on another stage, on another account, or before snapshots recorded their stage. Refused for every caller, an account key included.",
+          }
     delete:
       tags: [Sandboxes]
       summary: Delete sandbox
@@ -1927,6 +2344,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Suspended }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -1957,9 +2378,13 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Running }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
-            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {
@@ -1991,6 +2416,10 @@ paths:
                 reservationKey: { type: string }
       responses:
         "200": { description: Terminated }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
@@ -2001,7 +2430,7 @@ paths:
     post:
       tags: [Sandboxes]
       summary: Snapshot sandbox instance
-      description: Creates a reusable image from a persistent sandbox reservation, saved under `name`, that any sandbox config of the same provider can pin with `snapshot`. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. Daytona, E2B and Vercel capture the sandbox as their own snapshot and answer `active`; E2B pauses the sandbox while it captures, and Vercel stops it, so its next call resumes it. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes. Cloudflare, machine and custom sandboxes answer 409.
+      description: Creates a reusable image from a persistent sandbox reservation, saved under `name`, that any sandbox config of the same provider on the same stage can pin with `snapshot`. The snapshot records the stage of the sandbox it was taken from and boots only there; names are unique per stage. The self-hosted workdir `sandbox` provider captures the instance and answers `active`. Daytona, E2B and Vercel capture the sandbox as their own snapshot and answer `active`; E2B pauses the sandbox while it captures, and Vercel stops it, so its next call resumes it. The AWS MicroVM `lambda` provider builds a new image from the files the VM changed since it started and answers `building`; the snapshot turns `active` or `build_failed` once the build lands, usually within minutes. Cloudflare, machine and custom sandboxes answer 409.
       security: [{ BearerAuth: [] }]
       parameters:
         - {
@@ -2022,14 +2451,123 @@ paths:
                 name: { type: string }
       responses:
         "200": { description: "Snapshot active, or building on lambda" }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
           }
+        "404": { description: No reserved instance for this reservation key }
         "409":
           {
             description: "Provider does not support snapshot, or the name is already another provider's snapshot",
           }
+
+  /v1/sandboxes/{sandboxId}/exec:
+    post:
+      tags: [Sandboxes]
+      summary: Run a command in a sandbox instance
+      description: Runs `code` in a persistent sandbox reservation and answers its output, as the agent's `bash` tool would. The `reservationKey` must belong to this account and sandbox config. A scoped key or role session needs `sandboxes:write` on the sandbox. The audit row names the calling credential.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey, code]
+              properties:
+                reservationKey: { type: string }
+                code: { type: string, maxLength: 20000 }
+                timeoutSeconds:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `timeout`; a value above the provider's cap uses the default.",
+                  }
+                outputLimitBytes:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: "Defaults to the sandbox config's `outputLimitBytes`; a value above the provider's cap uses the default.",
+                  }
+      responses:
+        "200":
+          description: The command ran; `ok` is false when it exited non-zero
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  runtime: { type: string }
+                  exitCode: { type: [integer, "null"] }
+                  stdout: { type: string }
+                  stderr: { type: string }
+                  durationMs: { type: number }
+                  truncated: { type: boolean }
+                  provider: { type: string }
+        "400":
+          { description: "`code` is missing or longer than 20,000 characters" }
+        "402":
+          {
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+          }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+
+  /v1/sandboxes/{sandboxId}/refresh:
+    post:
+      tags: [Sandboxes]
+      summary: Refresh sandbox instance status
+      description: Asks the provider for the instance's state and writes it to the live-instance registry row. An instance the provider no longer has, or is terminating, is removed from the registry and answers `terminated`. The `reservationKey` must belong to this account and sandbox config.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reservationKey]
+              properties:
+                reservationKey: { type: string }
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    {
+                      type: string,
+                      enum: [running, suspended, error, terminated],
+                    }
+                  externalId: { type: string }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support status refresh }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:
@@ -2073,18 +2611,25 @@ paths:
                   token: { type: string }
                   expiresAt: { type: number }
                   websocketPath: { type: string }
+        "400":
+          {
+            description: "The sandbox config needs a fix first, such as a provider URL without its API key, a missing custom endpoint, or a non-public provider URL",
+          }
         "402":
           {
-            description: "The account has reached one of its monthly resource caps (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
+            description: "The account has reached one of its monthly resource caps or its storage limit (`budget_exhausted`), as for `POST /v1/runs`. A sandbox on the account's own provider credentials is never refused.",
           }
         "403":
           {
             description: Reservation does not belong to this account or sandbox config,
           }
-        "404": { description: No reserved instance for this reservation key }
+        "404":
+          {
+            description: "No reserved instance for this reservation key, or the workdir host no longer has the sandbox",
+          }
         "409":
           {
-            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, or the Cloudflare Container is not running",
+            description: "Provider does not support a live terminal, the MicroVM was launched without shell ingress, the Cloudflare Container is not running, or the workdir host is too old to issue terminal tokens",
           }
 
   /v1/workspaces:
@@ -2112,7 +2657,10 @@ paths:
                       type: object
                       description: Omit `bucket` for the managed bucket. A workspace that names its own `bucket` brings its own credentials, so `prefix` and `auth.type` `assumeRole` (AWS) or `r2` (Cloudflare R2) are then required. The request is rejected when `bucket` is a platform bucket, when `auth.roleArn` belongs to the platform AWS account, or when `endpoint` is not a public https URL.
                       properties:
-                        provider: { type: string, enum: [s3] }
+                        provider:
+                          type: string
+                          enum: [s3, disk]
+                          description: "`disk` keeps the files on the workspace's sandbox's own disk instead of a bucket: it needs a `worker` sandbox with `persistent: true`, takes no other storage field, and the files routes below answer 400 for it."
                         bucket:
                           type: string
                           description: A bucket you own. Requires `prefix` and `auth.type` `assumeRole` or `r2`.
@@ -2133,11 +2681,10 @@ paths:
                                 type: { type: string, enum: [managed] }
                             - type: object
                               required: [type, roleArn]
-                              description: An IAM role outside the platform AWS account, assumed per run with a session scoped to `bucket/prefix`.
+                              description: "An IAM role outside the platform AWS account, assumed per run with a session scoped to `bucket/prefix`. Broods sends the account's own external id (`GET /v1/account/storage-trust`) on every assume, so the role's trust policy must require it. `externalId` is not accepted here: a body that sets it is a 400."
                               properties:
                                 type: { type: string, enum: [assumeRole] }
                                 roleArn: { type: string }
-                                externalId: { type: string }
                             - type: object
                               required: [type, accessKeyId, secretAccessKey]
                               description: "A Cloudflare R2 API token's S3 keys, each one `${NAME}` env reference, never a value. Requires `bucket`, `prefix` and `endpoint` set to `https://<account id>.r2.cloudflarestorage.com`; `region` must be omitted or `auto`. Each run gets one-hour R2 temporary credentials scoped to `bucket/prefix`."
@@ -2168,7 +2715,7 @@ paths:
                             enabled: { type: boolean }
                         memory:
                           type: object
-                          description: Structured memory (memory_save + memory/MEMORY.md index loading + <memory> prompt).
+                          description: Structured memory (memory_save, memory_delete, memory/MEMORY.md index loading + <memory> prompt).
                           properties:
                             enabled: { type: boolean }
             examples:
@@ -2188,7 +2735,6 @@ paths:
                       auth:
                         type: assumeRole
                         roleArn: arn:aws:iam::111122223333:role/broods-mount
-                        externalId: shared-secret
               r2Bucket:
                 value:
                   name: r2-files
@@ -2555,6 +3101,62 @@ paths:
                       message: "upload quota: 20 uploads per hour; retry after 2026-09-03T11:20:00.000Z"
                       type: rate_limit_error
                       code: upload_quota_exceeded
+
+  /v1/mcp-connections/{serverId}:
+    parameters:
+      - name: serverId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Start an OAuth sign-in
+      description: Broods does discovery, client registration and PKCE. Give `authorizeUrl` to a person to open.
+      responses:
+        "200":
+          description: Sign-in started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, authorizeUrl, next]
+                properties:
+                  status: { type: string, enum: [pending] }
+                  authorizeUrl: { type: string, format: uri }
+                  next: { type: string }
+        "422":
+          {
+            description: The server offers no OAuth sign-in Broods can register with,
+          }
+    get:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Read whether the server is connected
+      responses:
+        "200":
+          description: Connection state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connected]
+                properties:
+                  connected: { type: boolean }
+    delete:
+      tags: [MCP servers]
+      security: [{ BearerAuth: [] }]
+      summary: Disconnect and forget the tokens
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: boolean }
 
   /v1/mcp/{serverId}:
     get:
@@ -2973,6 +3575,46 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/usage:
+    get:
+      tags: [Accounts]
+      summary: Read one stage's usage
+      description: >-
+        The numbers the dashboard's Usage tab shows: tokens, invocations, model
+        calls, run time and sandbox CPU over a range. Account secret, a CLI
+        login, or a role with `account:read`.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: project
+          in: query
+          required: true
+          schema: { type: string }
+        - name: stage
+          in: query
+          required: true
+          schema: { type: string }
+        - name: range
+          in: query
+          required: false
+          description: Defaults to `7d`.
+          schema: { type: string, enum: ["1h", "3h", "1d", "7d", "30d", "1y"] }
+      responses:
+        "200":
+          description: The stage's usage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  range: { type: string }
+                  startTimeMs: { type: integer }
+                  endTimeMs: { type: integer }
+                  totals:
+                    type: object
+                    additionalProperties: { type: number }
+        "400":
+          { description: A missing `project` or `stage`, or an unknown `range` }
+        "404": { description: No deployed stage by that name }
   /v1/audit:
     get:
       tags: [Audit]
@@ -3574,10 +4216,23 @@ components:
         `POST /v1/account/assume-role`) works on the config-plane routes,
         limited to its role's policy; it gets 401 on `/v1/runs` and every run
         URL, and role management under `/v1/roles*` refuses it.
+        A scoped account key (also `bask_...`, made on the dashboard's
+        Organization › API access) works like a role session: limited to its
+        permissions, project/stage scope and expiry, 401 on `/v1/runs` and
+        every run URL, and it cannot assume roles, manage roles or rotate the
+        account key.
+        A CLI login token (`bcli_...`, from `broods login`) works on every
+        account route like the account key, for its owner or admin while they
+        keep that role, except rotating the account key (403). The login the
+        dashboard lends its agent also gets 403 on role writes, assume-role
+        and connection writes, and 401 on the CLI routes.
         A runtime key (`bsk_...`) works only on `/v1/runs`,
         `GET /v1/runs/{runId}`, the endpoint-addressed run URLs and
         `POST /v1/account/assume-role` (roles pinned to its own stage); every
         config-plane route answers it with 401.
+        Beside a runtime key, `X-Broods-User-Token` may carry a signed user
+        token (`buat_...`, see `UserToken`); an invalid or expired one makes
+        the whole request a 401.
         A stage session ticket (`bdts_...`) runs agents like the runtime key,
         including agents without `publicAccess`, and also opens the
         observability socket.
@@ -3586,10 +4241,24 @@ components:
         a run with it is not enabled yet: `POST /v1/runs` and every other run
         route answer 403 `run_token_scope`, and every config-plane route
         answers 401. It expires shortly after the run's time budget.
+    UserToken:
+      type: apiKey
+      in: header
+      name: X-Broods-User-Token
+      description: >-
+        A short-lived end-user token (`buat_...`) your backend signs with the
+        stage's signing secret (`bsig_...`, `signUserToken` in the SDK),
+        naming the user, optionally the conversation keys they may use and a
+        credential, and an expiry at most 60 minutes out. The credential is
+        encrypted in the token and reaches only the agent's hosted MCP
+        servers, as
+        `X-Broods-User-Credential`. Sent only beside the runtime key. Keep
+        the signing secret on your server: whoever holds it can speak as any
+        user of the stage. Rotating it voids every token it signed.
     AdminAuth:
       type: http
       scheme: bearer
-      description: AdminAccountSecret from SST secrets
+      description: The deployment's `ADMIN_ACCOUNT_SECRET` (core and Convex env).
 
   headers:
     XRequestId:
@@ -3652,6 +4321,18 @@ components:
         maxLength: 64
 
   schemas:
+    ConversationFiles:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            type: object
+            required: [path, contentBase64]
+            properties:
+              path: { type: string, description: Relative to the folder. }
+              contentBase64: { type: string }
     AccountEnvVar:
       type: object
       required: [name, updatedAt]
@@ -3677,7 +4358,13 @@ components:
           description: Used for account-scoped deduplication
         conversationKey:
           type: string
-          description: Selects the account-scoped persisted direct conversation
+          description: >-
+            Selects the account-scoped persisted direct conversation. With the
+            runtime key it is a key any of your users could guess (a user id,
+            an email, `ticket-42`), so send a user token: the key then lives
+            under that user (`bsu:<userId>:<key>`, and the response names it
+            so), and another user's token or no token cannot reach it. Keys
+            starting with `bsu:` are reserved for that namespace.
         background:
           type: boolean
           default: false
@@ -3751,6 +4438,7 @@ components:
         provider-agnostic `reasoning` level (`provider-default | none | minimal
         | low | medium | high | xhigh`) over per-provider reasoning settings in
         `providerOptions`; when both are set the provider-specific setting wins.
+        An agent with `config.harness` refuses `providerOptions` here (400).
         The reserved keys `provider`, `modelId`, `output`, and `apiKey` are
         rejected so a request cannot swap the model, provider, structured output
         contract, or credentials.
@@ -3808,12 +4496,6 @@ components:
         - $ref: "#/components/schemas/TextContent"
         - $ref: "#/components/schemas/ImageContent"
         - $ref: "#/components/schemas/FileContent"
-        - $ref: "#/components/schemas/ToolCallContent"
-        - $ref: "#/components/schemas/ToolResultContent"
-        - $ref: "#/components/schemas/ReasoningContent"
-        - $ref: "#/components/schemas/SourceUrlContent"
-        - $ref: "#/components/schemas/SourceDocumentContent"
-        - $ref: "#/components/schemas/ToolApprovalRequestContent"
         - $ref: "#/components/schemas/ToolApprovalResponseContent"
 
     TextContent:
@@ -3841,7 +4523,7 @@ components:
         image:
           type: string
           description: Base64-encoded image data, URL, or File reference
-        mimeType:
+        mediaType:
           type: string
           description: MIME type of the image (e.g., `image/png`, `image/jpeg`)
 
@@ -3850,6 +4532,7 @@ components:
       required:
         - type
         - data
+        - mediaType
       properties:
         type:
           type: string
@@ -3857,127 +4540,11 @@ components:
         data:
           type: string
           description: Base64-encoded file data, URL, or File reference
-        mimeType:
+        mediaType:
           type: string
           description: MIME type of the file
         filename:
           type: string
-
-    ToolCallContent:
-      type: object
-      required:
-        - type
-        - toolCallId
-        - toolName
-        - input
-      properties:
-        type:
-          type: string
-          example: tool-call
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        input:
-          type: object
-          description: Tool input arguments as generated by the model
-
-    ToolResultContent:
-      type: object
-      required:
-        - type
-        - toolCallId
-        - toolName
-        - output
-      properties:
-        type:
-          type: string
-          example: tool-result
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        output:
-          description: Tool execution result. Can be any JSON value.
-        isError:
-          type: boolean
-
-    ReasoningContent:
-      type: object
-      required:
-        - type
-        - reasoning
-      properties:
-        type:
-          type: string
-          example: reasoning
-        reasoning:
-          type: string
-          description: Model's internal reasoning trace (not shown to end users)
-
-    SourceUrlContent:
-      type: object
-      required:
-        - type
-        - source
-      properties:
-        type:
-          type: string
-          example: source-url
-        source:
-          type: object
-          properties:
-            sourceType:
-              type: string
-              example: url
-            url:
-              type: string
-            title:
-              type: string
-
-    SourceDocumentContent:
-      type: object
-      required:
-        - type
-        - source
-      properties:
-        type:
-          type: string
-          example: source-document
-        source:
-          type: object
-          properties:
-            sourceType:
-              type: string
-              example: document
-            documentId:
-              type: string
-            title:
-              type: string
-            mediaType:
-              type: string
-
-    ToolApprovalRequestContent:
-      type: object
-      required:
-        - type
-        - approvalId
-        - toolCallId
-        - toolName
-        - input
-      properties:
-        type:
-          type: string
-          example: tool-approval-request
-        approvalId:
-          type: string
-        toolCallId:
-          type: string
-        toolName:
-          type: string
-        input:
-          type: object
-          description: Tool input awaiting user approval
 
     ToolApprovalResponseContent:
       type: object
@@ -4023,14 +4590,16 @@ components:
         statusUrl:
           type: string
           format: uri
-          description: Public poll URL for `runId`. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
 
     AnswersAccepted:
       type: object
       description: >-
         The 202 for a body carrying `answers`. `resultId` is the last prompt
         settled. `accepted` means the conversation resumed (`invoked`), or had
-        nothing to resume.
+        nothing to resume. A prompt that was already answered is skipped
+        when another answer in the same request landed, and listed in
+        `alreadyAnswered`.
       required: [status, resultId]
       properties:
         status:
@@ -4041,13 +4610,34 @@ components:
         eventId:
           type: string
           description: Event id of the resumed turn. Present when it resumed.
+        runId:
+          type: string
+          description: Run id of the resumed turn, for `GET /v1/runs/{runId}`. Present only when the answer started or queued a turn; absent when nothing was admitted (queue full, conflict, result already stored). When one request answers several prompts, it names the last turn an answer started or queued.
+        statusUrl:
+          type: string
+          format: uri
+          description: Public poll URL for `runId`, present only with it. Omitted when the deployment has no `PUBLIC_BASE_URL`; poll `GET /v1/runs/{runId}` on the same host then.
         invoked:
           type: boolean
           description: Present with `accepted`. True when this request started the resumed turn.
+        alreadyAnswered:
+          type: array
+          items:
+            type: string
+          description: The `statusId`s in this request that were already answered and skipped. Present only when there were any.
 
     IngressStatus:
       type: object
-      required: [runId, eventId, agentId, conversationKey, status]
+      required:
+        [
+          runId,
+          eventId,
+          agentId,
+          conversationKey,
+          status,
+          createdAt,
+          lastUpdatedAt,
+        ]
       properties:
         runId:
           type: string
@@ -4101,6 +4691,14 @@ components:
         stoppedByUser:
           type: boolean
           description: True when a `failed` status was a deliberate /stop rather than a fault.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the run was accepted.
+        lastUpdatedAt:
+          type: string
+          format: date-time
+          description: When the run's status last moved, including an answered question it resumed from.
 
     PendingQuestion:
       type: object
@@ -4273,7 +4871,7 @@ components:
                 | `account_not_found` | 404 | The account being deleted no longer exists. |
                 | `agent_name_exists` | 409 | An agent with this name already exists in the account. |
                 | `bad_gateway` | 502 | Default for a 502: an upstream answered with an error. |
-                | `budget_exhausted` | 402 | A monthly plan cap is used up. Upgrade or wait for next month. |
+                | `budget_exhausted` | 402 | A monthly plan cap or the storage limit is used up. Upgrade or wait for next month; for storage, delete files or upgrade. |
                 | `conflict` | 409 | Default for a 409: the request conflicts with current state. |
                 | `conversation_busy` | 409 | Another run holds this conversation. Retry when it finishes. |
                 | `conversation_not_found` | 404 | A `continue` request named a conversation key with no session behind it. |
@@ -4297,6 +4895,7 @@ components:
                 | `not_configured` | 409 | The channel credential the request needs is not configured on the agent. |
                 | `not_found` | 404 | Default for a 404: the path or resource does not exist. |
                 | `payload_too_large` | 413 | Default for a 413: the body is over the size limit. |
+                | `payment_required` | 402 | The plan does not cover this: creating another organization needs Pro, or every developer seat of the organization's owner is taken. The owner upgrades or adds a seat. |
                 | `plan_limit_exceeded` | 429 | Runs per minute are over the plan's limit. Retry after `Retry-After`. |
                 | `public_access_disabled` | 403 | The agent does not allow runtime-key access (`publicAccess` is off). |
                 | `question_already_answered` | 409 | An `ask_questions` question was already answered. |
@@ -4308,10 +4907,12 @@ components:
                 | `run_token_scope` | 403 | A run token called something other than reading its own agent's runs. |
                 | `sandbox_instance_reserved` | 409 | The sandbox still has a reserved instance that could not be terminated. |
                 | `scope_mismatch` | 403 | The WebSocket credential is scoped to a different project, stage or endpoint. |
+                | `read_only_after_logs` | 403 | This dock conversation read logs, so its login may only read. Propose the change. Reloading the page starts a new conversation. |
                 | `service_unavailable` | 503 | Default for a 503: the service is overloaded or starting. Retry. |
+                | `skill_upload_required` | 409 | A CLI sync sent a skill without its files, and the account no longer holds them. The body lists those skills in `skills`. Upload them and retry the sync. |
                 | `slack_error` | 502 | Slack returned another error or did not answer in time (channel directory). |
                 | `status_access_denied` | 403 | The run status belongs to another deployment than this credential's. |
-                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this caller. Retry after `Retry-After`. |
+                | `too_many_auth_failures` | 429 | Too many unauthorized attempts from this client address, whatever credentials they carried. A valid credential still authenticates. Retry after `Retry-After`. |
                 | `unauthorized` | 401 | Missing, invalid or revoked credential. |
                 | `unknown_webhook_stage` | 404 | No stage of this account is deployed at the webhook URL's endpoint id. |
                 | `unknown_webhook_url` | 404 | The webhook path matches neither webhook URL shape. |
@@ -4319,11 +4920,35 @@ components:
                 | `unsupported_channel_type` | 400 | The channel type does not support this operation. |
                 | `unsupported_media_type` | 415 | Default for a 415: the `Content-Type` is not accepted. |
                 | `upload_quota_exceeded` | 429 | The hourly upload grant budget is spent. Retry after `Retry-After`. |
+                | `user_token_conversation` | 403 | The user token lists its conversations and this `conversationKey` is not one of them. |
+                | `user_token_required` | 403 | The agent requires a signed user token (`X-Broods-User-Token`) with the runtime key and the request had none. |
               example: not_found
             param:
               type: string
               description: The request field the error is about, when it is about one.
               example: limit
+
+    StreamRefusal:
+      type: object
+      description: The only SSE frame of a streamed run refused before it starts, sent as one `data:` line with a non-2xx status. `error`, `code` and `errorType` match the JSON envelope's `message`, `code` and `type` for the same refusal. A core before this field set sends only `type` and `error`.
+      required:
+        - type
+        - error
+      properties:
+        type:
+          type: string
+          const: error
+        error:
+          type: string
+          description: Human-readable prose. Do not branch on it.
+        code:
+          type: string
+          description: The envelope's `code`. Branch on this.
+          example: conversation_busy
+        errorType:
+          type: string
+          description: The envelope's `type`, renamed because `type` names the frame.
+          example: conflict_error
 
     Account:
       type: object
@@ -4575,6 +5200,8 @@ components:
           $ref: "#/components/schemas/ProviderConfig"
         model:
           $ref: "#/components/schemas/ModelConfig"
+        transcription:
+          $ref: "#/components/schemas/TranscriptionConfig"
         agent:
           $ref: "#/components/schemas/AgentRuntimeConfig"
         harness:
@@ -4591,7 +5218,7 @@ components:
           type: object
           properties:
             enabled: { type: boolean }
-          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise the run fails.'
+          description: 'Registers the `browse` tool, which opens public web pages with Obscura on the first sandbox. That sandbox must be lambda with image "obscura" and network.mode allow-all, or a machine with obscura installed; otherwise manifest sync refuses the agent (when the manifest declares that sandbox) and the run fails.'
         policies:
           type: array
           items: { type: string }
@@ -4931,13 +5558,13 @@ components:
       properties:
         platform:
           type: string
-          description: Adapter name, e.g. slack, discord, matrix, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
+          description: Adapter name, e.g. slack, discord, telegram, github, linear, pancake, zalo, whatsapp, teams, gchat, twilio, instagram, messenger.
         externalId:
           type: string
           description: Provider id of the place, such as a Slack channel id or an owner/repo.
         workspaceRef:
           type: string
-          description: Team or guild the place sits in, when the provider has one.
+          description: What the place sits in, so a message from another one skips the record. Slack or Teams team id, Discord guild id, GitHub owner, Linear organization id, Pancake or Messenger page id, Instagram account id, WhatsApp phone number id, Twilio receiving number in E.164, Telegram or Zalo bot id (the digits before ":" in the bot token). Unset, the record applies on every one.
         name:
           type: string
         description:
@@ -4954,6 +5581,7 @@ components:
           type: [string, "null"]
         workspaceRef:
           type: [string, "null"]
+          description: The team, page, number or bot the record is tied to, as on create. null removes the tie, so the record applies on every one.
         config:
           $ref: "#/components/schemas/ChannelRecordConfig"
         status:
@@ -5036,6 +5664,7 @@ components:
                 [
                   dashboardUser,
                   apiAccountSecret,
+                  accountApiKey,
                   admin,
                   service,
                   cli,
@@ -5242,6 +5871,7 @@ components:
           - deepinfra
           - deepseek
           - fireworks
+          - fishaudio
           - google
           - groq
           - huggingface
@@ -5372,6 +6002,27 @@ components:
           additionalProperties:
             type: string
 
+    TranscriptionConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        Which provider and model turn inbound audio into text. Chat models that
+        hear audio themselves (Google, Vertex) skip transcription.
+      properties:
+        provider:
+          type: string
+          description: >-
+            Provider that transcribes, with its credentials from the matching
+            `provider` entry. Defaults to `model.provider`. OpenAI, Groq and
+            Mistral ship speech-to-text, and so does `fishaudio`, which is
+            valid only here and as a `provider` key.
+        modelId:
+          type: string
+          description: >-
+            Speech-to-text model. Defaults to the widest-container model the
+            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
+            Groq, `voxtral-mini-latest` on Mistral, `transcribe-1` on Fish Audio).
+
     ModelConfig:
       type: object
       description: Controls the Vercel AI SDK `streamText` call. All standard call settings pass through directly, and provider-specific settings use `providerOptions`.
@@ -5385,14 +6036,6 @@ components:
         modelId:
           type: string
           description: Provider-specific model identifier
-        transcriptionModelId:
-          type: string
-          description: >-
-            Speech-to-text model for inbound audio, on the same provider and
-            credentials as `modelId`. Defaults to the widest-container model the
-            provider ships (`whisper-1` on OpenAI, `whisper-large-v3-turbo` on
-            Groq, `voxtral-mini-latest` on Mistral). Providers with no
-            speech-to-text ignore it.
         reasoning:
           type: string
           enum: [provider-default, none, minimal, low, medium, high, xhigh]
@@ -5418,13 +6061,57 @@ components:
           items:
             type: string
         timeout:
-          description: Vercel AI SDK timeout setting in milliseconds or `{ totalMs }`
+          description: >-
+            The Vercel AI SDK `timeout` call setting, passed to `streamText` as
+            set: a total in milliseconds, or an object of per-phase limits.
+            `totalMs`, `stepMs`, `firstChunkMs` and `chunkMs` end the whole call
+            when they pass, with no retry; `toolMs` and `tools` abort only that
+            tool, and the model sees a tool error. The built-in loop only, not
+            `config.harness`.
           oneOf:
             - type: integer
+              minimum: 1
+              maximum: 2147483647
+              description: Total milliseconds for the call, the same as `totalMs`
             - type: object
+              additionalProperties: false
               properties:
                 totalMs:
                   type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: The whole call, every step, retry and tool included
+                stepMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Each step, from the request through its retries and tool calls
+                firstChunkMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: >-
+                    From the start of a step's response to its first text,
+                    reasoning or tool output. The clock starts once the provider
+                    answers, so a request that never gets a response is bounded
+                    by `stepMs` or `totalMs`.
+                chunkMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Between output chunks, until the model's response ends
+                toolMs:
+                  type: integer
+                  minimum: 1
+                  maximum: 2147483647
+                  description: Each tool execution, through the tool's abort signal
+                tools:
+                  type: object
+                  description: Per-tool limits that override `toolMs`, keyed `{toolName}Ms`, like `bashMs`
+                  additionalProperties:
+                    type: integer
+                    minimum: 1
+                    maximum: 2147483647
         output:
           $ref: "#/components/schemas/OutputConfig"
         providerOptions:
@@ -5521,7 +6208,7 @@ components:
           type: array
           items:
             type: string
-          description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
+          description: Account-scoped skill paths (e.g., `acct_.../support-flow`). Repeats are dropped; at most 32 distinct skills.
 
     SchedulerConfig:
       type: object
@@ -5558,6 +6245,9 @@ components:
           enum: [full, result, none]
           default: result
           description: What the parent sees when a child finishes. `none` hides the result from the parent; an `onSubagentFinish` hook overrides it.
+        model:
+          $ref: "#/components/schemas/ModelConfig"
+          description: Model for virtual subagents (no `agentId`), merged key by key over the parent's `model`. The child keeps the parent's tools. A predefined agent runs on its own model.
 
     SessionConfig:
       type: object
@@ -5588,12 +6278,16 @@ components:
     ToolsConfig:
       type: object
       description: >-
-        Enables provider-defined tools by the name the configured AI SDK
-        provider exposes on its `tools` namespace (for example `googleSearch`,
-        `urlContext`, or `codeExecution` on `google`). Core ships no built-in
-        external tools; remote tools come from `mcp`. A name the
-        configured provider does not expose is rejected when the agent runs.
-        Omitting a key or setting `enabled: false` disables the tool.
+        Enables AI SDK provider tools on the configured provider. A
+        descriptor (`type`/`id`/`args`) is found by its `id` under any key; a
+        flat entry is found by its key on the provider's `tools` namespace
+        (for example `googleSearch`). A client-executed tool (Anthropic bash
+        and text editor, OpenAI shell, local shell, apply patch and custom
+        tools) runs on the agent's sandbox as the Broods tool it stands for.
+        A Broods tool name such as `bash` may key only a descriptor that runs
+        as that tool. Remote tools come from `mcp`. A tool the configured
+        provider does not have is rejected when the agent runs. Omitting a key
+        or setting `enabled: false` disables the tool.
       additionalProperties:
         $ref: "#/components/schemas/ProviderToolConfig"
 
@@ -5655,7 +6349,8 @@ components:
             Storage id returned by POSTing the module source to an upload URL
             from `POST /v1/mcp/uploads`; the large-bundle alternative to
             `bundle`. Requires `sha256`. Exactly one of url, bundle or
-            bundleStorageId connects the server.
+            bundleStorageId connects the server. An id another resource
+            already holds answers 400 and is left untouched.
         sha256:
           type: string
           description: >-
@@ -5797,6 +6492,9 @@ components:
             type: string
         oauth:
           $ref: "#/components/schemas/McpOauth"
+        connected:
+          type: boolean
+          description: Signed in through `POST /v1/mcp-connections/{serverId}`; core sends that token.
         allowedTools:
           type: array
           items:
@@ -5816,17 +6514,15 @@ components:
     ProviderToolConfig:
       type: object
       description: >-
-        A tool the configured AI SDK provider executes itself, keyed by the name
-        it exposes on its `tools` namespace. Accepts either the descriptor a
-        provider tool serializes to (`type`/`id`/`args`, as produced by
-        `google.tools.googleSearch({...})`) or a flat object whose keys other
-        than `enabled`, `needsApproval`, and `async` are the tool's arguments.
+        An AI SDK provider tool. Accepts either the descriptor a provider tool
+        serializes to (`type`/`id`/`args`, as produced by
+        `anthropic.tools.webSearch_20260318({...})`) or a flat object whose
+        keys other than `enabled`, `needsApproval` and `command` are the
+        tool's arguments.
       properties:
         enabled:
           type: boolean
         needsApproval:
-          type: boolean
-        async:
           type: boolean
         type:
           type: string
@@ -5838,6 +6534,9 @@ components:
         args:
           type: object
           description: Arguments the provider tool was built with.
+        command:
+          type: string
+          description: Sandbox command an OpenAI custom tool's text is piped to on stdin. Required for `openai.custom`.
       additionalProperties: true
 
     ChannelsConfig:
@@ -5868,7 +6567,7 @@ components:
               description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             botUsername:
               type: string
-              description: Bot's @username, e.g. `tracy_bot`. When set, group messages run the agent only if they mention it, reply to it, or carry a slash command. Every message keeps running the agent when omitted.
+              description: Bot's @username, e.g. `support_bot`. When set, group messages run the agent only if they mention it, reply to it, or carry a slash command. Every message keeps running the agent when omitted.
             reactionEmoji:
               type: string
             trace:
@@ -5921,10 +6620,10 @@ components:
               description: Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
             triggerOnIssueOpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new issues (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new issues (opened, reopened). Defaults to true.
             triggerOnPROpen:
               type: boolean
-              description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+              description: When false, the bot does not auto-trigger on new pull requests (opened, reopened). Defaults to true.
             trace:
               type: string
               enum: [enabled, disabled]
@@ -6065,59 +6764,6 @@ components:
               description: >-
                 Role ids that also count as a mention, so tagging @oncall
                 reaches the agent without naming it directly.
-            trace:
-              type: string
-              enum: [enabled, disabled]
-              default: disabled
-              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            partition:
-              type: object
-              description: "Hierarchical workspace isolation scope for workspaces with `isolation: conversation`."
-              required: [by]
-              properties:
-                alias:
-                  type: string
-                  pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
-                by:
-                  type: string
-                  enum: [shared, conversation]
-        matrix:
-          type: object
-          description: >-
-            A Matrix account the agent speaks as, usually a person's own.
-            `apps/matrix-forwarder` syncs with the access token and posts room
-            messages to the webhook. A token requires `apiUrl`.
-          properties:
-            id:
-              type: string
-              description: Optional stable identifier for this channel connection (set by CLI-generated channel references).
-            apiUrl:
-              type: string
-              description: Homeserver base URL, e.g. https://matrix.org. Required with `botToken`.
-            botToken:
-              type: string
-              description: Access token of the Matrix account.
-            allowedChannelIds:
-              type: array
-              items:
-                type: string
-              description: Room ids this connection answers in. Every room when omitted or set to ["*"], none when empty.
-            allowedUserIds:
-              type: array
-              items:
-                type: string
-              description: Matrix user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
-            botName:
-              type: string
-              description: >-
-                Name the agent's replies are shown under, set as a per-message
-                profile. Unset, replies look like the account's own messages.
-            mentionText:
-              type: string
-              description: >-
-                Text that addresses the agent, e.g. @my-agent. Unset, a mention
-                of the account does. Every other message is stored as context.
             trace:
               type: string
               enum: [enabled, disabled]

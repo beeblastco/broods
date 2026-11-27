@@ -2,13 +2,16 @@
 # SDK manifest sync
 
 Model of `broods dev` / `broods deploy` against one stage. The CLI PUTs the whole
-manifest with a `prune` flag (`packages/broods/src/sync.ts` `putManifest`). The
+manifest with `prune` (`packages/broods/src/sync.ts` `putManifest`): `true`, or the
+list of deletes `broods dev` asked about and the user confirmed. The
 server upserts every resource by name, claims an undeclared CLI row with the same
 content as a rename, and with prune drops the CLI-managed rows the manifest no
-longer declares (`packages/convex/model/cliSyncResources.ts`, and
-`recordExternalResourcesBySecretHash` for skills, hooks and MCP servers).
-`GET /manifest` reads the CLI-managed rows back, and `diffManifests` compares them
-with the local manifest.
+longer declares, only those the list names when it sends one (`packages/convex/model/cliSyncResources.ts`, and
+`recordExternalResourcesBySecretHash` for skills, hooks and MCP servers; `syncCrons`
+prunes only `managedBy: "cli"` crons). `GET /manifest` (`resourcesForStage` in
+`packages/convex/model/cliSyncManifest.ts`) reads the CLI-managed rows back, plus
+every cron of a stage agent whatever its `managedBy`, and `diffManifests` compares
+them with the local manifest.
 
 Simplifications: names are `Nat`, a config is its settings plus artifact bytes,
 env refs are already normalized, and the diff is unsorted (sorting is a
@@ -26,7 +29,8 @@ inductive Kind where
 
 /-- What equality sees of a resource config: its settings (every plain key,
 including an artifact's `sha256`), the inline bytes (`bundle`, `contentBase64`),
-and the `bundleStorageId` handle a large MCP bundle is uploaded as. -/
+and the `bundleStorageId` or `filesStorageId` handle a large MCP bundle or skill
+is uploaded as. -/
 structure Config where
   settings : Nat
   bundle : Option Nat
@@ -63,6 +67,10 @@ structure Row where
 
 /-- The stage's rows the server reconciles, across every resource family. -/
 abbrev State := List Row
+
+/-- `resourcesForStage` lists only CLI-managed rows: an agent's or the dashboard's
+own cron is not code's to diff. -/
+def Row.listed (row : Row) : Bool := row.cli
 
 /-- Skills, hooks and MCP servers: account-service resources whose bytes the
 server does not keep in the manifest snapshot. -/
@@ -108,7 +116,8 @@ def diff (localM remote : Manifest) : List Entry :=
     (ul.filter fun x => !pairs.any (·.1.key == x.key)).map (fun x => ⟨.create, x.kind, x.name⟩) ++
     (ur.filter fun y => !pairs.any (·.2.key == y.key)).map (fun y => ⟨.delete, y.kind, y.name⟩)
 where
-  /-- `snapshotResource`: the artifact bytes and upload handle of skills, hooks
+  /-- `snapshotResource` (`packages/convex/model/manifestSnapshot.ts`, which
+  `manifestHash` hashes): the artifact bytes and upload handle of skills, hooks
   and MCP servers are not compared; their `sha256` is. -/
   snapshot (r : Resource) : Resource :=
     if r.kind.external then { r with config := { r.config with bundle := none, storage := none } }
@@ -129,8 +138,8 @@ where
   /-- Resources in `a` with no same-key resource in `b`. -/
   unmatched (a b : Manifest) : Manifest := a.filter fun x => (lookup b x.key).isNone
 
-/-- `GET /manifest`: the CLI-managed rows. -/
-def read (s : State) : Manifest := (s.filter (·.cli)).map (·.res)
+/-- `GET /manifest`: the listed rows. -/
+def read (s : State) : Manifest := (s.filter Row.listed).map (·.res)
 
 /-- `PUT /manifest`. `store` is what the server keeps and reads back for a resource. -/
 def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) : State :=
@@ -138,32 +147,75 @@ def sync (store : Resource → Resource) (m : Manifest) (prune : Bool) (s : Stat
   if prune then upserted.filter (fun row => !row.cli || m.any (·.key == row.res.key))
   else upserted
 
-/-- `externalizeLargeMcpBundles`: after the diff, a large MCP bundle is uploaded and
-replaced by its storage handle; its `sha256` stays. -/
-def upload (large : Nat → Bool) (r : Resource) : Resource :=
+/-- `PUT /manifest` with `prune: [{ kind, name }]`: the sync without prune, then
+only the undeclared CLI rows `chosen` names are dropped (`prunes` in
+`packages/convex/model/cliSync.ts`). -/
+def syncOnly (store : Resource → Resource) (m : Manifest) (chosen : List (Kind × Nat))
+    (s : State) : State :=
+  (sync store m false s).filter
+    (fun row => !row.cli || m.any (·.key == row.res.key) || !chosen.contains row.res.key)
+
+/-- `externalizeLargeMcpBundles` and `externalizeLargeSkills`: after the diff, a
+large MCP bundle or skill is uploaded and replaced by its storage handle; its
+`sha256` stays. A large skill the stage already `held` with the same snapshot is
+sent with neither bytes nor handle; `refused` and `putManifest` model the server's
+check of that claim and the CLI's one retry. -/
+def upload (large : Nat → Bool) (held : Resource → Bool) (r : Resource) : Resource :=
   match r.kind, r.config.bundle with
   | .mcp, some b =>
     if large b then { r with config := { r.config with bundle := none, storage := some b } } else r
+  | .skill, some b =>
+    if !large b then r
+    else if held r then { r with config := { r.config with bundle := none } }
+    else { r with config := { r.config with bundle := none, storage := some b } }
   | _, _ => r
 
 /-- `snapshotExternalConfig`: the recorded snapshot of an external resource drops
-its bytes and keeps everything else. -/
+its bytes, and a skill's upload handle, and keeps everything else. -/
 def storeExternal (r : Resource) : Resource :=
-  if r.kind.external then { r with config := { r.config with bundle := none } } else r
+  if r.kind.external then
+    { r with config := { r.config with
+        bundle := none, storage := if r.kind == .skill then none else r.config.storage } }
+  else r
 
 /-- What the server keeps for a resource: external kinds as their recorded
 snapshot of the uploaded config, every other kind through `normalize`. -/
-def storeReal (large : Nat → Bool) (normalize : Resource → Resource) (r : Resource) : Resource :=
-  if r.kind.external then storeExternal (upload large r) else normalize r
+def storeReal (large : Nat → Bool) (held : Resource → Bool) (normalize : Resource → Resource)
+    (r : Resource) : Resource :=
+  if r.kind.external then storeExternal (upload large held r) else normalize r
+
+/-- The held check before `handleManifestSync` claims a revision: the keys of large
+skills sent held whose files the account does not hold (`holds`), which the 409
+`skill_upload_required` names in `skills`. -/
+def refused (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    List (Kind × Nat) :=
+  (m.filter fun r => r.kind == .skill && r.config.bundle.any large && held r && !holds r).map
+    (·.key)
+
+/-- The retry's `held`: every skill the refusal named is uploaded, the rest unchanged. -/
+def retryHeld (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    Resource → Bool :=
+  fun r => held r && !(refused large held holds m).contains r.key
+
+/-- `BroodsSyncClient.putManifest`: send; on a refusal, send once more with the named
+skills uploaded. A refusal writes nothing, so the retry meets the same state and the
+same `holds`; a second refusal fails the sync (`none`). -/
+def putManifest (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource) (m : Manifest) (prune : Bool) (s : State) :
+    Option State :=
+  let send := fun (held : Resource → Bool) =>
+    if refused large held holds m = [] then some (sync (storeReal large held normalize) m prune s)
+    else none
+  (send held).orElse fun _ => send (retryHeld large held holds m)
 
 /-! ## Lemmas -/
 
 section
 variable {store : Resource → Resource}
 
-/-- The CLI-managed row with key `k`, as `read` sees it. -/
+/-- The listed row with key `k`, as `read` sees it. -/
 private def lookupRow (s : State) (k : Kind × Nat) : Option Row :=
-  s.find? (fun row => row.cli && row.res.key == k)
+  s.find? (fun row => row.listed && row.res.key == k)
 
 private theorem lookup_read (s : State) (k : Kind × Nat) :
     lookup (read s) k = (lookupRow s k).map (·.res) := by
@@ -171,7 +223,7 @@ private theorem lookup_read (s : State) (k : Kind × Nat) :
   | nil => rfl
   | cons row rest ih =>
     simp only [read, lookupRow, lookup] at ih ⊢
-    cases hc : row.cli <;> by_cases hk : row.res.key = k <;>
+    cases hc : row.listed <;> by_cases hk : row.res.key = k <;>
       simp_all
 
 private theorem find?_filter_same {p q : Row → Bool} (s : State)
@@ -197,10 +249,10 @@ private theorem lookupRow_upsert (hkey : ∀ r, (store r).key = r.key)
     lookupRow (upsert store m s r) k =
       if r.key = k then some ⟨store r, true⟩ else lookupRow s k := by
   by_cases hrk : r.key = k
-  · simp [lookupRow, upsert, hkey, hrk]
+  · simp [lookupRow, upsert, Row.listed, hkey, hrk]
   · have hrk' : (r.key == k) = false := by simpa using hrk
     simp only [hrk, ite_false]
-    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.true_and, hrk']
+    simp only [lookupRow, upsert, List.find?_cons, hkey, Bool.and_false, hrk']
     refine find?_filter_same s (fun row hp => ?_)
     simp only [Bool.and_eq_true, beq_iff_eq] at hp
     obtain ⟨x, hx, hxk⟩ := hk
@@ -305,54 +357,100 @@ theorem sync_converges (hkey : ∀ r, (store r).key = r.key)
     rw [hd, List.map_eq_nil_iff, diff.unmatched, List.filter_eq_nil_iff]
     intro y hy
     simp only [read, sync, ite_true, List.mem_map, List.mem_filter] at hy
-    obtain ⟨row, ⟨⟨_, hkeep⟩, _⟩, rfl⟩ := hy
+    obtain ⟨row, ⟨⟨hrow, hkeep⟩, hlisted⟩, rfl⟩ := hy
     simp only [Bool.or_eq_true, Bool.not_eq_true', List.any_eq_true, beq_iff_eq] at hkeep
     rcases hkeep with hc | ⟨x, hx, hk⟩
-    · simp_all
+    · simp_all [Row.listed]
     · have hs := lookup_self hx
       rw [hk] at hs
       cases hl : lookup m row.res.key <;> simp_all
 
 end
 
-/-- Skills, hooks and MCP servers, small or large bundle, read back equal to what
-the diff compares. -/
-theorem storeExternal_snapshot (large : Nat → Bool) (r : Resource) (h : r.kind.external = true) :
-    diff.snapshot (storeExternal (upload large r)) = diff.snapshot r := by
+/-- Skills, hooks and MCP servers, small or large bundle, uploaded or already held,
+read back equal to what the diff compares. -/
+theorem storeExternal_snapshot (large : Nat → Bool) (held : Resource → Bool) (r : Resource)
+    (h : r.kind.external = true) :
+    diff.snapshot (storeExternal (upload large held r)) = diff.snapshot r := by
   obtain ⟨kind, name, ⟨settings, bundle, storage⟩⟩ := r
   cases bundle with
   | none => cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
   | some b =>
-    by_cases hl : large b <;> cases kind <;>
-      simp_all [upload, storeExternal, diff.snapshot, Kind.external]
+    by_cases hl : large b <;> by_cases hh : held ⟨kind, name, ⟨settings, some b, storage⟩⟩ <;>
+      cases kind <;> simp_all [upload, storeExternal, diff.snapshot, Kind.external]
 
 /-- Upload and the recorded snapshot keep a resource's key. -/
-theorem storeExternal_key (large : Nat → Bool) (r : Resource) :
-    (storeExternal (upload large r)).key = r.key := by
-  have hu : (upload large r).key = r.key := by
+theorem storeExternal_key (large : Nat → Bool) (held : Resource → Bool) (r : Resource) :
+    (storeExternal (upload large held r)).key = r.key := by
+  have hu : (upload large held r).key = r.key := by
     unfold upload
-    split <;> (try split) <;> rfl
+    split <;> (repeat' split) <;> rfl
   rw [← hu]
   unfold storeExternal
   split <;> rfl
 
 /-- The fixed sync converges for every kind: external kinds with the server's real
 snapshot and upload, every other kind given its normalization round trip. -/
-theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Resource)
+theorem sync_converges_real (large : Nat → Bool) (held : Resource → Bool)
+    (normalize : Resource → Resource)
     (hkey : ∀ r, (normalize r).key = r.key)
     (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
     {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
-    (∀ e ∈ diff m (read (sync (storeReal large normalize) m prune s)), e.op = .delete) ∧
-      (prune = true → diff m (read (sync (storeReal large normalize) m prune s)) = []) := by
+    (∀ e ∈ diff m (read (sync (storeReal large held normalize) m prune s)), e.op = .delete) ∧
+      (prune = true →
+        diff m (read (sync (storeReal large held normalize) m prune s)) = []) := by
   refine sync_converges (fun r => ?_) (fun r => ?_) hu prune s
   · unfold storeReal
     split
-    · exact storeExternal_key large r
+    · exact storeExternal_key large held r
     · exact hkey r
   · unfold storeReal
     split
-    · exact storeExternal_snapshot large r (by assumption)
+    · exact storeExternal_snapshot large held r (by assumption)
     · exact hround r (by simpa using ‹¬r.kind.external = true›)
+
+/-- The retry is never refused: it holds back only skills the account holds. -/
+theorem refused_retry (large : Nat → Bool) (held holds : Resource → Bool) (m : Manifest) :
+    refused large (retryHeld large held holds m) holds m = [] := by
+  simp only [refused, retryHeld, List.map_eq_nil_iff, List.filter_eq_nil_iff]
+  intro r hr
+  by_cases hc : (r.kind == .skill && r.config.bundle.any large && held r && !holds r) = true
+  · have : r.key ∈ (m.filter fun r => r.kind == .skill && r.config.bundle.any large &&
+        held r && !holds r).map (·.key) := List.mem_map_of_mem (List.mem_filter.mpr ⟨hr, hc⟩)
+    simp_all
+  · simp_all
+
+/-- So the sync with its one retry always lands, and converges as one sync does. -/
+theorem putManifest_converges (large : Nat → Bool) (held holds : Resource → Bool)
+    (normalize : Resource → Resource)
+    (hkey : ∀ r, (normalize r).key = r.key)
+    (hround : ∀ r, r.kind.external = false → diff.snapshot (normalize r) = diff.snapshot r)
+    {m : Manifest} (hu : m.unique) (prune : Bool) (s : State) :
+    ∃ s', putManifest large held holds normalize m prune s = some s' ∧
+      (∀ e ∈ diff m (read s'), e.op = .delete) ∧ (prune = true → diff m (read s') = []) := by
+  by_cases h : refused large held holds m = []
+  · exact ⟨_, by simp [putManifest, h], sync_converges_real large held normalize hkey hround hu prune s⟩
+  · exact ⟨_, by simp [putManifest, h, refused_retry],
+      sync_converges_real large (retryHeld large held holds m) normalize hkey hround hu prune s⟩
+
+/-- A prune list deletes nothing it does not name: a row the sync without prune
+keeps survives unless the list names its key. -/
+theorem syncOnly_keeps_unnamed {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
+    {row : Row} (hrow : row ∈ sync store m false s)
+    (hc : chosen.contains row.res.key = false) :
+    row ∈ syncOnly store m chosen s := by
+  have h : row.res.key ∉ chosen := by simpa using hc
+  simp [syncOnly, hrow, h]
+
+/-- A list naming every row's key prunes exactly like `prune: true`. -/
+theorem syncOnly_all {m : Manifest} {chosen : List (Kind × Nat)} {s : State}
+    (hall : ∀ row ∈ sync store m false s, chosen.contains row.res.key = true) :
+    syncOnly store m chosen s = sync store m true s := by
+  simp only [syncOnly, sync, Bool.false_eq_true, ite_false, ite_true] at hall ⊢
+  apply List.filter_congr
+  intro row hrow
+  have h : row.res.key ∈ chosen := by simpa using hall row hrow
+  simp [h]
 
 /-! ## Findings, fixed, as executable witnesses -/
 
@@ -360,8 +458,30 @@ theorem sync_converges_real (large : Nat → Bool) (normalize : Resource → Res
 large ones as a storage handle, and the diff compares neither. -/
 example :
     let m : Manifest := [⟨.mcp, 1, ⟨0, some 42, none⟩⟩]
-    diff m (read (sync (storeReal (· > 10) id) m true [])) = [] ∧
-      diff m (read (sync (storeReal (· > 100) id) m true [])) = [] := by
+    diff m (read (sync (storeReal (· > 10) (fun _ => false) id) m true [])) = [] ∧
+      diff m (read (sync (storeReal (· > 100) (fun _ => false) id) m true [])) = [] := by
+  decide
+
+/-- A large skill is uploaded once: a second sync of the same skill, which the stage
+already holds, carries neither its bytes nor an upload handle, and both converge. -/
+example :
+    let r : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    upload (· > 10) (fun _ => false) r = ⟨.skill, 1, ⟨0, none, some 42⟩⟩ ∧
+      upload (· > 10) (fun _ => true) r = ⟨.skill, 1, ⟨0, none, none⟩⟩ ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => false) id) [r] true [])) = [] ∧
+      diff [r] (read (sync (storeReal (· > 10) (fun _ => true) id) [r] true [])) = [] := by
+  decide
+
+/-- Another stage replaced held skill `a`: the first send is refused naming only `a`,
+the retry uploads `a`, still sends `b` held, and lands. -/
+example :
+    let a : Resource := ⟨.skill, 1, ⟨0, some 42, none⟩⟩
+    let b : Resource := ⟨.skill, 2, ⟨0, some 43, none⟩⟩
+    let holds := fun (r : Resource) => r.key == b.key
+    refused (· > 10) (fun _ => true) holds [a, b] = [a.key] ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] a = false ∧
+      retryHeld (· > 10) (fun _ => true) holds [a, b] b = true ∧
+      (putManifest (· > 10) (fun _ => true) holds id [a, b] true []).isSome := by
   decide
 
 /-- An edited hosted MCP or hook bundle carries a new `sha256`, so the diff shows it. -/
@@ -379,6 +499,29 @@ example :
     let m : Manifest := [⟨.agent, 2, ⟨7, none, none⟩⟩]
     let s := sync id m false [⟨old, true⟩]
     read s = m ∧ diff m (read s) = [] := by
+  decide
+
+/-- `broods dev` prunes only what the user confirmed: a declined agent survives
+the prune that removes the one they said yes to. `prune: true`, the only prune it
+used to send after asking once, removes both. -/
+example :
+    let a : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
+    let b : Resource := ⟨.agent, 2, ⟨8, none, none⟩⟩
+    read (syncOnly id [] [b.key] [⟨a, true⟩, ⟨b, true⟩]) = [a] ∧
+      read (sync id [] true [⟨a, true⟩, ⟨b, true⟩]) = [] := by
+  decide
+
+/-- A cron an agent scheduled on its CLI agent survives `deploy --prune`, as
+91798774f intends, and `GET /manifest` no longer lists it, so the next diff is
+empty. Listing every cron, as `resourcesForStage` did before, shows a delete no
+prune performs, and `broods dev` asked to delete it after every sync. -/
+example :
+    let agent : Resource := ⟨.agent, 1, ⟨7, none, none⟩⟩
+    let own : Resource := ⟨.cron, 5, ⟨0, none, none⟩⟩
+    let after := sync id [agent] true [⟨agent, true⟩, ⟨own, false⟩]
+    diff [agent] (read after) = [] ∧
+      diff [agent] ((after.filter (fun row => row.cli || row.res.kind == .cron)).map (·.res)) =
+        [⟨.delete, .cron, 5⟩] := by
   decide
 
 end Broods.Sync

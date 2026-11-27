@@ -20,6 +20,9 @@ flowchart TB
   REG -->|"SDK"| VER["vercel"]
   REG -->|"HTTPS, bearer"| CFW["cloudflare: bridge Worker<br/>apps/cloudflare-sandbox"]
   CFW --> DO["Sandbox Durable Object<br/>one per sandbox id"] --> CT["Container"]
+  REG -->|"HTTPS, bearer"| WRK["worker: fast Cloudflare V8 Worker<br/>apps/cloudflare-worker"]
+  ISO --> DW["Dynamic Worker per sandbox id<br/>just-bash"]
+  ISO --> R2[("R2: stored disks")]
   REG ---|"machine frames"| GW["apps/gateway"]
   GW ---|"/v1/machines/ws"| DAEMON["machine: broods machine daemon"]
   REG -->|"POST :endpoint/exec"| CUSTOM["custom: account server"]
@@ -55,12 +58,12 @@ flowchart TD
   ON2 --> CE
 ```
 
-- The budget wrapper also guards `runBackground`, `resume`, `postReserved` and `prewarm`.
+- The budget wrapper also guards `runBackground`, `resume` and `postReserved`.
 - `SandboxCapacityError` comes only from a refused create: MicroVM `InsufficientCapacityException`, `ServiceQuotaExceededException`, `ThrottlingException`, `TooManyRequestsException`, and the workdir and Daytona admission refusals. Validation refuses a fallback on a `persistent` config, a fallback equal to `provider`, and a `machine` or `custom` fallback.
 - Limits come from `packages/convex/model/sandboxRules.ts`: `timeout` 30 s default, capped by `WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS` and `WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS`; output capped by `WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES`. A blocking call also stays inside `REQUEST_TIMEOUT_BUDGET_MS` in `src/server.ts`. Background jobs are bound by neither.
-- Env: `mergeSandboxEnv()` in `utils.ts` lays per-call `envVars` over the account's, drops `RESERVED_SANDBOX_ENV_KEYS` (`PATH`, `HOME`, `LD_PRELOAD`, `NODE_OPTIONS`, the `__CB_*` callback slots and the rest) from the per-call layer, drops the `BROODS_*` identity names from both, then sets the run's `BROODS_*` identity on top.
+- Env: `mergeSandboxEnv()` in `utils.ts` starts from the account's `envVars`. Only a harness shell command on `lambda` adds a per-call layer (`requestEnv`), and `RESERVED_SANDBOX_ENV_KEYS` (`PATH`, `HOME`, `LD_PRELOAD`, `NODE_OPTIONS`, the `__CB_*` callback slots and the rest) are dropped from it. The `BROODS_*` identity names are dropped from both, then the run's `BROODS_*` identity is set on top.
 - The exec wire contract a MicroVM image, the Cloudflare bridge and a `custom` server share is `SandboxExecRequest` / `SandboxExecResponse` in `src/shared/domain/sandbox-config.ts`. `parseExecResponse` and `execRunResult` in `utils.ts` read it.
-- CPU: `sandbox` reports CPU from the workdir cgroup and `lambda` from the image's `getrusage`. `src/harness/harness.ts` sums it into `sandboxUsage` rows and puts `tool.compute.type` and `tool.compute.cpu_usec` on the `tool.call` span. Other providers report none.
+- CPU: `sandbox` reports CPU from the workdir cgroup and `lambda` from the image's `getrusage`. `src/harness/usage-metering.ts` sums it per task into the `sandboxUsage` field of the run's `taskUsage` row and puts `tool.compute.type` and `tool.compute.cpu_usec` on the `tool.call` span. Other providers report none.
 
 ### Contribute a provider
 
@@ -77,8 +80,9 @@ flowchart TD
 | `sandbox`    | `workdir-executor.ts`    | `mount-s3` per run                  | native pause, resume, standby      | yes             | yes      | yes, logs and stop                 |
 | `daytona`    | `daytona-executor.ts`    | `mount-s3` with `mountAwsS3Buckets` | native `autoStopInterval`          | no              | yes      | yes, logs and stop                 |
 | `e2b`        | `e2b-executor.ts`        | rejected                            | native pause on timeout            | no              | yes      | launch and callback, no logs, stop |
-| `vercel`     | `vercel-executor.ts`     | rejected                            | named sandbox                      | no              | yes      | yes, logs and stop                 |
+| `vercel`     | `vercel-executor.ts`     | `mount-s3` per run                  | named sandbox                      | no              | yes      | yes, logs and stop                 |
 | `cloudflare` | `cloudflare-executor.ts` | rejected                            | same Container while warm, no disk | no              | no       | no                                 |
+| `worker`     | `worker-executor.ts`     | rejected                            | files stored in R2 between calls   | no              | no       | no                                 |
 | `machine`    | `machine-executor.ts`    | rejected                            | no                                 | no              | no       | no                                 |
 | `custom`     | `http-executor.ts`       | rejected                            | no                                 | no              | no       | no                                 |
 
@@ -110,9 +114,10 @@ sequenceDiagram
   end
 ```
 
-- Every write for one sandbox id goes through `queueMirrorWrite`, so a removal never lands before the upsert.
+- Every write for an ephemeral row goes through its row lane (see [Instance row](#instance-row)), so a removal never lands before the upsert.
 - Cloudflare writes the row before the exec that starts the Container, so its start is billed too. The MicroVM writes it after `RunMicrovm` returns.
 - A lost row is billed no further than the provider's max call timeout plus 2 minutes (`ephemeralSandboxMaxMs` in `packages/convex/model/usageMeter.ts`). `sweepStaleEphemeral`, started by the hourly `accrueRecent` cron, deletes it after that.
+- An `worker` row bills no time at all. Nothing runs between its commands, so the executor meters each command as it ends, the way a hosted MCP invoke is: its time on the Worker, waits included, as `workerMs` and one `workerRequests`, priced at Cloudflare's CPU-ms and request rates (`packages/convex/model/pricing.ts`, a slightly high estimate since a Worker cannot read its own CPU time) and shown inside Sandbox time. A call the Worker refused before its isolate ran (a 400, 401 or 404, a 410 for a released sandbox, or Cloudflare's own error) is not metered; a 409 means the command ran and lost the store race, so it is.
 - A sandbox on the account's own credentials gets no row. No lifecycle verb accepts an ephemeral row.
 
 ## Reservations
@@ -194,12 +199,14 @@ stateDiagram-v2
   expired --> taken: sweeper deletes the row, only while expired and same id
   taken --> [*]: provider delete succeeds
   taken --> claimed: provider delete failed, claimed back
+  taken --> kept: claim back failed or lost, re-reserved as teardown:id for 60 s
+  kept --> taken: next sweep retries the delete
   claimed --> [*]: terminate, workspace or account delete
   claimed --> [*]: machine gone, next call claims a new one
 ```
 
-- TTL: 7 days after last use (`SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`), one day for a harness reservation on a conversation key (`ISOLATED_SANDBOX_RELEASE_SECONDS` in `src/harness/harness.ts`).
-- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`) under a 5 minute lease, first after a random delay under 30 s. It pages expired reservations, plus mirror rows no reservation names, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`.
+- TTL: 7 days after last use (`SANDBOX_RESERVATION_TTL_SECONDS` in `packages/convex/runtime.ts`), one day for a harness reservation on a conversation key (`ISOLATED_SANDBOX_RELEASE_SECONDS` in `src/harness/ai-sdk-harness/session.ts`).
+- `src/shared/sandbox-sweeper.ts` runs hourly (`SANDBOX_SWEEP_INTERVAL_SECONDS`) under a 5 minute lease, first after a random delay under 30 s. It pages expired reservations, plus mirror rows no reservation names, through `releaseExpiredSandboxes()` in `src/shared/sandbox-cleanup.ts`. The orphan scan reads idle mirrors oldest first, page by page, until it has a page of orphans or reaches rows still in use, so mirrors whose deferred reservation keeps them reserved cannot hide the orphans behind them.
 - A release goes through the provider that reserved the machine, not the config's current one, so switching provider or turning `persistent` off strands nothing. It uses the reserving config's credentials when the instance row says `ownCredentials`, else the platform's.
 - A sandbox config that still holds an instance is kept when its CLI resource or canvas card goes, so an instance never names a missing config.
 
@@ -223,12 +230,20 @@ stateDiagram-v2
   error --> [*]: terminate or swept
 ```
 
-- Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core.
+- Refresh removes the row when the provider reports nothing or `terminating`, so `terminating` is never stored by core. The removal names the machine it read, so a replacement's row under the same key stays.
+- Core sends every row write through `src/harness/sandbox/mirror-writes.ts`: executor upserts on start and on every command, E2B's size patch, MicroVM burst reports, the `exec`, `terminal`, `refresh`, `suspend` and `resume` status writes, and every removal. Executors never wait for their writes.
+- Each row has a lane, keyed on the account and the reservation key (an ephemeral row's key is its sandbox id). A row's writes land in the order they were queued. A write of the same kind to the same machine as the lane's last pending write takes its place (an upsert keeps the run fields the newer one lacks; a status write never does, so a suspend and the resume after it both land), so a backlog holds only the latest; nothing else is dropped or reordered. Memory follows rows, not writes.
+- An unchanged refresh is sent at most once a minute per row (`MIRROR_REFRESH_EVERY_MS`), or once per fifteenth of the sandbox's idle timeout when that is shorter. A Convex write costs about the same CPU whatever it changes (about 25 ms on the local stack), so at one command every 5 s core asks for 12 times fewer writes. 1,000 such sandboxes on one account would ask for 200 writes a second: sent one at a time, about 60 a second land and Convex uses about 1.5 cores; with unchanged refreshes skipped, 17 a second land and it uses about 0.4. A refresh that differs in any field (a new run, machine or size), or that follows a status write or a removal, is sent at once. A refresh counts as sent only once Convex wrote the row: one that failed, timed out or was refused is sent again on the next command. The row's last-used time can trail the last command by up to that window, so an idle tail bills up to that much less.
+- An account sends one write at a time. Parallel writes on one account conflict on its shared usage rows in Convex (`OptimisticConcurrencyControlFailure`) and fail: on the local stack 158 of 200 first writes sent at once were lost, 3 of 200 with two in parallel, none one at a time (about 15 ms each). The account's lanes take turns, and a lane holding a status, a removal or a MicroVM burst report goes first, so a terminate waits for about two writes and a burst reaches its row before a removal queued after it. Under overload a row's refreshes get staler; the queue never grows past a few writes per row. Accounts run in parallel.
+- A write that has not answered after 10 s (`MIRROR_WRITE_TIMEOUT_MS`) frees the account's sender and logs, with the lane count, pending writes and oldest pending age; so does one that waited over 2 s. Shutdown's `drainInFlight` waits for every account's sender.
+- The sender only orders one pod's writes. The reservation check in `upsert` is what keeps a late write from another pod, such as the old pod of a rolling update, or one that timed out but landed, from bringing a released row back. A late write for an ephemeral row, which has no reservation, can bring it back until `sweepStaleEphemeral`.
+- A reserved row is written only while its reservation still names the machine (`upsert` in `packages/convex/sandbox/instances.ts`). Every release drops the reservation before the row goes, so a write that lands after it, such as a Cloudflare or Worker command that answered core after a terminate, is dropped instead of bringing back a row that bills a machine that is gone, or pointing a key reserved again at its old machine. Ephemeral rows need no reservation.
 - `specs` is what the meter bills. `specsVerified` is set only when the size is real: a provider report, or the size Broods sets on workdir, MicroVM and Cloudflare. Without it the dashboard shows `?`.
+- Executors queue a refresh on every command, and core sends the unchanged ones once a minute. A refresh of a machine still running at the size, credentials and project it was last billed at bills at most once a minute (`REFRESH_BILL_EVERY_MS` in `packages/convex/sandbox/instances.ts`), so an owner's concurrent tasks write the shared usage rows about once a minute each, not on every command. The next bill, status change or removal covers the stretch, so nothing is lost; like the idle tail, it lands on the day and month of the bill that covers it, and live usage can trail by up to a minute.
 
 ## Lifecycle actions and terminal
 
-The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row with the actor source. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
+The dashboard and the account API call `POST /v1/sandboxes/:id/:action` in `src/accounts/handler.ts`, with action `suspend`, `resume`, `terminate`, `snapshot`, `refresh`, `exec` or `terminal`. Each writes a `sandboxAuditEvents` row naming the actor. Only the config plane, on the service token, may name the dashboard user it acts for in the body's `actor`; any other caller is recorded as its own credential, `service`, with the role id for a scoped key or role session. `exec` takes at most 20,000 characters; the dashboard calls it with a 30 s timeout and 64 KiB output.
 
 `terminal` opens a real TTY on `sandbox`, `lambda` and `cloudflare`. Other providers answer it as unsupported and the dashboard keeps the bounded `exec` runner.
 
@@ -245,19 +260,21 @@ sequenceDiagram
   Core->>Core: resume if suspended, seal ticket, 2 min TTL
   Core-->>D: sealed ticket
   D->>G: WS /v1/sandboxes/terminal/ws, broods.token.:ticket
-  G->>G: open ticket, spend it once in TERMINAL_TICKETS_SPENT KV
+  G->>G: open ticket, spend it once in TERMINAL_TICKETS_SPENT_<env> KV
   G->>P: upstream WS with the provider credential
   P-->>D: TTY bytes both ways
 ```
 
 | Provider     | Upstream                                | Credential in the ticket                                      |
 | ------------ | --------------------------------------- | ------------------------------------------------------------- |
-| `sandbox`    | workdir PTY WebSocket                   | workdir API key as bearer                                     |
+| `sandbox`    | workdir PTY WebSocket                   | one-time terminal token the workdir host minted, as bearer    |
 | `lambda`     | MicroVM native shell (`SHELL_INGRESS`)  | `CreateMicrovmShellAuthToken` JWE, 30 min, `X-aws-proxy-auth` |
-| `cloudflare` | bridge `GET /v1/sandboxes/:id/terminal` | bridge API key as bearer                                      |
+| `cloudflare` | bridge `GET /v1/sandboxes/:id/terminal` | terminal token for that sandbox as bearer, ticket TTL         |
 
 - The ticket is AES-256-GCM sealed (`src/shared/terminal-ticket.ts`), so the browser holds only an opaque token. If NATS is down the upgrade answers 502 rather than skip the spend check.
 - A Cloudflare Container that is not running answers 409; a command has to start it first.
+- The Cloudflare terminal token (`apps/cloudflare-sandbox/src/terminal-token.ts`) is an HMAC of the sandbox id and expiry, signed with the bridge API key. The bridge accepts it only on `/terminal` for that sandbox id and until it expires, so the gateway never holds the key that reaches every sandbox.
+- For workdir, core asks the host for a token with `POST /v1/sandboxes/:id/pty-token`, on the same URL and API key as its other calls (an account's own `workdirUrl` and `apiKey` when set). The host keeps the token only in memory and accepts it once, on that sandbox's PTY, for 120 seconds; the ticket keeps its own two-minute life, whatever the host answers. A terminal token lets its holder run commands in that one sandbox for up to two minutes, once. A host without the route answers 404, and the terminal answers 409 saying the workdir host needs updating; core never falls back to the API key.
 
 ## Background jobs
 
@@ -280,7 +297,7 @@ sequenceDiagram
   S->>S: job writes .log and .exit
   S->>Core: POST /v1/sandbox-jobs/:resultId/complete, x-job-token
   Core->>CVX: verify token, settle completed or failed
-  alt model already observed it through async_status
+  alt row already stored: a saved async_status read or the turn wrote it
     Note over Core: skip the continuation
   else
     Core->>CVX: admit continuation as a followup
@@ -289,7 +306,8 @@ sequenceDiagram
   opt model polls
     M->>Core: async_status status, logs or stop
     Core->>S: jobStatus, jobLogs or stopJob
-    Core->>CVX: settle if terminal, mark observed
+    Core->>CVX: settle if terminal
+    Note over Core,CVX: the step save that carries the read stores the row
   end
 ```
 
@@ -313,8 +331,8 @@ stateDiagram-v2
   [*] --> processing: created before launch
   processing --> completed: callback or poll reads exit 0
   processing --> failed: callback, poll, or launch error
-  completed --> observed: async_status read it
-  failed --> observed: async_status read it
+  completed --> stored: saved history holds it, or a run that saves none read it
+  failed --> stored: saved history holds it, or a run that saves none read it
 ```
 
 - `lambda`, workdir, Daytona and Vercel keep markers under `<workspace root>/.fp-jobs/<reservation key>`, at most 10 running (`MAX_CONCURRENT_BACKGROUND_JOBS`). E2B uses its native `background: true` command, so it has callback delivery but no logs or stop.
@@ -391,7 +409,7 @@ The harness's own credentials never enter the VM. Stateless runs skip the mount 
 
 ### Image, snapshots and network
 
-- The image is built by AWS from an S3 zip of a Dockerfile (`create-microvm-image`), a versioned Firecracker snapshot of memory and disk. Core selects it with `MICROVM_IMAGE_IDENTIFIER`, optionally pinned by `MICROVM_IMAGE_VERSION`. `image: "obscura"` boots the `-obscura` variant next to the default. A `snapshot` ARN must be in the same account and region, and a `broods-snapshot-*` one boots only for the account with a `sandboxSnapshots` row for it.
+- The image is built by AWS from an S3 zip of a Dockerfile (`create-microvm-image`), a versioned Firecracker snapshot of memory and disk. Core selects it with `MICROVM_IMAGE_IDENTIFIER`, optionally pinned by `MICROVM_IMAGE_VERSION`. `image: "obscura"` boots the `-obscura` variant next to the default. A `snapshot` ARN must be in the same account and region, and a `broods-snapshot-*` one boots only for a sandbox in the account and stage of its `sandboxSnapshots` row (see [Snapshot stage lock](#snapshot-stage-lock)).
 - `apps/core/sst.config.ts` provisions the `MicrovmArtifacts` bucket, the `microvm-build` and `microvm-execution` roles, the `/broods/:stage/microvms` log group with its forwarder subscription, and the NAT-less `SandboxNetwork` VPC with the `microvm-egress` connector. Not in `ap-southeast-1` (`microvmPrereqsEnabled()`).
 - Network: `allow-all` uses default internet egress. `deny-all` and `restricted` attach the shared egress connector, which has no NAT; its S3 gateway endpoint reaches only the managed workspace bucket. Per-account allowlists cannot apply, so `allowDomains` and `allowCidrs` are rejected. Without `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`, `deny-all` fails to launch.
 
@@ -446,7 +464,7 @@ A workspace's `isolation` picks the namespace a run mounts (`isolatedWorkspaceNa
 
 ## Workdir (`sandbox` provider)
 
-- Core reaches the workdir control plane at `WORKDIR_URL` with `WORKDIR_API_KEY`, unless `options.workdirUrl` and `options.apiKey` override them. Images are referenced by name in `config.snapshot`.
+- Core reaches the workdir control plane at `WORKDIR_URL` with `WORKDIR_API_KEY`, unless `options.workdirUrl` and `options.apiKey` override them. Images are referenced by name in `config.snapshot`. One node serves every account, so an image id another account or stage registered is refused before the create (see [Snapshot stage lock](#snapshot-stage-lock)).
 - Sizes are create-time resources with vCPU clamped to 0.5, 1, 2 or 4; explicit `options.cpu`, `memoryMb` and `diskGb` win. `options.docker: true` enables docker-in-sandbox, on this provider only.
 - Every command runs as `timeout -k 5 :seconds bash -c ...`, since the workdir API has no exec timeout.
 - A self-hosted node needs the `mountpoint-s3` binary in the rootfs, a guest kernel with `CONFIG_FUSE_FS=y` (the prebuilt Firecracker CI kernels up to v1.13 ship without it), and `bash` plus GNU `timeout`. Without them every file tool fails with `mount-s3: not found`.
@@ -455,16 +473,25 @@ A workspace's `isolation` picks the namespace a run mounts (`isolatedWorkspaceNa
 
 Credentials fall back to deployment env: `DAYTONA_API_KEY`, `DAYTONA_ORGANIZATION_ID`, `DAYTONA_API_URL`, `DAYTONA_TARGET`; `E2B_API_KEY`; `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID`.
 
-| Topic             | Daytona                                                | E2B                                       | Vercel                                                 |
-| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------ |
-| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | timeout counts from start, reset each wake             |
-| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | not enforced                                           |
-| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image              |
-| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                  |
-| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists |
+| Topic             | Daytona                                                | E2B                                       | Vercel                                                              |
+| ----------------- | ------------------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| Idle              | `idleTimeoutSeconds` to `autoStopInterval`             | sandbox timeout with `onTimeout: "pause"` | session extended to idle past each call, 24 h cap (45 min on Hobby) |
+| Max lifetime      | `maxLifetimeSeconds` or 7 days to `autoDeleteInterval` | not mapped                                | checked at acquire, retires and recreates                           |
+| `config.snapshot` | `snapshot`                                             | `template`                                | `source` snapshot for `snap_`, else image                           |
+| Snapshot verb     | `sandbox.createSnapshot`, `broods-<uuid>` name         | `Sandbox.createSnapshot`                  | `sandbox.snapshot({ expiration: 0 })`                               |
+| Network           | `networkBlockAll`, domain lists ignored with a warning | `allow-all` only                          | `allow-all`, `deny-all`, or domain and CIDR allowlists              |
 
 - Daytona needs a snapshot with `mount-s3`, built by `bun run daytona:s3-snapshot` (`apps/core/scripts/daytona-s3-snapshot.ts`). It assumes the `sandbox-s3mount` role (`SANDBOX_MOUNT_ROLE_ARN`) for prefix-scoped credentials.
 - Each snapshot verb finishes before it answers, so the row is `active` at once.
+
+## Snapshot stage lock
+
+A snapshot is a copy of one sandbox's disk, so it boots only where it was taken.
+
+- The snapshot verb writes the `sandboxSnapshots` row with `scope`: the `{projectId, stageId}` of the sandbox config it ran on, or `"account"` for a config with no stage. Names are unique per account and scope. The row is the lock, so a capture whose row write fails answers an error rather than an unregistered image. Each image also gets a `sandboxSnapshotImages` row (account, scope, base image) on its first capture. A re-capture under the same name moves the snapshot row to the new image and leaves the old image's lock in place, and account deletion keeps the locks, so an image id never falls back to booting anywhere as a plain provider image. `findByImage` answers from the lock, as `inactive`, once no snapshot row names the image.
+- `snapshotBootRefusal` (`packages/convex/model/sandboxRules.ts`) is the one rule: the row's account and scope must equal the booting sandbox's. A row with no `scope` (taken before the lock) is refused everywhere. No caller is exempt; an account key and a stage-pinned role session get the same answer.
+- Writes: the config API (`POST` and `PATCH /v1/sandboxes`), a dashboard canvas save, a CLI sync and an env var refresh that changes `snapshot` all run `assertSnapshotInScope` and answer `400` with the refusal. An image id no account registered is a provider image or template and passes.
+- Boots: every executor that creates a machine from `config.snapshot` calls `assertSnapshotBootable` first (`harness/sandbox/utils.ts`): lambda in `#runInput`, workdir in `#create`, Daytona in `daytonaCreateOptions`, E2B and Vercel before `Sandbox.create`. `findByImage` looks the image up across accounts (`by_externalImageId_and_accountId`, the caller's own row first), so another account's image is refused rather than booted as a provider image. A config with no control plane (no known account or stage) boots no registered snapshot. The dashboard lifecycle verbs (`exec`, `terminal` and the rest) build their executor with the sandbox config's control plane, so a machine they create boots the config's own snapshot. Cloudflare, machine and custom reject `snapshot` at validation.
 - Vercel names a persistent sandbox with a prefix from the reservation key plus a random generation, stored as `externalId`, so a sweeper deleting an old machine never hits a new one under the same key. `onCreate` and `onResume` run as one script guarded by `.fp-lifecycle-created`.
 
 ## Cloudflare
@@ -525,7 +552,46 @@ stateDiagram-v2
 - `network.mode: "allow-all"` starts with `enableInternet: true`, anything else without; `restricted` is rejected. `size` maps to the nearest instance type, `standard-1` to `standard-4` (`CLOUDFLARE_INSTANCE_TYPES` in `apps/core/src/shared/sandbox-sizes.ts`).
 - Limits are in `apps/cloudflare-sandbox/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 15 minute timeout, 6 hour idle (the `setInactivityTimeout` ceiling). An ephemeral Container idles only a minute past its command, so one whose `DELETE` failed stops soon.
 - Exit 124 or 137 counts as a timeout only once the deadline passed; earlier it is the command's own exit or an OOM kill.
-- `deploy.yaml` does not deploy the bridge. A deployment that offers the provider runs `wrangler deploy` and sets `SANDBOX_API_KEY` on the Worker equal to core's `CLOUDFLARE_SANDBOX_API_KEY`, with `CLOUDFLARE_SANDBOX_URL` pointing at it.
+- `sst deploy` ships the bridge per stage with wrangler, as `cloudflareWorkers.sandbox`, when the deploy has `CLOUDFLARE_API_TOKEN`. Its Container image is built only when the registry lacks `broods-sandbox:<Dockerfile hash>` (the first deploy to an account, or a `Dockerfile` change), shared by every stage, so only that deploy needs Docker. The infra repo generates `SANDBOX_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_SANDBOX_API_KEY`, and points `CLOUDFLARE_SANDBOX_URL` at it. Each stage's bridge has its own Containers.
+
+## Worker
+
+Bash in a V8 isolate, no container and no Durable Object. `worker-executor.ts` calls the Worker in `apps/cloudflare-worker` (`src/index.ts`), which loads one Dynamic Worker per sandbox id running [just-bash](https://github.com/vercel-labs/just-bash), a bash written in TypeScript with its own in-memory disk and 81 commands (`cat`, `grep`, `sed`, `awk`, `jq`, `find`, `sort`, `gzip`, and `curl` with internet). No processes, no `python`, no `git`, no `eval`: a command is either a built-in or `command not found`. The Worker stays dumb: ids, env, working directory and output limit all come from core.
+
+```mermaid
+sequenceDiagram
+  participant E as worker-executor
+  participant W as V8 Worker
+  participant R2 as R2 sandboxes/:id
+  participant I as isolate (just-bash)
+
+  E->>W: POST /v1/sandboxes/:id/exec, Bearer key
+  W->>W: SHA-256 and timingSafeEqual the header
+  opt persist
+    W->>R2: get the stored disk
+  end
+  W->>I: LOADER.get(id:network:cpu).exec(script, disk)
+  I->>I: restore disk, mkdir cwd, run script
+  I-->>W: result, disk after the command
+  opt persist and the disk changed
+    W->>R2: conditional put (an empty object when the disk emptied)
+  end
+  W-->>E: SandboxExecResponse, duration measured here
+```
+
+| Route                         | Does                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| `POST /v1/sandboxes/:id/exec` | Runs one script in the sandbox's isolate, answers a `SandboxExecResponse`              |
+| `GET /v1/sandboxes/:id`       | `{ exists }`: whether a stored disk is under the id                                    |
+| `DELETE /v1/sandboxes/:id`    | Drops the stored disk, leaving an empty `released` marker that later calls get 410 for |
+
+- Nothing runs between commands. A persistent sandbox is its stored disk: one gzip of a JSON header and the files' raw bytes, one R2 object per id, restored into a fresh shell on every call. The runtime packs the disk again after the command and answers "unchanged" when nothing differs, so a read-only command stores nothing. An ephemeral call runs on an empty disk and stores nothing. There is no idle, no suspend, no snapshot, no terminal, no workspace mount and no background job.
+- Billing follows: each command is metered as it ends (its time on the Worker plus one request), an ephemeral call keeps no instance row, and a reserved sandbox's row reads `suspended` while its disk is stored and bills nothing.
+- The isolate is keyed by sandbox id plus what is fixed at load: its network (`globalOutbound: null` without internet, so `curl` is not even registered) and its CPU limit, `limits.cpuMs` from the call's timeout. That limit is the real guard for a busy command, because inside an isolate the clock moves only while the shell waits; just-bash's own deadline (exit 124) catches a `sleep` or a slow `curl`.
+- The isolate runs with `nodejs_compat` for `node:zlib` (gzip and file sniffing, and the stored disk) and the `Buffer` global; nothing else from Node is in the build. `bun run build` in the workspace writes `.generated/runtime.txt` from `src/runtime.ts`, and the host ships it as a text module.
+- Limits are in `apps/cloudflare-worker/src/limits.ts`, which core imports to clamp: 1 MiB output per stream, 60 s timeout, 16 MiB stored disk compressed. A disk past the cap stays as it was and the call fails with what to clean up.
+- `sst deploy` ships the Worker per stage with wrangler, as `cloudflareWorkers.worker`, when the deploy has `CLOUDFLARE_API_TOKEN`. The infra repo generates `WORKER_API_KEY`, puts it on the Worker and in core's `CLOUDFLARE_WORKER_API_KEY`, and points `CLOUDFLARE_WORKER_URL` at it. `bun test` there runs the Worker in Miniflare with a real Worker Loader and R2.
+- A `disk` workspace (`storage.provider: "disk"`, `sandboxHoldsWorkspace` in `packages/convex/model/sandboxProviders.ts`) is this disk: the workspace sandbox carries no `storage`, so the executor reserves on the workspace namespace and each folder, partition and user conversation is its own R2 object. `SHELL_ONLY_SANDBOX_PROVIDERS` marks the shell with no `node` and no `sync`: `edit` reads the file with `base64`, replaces in core and writes it back; `glob` lists with `find` and matches with `Bun.Glob`; `write` skips `sync`. `harness/conversation-files.ts` reads a folder as one gzipped listing (the answer is capped at 1 MiB) and replaces it in one command.
 
 ## Machine
 
@@ -544,7 +610,7 @@ sequenceDiagram
   D->>Core: hello: sandbox, hostname, computer, mcp
   Core->>Core: check credentials and sandboxes:write, claim the record
   Core->>CVX: mirror the connection
-  Core->>D: ready
+  Core->>D: ready, expiresInMs for a stage ticket
   T->>Core: run(request)
   Core->>D: exec frame
   D-->>Core: result frame
@@ -552,9 +618,12 @@ sequenceDiagram
   loop every 60 s
     Core->>CVX: mark seen, quiet means offline
   end
+  D->>Core: credential: a fresh ticket, at half the time left
+  Core->>D: ready with the new expiresInMs
 ```
 
 - One daemon holds a record. A second is closed with `4423` naming the holder's host; `--force` replaces the holder, which gets `4409`. Bad credentials close with `4401`, an unknown sandbox name with `4404`, a malformed frame with `4400`.
+- A stage ticket's socket lives as long as its ticket. `ready` tells the daemon how long that is (`expiresInMs`, relative so a skewed clock cannot move it), and the daemon sends `{ type: "credential", token }` with a freshly minted ticket at half the time left, retrying at half of what remains until core answers. Core resolves that ticket and, only if it is for the socket's own account and stage and may still write sandboxes, moves the deadline and the bearer each heartbeat checks, then sends `ready` again with the new `expiresInMs`. Any other ticket closes the socket with `4401`; one core cannot check for an outage keeps the old deadline. Without a refresh the socket closes with `4419` the moment the ticket expires, and core sends no frame to it after that, even if the timer runs late. `4419` is not fatal: the daemon (and a CLI older than the refresh) reconnects with a freshly minted ticket and reclaims its record, and a command still running then fails like any disconnect. Every heartbeat also resolves the daemon's bearer again; one that no longer resolves to the account (key rotated, role session ended or revoked, account suspended) closes with `4401`. A heartbeat that cannot reach Convex keeps the daemon.
 - The socket accepts a stage ticket minted from `broods login`, the account key, or a role session with `sandboxes:write` on the record. Never the runtime key or the dashboard's member ticket.
 - Frames cap at 4 MiB. A computer action has 30 s, an MCP call 60 s, `bash` its timeout plus 5 s.
 - Validation rejects `persistent`, `size`, `snapshot` and any network mode but `allow-all`, and a machine cannot back a workspace.
@@ -573,7 +642,11 @@ flowchart TD
 ```
 
 - The key is stored on `runtimeHarnessSessions`, so a conversation resumes on the machine it started on. A session ending on a shared machine neither suspends nor deletes it.
+- Claude Code, Codex, Deep Agents and OpenCode keep the conversation on the machine (each CLI's own session store), and the checkpoint holds only its id. When the machine is released, or an adapter version bump moves the conversation to a new one, the next turn starts a fresh session.
+- Pi keeps its conversation in Convex: Pi appends each session entry through `sessionStorage` (`adapters/pi.ts`), the Broods `Session` holds the entries until `saveHarnessSession`, and the checkpoint holds only the leaf entry id and the last entry sequence. A turn usually costs one save and one paged read whatever the history length; a turn over one transaction's budget (4 MiB or 100 entries) stages the rest in `appendHarnessSessionEntries` first. When Pi's machine is released, `openAiSdkHarnessSession` resumes the same session on a fresh machine and logs it; the other adapters start a fresh session. An entry over 512 KiB is stored with every image swapped for `[attachment not retained]` and every long string truncated, in one pass.
 - Neither provider streams processes, so `harness-shell-process.ts` runs the adapter detached and file-spooled; short shell calls poll its output in 180 KiB chunks every 25 ms.
+- Core holds a whole file in memory for each harness file read, so a read of a file over 25 MiB (a symlink counts as the file it points to) fails with `SandboxFileTooLargeError` before its bytes reach core; the harness reads a part of it with a shell command instead.
+- Core also holds a harness command's stdout and stderr whole, because adapters parse them (Pi's `find` and `ls`, `listDirectory`). Each is capped at 16 MiB for core's memory, not the model's context: past it core kills the command, stops polling it, and fails the call with `SandboxOutputTooLargeError` instead of returning a part. The cap bounds one stream, not the pod: several large commands at once can still add up.
 - On `lambda`, WebSocket ingress needs the AWS token and port as subprotocols, so `microvm-websocket-proxy.ts` hands the adapter a loopback URL and adds them upstream. The token stays in core and the upstream header, never a URL or log.
 
 ```mermaid

@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * Server tab for MCP nodes. Hosted mode edits Node source the dashboard
- * bundles and core probes in the sandboxed Lambda before the row is written;
- * external mode registers a pre-existing server by url + headers.
- */
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
@@ -15,6 +10,7 @@ import { formatSource } from "@/app/lib/formatSource";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { Check } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useState } from "react";
@@ -36,7 +32,8 @@ const DEFAULT_SOURCE = [
   'import { z } from "zod";',
   "",
   "// The factory runs once per request (stateless hosting). Register as many",
-  "// tools as you want; agents see each as <node-name>__<tool-name>.",
+  "// tools as you want; agents see each as <node-name>__<tool-name>. Broods",
+  "// speaks MCP 2026-07-28 only, so the 2025-era handshake is refused.",
   "export default createMcpHandler(() => {",
   '  const server = new McpServer({ name: "my-server", version: "1.0.0" });',
   "",
@@ -52,12 +49,15 @@ const DEFAULT_SOURCE = [
   "  );",
   "",
   "  return server;",
-  "});",
+  '}, { legacy: "reject" });',
   "",
 ].join("\n");
 
 type SaveState =
   | { kind: "idle" }
+  | { kind: "formatting" }
+  | { kind: "saving" }
+  | { kind: "failed"; message: string }
   | { kind: "saved"; toolCount: number; verified: boolean };
 
 export function McpTab({
@@ -92,33 +92,35 @@ export function McpTab({
     sourceCode,
     url,
   } = form;
-  const [isSaving, setIsSaving] = useState(false);
-  const [isFormatting, setIsFormatting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
+  const isFormatting = saveState.kind === "formatting";
+  const isSaving = saveState.kind === "saving";
 
   async function handleFormat(): Promise<void> {
-    setIsFormatting(true);
-    setSaveError(null);
+    setSaveState({ kind: "formatting" });
     try {
-      setSourceCode(await formatSource(sourceCode));
+      const formatted = await formatSource(sourceCode);
+      // The first press lazy-loads prettier: typing during it wins.
+      setSourceCode((current) =>
+        current === sourceCode ? formatted : current,
+      );
+      setSaveState({ kind: "idle" });
     } catch (error) {
-      setSaveError(toErrorMessage(error));
-    } finally {
-      setIsFormatting(false);
+      setSaveState({ kind: "failed", message: toErrorMessage(error) });
     }
   }
 
   async function handleSave(): Promise<void> {
     if (!projectId || !stageId) {
-      setSaveError("Select a stage before saving this server.");
+      setSaveState({
+        kind: "failed",
+        message: "Select a stage before saving this server.",
+      });
 
       return;
     }
 
-    setIsSaving(true);
-    setSaveError(null);
-    setSaveState({ kind: "idle" });
+    setSaveState({ kind: "saving" });
     try {
       const headers = parseHeaders(headersJson);
       const shared = {
@@ -128,7 +130,7 @@ export function McpTab({
         nodeLabel: nodeLabel,
         ...(headers !== undefined ? { headers: headers } : {}),
       };
-      let result: { verified: boolean; tools: unknown[] };
+      let result: FunctionReturnType<typeof api.mcp.saveForNode>;
       if (activeTransport === "hosted") {
         result = await saveForNode({
           ...shared,
@@ -144,9 +146,7 @@ export function McpTab({
         verified: result.verified,
       });
     } catch (error) {
-      setSaveError(toErrorMessage(error));
-    } finally {
-      setIsSaving(false);
+      setSaveState({ kind: "failed", message: toErrorMessage(error) });
     }
   }
 
@@ -176,8 +176,7 @@ export function McpTab({
     server.transport === "hosted" &&
     server.sourceCode === undefined
   ) {
-    // A CLI-uploaded hosted row carries no source: editing this tab's
-    // template over the real bundle would overwrite it, so the editor gives way.
+    // A CLI-uploaded row carries no source; saving this template would overwrite its bundle.
     return <BundleManagedNotice server={server} />;
   }
 
@@ -197,7 +196,11 @@ export function McpTab({
             Save bundles the code, runs it in the sandbox, and lists its tools;
             a server that fails to build or answer never uploads.
           </p>
-          <CodeEditor value={sourceCode} onChange={setSourceCode} />
+          <CodeEditor
+            value={sourceCode}
+            onChange={setSourceCode}
+            readOnly={isSaving}
+          />
         </>
       ) : (
         <>
@@ -208,6 +211,7 @@ export function McpTab({
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://mcp.example.com/mcp"
               aria-label="Server URL"
+              disabled={isSaving}
               className="h-8 font-mono text-xs"
             />
           </div>
@@ -224,6 +228,7 @@ export function McpTab({
           value={headersJson}
           onChange={(e) => setHeadersJson(e.target.value)}
           aria-label="Headers"
+          disabled={isSaving}
           spellCheck={false}
           placeholder={'{\n  "Authorization": "Bearer ${MY_TOKEN}"\n}'}
           variant="code"
@@ -236,9 +241,13 @@ export function McpTab({
         </p>
       </div>
 
-      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+      {saveState.kind === "failed" && (
+        <p role="alert" className="text-xs text-destructive">
+          {saveState.message}
+        </p>
+      )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" data-save-state={saveState.kind}>
         {activeTransport === "hosted" && (
           <Button
             size="sm"
@@ -254,7 +263,7 @@ export function McpTab({
           <Button
             size="sm"
             className="h-8 cursor-pointer text-xs"
-            disabled={isSaving}
+            disabled={isSaving || isFormatting}
             onClick={handleSave}
           >
             {isSaving ? "Verifying…" : "Save Server"}
@@ -266,7 +275,6 @@ export function McpTab({
   );
 }
 
-/** CLI-owned hosted rows: the source lives in the user's project, not here. */
 function BundleManagedNotice({
   server,
 }: {
@@ -290,7 +298,6 @@ function BundleManagedNotice({
   );
 }
 
-/** Machine rows run on a person's computer, which the dashboard cannot reach. */
 function MachineManagedNotice({
   server,
 }: {
@@ -388,12 +395,11 @@ function TransportToggle({
   );
 }
 
-/** Form state seeded from the saved row; synced during render, not an effect. */
 function useServerForm(server: Doc<"mcp"> | null | undefined): {
   activeTransport: "hosted" | "http";
   headersJson: string;
   setHeadersJson: (value: string) => void;
-  setSourceCode: (value: string) => void;
+  setSourceCode: React.Dispatch<React.SetStateAction<string>>;
   setTransport: (value: "hosted" | "http") => void;
   setUrl: (value: string) => void;
   sourceCode: string;
@@ -407,7 +413,6 @@ function useServerForm(server: Doc<"mcp"> | null | undefined): {
   if (server !== undefined && server !== syncedServer) {
     setSyncedServer(server);
     if (server) {
-      // A machine row has no editor; the form only ever edits the other two.
       setTransport(server.transport === "machine" ? null : server.transport);
       setSourceCode(server.sourceCode ?? DEFAULT_SOURCE);
       setUrl(server.url ?? "");

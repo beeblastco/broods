@@ -1,17 +1,14 @@
 "use client";
 
-/**
- * Skill file explorer. Wraps WorkspaceFilesTab with broods skill format
- * constraints: SKILL.md at root required, text files only, 5 MB per file /
- * 30 MB total. Publish action pushes the files to the broods account.
- */
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
+import { toErrorMessage } from "@/app/lib/errors";
 import {
   clearSkillsBearerToken,
   getSkillsBearerToken,
@@ -20,9 +17,8 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { AlertTriangle, BookOpen, Eye, EyeOff, Send, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
+import { AlertTriangle, BookOpen, Send, X } from "lucide-react";
+import { useCallback, useEffect, useEffectEvent, useId, useState } from "react";
 
 const ALLOWED_EXTENSIONS = new Set([
   "css",
@@ -85,32 +81,29 @@ export function SkillFilesTab({
 
   const [syncedSkillMdUrl, setSyncedSkillMdUrl] = useState(skillMdUrl);
 
-  // Clear parsed metadata when SKILL.md disappears (set during render so the
-  // effect below only performs the async fetch, never a synchronous setState).
   if (skillMdUrl !== syncedSkillMdUrl) {
     setSyncedSkillMdUrl(skillMdUrl);
     if (!skillMdUrl) setSkillMeta(null);
   }
 
+  // A download can finish after the path or its writer changed.
+  const onMetadataLoaded = useEffectEvent((text: string): void => {
+    const meta = parseSkillMd(text);
+    setSkillMeta(meta);
+    if (!meta.name) return;
+    const accountPart = skillPath.includes("/") ? skillPath.split("/")[0] : "";
+    const newPath = accountPart ? `${accountPart}/${meta.name}` : meta.name;
+    if (newPath !== skillPath) onUpdateSkillPath(newPath);
+  });
+
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- fetches SKILL.md from storage
   useEffect(() => {
     if (!skillMdUrl) return;
     let cancelled = false;
     fetch(skillMdUrl)
       .then((r) => r.text())
       .then((text) => {
-        if (!cancelled) {
-          const meta = parseSkillMd(text);
-          setSkillMeta(meta);
-          if (meta.name) {
-            const accountPart = skillPath.includes("/")
-              ? skillPath.split("/")[0]
-              : "";
-            const newPath = accountPart
-              ? `${accountPart}/${meta.name}`
-              : meta.name;
-            if (newPath !== skillPath) onUpdateSkillPath(newPath);
-          }
-        }
+        if (!cancelled) onMetadataLoaded(text);
       })
       .catch(() => {
         if (!cancelled) setSkillMeta(null);
@@ -202,7 +195,6 @@ export function SkillFilesTab({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* SKILL.md info bar */}
       {skillMeta && (
         <div className="flex shrink-0 flex-col gap-0.5 border-b border-border bg-muted/20 px-3 py-2">
           <div className="flex items-center gap-1.5">
@@ -219,7 +211,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* SKILL.md missing warning */}
       {files !== undefined && !hasSkillMd && (
         <div className="flex shrink-0 items-center gap-2 border-b border-warning/20 bg-warning/5 px-3 py-1.5">
           <AlertTriangle className="size-3 shrink-0 text-warning" />
@@ -237,7 +228,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Unsupported file types warning */}
       {unsupportedFiles.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-1.5">
           <AlertTriangle className="size-3 shrink-0 text-destructive" />
@@ -249,7 +239,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Create SKILL.md form */}
       {showCreateSkillMd && (
         <div className="shrink-0 p-2">
           <CreateSkillMdForm
@@ -259,7 +248,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Core file tree, reuses WorkspaceFilesTab */}
       <div
         id={`skill-files-${nodeId}`}
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -269,7 +257,6 @@ export function SkillFilesTab({
 
       <Separator />
 
-      {/* Token prompt */}
       {promptMode && (
         <div className="shrink-0 p-2">
           <TokenPrompt
@@ -280,7 +267,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Status message */}
       {status.type !== "idle" && status.message && (
         <div
           className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-2xs ${
@@ -299,7 +285,6 @@ export function SkillFilesTab({
         </div>
       )}
 
-      {/* Action bar */}
       {!promptMode && canWrite && (
         <div className="flex shrink-0 items-center gap-1.5 px-3 py-2">
           <Button
@@ -355,10 +340,12 @@ function CreateSkillMdForm({
   onSubmit: (name: string, description: string) => void;
   onCancel: () => void;
 }): React.JSX.Element {
+  const formId = useId();
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const nameValid =
     /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  const nameInvalid = name !== "" && !nameValid;
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
@@ -367,6 +354,7 @@ function CreateSkillMdForm({
           Create SKILL.md
         </span>
         <button
+          aria-label="Cancel skill creation"
           className="cursor-pointer text-muted-foreground hover:text-foreground"
           onClick={onCancel}
         >
@@ -377,24 +365,38 @@ function CreateSkillMdForm({
         Lowercase letters, numbers, hyphens. Required at the bundle root.
       </p>
       <div className="flex flex-col gap-1">
-        <label className="text-3xs text-muted-foreground">Skill name</label>
+        <label
+          htmlFor={`${formId}-name`}
+          className="text-3xs text-muted-foreground"
+        >
+          Skill name
+        </label>
         <Input
+          id={`${formId}-name`}
           value={name}
           placeholder="support-flow"
           className="h-7 font-mono text-2xs"
+          aria-invalid={nameInvalid}
+          aria-describedby={nameInvalid ? `${formId}-name-error` : undefined}
           onChange={(e) =>
             setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))
           }
         />
-        {name && !nameValid && (
-          <p className="text-3xs text-destructive">
+        {nameInvalid && (
+          <p id={`${formId}-name-error`} className="text-3xs text-destructive">
             Name must start and end with a letter or number.
           </p>
         )}
       </div>
       <div className="flex flex-col gap-1">
-        <label className="text-3xs text-muted-foreground">Description</label>
+        <label
+          htmlFor={`${formId}-description`}
+          className="text-3xs text-muted-foreground"
+        >
+          Description
+        </label>
         <Textarea
+          id={`${formId}-description`}
           value={desc}
           placeholder="What this skill does and when to use it."
           className="h-16 resize-none text-2xs"
@@ -423,12 +425,6 @@ function TokenPrompt({
   onCancel: () => void;
 }): React.JSX.Element {
   const [draft, setDraft] = useState("");
-  const [show, setShow] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
@@ -445,37 +441,24 @@ function TokenPrompt({
         Your account key (starts with <code>bask_</code>). Saved in session
         only.
       </p>
-      <div className="flex items-center gap-1.5">
-        <Input
-          ref={ref}
-          type={show ? "text" : "password"}
-          value={draft}
-          placeholder="bask_…"
-          className="h-7 flex-1 font-mono text-2xs"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            }
-          }}
-        />
-        <IconTooltip label={show ? "Hide key" : "Show key"}>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            className="cursor-pointer"
-            onClick={() => setShow((v) => !v)}
-          >
-            {show ? (
-              <EyeOff className="size-3.5" />
-            ) : (
-              <Eye className="size-3.5" />
-            )}
-          </Button>
-        </IconTooltip>
-      </div>
+      <SecretInput
+        noun="key"
+        aria-label={label}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- the user just asked to publish
+        autoFocus
+        value={draft}
+        placeholder="bask_…"
+        className="h-7 flex-1 font-mono text-2xs"
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.nativeEvent.isComposing && draft.trim())
+            onConfirm(draft.trim());
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+      />
       <Button
         size="sm"
         className="h-7 cursor-pointer self-end text-2xs"

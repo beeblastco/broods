@@ -1,9 +1,35 @@
-import { describe, expect, it, jest, spyOn } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+  mock,
+  spyOn,
+} from "bun:test";
+import * as asyncToolResult from "../src/harness/async-tool-result.ts";
+import type { AsyncToolResultRecord } from "../src/harness/async-tool-result.ts";
+import * as continuation from "../src/harness/continuation.ts";
+import * as harness from "../src/harness/harness.ts";
+import * as ingress from "../src/harness/ingress.ts";
+import type { ChannelInboundEvent } from "../src/harness/integrations.ts";
+import { resetPlanLimitsForTests } from "../src/harness/plan-limits.ts";
+import * as questions from "../src/harness/questions.ts";
+import type { PendingQuestionInput } from "../src/harness/questions.ts";
+import { Session } from "../src/harness/session.ts";
+import { createTools } from "../src/harness/tools/index.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
+import { getStorage, resetStorageForTests } from "../src/shared/storage.ts";
+import { coreRequest } from "./helpers/http.ts";
 
-const { dispatchInProcessWorker, drainInProcessWorkers } =
+const { handleChannelRequest, handler } =
   await import("../src/harness/handler.ts");
+const { dispatchInProcessWorker, drainInProcessWorkers, workerQueueFull } =
+  await import("../src/harness/worker-queue.ts");
 const QUEUED_LEASE_RENEW_INTERVAL_MS = 5 * 60 * 1000;
+const WORKER_SLOTS = 8;
+const MAX_PENDING_WORKER_RUNS = 1000;
 
 /** Lets settled renewals run their continuations; fake timers also fake Bun.sleep. */
 async function flushMicrotasks(): Promise<void> {
@@ -11,17 +37,6 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("in-process worker dispatch", () => {
-  it("runs payloads with a synthesized invocation context", async () => {
-    let seenContext: { requestId: string; deadlineMs: number } | undefined;
-    dispatchInProcessWorker("test-worker", async (context) => {
-      seenContext = context;
-    });
-    await drainInProcessWorkers();
-
-    expect(seenContext?.requestId).toMatch(/[0-9a-f-]{36}/);
-    expect(seenContext!.deadlineMs).toBeGreaterThan(Date.now());
-  });
-
   it("caps concurrency at the worker limit and drains the FIFO queue", async () => {
     const releases: (() => void)[] = [];
     const started: number[] = [];
@@ -46,14 +61,12 @@ describe("in-process worker dispatch", () => {
       }
     };
 
-    // Default cap is 8; dispatch 10 so two must queue.
     for (let i = 0; i < 10; i += 1) {
       dispatchInProcessWorker("test-worker", run(i));
     }
     await waitForStarted(8);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
 
-    // Finishing one worker pulls the next queued payload, in FIFO order.
     releases.shift()!();
     await waitForStarted(9);
     expect(started).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
@@ -91,7 +104,6 @@ describe("in-process worker dispatch", () => {
         async (): Promise<void> => {},
         lease,
       );
-      // A short wait costs no Convex call.
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS - 1);
       expect(mutate).not.toHaveBeenCalled();
       jest.advanceTimersByTime(1);
@@ -177,7 +189,6 @@ describe("in-process worker dispatch", () => {
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
       expect(mutate).toHaveBeenCalledTimes(16);
 
-      // A sweep still in flight is not started over by the next tick.
       jest.advanceTimersByTime(QUEUED_LEASE_RENEW_INTERVAL_MS);
       expect(mutate).toHaveBeenCalledTimes(16);
 
@@ -213,7 +224,7 @@ describe("in-process worker dispatch", () => {
       jest.advanceTimersByTime(5_000);
       expect(signal?.aborted).toBe(true);
       expect((signal?.reason as Error).message).toBe(
-        "Run exceeded the worker deadline",
+        "I ran out of time on this turn.",
       );
       await drainInProcessWorkers();
     } finally {
@@ -222,11 +233,1007 @@ describe("in-process worker dispatch", () => {
     }
   });
 
+  it("hands a yielding run's slot to the queued run and resumes it next", async (): Promise<void> => {
+    const releases: (() => void)[] = [];
+    const started: string[] = [];
+    const blocked = (): Promise<void> =>
+      new Promise<void>((resolve): void => {
+        releases.push(resolve);
+      });
+    let firstDeadline = 0;
+    let resumedDeadline = 0;
+    dispatchInProcessWorker("test-worker", async (context): Promise<void> => {
+      started.push("yielder");
+      firstDeadline = context.deadlineMs;
+      await blocked();
+      await context.yieldSlot!(undefined);
+      resumedDeadline = context.deadlineMs;
+    });
+    for (let i = 0; i < 7; i += 1) {
+      dispatchInProcessWorker("test-worker", async (): Promise<void> => {
+        started.push(`busy-${i}`);
+        await blocked();
+      });
+    }
+    dispatchInProcessWorker("test-worker", async (): Promise<void> => {
+      started.push("queued");
+      await blocked();
+    });
+    await flushMicrotasks();
+    expect(started).not.toContain("queued");
+
+    await Bun.sleep(2);
+    releases.shift()!();
+    await flushMicrotasks();
+    expect(started).toContain("queued");
+    expect(resumedDeadline).toBe(0);
+
+    releases.shift()!();
+    await flushMicrotasks();
+    expect(resumedDeadline).toBeGreaterThan(firstDeadline);
+
+    while (releases.length > 0) releases.shift()!();
+    await drainInProcessWorkers();
+  });
+
   it("logs and swallows worker failures like a fire-and-forget invoke", async () => {
-    // Must not reject or throw; the failure only surfaces through logError.
     dispatchInProcessWorker("test-worker", async () => {
       throw new Error("worker exploded");
     });
     await drainInProcessWorkers();
+  });
+});
+
+describe("streamed runs", (): void => {
+  let agentLoop: ReturnType<typeof spyOn<typeof harness, "runAgentLoop">>;
+  let settle: ReturnType<typeof spyOn<typeof ingress, "settleIngress">>;
+  let modelPasses: number;
+  let prepared: number;
+  let releases: (() => void)[];
+
+  beforeEach((): void => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    modelPasses = 0;
+    prepared = 0;
+    releases = [];
+    const storage = getStorage();
+    spyOn(storage.accounts, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      username: "ada",
+      secretHash: "hash",
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    spyOn(storage.agents, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      agentId: "agent_1",
+      name: "agent",
+      config: {},
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    spyOn(storage.budgets, "get").mockResolvedValue(null);
+    spyOn(runtime, "mutate").mockResolvedValue(null);
+    spyOn(runtime, "query").mockResolvedValue(null);
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "owner",
+      ownerGeneration: 1,
+    });
+    settle = spyOn(ingress, "settleIngress").mockResolvedValue(1);
+    spyOn(Session.prototype, "assertCurrentOwner").mockResolvedValue();
+    spyOn(Session.prototype, "createTurnContext").mockImplementation(
+      async (): ReturnType<Session["createTurnContext"]> => {
+        prepared += 1;
+
+        return {
+          messages: [{ role: "user", content: "hi" }],
+          system: [],
+          ephemeralSystem: [],
+          systemContextSnapshot: { cursor: null, messages: [] },
+        };
+      },
+    );
+    agentLoop = spyOn(harness, "runAgentLoop").mockImplementation(
+      async (): Promise<never> => {
+        modelPasses += 1;
+        throw new Error("model pass reached");
+      },
+    );
+    for (let slot = 0; slot < WORKER_SLOTS; slot += 1) {
+      dispatchInProcessWorker(
+        "busy",
+        (): Promise<void> =>
+          new Promise<void>((resolve): void => {
+            releases.push(resolve);
+          }),
+      );
+    }
+  });
+
+  afterEach(async (): Promise<void> => {
+    for (const release of releases) release();
+    await drainInProcessWorkers();
+    mock.restore();
+    resetStorageForTests();
+    resetPlanLimitsForTests();
+    delete process.env.SERVICE_AUTH_SECRET;
+  });
+
+  function streamedRun(index: number, background = false): Promise<Response> {
+    return handler(
+      coreRequest(
+        "POST",
+        "/v1/runs",
+        {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_1",
+        },
+        {
+          agentId: "agent_1",
+          eventId: `event-${index}`,
+          conversationKey: `conversation-${index}`,
+          events: [{ role: "user", content: "hi" }],
+          ...(background ? { background: true } : {}),
+        },
+      ),
+    );
+  }
+
+  function fillWorkerQueue(leave = 0): void {
+    for (let index = leave; index < MAX_PENDING_WORKER_RUNS; index += 1) {
+      dispatchInProcessWorker("queued", async (): Promise<void> => {});
+    }
+  }
+
+  async function drainWorkerQueue(): Promise<void> {
+    for (const release of releases.splice(0)) release();
+    await drainInProcessWorkers();
+  }
+
+  function settles(): unknown[] {
+    return settle.mock.calls.map(([settlement]): unknown => settlement);
+  }
+
+  it("waits for a worker slot like every other run, streaming meanwhile", async (): Promise<void> => {
+    const responses = await Promise.all([streamedRun(1), streamedRun(2)]);
+    await Bun.sleep(20);
+
+    expect(responses.map((response): number => response.status)).toEqual([
+      200, 200,
+    ]);
+    expect(modelPasses).toBe(0);
+    expect(prepared).toBe(0);
+
+    for (const release of releases.splice(0)) release();
+    const bodies = await Promise.all(
+      responses.map((response): Promise<string> => response.text()),
+    );
+    expect(modelPasses).toBe(2);
+    for (const body of bodies) expect(body).toContain("model pass reached");
+  });
+
+  it("offers ask_questions to a plain HTTP run, answered by status polling", async (): Promise<void> => {
+    const response = await streamedRun(1);
+    await drainWorkerQueue();
+    await response.text();
+
+    const [session] = agentLoop.mock.calls[0]!;
+    const tools = await createTools(
+      {
+        conversationKey: session.conversationKey,
+        session: session,
+        modelProviderName: "anthropic",
+        modelProvider: undefined,
+      },
+      {},
+    );
+    expect(Object.keys(tools)).toEqual(["ask_questions"]);
+  });
+
+  it("starts nothing for a client that left while it waited", async (): Promise<void> => {
+    const response = await streamedRun(1);
+    await response.body!.cancel();
+
+    for (const release of releases.splice(0)) release();
+    await drainInProcessWorkers();
+    expect(modelPasses).toBe(0);
+    expect(prepared).toBe(0);
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
+  it("answers a full queue with 503 and records nothing, so a retry with the same eventId starts a new run", async (): Promise<void> => {
+    // Like Convex: an eventId already recorded replays as that run.
+    const recorded = new Set<string>();
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (candidate): Promise<ingress.IngressAdmission> => {
+        if (recorded.has(candidate.eventId)) {
+          return {
+            outcome: "duplicate",
+            eventId: candidate.eventId,
+            runId: candidate.runId,
+            status: "failed",
+          };
+        }
+        recorded.add(candidate.eventId);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    fillWorkerQueue();
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
+    expect(await response.text()).toBe(
+      `data: {"type":"error","error":"In-process worker queue is full","code":"service_unavailable","errorType":"overloaded_error"}\n\n`,
+    );
+    const recordedBy503 = recorded.size;
+    const settledBy503 = settles().length;
+
+    await drainWorkerQueue();
+    const retry = await streamedRun(1);
+
+    expect(retry.status).toBe(200);
+    expect(retry.headers.get("content-type")).toBe("text/event-stream");
+    expect(await retry.text()).toContain("model pass reached");
+    expect(modelPasses).toBe(1);
+    expect(recordedBy503).toBe(0);
+    expect(settledBy503).toBe(0);
+  });
+
+  it("does not count a run the full queue turned away against the plan", async (): Promise<void> => {
+    // One run a minute: a 503 that kept its count would refuse the retry.
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    fillWorkerQueue();
+
+    expect((await streamedRun(1)).status).toBe(503);
+
+    await drainWorkerQueue();
+    const retry = await streamedRun(1);
+
+    expect(retry.status).toBe(200);
+    expect(await retry.text()).toContain("model pass reached");
+  });
+
+  it("queues a streamed run that passed the door even when the queue filled behind it", async (): Promise<void> => {
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue(1);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(200);
+    expect(settles()).toEqual([]);
+    await drainWorkerQueue();
+    expect(await response.text()).toContain("model pass reached");
+  });
+
+  it("queues a background run that passed the door even when the queue filled behind it", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    spyOn(runtime, "mutate").mockResolvedValue(true);
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue(1);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    try {
+      const response = await streamedRun(1, true);
+
+      expect(response.status).toBe(202);
+      expect(settles()).toEqual([]);
+      await drainWorkerQueue();
+      expect(modelPasses).toBe(1);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("fails a streamed run whose place a recovered envelope took, instead of leaving it owned", async (): Promise<void> => {
+    spyOn(ingress, "loadAppliedIngressConfig").mockResolvedValue({});
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        fillWorkerQueue(1);
+
+        return {
+          outcome: "owner",
+          ownerGeneration: 1,
+          recovered: {
+            eventId: "recovered-event",
+            events: [{ role: "user", content: "earlier" }],
+            delivery: {
+              kind: "async",
+              publicEventId: "recovered-event",
+              publicConversationKey: "conversation-1",
+              statusUrl: "/v1/runs/recovered",
+            },
+            requestedMode: "followup",
+            appliedMode: "followup",
+            appliedToEventId: "recovered-event",
+            contributingEventIds: ["recovered-event"],
+            ownerGeneration: 2,
+            configRef: {},
+          },
+        };
+      },
+    );
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("In-process worker queue is full");
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
+  it("fails a WebSocket run on a core without WebSocket instead of leaving it owned", async (): Promise<void> => {
+    const response = await handler(
+      coreRequest(
+        "POST",
+        "/v1/runs",
+        {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_1",
+        },
+        {
+          agentId: "agent_1",
+          eventId: "event-1",
+          conversationKey: "conversation-1",
+          connectionId: "connection-1",
+          events: [{ role: "user", content: "hi" }],
+        },
+      ),
+    );
+    await drainWorkerQueue();
+
+    expect(response.status).toBe(202);
+    expect(settles()).toEqual([
+      expect.objectContaining({ status: "failed", ownerGeneration: 1 }),
+    ]);
+  });
+
+  it("admits only as many concurrent requests as the queue has places", async (): Promise<void> => {
+    spyOn(ingress, "acceptIngress").mockImplementation(
+      async (): Promise<ingress.IngressAdmission> => {
+        await Bun.sleep(5);
+
+        return { outcome: "owner", ownerGeneration: 1 };
+      },
+    );
+    fillWorkerQueue(2);
+
+    const responses = await Promise.all(
+      [1, 2, 3, 4, 5].map((index): Promise<Response> => streamedRun(index)),
+    );
+
+    expect(
+      responses
+        .map((response): number => response.status)
+        .sort((a, b): number => a - b),
+    ).toEqual([200, 200, 503, 503, 503]);
+    expect(ingress.acceptIngress).toHaveBeenCalledTimes(2);
+    expect(settles()).toEqual([]);
+    expect(workerQueueFull()).toBe(true);
+    await drainWorkerQueue();
+    expect(modelPasses).toBe(2);
+  });
+
+  it("turns a background run away the same way when the queue is full", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      fillWorkerQueue();
+
+      const response = await streamedRun(1, true);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("5");
+      expect(await response.json()).toMatchObject({
+        error: {
+          message: "In-process worker queue is full",
+          code: "service_unavailable",
+        },
+      });
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+      expect(settles()).toEqual([]);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("answers an account out of budget with 402, not 503, while the queue is full", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 100,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 60,
+      warned: false,
+    });
+    fillWorkerQueue();
+
+    const response = await streamedRun(1);
+
+    expect(response.status).toBe(402);
+    expect(await response.json()).toMatchObject({
+      error: { code: "budget_exhausted" },
+    });
+    expect(ingress.acceptIngress).not.toHaveBeenCalled();
+  });
+
+  it("answers an account past its runs per minute with 429, not 503, while the queue is full", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    spyOn(runtime, "mutate").mockResolvedValue(true);
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    try {
+      expect((await streamedRun(1, true)).status).toBe(202);
+      fillWorkerQueue(1);
+
+      const response = await streamedRun(2, true);
+
+      expect(response.status).toBe(429);
+      expect(await response.json()).toMatchObject({
+        error: { code: "plan_limit_exceeded" },
+      });
+      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("gives back the per-minute run count of a retry that started no run", async (): Promise<void> => {
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "duplicate",
+      eventId: "event-1",
+      runId: "run-1",
+      status: "processing",
+    });
+    try {
+      const statuses = [
+        (await streamedRun(1)).status,
+        (await streamedRun(1, true)).status,
+      ];
+
+      expect(statuses).not.toContain(429);
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("gives back the per-minute run count of a cron fire that failed to start", async (): Promise<void> => {
+    const storage = getStorage();
+    spyOn(storage.budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(storage.crons, "getById").mockResolvedValue({
+      accountId: "acct_1",
+      cronId: "cron_1",
+      name: "nightly",
+      agentId: "agent_1",
+      events: [{ role: "user", content: "run" }],
+      scheduleExpression: "cron(0 9 * * ? *)",
+      status: "active",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+    });
+    // The run never opens: its agent is gone.
+    spyOn(storage.agents, "getById").mockResolvedValue(null);
+    spyOn(storage.crons, "markFailed").mockResolvedValue();
+    const fire = (): Promise<Response> =>
+      handler(
+        coreRequest(
+          "POST",
+          "/v1/cron-runs",
+          { authorization: "Bearer service-secret" },
+          { kind: "cron", accountId: "acct_1", cronId: "cron_1" },
+        ),
+      ).catch((): Response => new Response(null, { status: 500 }));
+
+    const statuses = [(await fire()).status, (await fire()).status];
+
+    expect(statuses).toEqual([500, 500]);
+  });
+
+  it("answers 202 when some answers landed and another was already answered", async (): Promise<void> => {
+    const question = (resultId: string): AsyncToolResultRecord => ({
+      resultId: resultId,
+      parentEventId: `acct:acct_1:agent:agent_1:api:conversation-1:async-question:${resultId}`,
+      conversationKey: "acct:acct_1:agent:agent_1:api:conversation-1",
+      toolName: "ask_questions",
+      toolCallId: `call_${resultId}`,
+      input: {
+        questions: [{ id: "q", header: "Q", question: "Which?", options: [] }],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      },
+      status: "processing",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      expiresAt: Date.now() + 60_000,
+    });
+    spyOn(asyncToolResult, "getAsyncToolResult").mockImplementation(
+      async (resultId): Promise<AsyncToolResultRecord> => question(resultId),
+    );
+    spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
+      null,
+    );
+    // A was still open; someone answered B a moment earlier, until `bOpen`.
+    let bOpen = false;
+    spyOn(
+      asyncToolResult,
+      "settleAsyncToolResultFromCallback",
+    ).mockImplementation(
+      async ({ resultId }): Promise<AsyncToolResultRecord | null> =>
+        resultId === "async_tool_a" || bOpen
+          ? { ...question(resultId), status: "completed" }
+          : null,
+    );
+
+    const answer = async (): Promise<Response> =>
+      handler(
+        coreRequest(
+          "POST",
+          "/v1/runs",
+          { authorization: "Bearer service-secret", "x-account-id": "acct_1" },
+          {
+            agentId: "agent_1",
+            eventId: "answer-1",
+            conversationKey: "conversation-1",
+            answers: [
+              { statusId: "async_tool_a", answers: { q: ["yes"] } },
+              { statusId: "async_tool_b", answers: { q: ["no"] } },
+            ],
+          },
+        ),
+      );
+    process.env.PUBLIC_BASE_URL = "https://api.example.test";
+    try {
+      const admit = spyOn(ingress, "acceptIngress").mockResolvedValue({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const admitted = await answer();
+      // A full queue admits nothing, so there is no run to name.
+      admit.mockResolvedValue({ outcome: "capacity" });
+      const refused = await answer();
+
+      expect(admit).toHaveBeenCalledTimes(2);
+      expect(admitted.status).toBe(202);
+      expect(await admitted.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_a",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+        alreadyAnswered: ["async_tool_b"],
+      });
+      expect(refused.status).toBe(202);
+      const refusedBody = (await refused.json()) as Record<string, unknown>;
+      expect(refusedBody).toMatchObject({ status: "accepted", invoked: false });
+      expect(refusedBody).not.toHaveProperty("runId");
+      expect(refusedBody).not.toHaveProperty("statusUrl");
+
+      // Both open: A starts a turn, then B's resume finds the queue full.
+      bOpen = true;
+      admit.mockResolvedValueOnce({
+        outcome: "owner",
+        runId: "run_resumed",
+        ownerGeneration: 1,
+      });
+      const mixed = await answer();
+
+      expect(await mixed.json()).toMatchObject({
+        status: "accepted",
+        resultId: "async_tool_b",
+        runId: "run_resumed",
+        statusUrl: "https://api.example.test/v1/runs/run_resumed",
+      });
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it("gives back the per-minute run count of an answer request that resumed nothing", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(asyncToolResult, "getAsyncToolResult").mockImplementation(
+      async (resultId): Promise<AsyncToolResultRecord | null> =>
+        resultId === "async_tool_gone"
+          ? null
+          : {
+              resultId: resultId,
+              parentEventId: `acct:acct_1:agent:agent_1:api:conversation-1:async-question:${resultId}`,
+              conversationKey: "acct:acct_1:agent:agent_1:api:conversation-1",
+              toolName: "ask_questions",
+              toolCallId: "call_1",
+              input: {
+                questions: [
+                  { id: "q", header: "Q", question: "Which?", options: [] },
+                ],
+                blocking: false,
+                answerBy: new Date(Date.now() + 60_000).toISOString(),
+              },
+              status: "processing",
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              expiresAt: Date.now() + 60_000,
+            },
+    );
+    // Someone else answered the open one first.
+    spyOn(
+      asyncToolResult,
+      "settleAsyncToolResultFromCallback",
+    ).mockResolvedValue(null);
+    const answer = async (statusId: string): Promise<number> =>
+      (
+        await handler(
+          coreRequest(
+            "POST",
+            "/v1/runs",
+            {
+              authorization: "Bearer service-secret",
+              "x-account-id": "acct_1",
+            },
+            {
+              agentId: "agent_1",
+              eventId: `answer-${statusId}`,
+              conversationKey: "conversation-1",
+              answers: [{ statusId: statusId, answers: { q: ["yes"] } }],
+            },
+          ),
+        )
+      ).status;
+
+    const statuses = [
+      await answer("async_tool_a"),
+      await answer("async_tool_gone"),
+      await answer("async_tool_a"),
+    ];
+
+    expect(statuses).toEqual([409, 404, 409]);
+  });
+
+  it("gives back the per-minute run count of a continue or an event list that starts nothing", async (): Promise<void> => {
+    spyOn(getStorage().budgets, "get").mockResolvedValue({
+      enforced: true,
+      plan: "free",
+      month: "2026-10",
+      usedPercent: 0,
+      shares: { sandboxHours: 0, hostedMcpHours: 0, storageGb: 0, egressGb: 0 },
+      runsPerMinute: 1,
+      warned: false,
+    });
+    spyOn(ingress, "acceptIngress").mockResolvedValue({
+      outcome: "duplicate",
+      eventId: "event-1",
+      runId: "run-1",
+      status: "processing",
+    });
+    spyOn(getStorage().agentDeployments, "getByAgentId").mockResolvedValue(
+      null,
+    );
+    const send = async (body: Record<string, unknown>): Promise<number> =>
+      (
+        await handler(
+          coreRequest(
+            "POST",
+            "/v1/runs",
+            {
+              authorization: "Bearer service-secret",
+              "x-account-id": "acct_1",
+            },
+            { agentId: "agent_1", conversationKey: "conversation-1", ...body },
+          ),
+        )
+      ).status;
+    const assistantOnly = [{ role: "assistant", content: "noted" }];
+
+    const statuses = [
+      await send({ eventId: "continue-1", continue: true }),
+      await send({ eventId: "continue-2", continue: true }),
+      await send({ eventId: "sse-1", events: assistantOnly }),
+      await send({ eventId: "bg-1", events: assistantOnly, background: true }),
+      await send({ eventId: "continue-3", continue: true }),
+    ];
+
+    expect(statuses).not.toContain(429);
+  });
+
+  describe("channel messages", (): void => {
+    let sent: string[];
+
+    beforeEach((): void => {
+      sent = [];
+      // No open ask_questions prompt, so the message is a turn.
+      spyOn(runtime, "query").mockResolvedValue([]);
+    });
+
+    function channelMessage(index: number): ChannelInboundEvent {
+      return {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        eventId: `channel-event-${index}`,
+        conversationKey: `acct:acct_1:agent:agent_1:tg:${index}`,
+        content: "hi",
+        events: [{ role: "user", content: "hi" }],
+        channelName: "telegram",
+        source: { chatId: index },
+        channel: {
+          sendText: async (text): Promise<void> => {
+            sent.push(text);
+          },
+          sendTyping: async (): Promise<void> => {},
+          reactToMessage: async (): Promise<void> => {},
+        },
+      };
+    }
+
+    it("turns a message away on a full queue before the plan counts it or ingress records it", async (): Promise<void> => {
+      // One run a minute: a turned-away message that kept its count would refuse redelivery.
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 0,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 1,
+        warned: false,
+      });
+      fillWorkerQueue();
+
+      const turnedAway = await handleChannelRequest(channelMessage(1)).then(
+        (): string => "admitted",
+        (err: unknown): string => String(err),
+      );
+
+      expect(turnedAway).toBe("Error: In-process worker queue is full");
+      await drainWorkerQueue();
+
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+      expect(settles()).toEqual([]);
+      expect(sent).toEqual([]);
+
+      await handleChannelRequest(channelMessage(1));
+      await drainInProcessWorkers();
+
+      expect(ingress.acceptIngress).toHaveBeenCalledTimes(1);
+      expect(sent).not.toContainEqual(
+        expect.stringContaining("Rate limit reached"),
+      );
+    });
+
+    it("still runs a command that starts no run, such as /stop, while the queue is full", async (): Promise<void> => {
+      spyOn(runtime, "mutate").mockResolvedValue(true);
+      fillWorkerQueue();
+
+      await handleChannelRequest({
+        ...channelMessage(1),
+        content: "/help",
+        events: [{ role: "user", content: "/help" }],
+        commandToken: "/help",
+      });
+
+      expect(sent).toEqual([expect.stringContaining("/stop")]);
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
+
+    it("tells an account out of budget its refusal, not the full queue", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 100,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 60,
+        warned: false,
+      });
+      fillWorkerQueue();
+
+      await handleChannelRequest(channelMessage(1));
+
+      expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
+      expect(ingress.acceptIngress).not.toHaveBeenCalled();
+    });
+
+    it("refuses an answer to an open question once the budget is used, before it resumes the run", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 100,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 60,
+        warned: false,
+      });
+      const mutate = spyOn(runtime, "mutate").mockResolvedValue(null);
+      const message = channelMessage(1);
+      const pending: PendingQuestionInput = {
+        questions: [
+          { id: "q", header: "Stage", question: "Which stage?", options: [] },
+        ],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      };
+      spyOn(questions, "listOpenQuestions").mockResolvedValue([
+        {
+          pending: pending,
+          record: {
+            resultId: "async_tool_1",
+            parentEventId: `${message.eventId}:async-question:async_tool_1`,
+            conversationKey: message.conversationKey,
+            toolName: "ask_questions",
+            toolCallId: "call_1",
+            input: pending,
+            status: "processing",
+            createdAt: "2026-10-01T00:00:00.000Z",
+            updatedAt: "2026-10-01T00:00:00.000Z",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+      ]);
+
+      await handleChannelRequest(message);
+
+      expect(sent).toEqual([expect.stringContaining("monthly resource caps")]);
+      expect(mutate).not.toHaveBeenCalledWith(
+        "updateAsyncToolResult",
+        expect.anything(),
+      );
+    });
+
+    it("gives back the per-minute run count of a channel answer that resumed nothing", async (): Promise<void> => {
+      spyOn(getStorage().budgets, "get").mockResolvedValue({
+        enforced: true,
+        plan: "free",
+        month: "2026-10",
+        usedPercent: 0,
+        shares: {
+          sandboxHours: 0,
+          hostedMcpHours: 0,
+          storageGb: 0,
+          egressGb: 0,
+        },
+        runsPerMinute: 1,
+        warned: false,
+      });
+      const message = channelMessage(1);
+      const pending: PendingQuestionInput = {
+        questions: [
+          { id: "q", header: "Stage", question: "Which stage?", options: [] },
+        ],
+        blocking: false,
+        answerBy: new Date(Date.now() + 60_000).toISOString(),
+      };
+      const record: AsyncToolResultRecord = {
+        resultId: "async_tool_1",
+        parentEventId: `${message.conversationKey}:async-question:async_tool_1`,
+        conversationKey: message.conversationKey,
+        toolName: "ask_questions",
+        toolCallId: "call_1",
+        input: pending,
+        status: "processing",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        expiresAt: Date.now() + 60_000,
+      };
+      spyOn(questions, "listOpenQuestions").mockResolvedValue([
+        { pending: pending, record: record },
+      ]);
+      // The live run already read the answer, so there is nothing to resume.
+      spyOn(
+        asyncToolResult,
+        "settleAsyncToolResultFromCallback",
+      ).mockResolvedValue({
+        ...record,
+        status: "completed",
+        handback: "stored",
+      });
+
+      await handleChannelRequest(message);
+      await handleChannelRequest({ ...message, eventId: "channel-event-2" });
+
+      expect(sent).not.toContainEqual(
+        expect.stringContaining("Rate limit reached"),
+      );
+    });
+
+    it("stops a model that keeps choosing approval-gated tools after two re-runs", async (): Promise<void> => {
+      spyOn(Session.prototype, "persistModelMessages").mockResolvedValue([]);
+      const taken = spyOn(
+        Session.prototype,
+        "takeNextIngress",
+      ).mockResolvedValue(null);
+      let passes = 0;
+      spyOn(continuation, "runAgentLoopUntilSubagentsIdle").mockImplementation(
+        async (_session, _turn, _config, _context, reply) => {
+          passes += 1;
+          // Ends the base's unbounded loop so the test can fail instead of hang.
+          if (passes > 10) throw new Error("runaway approval loop");
+          await reply.onApprovalRequired?.([
+            { approvalId: "a", toolCallId: "c", toolName: "bash", input: {} },
+          ]);
+
+          return { didFail: false, failureText: null, questions: [] };
+        },
+      );
+
+      await handleChannelRequest(channelMessage(1));
+      await drainWorkerQueue();
+
+      expect(passes).toBe(3);
+      expect(sent).toEqual([expect.stringContaining("need approval")]);
+      expect(taken.mock.calls).toEqual([
+        [
+          expect.objectContaining({
+            status: "failed",
+            error: expect.stringContaining("need approval"),
+          }),
+        ],
+      ]);
+    });
   });
 });

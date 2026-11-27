@@ -104,7 +104,7 @@ export function McpDetailsTab({
             onChange={(e) => setEditName(e.target.value)}
             className="h-8 text-sm"
             onKeyDown={(e) => {
-              if (e.key === "Enter") onSaveName();
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) onSaveName();
             }}
           />
           {nameChanged && canWrite && (
@@ -177,12 +177,15 @@ export function McpDetailsTab({
 
       <AgentWireRow nodeId={nodeId} server={server ?? null} />
 
-      {statusError && <p className="text-xs text-destructive">{statusError}</p>}
+      {statusError && (
+        <p role="alert" className="text-xs text-destructive">
+          {statusError}
+        </p>
+      )}
     </div>
   );
 }
 
-/** Agents opt in through their config's `mcp` branch. */
 function AgentWireRow({
   nodeId,
   server,
@@ -243,7 +246,11 @@ function AgentWireRow({
           aria-label="Toggle server on the connected agent"
         />
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </>
   );
 }

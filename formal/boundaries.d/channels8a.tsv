@@ -1,0 +1,2 @@
+kind	name	reason
+external	^channelApiFetch\(apiUrl\)$	The network fetch returned by the checked channelApiFetch; the twin checks its URL, method, headers and body.

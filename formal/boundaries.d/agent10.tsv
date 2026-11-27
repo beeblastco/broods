@@ -1,0 +1,5 @@
+kind	name	reason
+opaque	ZodTransform	A harness adapter tool schema object inside the adapter, passed through untouched and never inspected.
+external	^logs\.getLogger$	OpenTelemetry logs API accessor; the twin checks the logger name it is asked for.
+opaque	ProxyLogger	OpenTelemetry logger handle, used only to emit and never inspected.
+opaque	ProxyLoggerProvider	OpenTelemetry provider handle held inside the logger, never inspected.

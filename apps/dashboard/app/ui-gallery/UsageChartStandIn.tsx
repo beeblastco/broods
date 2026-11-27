@@ -11,11 +11,6 @@ import { useMemo, useState } from "react";
 const HOUR_MS = 60 * 60 * 1000;
 const START_MS = Date.UTC(2026, 8, 24, 0, 0);
 
-/**
- * The Usage tab's token chart on fixed, cache-heavy data: SDK input totals that
- * already include cache reads and writes, the case that once stacked past the
- * frame. Two bin counts to switch between, like changing the range.
- */
 export function UsageChartStandIn(): React.JSX.Element {
   const [bins, setBins] = useState(12);
   const [selected, setSelected] = useState<number | null>(null);

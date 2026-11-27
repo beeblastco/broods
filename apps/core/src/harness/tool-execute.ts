@@ -1,10 +1,3 @@
-/**
- * The one invariant every tool-execute wrapper must hold: the AI SDK streams a
- * tool only when execute returns an AsyncIterable, so an `async` wrapper turns a
- * streaming tool into a Promise the SDK hands back unread. Wrappers go through
- * wrapToolExecute rather than re-deriving that branch each time.
- */
-
 import type { ToolSet } from "ai";
 import type { Session } from "./session.ts";
 
@@ -14,31 +7,85 @@ const AsyncGeneratorFunction = Object.getPrototypeOf(
 
 export type ToolExecute = NonNullable<ToolSet[string]["execute"]>;
 
-/** Runs around a tool call: `before` gates/rewrites input, `after` its result. */
 export interface ToolExecuteHooks {
   before?: (input: unknown) => Promise<unknown>;
   after?: (output: unknown) => Promise<unknown>;
 }
 
-export function isAsyncIterable(
-  value: unknown,
-): value is AsyncIterable<unknown> {
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   return Boolean(
     value && typeof value === "object" && Symbol.asyncIterator in value,
   );
 }
 
-/**
- * Whether wrapping this execute must itself stream. Checked on the function, not
- * on a call's return value, because a wrapper has to pick its own shape before
- * it is allowed to start the tool.
- */
-export function isStreamingExecute(execute: ToolExecute): boolean {
+// The SDK streams only when execute returns an AsyncIterable, and a wrapper must pick its
+// shape before it starts the tool, so this checks the function, not a call's result.
+function isStreamingExecute(execute: ToolExecute): boolean {
   return execute instanceof AsyncGeneratorFunction;
 }
 
-// `after` applies to a streaming tool's last yield, which is the value the SDK
-// takes as its result.
+// Only awaited onToolExecutionStart callbacks can reorder calls, so `reserve` before those.
+export function serializeToolCalls(
+  tools: ToolSet,
+  name: string,
+): {
+  tools: ToolSet;
+  reserve: (toolCall: { toolName: string; toolCallId: string }) => void;
+} {
+  const tool = tools[name];
+  if (typeof tool?.execute !== "function" || isStreamingExecute(tool.execute)) {
+    return { tools: tools, reserve: (): void => {} };
+  }
+  const call = tool.execute;
+  const turns = new Map<string, ReturnType<typeof takeTurn>>();
+  let last: Promise<void> = Promise.resolve();
+
+  return {
+    tools: {
+      ...tools,
+      [name]: {
+        ...tool,
+        execute: async (...args: Parameters<ToolExecute>): Promise<unknown> => {
+          const [, { toolCallId, abortSignal }] = args;
+          const turn = turns.get(toolCallId) ?? takeTurn(toolCallId);
+          turns.delete(toolCallId);
+          const stopped = Promise.withResolvers<void>();
+          const stop = (): void => stopped.resolve();
+          abortSignal?.addEventListener("abort", stop, { once: true });
+          try {
+            if (!abortSignal?.aborted) {
+              await Promise.race([turn.after, stopped.promise]);
+            }
+            abortSignal?.throwIfAborted();
+
+            return await call(...args);
+          } finally {
+            abortSignal?.removeEventListener("abort", stop);
+            // A dropped call still frees the next only after the one before it.
+            void turn.after.then(turn.done);
+          }
+        },
+      } as ToolSet[string],
+    },
+    reserve: (toolCall: { toolName: string; toolCallId: string }): void => {
+      if (toolCall.toolName === name) takeTurn(toolCall.toolCallId);
+    },
+  };
+
+  function takeTurn(toolCallId: string): {
+    after: Promise<void>;
+    done: () => void;
+  } {
+    const done = Promise.withResolvers<void>();
+    const turn = { after: last, done: done.resolve };
+    turns.set(toolCallId, turn);
+    last = done.promise;
+
+    return turn;
+  }
+}
+
+// The SDK takes a streaming tool's last yield as its result, so `after` maps that one.
 export function wrapToolExecute(
   tools: ToolSet,
   hooks: (name: string) => ToolExecuteHooks,
@@ -83,10 +130,6 @@ export function wrapToolExecute(
   return wrapped;
 }
 
-/**
- * Revalidates the fencing token before any executable tool starts, unless a
- * fenced call proved it within the session's owner check interval.
- */
 export function wrapToolsWithOwnerFence(
   tools: ToolSet,
   session: Pick<Session, "assertRecentOwner">,

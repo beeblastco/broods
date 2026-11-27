@@ -30,7 +30,7 @@ function mockClient(
 
 const ref: AgentReference = {
   kind: "agent",
-  name: "tracy",
+  name: "support",
   id: "agent_1",
   project: "demo",
   stage: "development",
@@ -39,7 +39,7 @@ const ref: AgentReference = {
   stageSlug: "development",
 };
 
-test("continue posts continue: true to the scoped run route", async () => {
+test("continue posts continue: true to the scoped run route", async (): Promise<void> => {
   const { client, calls } = mockClient(202, {
     runId: "run_cccccccccccccccccccccccccccc0001",
     eventId: "continue-1",
@@ -68,12 +68,12 @@ test("continue posts continue: true to the scoped run route", async () => {
   expect(run.status).toBe("processing");
 });
 
-test("continue surfaces a non-202 answer as an error", async () => {
+test("continue surfaces a non-202 answer as an error", async (): Promise<void> => {
   const { client } = mockClient(404, {
     error: { message: "Conversation not found" },
   });
 
-  expect(
+  await expect(
     client.continue({ agentId: "agent_1", conversationKey: "chat_1" }),
   ).rejects.toThrow("Continue failed: 404");
 });

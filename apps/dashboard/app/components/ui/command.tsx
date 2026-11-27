@@ -42,7 +42,6 @@ function CommandDialog({
   title?: string;
   description?: string;
   className?: string;
-  /** Forwarded to the inner Command, for callers that rank their own rows. */
   shouldFilter?: boolean;
   showCloseButton?: boolean;
 }) {

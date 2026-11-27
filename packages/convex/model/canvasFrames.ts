@@ -1,52 +1,21 @@
-/**
- * Canvas frames: the groups sandbox, workspace and MCP cards sit in.
- *
- * Frames are derived, never stored. The dashboard draws them as parent nodes
- * and the tidy layout packs their members into slots, both from this module,
- * so the two agree on membership, order and geometry. A member node keeps
- * its absolute position in the saved layout; a frame's origin is read back
- * from its members. A group with one member is no frame: that node stays a
- * card, and becomes a chip once a second member joins its group.
- *
- * Two things about a group are stored, both on its member nodes. A node whose
- * `data.ungrouped` is set joins no group at all and stays a card, which is how
- * the canvas pulls a member out of a frame. A node's `data.frameSlot` is the
- * place a drop gave it in one named group, which is how a card dropped into a
- * frame lands where it was dropped rather than where the sort would put it.
- *
- * Also the relations frames and layout both read off the flat graph: which
- * agents reference a resource, which sandbox a workspace resolves to, and
- * which computer a machine MCP server runs on.
- *
- * Pure on purpose: the dashboard imports it, so no Convex server imports.
- */
+// Frames are derived, never stored: members keep absolute positions and a frame's origin is
+// read back from them. Pure: the dashboard imports it, so no Convex server imports.
 
 import type { LayoutEdge, LayoutNode, LayoutPosition } from "./canvasLayout";
 import type { McpPlacement, McpTransport } from "./mcp";
 
-/**
- * Member chip width inside a frame: `NODE_WIDTH` from `canvasLayout.ts`, so a
- * row and a card are the same width. Inlined; that module imports this one.
- */
+// `NODE_WIDTH` of `canvasLayout.ts`, inlined because that module imports this one.
 export const FRAME_CHIP_WIDTH = 176;
 
-/** Member chip height: a name line and a status line, the same for every kind. */
 export const FRAME_CHIP_HEIGHT = 44;
 
-/** Vertical gap between two chips. */
 export const FRAME_GAP = 8;
 
-/** Title row above the first chip. */
 export const FRAME_HEADER_HEIGHT = 28;
 
-/**
- * Slot height of the one chip a click opens: `NODE_HEIGHT` from
- * `canvasLayout.ts`, so an open chip is a card. Inlined; that module imports
- * this one.
- */
+// `NODE_HEIGHT` of `canvasLayout.ts`, so an open chip is a card; inlined like the width.
 export const FRAME_MEMBER_CARD_HEIGHT = 96;
 
-/** Inset left and right of the chips, and below the last one. */
 export const FRAME_PADDING = 8;
 
 export const FRAME_WIDTH = FRAME_CHIP_WIDTH + FRAME_PADDING * 2;
@@ -63,24 +32,15 @@ const MCP_FRAME_LABELS: Record<McpTransport, string> = {
   machine: "MCP · your computer",
 };
 
-/** One derived group and the member nodes it holds; drawn as a frame from two members. */
 export type CanvasFrame = {
-  /** `frame:{owners}:{kind}:{key}`, stable while membership rules hold. */
   id: string;
-  /** What splits groups of one kind: where a sandbox runs, a workspace's storage, an MCP transport. */
   key: string;
   kind: FrameKind;
   label: string;
-  /**
-   * Sandboxes by order number, machine MCP servers by their computer's order
-   * number, then by label.
-   */
   memberIds: string[];
-  /** Sorted ids of the agents that reach every member. */
   ownerIds: string[];
 };
 
-/** The group a member node falls into, before ownership splits it. */
 export type FrameGroup = {
   key: string;
   kind: FrameKind;
@@ -89,10 +49,8 @@ export type FrameGroup = {
 
 export type FrameKind = "sandbox" | "workspace" | "mcp";
 
-/** The place a drop gave a member, and the group it was given in. */
 export type FrameSlot = { group: string; slot: number };
 
-/** What frame geometry reads from a group. */
 export type FrameShape = Pick<CanvasFrame, "kind" | "memberIds">;
 
 export type FrameSize = {
@@ -100,25 +58,14 @@ export type FrameSize = {
   width: number;
 };
 
-/** Each saved MCP server's placement, keyed by the canvas node id it owns. */
 export type McpServersByNode = ReadonlyMap<string, McpPlacement>;
 
-/**
- * A workspace's effective sandbox, by the broods cascade
- * `ws.sandbox (override) ?? config.sandboxes[0] (inherited) ?? none (read-only)`.
- * Inherited lists every distinct default of the agents wired to it: each agent
- * runs the workspace on its own default.
- */
+// `ws.sandbox` (override) ?? each wired agent's `sandboxes[0]` (inherited) ?? none (read-only).
 export type WorkspaceSandboxIds =
   | { kind: "inherited"; sandboxIds: string[] }
   | { kind: "override"; sandboxIds: string[] }
   | { kind: "readonly" };
 
-/**
- * Agents that reach each non-agent node, keyed by node id. Ownership is read
- * undirected over default edges, and a mount ties its two ends together: an
- * agent that reaches one reaches the other.
- */
 export function agentOwners(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -138,8 +85,7 @@ export function agentOwners(
       }
       continue;
     }
-    // The dashboard draws agent→service, but a reconnected edge can arrive
-    // the other way round.
+    // A reconnected edge can arrive service→agent.
     const agentId = agentIds.has(edge.source)
       ? edge.source
       : agentIds.has(edge.target)
@@ -158,11 +104,6 @@ export function agentOwners(
   return owners;
 }
 
-/**
- * How many distinct agents reference each sandbox and workspace: a sandbox in
- * an agent's `sandboxes`, a workspace an agent wires, and a sandbox mounted
- * into such a workspace.
- */
 export function agentRefCounts(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -198,11 +139,6 @@ export function agentRefCounts(
   return new Map([...refs].map(([id, agents]) => [id, agents.size]));
 }
 
-/**
- * Sandbox node ids an agent reaches over a direct edge, in `sandboxes` order:
- * the agent node's stored `sandboxOrder` first, then any other direct sandbox
- * edge in edge order, so a freshly drawn sandbox lands last.
- */
 export function agentSandboxOrder(
   agent: LayoutNode,
   nodes: readonly LayoutNode[],
@@ -211,10 +147,6 @@ export function agentSandboxOrder(
   return sandboxOrdersFor([agent], nodes, edges).get(agent.id) ?? [];
 }
 
-/**
- * {@link agentSandboxOrder} for every agent at once, in one pass over the
- * edges, for the readers that need all of them.
- */
 export function agentSandboxOrders(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -226,14 +158,8 @@ export function agentSandboxOrders(
   );
 }
 
-/**
- * The place each sandbox card shows: its 1-based place in its agents'
- * `sandboxes`, only where every agent that wires it gives it the same place
- * and at least one of them lists more than one sandbox. A shared sandbox that
- * is first for one agent and second for another has no number, and neither
- * does an agent's only sandbox: with nothing to order, "1 · default" says
- * nothing. Frames sort by `sandboxOrderNumbers` instead, which always numbers.
- */
+// Only where every wiring agent agrees and one of them lists several sandboxes: an only
+// sandbox's "1 · default" says nothing. Frames sort by `sandboxOrderNumbers` instead.
 export function agreedSandboxOrderNumbers(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -262,12 +188,6 @@ export function compareByLabel(a: LayoutNode, b: LayoutNode): number {
   return labelOf(a).localeCompare(labelOf(b));
 }
 
-/**
- * Every group on the canvas, one-member groups included. Only sandbox,
- * workspace and MCP nodes at least one agent reaches are grouped; unreached
- * ones stay standalone cards, and so does a node pulled out by hand
- * (`data.ungrouped`).
- */
 export function deriveCanvasGroups(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -275,8 +195,7 @@ export function deriveCanvasGroups(
 ): CanvasFrame[] {
   const owners = agentOwners(nodes, edges);
   const sandboxNumbers = sandboxOrderNumbers(nodes, edges);
-  // A machine MCP server sorts by the place of the computer it runs on, so
-  // servers line up with their computers and runs-on edges never cross.
+  // A machine MCP server sorts by its computer's place, so runs-on edges never cross.
   const numbers = new Map(sandboxNumbers);
   for (const [mcpId, sandboxId] of runsOnSandboxIds(nodes, mcpServers)) {
     const number = sandboxNumbers.get(sandboxId);
@@ -329,7 +248,6 @@ export function deriveCanvasGroups(
   );
 }
 
-/** Edge kind, from the ReactFlow field when set, else from the persisted id prefix. */
 export function edgeKind(edge: LayoutEdge): "mount" | "subagent" | "default" {
   if (edge.type === "mount" || edge.id.startsWith("mount:")) return "mount";
   if (edge.type === "subagent" || edge.id.startsWith("subagent:")) {
@@ -339,11 +257,6 @@ export function edgeKind(edge: LayoutEdge): "mount" | "subagent" | "default" {
   return "default";
 }
 
-/**
- * The frame group a node would join, or null for node types that are never
- * framed. Sandboxes split by where they run, workspaces by storage provider,
- * MCP servers by transport; a server not saved yet has no transport.
- */
 export function frameGroupOf(
   node: LayoutNode,
   mcpServers: McpServersByNode,
@@ -368,8 +281,7 @@ export function frameGroupOf(
       typeof storage === "object" && storage !== null && "provider" in storage
         ? storage.provider
         : undefined;
-    // A workspace saved without storage is materialized as S3. The provider
-    // splits groups but stays out of the label while S3 is the only one.
+    // A workspace saved without storage is materialized as S3.
     const key = typeof provider === "string" && provider ? provider : "s3";
 
     return { key: key, kind: "workspace", label: "Workspaces" };
@@ -385,12 +297,6 @@ export function frameGroupOf(
   return null;
 }
 
-/**
- * Absolute top-left of each member's slot, filled in `memberIds` order. With
- * `expandedId` that member takes a card's slot and pushes the ones under it
- * down; the saved layout is packed without it, so an open chip moves no
- * stored position.
- */
 export function frameMemberPositions(
   origin: LayoutPosition,
   frame: FrameShape,
@@ -408,7 +314,6 @@ export function frameMemberPositions(
   );
 }
 
-/** A frame's top-left, read back from its members' absolute positions. */
 export function frameOriginOf(
   memberPositions: readonly LayoutPosition[],
 ): LayoutPosition {
@@ -418,12 +323,10 @@ export function frameOriginOf(
   return { x: x - FRAME_PADDING, y: y - FRAME_HEADER_HEIGHT };
 }
 
-/** The groups drawn as frames: those with two members or more. */
 export function framesOf(groups: readonly CanvasFrame[]): CanvasFrame[] {
   return groups.filter((group) => group.memberIds.length >= 2);
 }
 
-/** Open frame box for its kind and member count, taller around an open chip. */
 export function frameSize(frame: FrameShape, expandedId?: string): FrameSize {
   const chips = frame.memberIds.reduce(
     (total, id) => total + memberSlotHeight(id, expandedId),
@@ -436,12 +339,7 @@ export function frameSize(frame: FrameShape, expandedId?: string): FrameSize {
   };
 }
 
-/**
- * Whether an edge id names a `broods/` project endpoint: a `cli-` node id right
- * after the kind prefix, the way the CLI sync writes every edge it creates. The
- * sync prunes such an edge its config no longer lists, and the dashboard locks
- * it.
- */
+// The CLI sync writes every edge it creates with a `cli-` node id right after the kind prefix.
 export function isCliEdgeId(id: string): boolean {
   return (
     id.startsWith("mount:cli-") ||
@@ -450,7 +348,6 @@ export function isCliEdgeId(id: string): boolean {
   );
 }
 
-/** The slot a member fills: a chip's, or a card's while it is the open one. */
 export function memberSlotHeight(
   id: string,
   expandedId: string | undefined,
@@ -458,10 +355,6 @@ export function memberSlotHeight(
   return id === expandedId ? FRAME_MEMBER_CARD_HEIGHT : FRAME_CHIP_HEIGHT;
 }
 
-/**
- * The sandbox node each machine MCP server runs on, by the server's node id:
- * the sandbox whose mount name, or else label, is the server's `sandbox`.
- */
 export function runsOnSandboxIds(
   nodes: readonly LayoutNode[],
   mcpServers: McpServersByNode,
@@ -486,10 +379,6 @@ export function runsOnSandboxIds(
   );
 }
 
-/**
- * Each directly wired sandbox's 1-based place in `sandboxes`. A sandbox
- * several agents list takes its lowest place.
- */
 export function sandboxOrderNumbers(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -507,10 +396,6 @@ export function sandboxOrderNumbers(
   return numbers;
 }
 
-/**
- * Sandboxes no agent wires that a workspace mounts: they run only that
- * workspace's files, so they have no place in any `sandboxes` to number.
- */
 export function workspaceOnlySandboxIds(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -530,12 +415,7 @@ export function workspaceOnlySandboxIds(
   );
 }
 
-/**
- * Each workspace's effective sandboxes. A sandbox wired to it is a mount; with
- * none, a `readOnly` flag forces read-only (the pure graph cannot express a
- * `sandbox: null` ref); otherwise it inherits the default of every agent wired
- * to it that has one, and is read-only when none does.
- */
+// `data.readOnly` stands in for a `sandbox: null` ref, which the graph cannot express.
 export function workspaceSandboxIds(
   nodes: readonly LayoutNode[],
   edges: readonly LayoutEdge[],
@@ -580,7 +460,6 @@ export function workspaceSandboxIds(
           ],
         ];
       }
-      // Sorted, so the list does not depend on the order edges arrive in.
       const inherited = [
         ...new Set(
           [...(agents.get(workspace.id) ?? [])]
@@ -601,17 +480,8 @@ export function workspaceSandboxIds(
   );
 }
 
-/**
- * The place a drop gave this member in this group, or last when it has none. A
- * drop writes it on every member of the group at once, so a group is either
- * ordered by hand or ordered by the rules, never half of each.
- *
- * It names the group it was given in, because a group's id is its members' kind,
- * key and owning agents: re-wire a card to another agent and the slot it was
- * given somewhere else stops counting instead of following it there. A group
- * that orders itself carries none of these, so a sandbox chip's place and the
- * place its badge shows stay the same number.
- */
+// A drop writes a slot on every member at once, so a group is ordered by hand or by rules.
+// The slot names its group, so re-wiring a card to another agent drops the stale slot.
 function handSlotOf(node: LayoutNode, frameId: string): number {
   const stored: unknown = node.data.frameSlot;
   if (typeof stored !== "object" || stored === null) {
@@ -636,7 +506,6 @@ function lowestOrderNumber(
   return Math.min(...frame.memberIds.map((id) => orderNumberOf(numbers, id)));
 }
 
-/** Order number for sorting; nodes without one sort after every numbered node. */
 function orderNumberOf(
   numbers: ReadonlyMap<string, number>,
   nodeId: string,
@@ -644,7 +513,6 @@ function orderNumberOf(
   return numbers.get(nodeId) ?? Number.MAX_SAFE_INTEGER;
 }
 
-/** The `sandboxes` order of each of `agents`, reading every edge once. */
 function sandboxOrdersFor(
   agents: readonly LayoutNode[],
   nodes: readonly LayoutNode[],
@@ -683,10 +551,6 @@ function sandboxOrdersFor(
   );
 }
 
-/**
- * Give both ends of every mount every owner either end has. Repeats until
- * nothing changes, so a chain of mounts settles on one owner set too.
- */
 function spreadOwnersOverMounts(
   owners: Map<string, Set<string>>,
   mountPairs: readonly (readonly [string, string])[],

@@ -21,8 +21,7 @@ interface Props {
 
 const DEFAULT_POLICY_DOCUMENT = {
   version: 1,
-  // Starts watching rather than blocking, so a new policy cannot break a live
-  // agent the moment it is attached. Flip to "enforce" once the log looks right.
+  // Audit first, so a new policy cannot break a live agent the moment it is attached.
   mode: "audit",
   rules: [
     {
@@ -62,7 +61,6 @@ export function PoliciesPanel({
   const [busy, setBusy] = useState(false);
   const [deletingPolicy, setDeletingPolicy] =
     useState<Doc<"agentPolicies"> | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   function beginNew(): void {
@@ -121,14 +119,11 @@ export function PoliciesPanel({
   async function deletePolicy(): Promise<void> {
     if (!deletingPolicy) return;
     setIsDeleting(true);
-    setDeleteError(null);
     try {
       await removePolicy({ policyId: deletingPolicy._id });
       setDeletingPolicy(null);
       if (editing && editing !== "new" && editing._id === deletingPolicy._id)
         setEditing(null);
-    } catch (err) {
-      setDeleteError(toErrorMessage(err));
     } finally {
       setIsDeleting(false);
     }
@@ -219,9 +214,6 @@ export function PoliciesPanel({
           {policies && policies.length === 0 && (
             <p className="text-sm text-muted-foreground">No policies yet.</p>
           )}
-          {deleteError && (
-            <p className="text-xs text-destructive">{deleteError}</p>
-          )}
         </div>
 
         {editing && (
@@ -246,7 +238,11 @@ export function PoliciesPanel({
               aria-label="Policy document"
               className="min-h-64 font-mono text-xs"
             />
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            {error && (
+              <p role="alert" className="text-xs text-destructive">
+                {error}
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
@@ -273,10 +269,7 @@ export function PoliciesPanel({
         <DeleteConfirmDialog
           open={deletingPolicy !== null}
           onOpenChange={(open) => {
-            if (!open) {
-              setDeletingPolicy(null);
-              setDeleteError(null);
-            }
+            if (!open) setDeletingPolicy(null);
           }}
           resourceName={deletingPolicy.name}
           resourceType="policy"

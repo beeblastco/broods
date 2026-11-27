@@ -1,12 +1,13 @@
-/**
- * Deployment-key authorization for status/attach reads. A child subagent read
- * is allowed only through its already-authorized, active, public parent.
- */
-
+import {
+  USER_CONVERSATION_PREFIX,
+  userOwnsConversation,
+  type UserToken,
+} from "@broods/convex/model/userToken";
 import type { StageTicketScope } from "../shared/auth.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   parseAccountAgentScopedKey,
+  publicConversationKeyFromScoped,
   subagentParentEventId,
 } from "../shared/runtime-keys.ts";
 import type { AgentDeploymentScope } from "../shared/storage.ts";
@@ -18,8 +19,8 @@ export interface StatusAccessAuth {
   endpointId: string;
   stageSlug: string;
   projectSlug: string;
-  /** A member's ticket, which runs the stage's private agents too. */
   stageTicket?: StageTicketScope;
+  user?: UserToken;
 }
 
 export interface StatusAccessContext {
@@ -39,7 +40,10 @@ export interface StatusAccessContext {
 }
 
 export interface StatusAccessDenial {
-  code: "public_access_disabled" | "status_access_denied";
+  code:
+    | "public_access_disabled"
+    | "status_access_denied"
+    | "user_token_required";
   message: string;
 }
 
@@ -48,7 +52,6 @@ export interface StatusAccessRequest {
   agentId: string;
   eventId: string;
   publicEventId: string;
-  /** The run's envelope, already resolved by run id before this check runs. */
   ingress: IngressStatusRecord;
 }
 
@@ -82,8 +85,7 @@ async function publicAgentDenial(
   context: StatusAccessContext,
 ): Promise<StatusAccessDenial | null> {
   const agent = await context.agentLoader(request.accountId, request.agentId);
-  // A ticket may POST a run on a private agent of its stage, so it may also
-  // read that run back; publicAccess only opens an agent to the frontend key.
+  // A stage ticket may run its stage's private agents, so it may read those runs back too.
   if (!agent || (agent.config.publicAccess !== true && !auth.stageTicket)) {
     return {
       code: "public_access_disabled",
@@ -94,14 +96,18 @@ async function publicAgentDenial(
     request.accountId,
     request.agentId,
   );
-
-  return deploymentScopeMatches(auth, deployment) &&
-    deploymentScopeMatches(
+  // Scope first, so a key from another stage learns nothing of the agent.
+  if (
+    !deploymentScopeMatches(auth, deployment) ||
+    !deploymentScopeMatches(
       auth,
       request.ingress.publicDeploymentIngress ?? null,
     )
-    ? null
-    : accessDenied();
+  ) {
+    return accessDenied();
+  }
+
+  return embeddableUserDenial(auth, agent, request.ingress.conversationKey);
 }
 
 async function subagentDenial(
@@ -131,8 +137,7 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  // The parent must pass the gate its own status read does: an active agent
-  // (public, unless a ticket reads it) on this deployment, with a live ingress row.
+  // The parent must pass the same gate its own status read does.
   const [parentAgent, parentDeployment, parentStatus] = await Promise.all([
     context.agentLoader(request.accountId, parentScope.agentId),
     context.deploymentLoader(request.accountId, parentScope.agentId),
@@ -153,7 +158,38 @@ async function subagentDenial(
     return accessDenied();
   }
 
-  return null;
+  return embeddableUserDenial(auth, parentAgent, parentStatus.conversationKey);
+}
+
+export function embeddableKeyReaches(
+  user: UserToken | undefined,
+  publicConversationKey: string,
+): boolean {
+  return user
+    ? userOwnsConversation(user, publicConversationKey)
+    : !publicConversationKey.startsWith(USER_CONVERSATION_PREFIX);
+}
+
+function embeddableUserDenial(
+  auth: StatusAccessAuth,
+  agent: AgentRecord,
+  scopedConversationKey: string,
+): StatusAccessDenial | null {
+  if (auth.stageTicket) return null;
+  if (agent.requireUserToken === true && !auth.user) {
+    return {
+      code: "user_token_required",
+      message: `Agent ${agent.agentId} requires a signed user token with the runtime key.`,
+    };
+  }
+  // A key scoped to another account or agent keeps its prefix, so it never reads as a user's.
+  const publicKey = publicConversationKeyFromScoped(
+    scopedConversationKey,
+    auth.account.accountId,
+    agent.agentId,
+  );
+
+  return embeddableKeyReaches(auth.user, publicKey) ? null : accessDenied();
 }
 
 function accessDenied(): StatusAccessDenial {

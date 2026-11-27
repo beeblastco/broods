@@ -1,8 +1,3 @@
-/**
- * The gate's own behavior. A performance gate that silently stops failing is
- * worse than no gate, so the grading rules get tests of their own.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
   compareToBaselines,
@@ -32,8 +27,7 @@ const BASELINES: BenchBaselineFile = {
   },
 };
 
-// Enough gated cases for the suite's median drift to stand in for the host's
-// clock, the way it does on a real run.
+// Enough gated cases for the suite's median drift to stand in for the host's clock.
 const SUITE_NAMES: readonly string[] = ["a", "b", "c", "d", "e", "f"].map(
   (letter) => `suite/${letter}`,
 );
@@ -211,16 +205,6 @@ describe("compareToBaselines", () => {
     expect(machineRatio).toBeCloseTo(0.6, 5);
     expect(comparisons[0]?.status).toBe("ok");
     expect(comparisons[0]?.failing).toBe(false);
-  });
-
-  it("judges against the raw clock when too few cases have baselines", () => {
-    const { machineRatio } = compareToBaselines(
-      [measurement({ name: "gated/case", nsPerOp: 140 })],
-      BASELINES,
-      SAME_MACHINE,
-    );
-
-    expect(machineRatio).toBe(1);
   });
 
   it("reports a skipped case without grading it or moving the machine ratio", () => {

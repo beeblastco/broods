@@ -1,24 +1,16 @@
-/**
- * Session pruning, which runs once per turn over the whole conversation before
- * the model call. Cost here grows with history, so the suite measures two sizes
- * of the same conversation: a regression that turns this superlinear shows up
- * as the long case moving while the short one holds.
- */
-
 import { pruneSessionMessages } from "../../apps/core/src/harness/pruning.ts";
 import type { AgentConfig } from "../../apps/core/src/shared/domain/agent-config.ts";
 import type { BenchCase } from "../runner.ts";
 
-// The `ai` package is a core dependency, not a root one, so take the message
-// type from the function under test rather than reaching into its node_modules.
+// `ai` is a core dependency, not a root one: take the type from the function under test.
 type ModelMessage = Parameters<typeof pruneSessionMessages>[0][number];
 
-// Anthropic is not a stored-item provider, so reasoning is stripped: the
-// default path, and the one that does the most work.
+// Not a stored-item provider, so reasoning is stripped: the default path and the most work.
 const AGENT_CONFIG: AgentConfig = {
   model: { provider: "anthropic", modelId: "claude-opus-5" },
 };
 
+// Two sizes of one history: a superlinear regression moves the long case, not the short.
 const SHORT_CONVERSATION: readonly ModelMessage[] = buildConversation(10);
 const LONG_CONVERSATION: readonly ModelMessage[] = buildConversation(50);
 
@@ -37,11 +29,6 @@ export const coreSessionCases: readonly BenchCase[] = [
   },
 ];
 
-/**
- * A tool-using conversation of `turns` rounds: four messages per turn (user,
- * assistant reasoning + tool call, tool result, assistant answer), which is the
- * shape an agent run accumulates.
- */
 function buildConversation(turns: number): ModelMessage[] {
   const messages: ModelMessage[] = [];
   for (let turn = 0; turn < turns; turn += 1) {

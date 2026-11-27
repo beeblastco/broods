@@ -26,8 +26,6 @@ describe("account-management deployment key auth", () => {
     setStorageForTests(deploymentStorage());
     const { handler } = await import("../src/accounts/handler.ts");
 
-    // Skills, tools, and cron CRUD moved to the Convex config plane. The
-    // account handler no longer serves them for any principal.
     const skillsResponse = await handler(event("GET", "/v1/skills"));
     const toolsResponse = await handler(event("GET", "/v1/tools"));
     const cronsResponse = await handler(event("GET", "/v1/crons"));

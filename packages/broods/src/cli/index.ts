@@ -1,65 +1,89 @@
 #!/usr/bin/env node
-/**
- * CLI entry point for code-first broods resources.
- */
 
 import {
   chmod,
   lstat,
   mkdir,
   readFile,
-  readdir,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import module from "node:module";
-import { basename, join, relative, resolve, sep } from "node:path";
-import { watch } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { stripVTControlCharacters } from "node:util";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
-import type { CliManifest } from "../contracts.ts";
+import type {
+  CliManifest,
+  CliPruneTarget,
+  DeploymentRegion,
+} from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
   gatewayUrlForDashboard,
   readStoredAuth,
-  stageFromEnv,
+  readStoredLogin,
+  removeStoredAuth,
   stripTrailingSlash,
   writePrivateFile,
   writeStoredAuth,
   type StoredAuthConfig,
 } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
+import { USER_TOKEN_SECRET_ENV } from "../user-token.ts";
+import { keyHint } from "../../../convex/model/accountSecrets.ts";
+import {
+  DEPLOYMENT_REGIONS,
+  LIVE_DEPLOYMENT_REGIONS,
+} from "../../../convex/cli/types.ts";
+import { USER_TOKEN_SECRET_PREFIX } from "../../../convex/model/userToken.ts";
 import {
   type CliOnboardingContext,
   type CliOnboardingOrg,
   type CliOnboardingProject,
+  type CliGitHubLink,
+  type CliGitHubStatus,
   type CliProject,
   type CliStage,
+  type CliStageSession,
+  cliFetch,
+  type DiffEntry,
   diffManifests,
   BroodsSyncClient,
   ManifestConflictError,
   type RemoteManifestResponse,
   RouteNotMountedError,
 } from "../sync.ts";
+import { readStageSource } from "../source.ts";
+import type { StageSource } from "../../../convex/model/stageSource.ts";
 import {
   BroodsClient,
   DEFAULT_CORE_BASE_URL,
   type AgentReference,
 } from "../client.ts";
-import { isShellOwnedEnv, loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import {
+  isShellOwnedEnv,
+  loadBroodsRuntimeConfig,
+  parseEnv as parseDotenv,
+} from "../runtime-config.ts";
+import {
+  fetchObservabilityTrace,
+  StageSessionRefusedError,
   subscribeObservabilityLogs,
   type ObservabilityClientOptions,
 } from "../observability-client.ts";
 import {
   isSandboxLogId,
+  isTraceId,
+  MAX_OBSERVABILITY_BACKFILL,
   type LogLevel,
   type ObservabilityLogEntry,
+  type ObservabilitySpanRow,
 } from "../observability-contracts.ts";
 import { BroodsAccountApiError, BroodsAccountClient } from "../account.ts";
 import {
@@ -68,9 +92,9 @@ import {
   isConnectionType,
 } from "../../../convex/model/connections.ts";
 import { connectInBrowser } from "./connect.ts";
+import { collectSourceFiles, watchSource } from "./dev-watch.ts";
 import {
   hasFlag,
-  isPlainObject,
   loginWithBrowser,
   optionValue,
   positionalArgs,
@@ -79,6 +103,7 @@ import {
   promptSelect,
   promptSelectOrText,
   promptText,
+  openBrowser,
   requireAuth,
 } from "./utils.ts";
 import {
@@ -86,6 +111,7 @@ import {
   formatContext,
   formatNext,
   formatTarget,
+  formatDuration,
   formatWarning,
   printDeploymentTarget,
   printDiffEntries,
@@ -99,6 +125,7 @@ import {
 } from "./output.ts";
 import {
   isNewerVersion,
+  isInstalledPackage,
   latestPublishedVersion,
   majorVersion,
   updateTarget,
@@ -110,20 +137,17 @@ import agentSkillOnboardText from "../../skills/broods/scripts/onboard.sh" with 
 const VERSION = packageJson.version;
 const AGENT_SKILL_DIR = join(".agents", "skills", "broods");
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
-// Re-mint a stage ticket this long before it expires, so a reconnect never
-// presents one the gateway is about to refuse.
-const STAGE_SESSION_REFRESH_MS = 60_000;
-// How often `broods dev` re-reads the stage when another session keeps syncing it.
 const DEV_SYNC_ATTEMPTS = 3;
 const DEFAULT_SERVICE_REGION = "eu-west-1";
-const SERVICE_REGIONS = [
+const SERVICE_REGIONS: ReadonlyArray<{
+  region: DeploymentRegion;
+  label: string;
+}> = [
   { region: "eu-west-1", label: "eu-west-1 (Ireland)" },
   { region: "us-east-1", label: "us-east-1 (US East)" },
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
-] as const;
+];
 
-// Options every command accepts, appended to each command's own help so a
-// reader never has to jump back to the top-level page for them.
 const GLOBAL_OPTIONS = `Global options:
   --project <name>      Project name override (default: package name or folder)
   --stage <name>        Target stage override (BROODS_STAGE otherwise)
@@ -131,20 +155,17 @@ const GLOBAL_OPTIONS = `Global options:
   --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
   -h, --help            Show this help`;
 
-// One line per group: each command's own page carries its description.
 const COMMAND_GROUPS = `Commands
   Develop   dev  diff  run  logs  stream
-  Ship      deploy  env  stage
-  Inspect   agent  whoami
-  Account   login  connect  disconnect  org  project
+  Ship      deploy  env  stage  github
+  Inspect   agent  runs  trace  audit  usage  whoami
+  Account   login  logout  connect  disconnect  org  project
   Tools     init  machine  mcp  update`;
 
-// Help printed to a terminal is colored for stdout; help embedded in an error
-// goes to stderr, so it stays plain rather than guess that stream's TTY.
+// Help inside an error goes to stderr, so it stays plain rather than guess that stream's TTY.
 const HELP_STDOUT: FormatOptions = { stream: "stdout" };
 const HELP_PLAIN: FormatOptions = { color: false };
 
-// Commands that act on one project and stage, so their page leads with it.
 const STAGE_SCOPED_COMMANDS = new Set([
   "agent",
   "deploy",
@@ -154,12 +175,13 @@ const STAGE_SCOPED_COMMANDS = new Set([
   "logs",
   "machine",
   "run",
+  "runs",
   "stage",
   "stream",
+  "trace",
+  "usage",
 ]);
 
-// One page per command, printed by `broods <command> --help` and by the
-// grouped commands when they are invoked with no subcommand at all.
 const COMMAND_HELP: Record<string, string> = {
   agent: `Usage: broods agent <list|get> [name]
 
@@ -176,17 +198,21 @@ connections. Uses the account key in BROODS_ACCOUNT_SECRET when set, otherwise
 your broods login.
 
 Types:
-${CONNECTION_TYPE_NAMES.map((type) => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
+${CONNECTION_TYPE_NAMES.map((type): string => `  ${type.padEnd(11)} ${CONNECTION_TYPES[type].description}`).join("\n")}
 
 ${GLOBAL_OPTIONS}`,
   deploy: `Usage: broods deploy [options]
 
-Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
-BROODS_STAGE by design. Pass --stage to deploy anywhere else.
+Syncs Production once and writes BROODS_API_KEY to .env.local, plus
+BROODS_USER_TOKEN_SECRET when the stage has no signing secret yet. With CI
+set it writes neither. Ignores BROODS_STAGE by design. Pass --stage to deploy
+anywhere else.
 
 Options:
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime key and write it to .env.local
+  --region <region>     Production's region, pinned by its first deploy
+                        (default: ${DEFAULT_SERVICE_REGION})
 
 ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
@@ -241,11 +267,19 @@ Options:
 ${GLOBAL_OPTIONS}`,
   login: `Usage: broods login [options]
 
-Authenticates through the dashboard and stores the token in
+Prints a link and a short code, then waits. Open the link on any
+device, check it shows the same code, and approve. Stores the token in
 ~/.broods/config.json.
 
 Options:
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logout: `Usage: broods logout [options]
+
+Revokes the stored login on the server and removes it from
+~/.broods/config.json. Other servers' logins stay. A BROODS_TOKEN
+in the environment is not touched: unset it yourself.
 
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
@@ -256,7 +290,7 @@ Options:
   -n, --limit <n>       Backfill line count (default 100)
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Show every level (DEBUG from the backfill only)
-  --json                Print the backfill as raw JSON
+  --json                Print each log line as JSON
   --sandbox <id>        Tail one sandbox instance's guest output instead. The id
                         is the last segment of the instance's log stream
                         (dashboard Instances sheet).
@@ -304,6 +338,32 @@ A prompt is sent as the first turn; redirected output streams plain text and
 therefore requires a prompt.
 
 ${GLOBAL_OPTIONS}`,
+  github: `Usage: broods github <status|repos|link|unlink|connect> [owner/repo]
+
+Links the project to a GitHub repo, so a push deploys its stage from your own
+GitHub Actions: Broods seals a project key per stage into the repo and commits
+.github/workflows/broods.yml.
+
+Subcommands:
+  status               The project's link, latest deploy per branch, and accounts
+  repos                Repos the org's connected GitHub accounts let you link
+  link <owner/repo>    Link a repo; by default the default branch deploys
+                       Development, or Production when the project has that
+                       stage, with dev (created when missing) for Development
+  unlink               Unlink and revoke the keys; the repo keeps its workflow
+  connect              Open the page that installs the Broods GitHub App on an
+                       account (org admins)
+
+Options:
+  --folder <path>                The folder holding broods/, when there are several
+  --production-branch <name|none>   Branch Production deploys from; none for no
+                                 Production deploys
+  --development-branch <name|none>  Branch Development deploys from; none for
+                                 no Development deploys
+  --json                         Print the result as JSON
+  --yes                          Skip the unlink confirmation
+
+${GLOBAL_OPTIONS}`,
   project: `Usage: broods project <list|delete> [name]
 
 Subcommands:
@@ -337,6 +397,51 @@ Streams live logs for the whole project/stage until Ctrl+C. No backfill.
 Options:
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Stream INFO and up (DEBUG is dashboard-only)
+
+${GLOBAL_OPTIONS}`,
+  audit: `Usage: broods audit [--limit <n>] [--agent <id>] [--action <name>] [--json]
+
+Prints the account's audit events, newest first: runs, deploys and changes.
+
+Options:
+  --limit <n>           How many to print. Default 30
+  --agent <id>          Only this agent's events
+  --action <name>       Only this action, e.g. run.completed
+  --json                Print them as JSON
+
+${GLOBAL_OPTIONS}`,
+  runs: `Usage: broods runs [--limit <n>] [--agent <id>] [--status <status>] [--json]
+
+Prints the stage's recent runs, newest first, with the trace id \`broods trace\`
+takes. Authenticates with your \`broods login\`.
+
+Options:
+  --limit <n>           How many to print. Default 20
+  --agent <id>          Only this agent's runs, from the last seven days
+  --status <status>     waiting, needs_input, ok or error, among the newest 500
+  --json                Print them as JSON
+
+${GLOBAL_OPTIONS}`,
+  usage: `Usage: broods usage [--range <range>] [--json]
+
+Prints the stage's tokens, invocations, model calls, run time and sandbox CPU.
+
+Options:
+  --range <range>       1h, 3h, 1d, 7d, 30d or 1y. Default 7d
+  --json                Print it as JSON
+
+${GLOBAL_OPTIONS}`,
+  trace: `Usage: broods trace <trace-id> [--json]
+
+Prints one run's trace: every model step and tool call with its status,
+duration and error. --json prints every span with its full attributes (system
+prompt, model input, reasoning, response, tool input and output), which is what
+a coding agent should read. The dashboard's Tracing tab copies the id.
+
+Authenticates with your \`broods login\`, like \`broods logs\`.
+
+Options:
+  --json                Print the spans as a JSON array
 
 ${GLOBAL_OPTIONS}`,
   mcp: `Usage: broods mcp
@@ -408,6 +513,10 @@ async function main(): Promise<void> {
       await login(args);
 
       return;
+    case "logout":
+      await logout(args);
+
+      return;
     case "connect":
       await connectCommand(args);
 
@@ -426,6 +535,10 @@ async function main(): Promise<void> {
       return;
     case "project":
       await projectCommand(args);
+
+      return;
+    case "github":
+      await githubCommand(args);
 
       return;
     case "stage":
@@ -456,6 +569,22 @@ async function main(): Promise<void> {
       await logs(args);
 
       return;
+    case "trace":
+      await trace(args);
+
+      return;
+    case "audit":
+      await audit(args);
+
+      return;
+    case "runs":
+      await runs(args);
+
+      return;
+    case "usage":
+      await usage(args);
+
+      return;
     case "machine":
       await machine(args);
 
@@ -483,16 +612,10 @@ async function main(): Promise<void> {
   }
 }
 
-// Falls back to the top-level page so a mistyped key still prints something
-// useful instead of "undefined" inside an error message.
 function commandHelp(command: string): string {
   return COMMAND_HELP[command] ?? renderHelp([], HELP_PLAIN);
 }
 
-/**
- * Where the next command acts, from local state only: help runs offline, so a
- * shell export wins over `.env.local` here exactly as it does for commands.
- */
 function helpContext(args: string[]): HelpContext {
   const runtime = loadBroodsRuntimeConfig();
   const baseUrl = optionValue(args, "--base-url") ?? runtime.baseUrl;
@@ -511,7 +634,6 @@ function helpContext(args: string[]): HelpContext {
   };
 }
 
-// The one or two commands that move this directory forward from where it is.
 function nextCommands(context: HelpContext): [string, string][] {
   if (!context.loggedIn) {
     return [["broods login", "sign in through the dashboard"]];
@@ -526,7 +648,6 @@ function nextCommands(context: HelpContext): [string, string][] {
   ];
 }
 
-// A command page, led by what it would act on when the command is stage-scoped.
 function renderCommandHelp(command: string, args: string[]): string {
   const page = commandHelp(command);
   if (!STAGE_SCOPED_COMMANDS.has(command)) return page;
@@ -535,8 +656,7 @@ function renderCommandHelp(command: string, args: string[]): string {
   if (command !== "deploy" || optionValue(args, "--stage") !== undefined) {
     return `${formatTarget(project, context.stage, HELP_STDOUT)}\n\n${page}`;
   }
-  // deploy ignores BROODS_STAGE, so say so only when one is actually selected.
-  const selected = stageFromEnv();
+  const selected = process.env.BROODS_STAGE;
   const note =
     selected && selected !== "production"
       ? `ignores stage ${selected}`
@@ -549,7 +669,6 @@ function renderCommandHelp(command: string, args: string[]): string {
   return `${target}\n\n${page}`;
 }
 
-/** Bare `broods`: where you are pointed, what to run next, then every command. */
 function renderHelp(args: string[], options: FormatOptions): string {
   const context = helpContext(args);
 
@@ -579,11 +698,17 @@ async function init(args: string[]): Promise<void> {
     force,
   );
   await ensureAgentSkill(force);
+  // Like login and dev: BROODS_DASHBOARD_URL / BROODS_BASE_URL pick the server.
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardFlag = optionValue(args, "--dashboard-url");
   const dashboardUrl =
-    optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
+    dashboardFlag ?? runtime.dashboardUrl ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
-    baseUrl: gatewayUrlForDashboard(dashboardUrl),
+    // The flag names one server, so its gateway wins over a stored login's.
+    baseUrl:
+      (dashboardFlag ? undefined : runtime.baseUrl) ??
+      gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
@@ -599,8 +724,7 @@ async function login(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
-  // Login records who you are, not what you work on. Project, stage and region
-  // land in .env.local only when passed; `init` and `dev` pick them otherwise.
+  // Login pins no scope unless passed: `init` and `dev` pick project, stage and region.
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
     baseUrl: auth.baseUrl,
@@ -618,28 +742,51 @@ async function login(args: string[]): Promise<void> {
   if (account) console.log(`Account: ${account}`);
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
   if (!project) return;
-  const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+  const stage =
+    optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
 
   await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
-/** An account API failure's own message, without the method, path and raw JSON around it. */
-function apiErrorMessage(error: unknown): string {
-  if (!(error instanceof BroodsAccountApiError))
-    return error instanceof Error ? error.message : String(error);
-  try {
-    const body = JSON.parse(error.body) as { error?: { message?: string } };
-
-    return body.error?.message ?? error.message;
-  } catch {
-    return error.message;
+// Revokes the saved login it removes; on a 401 the server revoked nothing, so it only warns.
+async function logout(args: string[]): Promise<void> {
+  loadBroodsRuntimeConfig();
+  const envTokenNote = process.env.BROODS_TOKEN
+    ? "BROODS_TOKEN is set, so commands keep using it. The CLI cannot remove it: unset it where it is set."
+    : "";
+  const auth = readStoredLogin(optionValue(args, "--base-url"));
+  if (!auth) {
+    throw new Error(`No saved login to remove. ${envTokenNote}`.trim());
   }
+  const response = await cliFetch(`${auth.baseUrl}/v1/account/auth/token`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.token}` },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new Error(
+      `Logout failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  await removeStoredAuth(auth.baseUrl);
+  if (response.ok) printSuccess(`Logged out of ${auth.baseUrl}`);
+  else
+    printWarning(
+      `Removed the saved login for ${auth.baseUrl}. The server did not revoke it: it was already invalid, or it is lent to an agent and ends with that session.`,
+    );
+  if (envTokenNote) printWarning(envTokenNote);
 }
 
-/**
- * `broods connect [type]`: with a type, signs that external account in through
- * the browser; without one, lists the account's connections.
- */
+function apiErrorMessage(error: unknown): string {
+  // With no envelope the server message is the raw body: keep the method, path and status.
+  if (
+    error instanceof BroodsAccountApiError &&
+    error.serverMessage !== error.body
+  )
+    return error.serverMessage;
+
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function connectCommand(args: string[]): Promise<void> {
   const [type] = positionalArgs(args);
   const client = await connectionsClient(args);
@@ -655,7 +802,7 @@ async function connectCommand(args: string[]): Promise<void> {
   }
   const meta = CONNECTION_TYPES[type];
   const connection = await connectInBrowser(client, type).catch(
-    (error: unknown) => {
+    (error: unknown): never => {
       throw new Error(apiErrorMessage(error));
     },
   );
@@ -669,10 +816,6 @@ async function connectCommand(args: string[]): Promise<void> {
   for (const model of connection.models) console.log(`  ${model}`);
 }
 
-/**
- * The account client connections run on: the account key when set, else
- * the `broods login` token. Role sessions are refused by the route itself.
- */
 async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
   loadBroodsRuntimeConfig();
   const baseUrl = optionValue(args, "--base-url");
@@ -691,7 +834,6 @@ async function connectionsClient(args: string[]): Promise<BroodsAccountClient> {
   });
 }
 
-/** `broods disconnect <type>`: forget a connection and revoke it. */
 async function disconnectCommand(args: string[]): Promise<void> {
   const [type] = positionalArgs(args);
   if (!type || !isConnectionType(type))
@@ -705,7 +847,6 @@ async function disconnectCommand(args: string[]): Promise<void> {
   console.log(`No ${type} connection.`);
 }
 
-/** The account's connections as a table, then the types it can add. */
 async function listConnections(client: BroodsAccountClient): Promise<void> {
   const connections = await client.listConnections();
   if (connections.length === 0) {
@@ -714,8 +855,12 @@ async function listConnections(client: BroodsAccountClient): Promise<void> {
     console.log(`${"TYPE".padEnd(16)} ACCOUNT`);
   }
   for (const connection of connections) {
+    // A newer server can list a type this CLI release does not know.
+    const label = isConnectionType(connection.type)
+      ? CONNECTION_TYPES[connection.type].label
+      : String(connection.type);
     console.log(
-      `${CONNECTION_TYPES[connection.type].label.padEnd(16)} ${connection.email ?? connection.clientId}`,
+      `${label.padEnd(16)} ${connection.email ?? connection.clientId}`,
     );
   }
   console.log(
@@ -723,11 +868,6 @@ async function listConnections(client: BroodsAccountClient): Promise<void> {
   );
 }
 
-/**
- * Best-effort: recover the stage's runtime key after login and write it to
- * .env.local so `dev` can stream right away. Silent when the project/stage
- * is not deployed yet, because login itself should still succeed.
- */
 async function writeRuntimeKeyForLogin(
   baseUrl: string,
   token: string,
@@ -766,6 +906,7 @@ async function whoami(args: string[]): Promise<void> {
     auth = await requireAuth(optionValue(args, "--base-url"));
   } catch (error) {
     printWarning(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
 
     return;
   }
@@ -776,7 +917,9 @@ async function whoami(args: string[]): Promise<void> {
     token: auth.token,
   });
   const context = await client.getOnboarding();
-  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  const org = context.orgs.find(
+    (entry): boolean => entry.id === context.currentOrgId,
+  );
   if (context.user) console.log(`User:        ${context.user.email}`);
   console.log(
     `Org:         ${org ? formatOrgChoice(org) : context.currentOrgId}`,
@@ -786,8 +929,6 @@ async function whoami(args: string[]): Promise<void> {
       `Account:     ${context.account.username} (${context.account.status})`,
     );
   }
-  // A folder name is a guess, not a scope anyone chose, so there is no remote
-  // project or key to check against yet.
   if (!projectSet) {
     printWarning("No project set. `broods dev` picks one.");
 
@@ -796,7 +937,7 @@ async function whoami(args: string[]): Promise<void> {
 
   await printRuntimeKeyStatus(client, scope, org?.name);
 
-  const projects = context.projects.map((entry) => entry.name);
+  const projects = context.projects.map((entry): string => entry.name);
   if (!projects.includes(scope.project)) {
     printWarning(
       `This org has no project named ${scope.project}. It has: ${projects.length > 0 ? projects.join(", ") : "none"}.`,
@@ -804,18 +945,11 @@ async function whoami(args: string[]): Promise<void> {
   }
 }
 
-/**
- * Prints how the local BROODS_API_KEY compares with the key the org and stage
- * serve. Used by `whoami`.
- */
 async function printRuntimeKeyStatus(
   client: BroodsSyncClient,
   scope: ReturnType<typeof targetScope>,
   orgName: string | undefined,
 ): Promise<void> {
-  // The runtime key is per stage, so a key that does not match the one this
-  // org/stage serves means `run`, `logs` and `stream` are talking to a
-  // different tenant than `dev` would sync to.
   const localKey = process.env.BROODS_API_KEY;
   const keySource = isShellOwnedEnv("BROODS_API_KEY")
     ? "your shell"
@@ -861,8 +995,6 @@ async function orgCommand(args: string[]): Promise<void> {
   const isList = subcommand === "list" || subcommand === "ls";
   const isUse = subcommand === "use" || subcommand === "select";
   const isCreate = subcommand === "create" || subcommand === "new";
-  // Reject a typo before the login round trip, or it surfaces as a network
-  // error instead of the usage the caller actually needs.
   if (!isList && !isUse && !isCreate) {
     throw new Error(
       `Unknown org subcommand: ${subcommand}\n\n${commandHelp("org")}`,
@@ -904,18 +1036,20 @@ async function orgCommand(args: string[]): Promise<void> {
 
   if (isUse) {
     const selectable = context.orgs.filter(
-      (org) => org.accountStatus === "active",
+      (org): boolean => org.accountStatus === "active",
     );
     const selected = needle
       ? selectable.find(
-          (org) =>
+          (org): boolean =>
             org.slug === needle || org.name === needle || org.id === needle,
         )
       : await promptSelect(
           "Select organization",
           selectable,
           formatOrgChoice,
-          selectable.findIndex((org) => org.id === context.currentOrgId),
+          selectable.findIndex(
+            (org): boolean => org.id === context.currentOrgId,
+          ),
         );
     if (!selected) {
       throw new Error(
@@ -953,8 +1087,6 @@ async function projectCommand(args: string[]): Promise<void> {
   }
   const isList = subcommand === "list" || subcommand === "ls";
   const isDelete = subcommand === "delete" || subcommand === "rm";
-  // Reject a typo before the login round trip, or it surfaces as a network
-  // error instead of the usage the caller actually needs.
   if (!isList && !isDelete) {
     throw new Error(
       `Unknown project subcommand: ${subcommand}\n\n${commandHelp("project")}`,
@@ -987,7 +1119,7 @@ async function projectCommand(args: string[]): Promise<void> {
     for (const project of projects) {
       console.log(formatProject(project, scope.project));
     }
-    const empty = projects.filter((project) => project.empty);
+    const empty = projects.filter((project): boolean => project.empty);
     if (empty.length > 0) {
       console.log(
         `\n${empty.length} empty project(s). Delete one with \`broods project delete <name>\`.`,
@@ -1001,15 +1133,13 @@ async function projectCommand(args: string[]): Promise<void> {
   if (!name.trim()) throw new Error("Project name is required.");
   const projects = await client.listProjects();
   const target = projects.find(
-    (project) => project.name === name || project.slug === name,
+    (project): boolean => project.name === name || project.slug === name,
   );
   if (!target) {
     throw new Error(
-      `No project named "${name}". Existing: ${projects.map((project) => project.name).join(", ")}.`,
+      `No project named "${name}". Existing: ${projects.map((project): string => project.name).join(", ")}.`,
     );
   }
-  // Naming what dies is the whole safety story here: the counts are the only
-  // signal separating an abandoned shell from somebody's live stage.
   if (!hasFlag(args, "--yes")) {
     console.log(`Deleting ${target.name} removes ${describeContents(target)}.`);
     const confirmed = await promptConfirm(
@@ -1021,8 +1151,7 @@ async function projectCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  // The id, never the name: names are not unique, and a name the server
-  // re-resolves could purge a different project than the one just confirmed.
+  // By id: names are not unique, so a re-resolved name could purge another project.
   const deleted = await client.deleteProject(target.id);
   if (!deleted) throw new Error(`Project ${target.name} was not found.`);
   printSuccess(
@@ -1035,6 +1164,129 @@ async function projectCommand(args: string[]): Promise<void> {
   }
 }
 
+/** `broods github`: link the project to a repo and read how its pushes deploy. */
+async function githubCommand(args: string[]): Promise<void> {
+  const [subcommand, repo] = positionalArgs(args);
+  const known = ["status", "repos", "link", "unlink", "connect"];
+  if (!subcommand) {
+    console.log(renderCommandHelp("github", args));
+
+    return;
+  }
+  // Reject a typo before the login round trip, like `broods project`.
+  if (!known.includes(subcommand)) {
+    throw new Error(
+      `Unknown github subcommand: ${subcommand}\n\n${commandHelp("github")}`,
+    );
+  }
+  const runtime = loadBroodsRuntimeConfig();
+  const auth = await requireAuthOrLogin(
+    optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
+    optionValue(args, "--base-url"),
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const { project } = targetScope(args);
+  const json = hasFlag(args, "--json");
+  const print = (value: unknown, text: () => void): void => {
+    if (json) console.log(JSON.stringify(value, null, 2));
+    else text();
+  };
+
+  if (subcommand === "connect") {
+    const { url } = await client.githubConnect();
+    print({ url: url }, (): void => {
+      console.log(`Install the Broods GitHub App: ${url}`);
+      openBrowser(url);
+    });
+
+    return;
+  }
+  if (subcommand === "repos") {
+    const [repos, status] = await Promise.all([
+      client.githubRepos(project),
+      client.githubStatus(project),
+    ]);
+    print(repos, (): void => {
+      if (repos.length === 0) {
+        console.log("No repos yet. `broods github connect` adds an account.");
+      }
+      for (const entry of repos) {
+        console.log(
+          `${entry.fullName}  ${entry.defaultBranch}${entry.private ? "  private" : ""}`,
+        );
+      }
+      // A repo the App was not given is fixed in the account's App settings.
+      const web = status.webUrl ?? "https://github.com";
+      for (const installation of status.installations) {
+        console.log(
+          `Repo missing? Choose ${installation.login}'s repos: ${
+            installation.accountType === "Organization"
+              ? `${web}/organizations/${installation.login}/settings/installations/${installation.installationId}`
+              : `${web}/settings/installations/${installation.installationId}`
+          }`,
+        );
+      }
+    });
+
+    return;
+  }
+  if (subcommand === "link") {
+    if (!repo) throw new Error("Usage: broods github link <owner/repo>");
+    const linked = await client.githubLink(project, {
+      repo: repo,
+      folder: optionValue(args, "--folder"),
+      baseUrl: auth.baseUrl,
+      productionBranch: branchOption(args, "--production-branch"),
+      developmentBranch: branchOption(args, "--development-branch"),
+    });
+    print(linked, (): void => {
+      printSuccess(`Linked ${linked.fullName} to ${project}`);
+      printGitHubLink(linked);
+    });
+
+    return;
+  }
+  if (subcommand === "unlink") {
+    if (
+      !hasFlag(args, "--yes") &&
+      !(await promptConfirm(`Unlink ${project}'s repo and revoke its keys?`))
+    ) {
+      return;
+    }
+    await client.githubUnlink(project);
+    print({ unlinked: true }, (): void =>
+      printSuccess(`Unlinked ${project}; the repo keeps its workflow file.`),
+    );
+
+    return;
+  }
+  const status = await client.githubStatus(project);
+  print(status, (): void => {
+    if (!status.configured) {
+      console.log(`GitHub is not set up on ${auth.baseUrl}.`);
+
+      return;
+    }
+    if (!status.repo) {
+      console.log(
+        `${project} is not linked. \`broods github link <owner/repo>\` links one.`,
+      );
+    } else {
+      console.log(`${project} deploys from ${status.repo.fullName}`);
+      printGitHubLink(status.repo, status.deploys);
+    }
+    const accounts = status.installations.map((entry): string => entry.login);
+    console.log(
+      `Connected accounts: ${accounts.length > 0 ? accounts.join(", ") : "none (`broods github connect`)"}`,
+    );
+  });
+}
+
 async function stageCommand(args: string[]): Promise<void> {
   const [subcommand, needle] = positionalArgs(args);
   if (!subcommand) {
@@ -1045,8 +1297,6 @@ async function stageCommand(args: string[]): Promise<void> {
   const isList = subcommand === "list" || subcommand === "ls";
   const isUse = subcommand === "use" || subcommand === "select";
   const isCreate = subcommand === "create" || subcommand === "new";
-  // Reject a typo before the login round trip, or it surfaces as a network
-  // error instead of the usage the caller actually needs.
   if (!isList && !isUse && !isCreate) {
     throw new Error(
       `Unknown stage subcommand: ${subcommand}\n\n${commandHelp("stage")}`,
@@ -1086,16 +1336,18 @@ async function stageCommand(args: string[]): Promise<void> {
   if (isUse) {
     const stages = await client.listStages(scope.project);
     const selected = needle
-      ? stages.find((stage) => stageNameEquals(stage.name, needle))
+      ? stages.find((stage): boolean => stageNameEquals(stage.name, needle))
       : await promptSelect(
           "Select stage",
           stages,
           formatStageDetail,
-          stages.findIndex((stage) => stageNameEquals(stage.name, scope.stage)),
+          stages.findIndex((stage): boolean =>
+            stageNameEquals(stage.name, scope.stage),
+          ),
         );
     if (!selected) {
       throw new Error(
-        `${scope.project} has no stage "${needle}". Existing: ${stages.map((stage) => stage.name).join(", ")}. Create it with \`broods stage create ${needle} --from ${scope.stage}\`.`,
+        `${scope.project} has no stage "${needle}". Existing: ${stages.map((stage): string => stage.name).join(", ")}. Create it with \`broods stage create ${needle} --from ${scope.stage}\`.`,
       );
     }
     const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
@@ -1155,8 +1407,6 @@ async function diff(args: string[]): Promise<void> {
   const remote = await client.getManifest(manifest.project, manifest.stage);
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 
-  // Resource drift is only half the picture: a stage can match the manifest
-  // exactly and still hold a stale secret behind an env() ref.
   printEnvDriftWarning(
     await inspectEnvRefs(client, manifest),
     `${manifest.project}/${manifest.stage}`,
@@ -1177,10 +1427,20 @@ async function deploy(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
+  // Not BROODS_REGION: `init` writes that as a default, and Production's region is pinned once.
+  const flag = optionValue(args, "--region");
+  const region = DEPLOYMENT_REGIONS.find((known): boolean => known === flag);
+  if (hasFlag(args, "--region") && !region) {
+    throw new Error(
+      `Unknown region ${flag ?? "(empty)"}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
   const result = await client.putManifest(
-    manifest,
+    region ? { ...manifest, region: region } : manifest,
     hasFlag(args, "--prune"),
     hasFlag(args, "--rotate-key"),
+    undefined,
+    await sourceToStore(),
   );
   await writeGeneratedFiles(
     manifest,
@@ -1194,27 +1454,72 @@ async function deploy(args: string[]): Promise<void> {
   printSuccess(
     `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.stage}`,
   );
-  await applyDeploymentKey(result.deployment);
+  await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 }
 
-/**
- * Persist the stage's recoverable runtime key after a deploy.
- */
 async function applyDeploymentKey(
+  client: BroodsSyncClient,
+  manifest: CliManifest,
   deployment: RemoteManifestResponse["deployment"],
 ): Promise<void> {
-  if (!deployment) return;
+  if (!deployment || process.env.CI) return;
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
     printSuccess(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
+  }
+
+  const remoteHint = deployment.userTokenSecretHint;
+  const matches = (secret: string | undefined): boolean =>
+    secret !== undefined &&
+    keyHint(USER_TOKEN_SECRET_PREFIX, secret) === remoteHint;
+  const fileSecret = parseDotenv(
+    await readTextIfExists(resolve(process.cwd(), ".env.local")),
+  )[USER_TOKEN_SECRET_ENV];
+  if (
+    remoteHint &&
+    (matches(process.env[USER_TOKEN_SECRET_ENV]) || matches(fileSecret))
+  ) {
+    warnShellShadowedEnv(
+      USER_TOKEN_SECRET_ENV,
+      !matches(process.env[USER_TOKEN_SECRET_ENV]) &&
+        isShellOwnedEnv(USER_TOKEN_SECRET_ENV),
+    );
 
     return;
   }
+  // Never rotate an existing secret: that voids what a backend, CI or teammate signs with.
+  if (remoteHint) {
+    printWarning(
+      `${manifest.project}/${manifest.stage} already has a user token signing secret (${remoteHint}), ` +
+        `and ${USER_TOKEN_SECRET_ENV} here is unset or another one. Use the secret your backend ` +
+        "signs with, or rotate it on the dashboard's Runtime key tab.",
+    );
+
+    return;
+  }
+
+  // The sync already landed, so a refused rotation (no keys:write) only warns.
+  const rotated = await client
+    .rotateUserTokenSecret(manifest.project, manifest.stage)
+    .catch((error: unknown): null => {
+      printWarning(
+        `${error instanceof Error ? error.message : String(error)}. ` +
+          `Set ${USER_TOKEN_SECRET_ENV} from the dashboard's Runtime key tab to sign user tokens.`,
+      );
+
+      return null;
+    });
+  if (!rotated) return;
+  const shadowed = isShellOwnedEnv(USER_TOKEN_SECRET_ENV);
+  await writeEnvValue(USER_TOKEN_SECRET_ENV, rotated.secret);
+  printSuccess(
+    `Wrote a new user token signing secret to ${USER_TOKEN_SECRET_ENV} in .env.local`,
+  );
+  warnShellShadowedEnv(USER_TOKEN_SECRET_ENV, shadowed);
 }
 
-/** Surface non-fatal deploy advisories (unresolved policy refs, resources a prune kept). */
 function printSyncWarnings(result: RemoteManifestResponse): void {
   const missingPolicies = result.warnings?.missingPolicies ?? [];
   if (missingPolicies.length > 0) {
@@ -1233,11 +1538,6 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   }
 }
 
-/**
- * Replaces this copy of the CLI with the newest published release, using the
- * package manager that installed it. The install runs in the foreground so the
- * manager's own output and exit code reach the caller unchanged.
- */
 async function update(): Promise<void> {
   const latest = await latestPublishedVersion({ maxAgeMs: 0 });
   if (latest === null) {
@@ -1259,7 +1559,7 @@ async function update(): Promise<void> {
     `Updating broods ${VERSION} → ${next} ${target.global ? "globally" : "in this project"}`,
   );
   console.log(`$ ${[target.command, ...target.args].join(" ")}`);
-  await new Promise<void>((resolveInstall, reject) => {
+  await new Promise<void>((resolveInstall, reject): void => {
     // Every manager is a `.cmd` shim on Windows, which only a shell can run.
     const child = spawn(target.command, target.args, {
       cwd: target.cwd,
@@ -1267,7 +1567,7 @@ async function update(): Promise<void> {
       shell: process.platform === "win32",
     });
     child.on("error", reject);
-    child.on("exit", (code) => {
+    child.on("exit", (code): void => {
       if (code === 0) {
         resolveInstall();
 
@@ -1286,11 +1586,9 @@ async function update(): Promise<void> {
   }
 }
 
-/**
- * Tells a sync that a newer CLI is published. Cached for a day and silent on
- * any failure, because a version check must never hold up or fail a sync.
- */
 async function warnOnOutdatedCli(): Promise<void> {
+  // A monorepo build's workspace version is never the released one, so it would always nag.
+  if (!isInstalledPackage()) return;
   const latest = await latestPublishedVersion();
   if (latest === null || !isNewerVersion(latest, VERSION)) return;
   printWarning(
@@ -1302,22 +1600,15 @@ async function dev(args: string[]): Promise<void> {
   await ensureDevOnboarding(args);
 
   if (hasFlag(args, "--once")) {
-    if (!process.env.BROODS_SUPPRESS_DEV_TARGET) {
-      await printDevTarget(args);
-      await warnOnOutdatedCli();
-    }
     const start = performance.now();
-    await syncDev(args);
+    await syncDev(args, !process.env.BROODS_SUPPRESS_DEV_TARGET);
     printReadyLine(performance.now() - start);
 
     return;
   }
 
-  // Each sync runs in a FRESH child process (`dev --once`). Bun does not bust the
-  // dynamic-import cache via query strings, so an in-process watch would keep
-  // recompiling the file content captured at startup and never see edits. The
-  // child shares a declined-deletes file so a removed resource is not re-prompted
-  // on every later save.
+  // Each sync is a fresh `dev --once` child: Bun's import cache ignores query strings, so an
+  // in-process watch never sees edits. Children share a file of declined deletes.
   const declinedFile = join(tmpdir(), `broods-declined-${process.pid}.txt`);
   const childEnv = {
     ...process.env,
@@ -1326,84 +1617,58 @@ async function dev(args: string[]): Promise<void> {
     BROODS_RELOAD_ENV: "1",
   };
 
-  await printDevTarget(args);
+  const { compiled, auth } = await loadDevTarget(args);
+  printDevTarget(args, compiled, auth);
   await warnOnOutdatedCli();
 
-  let timer: NodeJS.Timeout | undefined;
-  let syncing = false;
-  let pending = false;
-  // Recorded only after a sync succeeds, so a failed one retries on the next save.
-  let lastSourceSignature: string | undefined;
-
-  const syncChanged = async (): Promise<void> => {
-    const signature = await sourceSignature();
-    if (signature === lastSourceSignature) return;
-    await runSyncChild(args, childEnv);
-    lastSourceSignature = signature;
+  // Live logs like `convex dev`, retried after each sync: a new stage has none until a deploy.
+  const logController = new AbortController();
+  let logs: "off" | "on" | "failed" = "off";
+  let hinted = false;
+  const startLogs = (): void => {
+    if (logs !== "off") return;
+    logs = "on";
+    void streamDevLogs(args, logController.signal).then((outcome): void => {
+      if (outcome === "refused" && !hinted) {
+        hinted = true;
+        console.log("· live logs start after the first sync lands.");
+      }
+      logs = outcome === "failed" ? "failed" : "off";
+    });
   };
-  const printSyncError = (error: unknown): void =>
-    console.error(error instanceof Error ? error.message : String(error));
-
-  // A failed first sync keeps the watcher up, so fixing the file retries it.
-  await syncChanged().catch(printSyncError);
-
-  const runSync = (): void => {
-    if (syncing) {
-      pending = true;
-
-      return;
-    }
-    syncing = true;
-    syncChanged()
-      .catch(printSyncError)
-      .finally(() => {
-        syncing = false;
-        if (pending) {
-          pending = false;
-          runSync();
-        }
-      });
-  };
-
-  const watcher = watch(
+  const watcher = watchSource(
     resolve(process.cwd(), PROJECT_DIR),
-    { recursive: true },
-    (_event, filename) => {
-      if (!filename || isGeneratedPath(filename)) return;
-      clearTimeout(timer);
-      timer = setTimeout(runSync, 150);
+    async (): Promise<void> => {
+      try {
+        await runSyncChild(args, childEnv);
+      } finally {
+        startLogs();
+      }
     },
   );
 
-  // Like `convex dev`: stream live agent logs alongside the resource watcher so
-  // the developer sees activity while editing. Best-effort: with no runtime
-  // key configured yet, it prints a hint and skips without breaking the sync.
-  const logController = new AbortController();
-  void streamDevLogs(args, logController.signal);
-
-  process.on("SIGINT", () => {
+  process.on("SIGINT", (): never => {
     logController.abort();
     watcher.close();
     process.exit(0);
   });
 }
 
-// Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the
-// stage has no deployment yet, print a hint and return rather than breaking the
-// watch loop.
+// "refused" (no deployment yet) and "dropped" retry after the next sync; "failed" is printed.
 async function streamDevLogs(
   args: string[],
   signal: AbortSignal,
-): Promise<void> {
+): Promise<"refused" | "dropped" | "failed"> {
   let session: ObservabilityClientOptions;
   try {
     session = await openStageSession(args);
   } catch (error) {
+    if (error instanceof StageSessionRefusedError) return "refused";
     console.log(
       `· live logs off. ${error instanceof Error ? error.message : String(error)}`,
     );
 
-    return;
+    return "failed";
   }
 
   const minLevel = resolveMinLevel(args);
@@ -1424,6 +1689,8 @@ async function streamDevLogs(
       );
     }
   }
+
+  return "dropped";
 }
 
 async function ensureDevOnboarding(args: string[]): Promise<void> {
@@ -1432,24 +1699,18 @@ async function ensureDevOnboarding(args: string[]): Promise<void> {
   await ensureLocalDevDefaults(args);
 }
 
-/**
- * Install the broods skill for coding agents, the way Convex vendors its AI
- * rules files. Only a repo that already works with an agent gets it, and an
- * existing install is left alone unless forced, so local edits survive.
- */
 async function ensureAgentSkill(force: boolean): Promise<void> {
   const cwd = process.cwd();
   const markers = [".agent", ".agents", ".claude", "AGENTS.md", "CLAUDE.md"];
   const found = await Promise.all(
-    markers.map((marker) => pathExists(resolve(cwd, marker))),
+    markers.map((marker): Promise<boolean> => pathExists(resolve(cwd, marker))),
   );
   if (!found.includes(true)) return;
 
   const root = resolve(cwd, AGENT_SKILL_DIR);
   if (!force && (await pathExists(resolve(root, "SKILL.md")))) return;
 
-  // A cloned repo can ship a symlink anywhere under .agents, and init runs
-  // without executing repo code, so refuse to write through one.
+  // A cloned repo can plant a symlink under .agents; never write through one.
   const skillRel = join(AGENT_SKILL_DIR, "SKILL.md");
   const onboardRel = join(AGENT_SKILL_DIR, "scripts", "onboard.sh");
   for (const rel of [skillRel, onboardRel]) {
@@ -1468,7 +1729,6 @@ async function ensureAgentSkill(force: boolean): Promise<void> {
   printSuccess(`Installed the broods agent skill at ${AGENT_SKILL_DIR}/`);
 }
 
-/** True when any existing component of relPath under cwd is a symlink. */
 async function hasSymlinkComponent(
   cwd: string,
   relPath: string,
@@ -1479,7 +1739,6 @@ async function hasSymlinkComponent(
     try {
       if ((await lstat(current)).isSymbolicLink()) return true;
     } catch {
-      // Nothing past a missing component can exist, symlinks included.
       return false;
     }
   }
@@ -1512,19 +1771,26 @@ async function ensureProjectShell(): Promise<void> {
     false,
   );
   printSuccess(`Created starter ${PROJECT_DIR}/`);
+  const installed = (
+    module.createRequire(join(root, "index.ts")).resolve.paths("broods") ?? []
+  ).some((dir): boolean => existsSync(join(dir, "broods")));
+  if (!installed)
+    console.log(
+      "· For editor types, run `npm install broods` or `bun add broods`.",
+    );
 }
 
 async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
-  const values = parseEnv(current);
+  const values = parseDotenv(current);
   const stageValue = values.BROODS_STAGE;
   const missing = [
     "BROODS_DASHBOARD_URL",
     "BROODS_BASE_URL",
     "BROODS_PROJECT",
     "BROODS_REGION",
-  ].filter((key) => values[key] === undefined);
+  ].filter((key): boolean => values[key] === undefined);
   if (missing.length === 0 && stageValue !== undefined) return;
   const needsProject = values.BROODS_PROJECT === undefined;
   const needsStage = stageValue === undefined;
@@ -1539,7 +1805,8 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     optionValue(args, "--project") ??
     process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
-  let stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
+  let stage =
+    optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development";
   let region =
     optionValue(args, "--region") ??
     process.env.BROODS_REGION ??
@@ -1566,13 +1833,15 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
-    const regions = [...SERVICE_REGIONS];
+    const regions = SERVICE_REGIONS.filter((entry): boolean =>
+      LIVE_DEPLOYMENT_REGIONS.includes(entry.region),
+    );
     region = await promptSelect(
       "Select service region",
       regions,
-      (entry) => entry.label,
-      regions.findIndex((entry) => entry.region === region),
-    ).then((entry) => entry.region);
+      (entry): string => entry.label,
+      regions.findIndex((entry): boolean => entry.region === region),
+    ).then((entry): DeploymentRegion => entry.region);
   }
 
   await writeLocalEnvDefaults({
@@ -1593,9 +1862,7 @@ async function requireAuthOrLogin(
     return await requireAuth(baseUrl);
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
-    printWarning(
-      `${error instanceof Error ? error.message : String(error)} Starting browser login.`,
-    );
+    console.log("Not signed in yet. Opening your browser to sign in.");
 
     return await loginWithBrowser(dashboardUrl);
   }
@@ -1608,7 +1875,6 @@ async function getOnboardingContextOrFallback(
   try {
     return await client.getOnboarding();
   } catch (error) {
-    // Only an older server falls back; a 401 or a network error is the answer.
     if (!(error instanceof RouteNotMountedError) || !auth.org) throw error;
     printWarning(
       "This broods server cannot list your orgs yet; using the org from your login.",
@@ -1630,17 +1896,15 @@ async function getOnboardingContextOrFallback(
   }
 }
 
-/**
- * Persist the switched-to org locally, then repoint BROODS_API_KEY at it so
- * `run`/`logs` cannot keep serving the org the CLI just left.
- */
 async function applyOrgSelection(
   client: BroodsSyncClient,
   auth: StoredAuthConfig,
   context: CliOnboardingContext,
   args: string[],
 ): Promise<void> {
-  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  const org = context.orgs.find(
+    (entry): boolean => entry.id === context.currentOrgId,
+  );
   if (!org) {
     throw new Error("Selected organization is not visible to this login");
   }
@@ -1666,17 +1930,11 @@ async function applyOrgSelection(
 
   console.log(`Org: ${formatOrgChoice(org)}`);
   console.log(
-    `Projects: ${context.projects.length > 0 ? context.projects.map((entry) => entry.name).join(", ") : "none yet"}`,
+    `Projects: ${context.projects.length > 0 ? context.projects.map((entry): string => entry.name).join(", ") : "none yet"}`,
   );
   await syncRuntimeKeyForScope(client, targetScope(args));
 }
 
-/**
- * Rewrite BROODS_API_KEY for the scope the CLI now points at. The switch is
- * already persisted by the time this runs, so a lookup failure warns and
- * returns rather than failing the whole command with a stored-but-unreported
- * org/stage change.
- */
 async function syncRuntimeKeyForScope(
   client: BroodsSyncClient,
   scope: { project: string; stage: string },
@@ -1701,8 +1959,7 @@ async function syncRuntimeKeyForScope(
     return;
   }
 
-  // A shell export shadows .env.local, so process.env is not proof the file is
-  // current: write it anyway and tell the user their export still wins.
+  // A shell export shadows .env.local, so a matching process.env does not prove it current.
   const shadowed = isShellOwnedEnv("BROODS_API_KEY");
   if (!shadowed && process.env.BROODS_API_KEY === key.apiKey) return;
 
@@ -1711,11 +1968,7 @@ async function syncRuntimeKeyForScope(
   warnShellShadowedEnv("BROODS_API_KEY", shadowed);
 }
 
-/**
- * Warn when a shell export overrides the `.env.local` value just written.
- * `shadowed` has to be sampled before the write, which makes the file and
- * `process.env` agree again.
- */
+// Sample `shadowed` before the write, which makes the file and process.env agree again.
 function warnShellShadowedEnv(name: string, shadowed: boolean): void {
   if (!shadowed) return;
   printWarning(
@@ -1732,11 +1985,23 @@ function formatOrgChoice(org: CliOnboardingOrg): string {
   return `${org.name} (${org.slug}, ${suffix}${plan})`;
 }
 
-/** The slug only earns a mention when it differs from the name. */
 function formatProjectChoice(project: CliOnboardingProject): string {
   return project.slug === project.name
     ? project.name
     : `${project.name} (${project.slug})`;
+}
+
+// A branch flag: its name, null for `none`, unset when the flag is absent.
+function branchOption(args: string[], name: string): string | null | undefined {
+  const value = optionValue(args, name);
+  if (
+    value === undefined &&
+    args.some((arg): boolean => arg.startsWith(name))
+  ) {
+    throw new Error(`${name} needs a branch name, or none.`);
+  }
+
+  return value === "none" ? null : value;
 }
 
 function describeContents(project: CliProject): string {
@@ -1745,8 +2010,6 @@ function describeContents(project: CliProject): string {
     : `${project.stageCount} stage(s), ${project.agentCount} agent(s), ${project.variableCount} env var(s), ${project.deploymentCount} deployment(s), ${project.fileCount} workspace file(s)`;
 }
 
-// The scope can hold either spelling: BROODS_PROJECT and the directory name
-// are matched against name and slug alike everywhere else.
 function formatProject(project: CliProject, current: string): string {
   const contents = project.empty ? "empty" : describeContents(project);
 
@@ -1754,6 +2017,42 @@ function formatProject(project: CliProject, current: string): string {
     `${project.name}: ${contents}`,
     project.name === current || project.slug === current,
   );
+}
+
+// Each mapped stage's branch with its latest run, then what needs attention.
+function printGitHubLink(
+  link: CliGitHubLink,
+  deploys: CliGitHubStatus["deploys"] = [],
+): void {
+  console.log(`  folder       ${link.rootDirectory || "/"}`);
+  const stages = [
+    ["Production", link.productionBranch],
+    ["Development", link.developmentBranch],
+  ] as const;
+  for (const [stage, branch] of stages) {
+    if (!branch) continue;
+    const run = deploys.find((entry): boolean => entry.branch === branch);
+    const state = !run
+      ? "no deploy yet"
+      : run.status !== "completed"
+        ? "deploying"
+        : run.conclusion === "success"
+          ? "deployed"
+          : "failed";
+    console.log(
+      `  ${stage.padEnd(12)} ${branch}  ${state}${run ? `  ${run.sha.slice(0, 7)}  ${run.url}` : ""}`,
+    );
+  }
+  if (!link.protectedSecrets) {
+    printWarning(
+      "This plan has no environments on private repos, so the deploy keys are repo secrets any branch's workflow can read.",
+    );
+  }
+  if (link.setupPullRequestUrl) {
+    printWarning(
+      `A protected branch got the workflow as a pull request; merge it to deploy on push: ${link.setupPullRequestUrl}`,
+    );
+  }
 }
 
 function formatStage(stage: CliStage, current: string): string {
@@ -1769,12 +2068,10 @@ function formatStageDetail(stage: CliStage): string {
   return `${stage.name} (${stage.kind}${region}): ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
 }
 
-/** Stage names match the way the backend matches them: trimmed, case-insensitive. */
 function stageNameEquals(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
-/** The project/stage a command acts on, without compiling the project. */
 function targetScope(args: string[]): { project: string; stage: string } {
   loadBroodsRuntimeConfig();
 
@@ -1783,7 +2080,8 @@ function targetScope(args: string[]): { project: string; stage: string } {
       optionValue(args, "--project") ??
       process.env.BROODS_PROJECT ??
       inferProjectName(process.cwd()),
-    stage: optionValue(args, "--stage") ?? stageFromEnv() ?? "development",
+    stage:
+      optionValue(args, "--stage") ?? process.env.BROODS_STAGE ?? "development",
   };
 }
 
@@ -1792,15 +2090,15 @@ async function selectOnboardingOrg(
   context: CliOnboardingContext,
 ): Promise<CliOnboardingContext> {
   const activeOrgs = context.orgs.filter(
-    (org) => org.accountStatus === "active",
+    (org): boolean => org.accountStatus === "active",
   );
   const createNew = { kind: "create" as const, name: "New organization" };
   const selected = await promptSelect(
     "Select organization",
     [...activeOrgs, createNew],
-    (entry) =>
+    (entry): string =>
       "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
-    activeOrgs.findIndex((org) => org.id === context.currentOrgId),
+    activeOrgs.findIndex((org): boolean => org.id === context.currentOrgId),
   );
 
   if ("kind" in selected) {
@@ -1823,7 +2121,8 @@ function defaultProjectName(
   inferred: string,
 ): string {
   const exact = context.projects.find(
-    (project) => project.name === inferred || project.slug === inferred,
+    (project): boolean =>
+      project.name === inferred || project.slug === inferred,
   );
 
   return exact?.name ?? inferred;
@@ -1834,15 +2133,10 @@ function findProject(
   needle: string,
 ): CliOnboardingProject | undefined {
   return context.projects.find(
-    (project) => project.name === needle || project.slug === needle,
+    (project): boolean => project.name === needle || project.slug === needle,
   );
 }
 
-/**
- * Picks the project to sync: a number connects to that existing project after a
- * confirmation, and any other answer (empty means the suggested name) creates a
- * project under that name unless one already goes by it.
- */
 async function selectOnboardingProject(
   context: CliOnboardingContext,
   inferred: string,
@@ -1872,13 +2166,8 @@ async function selectOnboardingProject(
   }
 }
 
-/**
- * Runs one `dev --once` sync in a fresh child process with inherited stdio, so
- * each compile starts from an empty module cache (see {@link dev}) and any delete
- * confirmation prompt still reaches the terminal.
- */
 function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
+  return new Promise((resolvePromise, reject): void => {
     const entryPoint = process.argv[1] ?? "";
     const child = spawn(
       process.execPath,
@@ -1889,7 +2178,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       },
     );
     child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.on("exit", (code, signal): void => {
       if (code === 0) {
         resolvePromise();
 
@@ -1897,49 +2186,38 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       }
       reject(
         new Error(
+          // The child already printed why; say what happens next.
           signal
-            ? `Sync child exited from signal ${signal}`
-            : `Sync child exited with code ${code ?? "unknown"}`,
+            ? `Sync stopped (${signal}). Watching for changes: save a file in broods/ to retry.`
+            : "Sync failed. Watching for changes: fix it, then save a file in broods/ to retry.",
         ),
       );
     });
   });
 }
 
-/**
- * Syncs the dev stage once. Creates/updates are pushed first so they apply
- * immediately; deletions (resources removed from code) are then confirmed
- * interactively before pruning, so an edit-in-progress never silently destroys
- * an agent's history or a workspace's files, and a slow answer never blocks the
- * non-destructive sync. Declined deletes are remembered (across watch child
- * processes via `BROODS_DECLINED_FILE`) so they are not re-prompted.
- */
-async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
-  const compiled = await compileProject({
-    project: optionValue(args, "--project"),
-    stage: optionValue(args, "--stage"),
-    command: "dev",
-  });
-  const auth = await requireAuth(
-    optionValue(args, "--base-url") ?? compiled.config.baseUrl,
-  );
+async function syncDev(
+  args: string[],
+  showTarget: boolean,
+): Promise<RemoteManifestResponse> {
+  const { compiled, auth } = await loadDevTarget(args);
+  if (showTarget) {
+    printDevTarget(args, compiled, auth);
+    await warnOnOutdatedCli();
+  }
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
 
-  // The sync rejects unresolved env refs, so push .env.local values up first:
-  // that is what lets a local `.env.local` alone carry a dev stage.
+  // The sync rejects unresolved env refs, so .env.local values go up first.
   const pushed = await pushLocalEnvVars(
     client,
     compiled.manifest,
-    await inspectEnvRefs(client, compiled.manifest),
+    await askForUnresolvedEnv(await inspectEnvRefs(client, compiled.manifest)),
   );
   if (pushed.length > 0) printEnvSync(pushed);
 
-  // Another session may sync the stage between this read and write. The server
-  // then refuses the stale write, so read the stage again and retry; a delete
-  // is asked again against the new diff.
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await syncDevOnce(client, compiled);
@@ -1954,7 +2232,6 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   }
 }
 
-/** One read, diff and write of the dev stage, sent with the revision it read. */
 async function syncDevOnce(
   client: BroodsSyncClient,
   compiled: Awaited<ReturnType<typeof compileProject>>,
@@ -1962,15 +2239,19 @@ async function syncDevOnce(
   const { manifest, resourceAliases, channels } = compiled;
   const remote = await client.getManifest(manifest.project, manifest.stage);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
-  printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
+  printDiffEntries(
+    diff.filter((entry): boolean => entry.operation !== "delete"),
+  );
 
-  // Push creates/updates (and canvas wiring) immediately, undeleted. A stage
-  // that does not exist yet is revision 0, so two first syncs still conflict.
+  // Deletes wait for the prompt below, so an edit in progress never destroys history.
+  // A stage that does not exist yet is revision 0, so two first syncs still conflict.
+  const source = await sourceToStore();
   let result = await client.putManifest(
     manifest,
     false,
     false,
     remote === null ? 0 : remote.revision,
+    source,
   );
   await writeGeneratedFiles(
     manifest,
@@ -1983,50 +2264,57 @@ async function syncDevOnce(
   await ensureGitIgnore();
 
   const declined = await loadDeclinedDeletes();
-  const deletes = diff.filter((entry) => entry.operation === "delete");
+  const deletes = diff.filter((entry): boolean => entry.operation === "delete");
   const undecided = deletes.filter(
-    (entry) => !declined.has(`${entry.kind}:${entry.name}`),
+    (entry): boolean => !declined.has(`${entry.kind}:${entry.name}`),
   );
-  let pruned = false;
+  const chosen: DiffEntry[] = [];
   if (undecided.length > 0) {
     printWarning("These remote resources are no longer declared locally:");
     printDiffEntries(undecided);
-    if (
-      await promptConfirm(
-        `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
+    for (const entry of undecided) {
+      const key = `${entry.kind}:${entry.name}`;
+      if (
+        await promptConfirm(
+          `Delete ${key} from ${manifest.project}/${manifest.stage}?`,
+        )
       )
-    ) {
-      result = await client.putManifest(manifest, true, false, result.revision);
-      await writeGeneratedFiles(
-        manifest,
-        result.ids,
-        process.cwd(),
-        resourceAliases,
-        result.deployment,
-        channels,
-      );
-      await clearDeclinedDeletes();
-      pruned = true;
-    } else {
-      await rememberDeclinedDeletes(
-        undecided.map((entry) => `${entry.kind}:${entry.name}`),
-      );
+        chosen.push(entry);
+      else await rememberDeclinedDeletes([key]);
     }
   }
-
-  // Persistent reminder: kept-but-undeclared resources are easy to forget once
-  // the prompt stops re-asking, so re-surface them (non-blocking) every sync
-  // until they are re-declared in code or pruned.
-  if (!pruned && deletes.length > 0) {
-    const names = deletes
-      .map((entry) => `${entry.kind}:${entry.name}`)
-      .join(", ");
-    printWarning(
-      `${deletes.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+  if (chosen.length > 0) {
+    result = await client.putManifest(
+      manifest,
+      chosen.map(({ kind, name }): CliPruneTarget => ({
+        kind: kind,
+        name: name,
+      })),
+      false,
+      result.revision,
+      source,
+    );
+    await writeGeneratedFiles(
+      manifest,
+      result.ids,
+      process.cwd(),
+      resourceAliases,
+      result.deployment,
+      channels,
     );
   }
 
-  await applyDeploymentKey(result.deployment);
+  const kept = deletes.filter((entry): boolean => !chosen.includes(entry));
+  if (kept.length > 0) {
+    const names = kept
+      .map((entry): string => `${entry.kind}:${entry.name}`)
+      .join(", ");
+    printWarning(
+      `${kept.length} undeclared resource(s) kept remotely: ${names}. Re-declare in code or run \`deploy --prune\` to remove.`,
+    );
+  }
+
+  await applyDeploymentKey(client, manifest, result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
 
@@ -2040,8 +2328,7 @@ function printChannelEndpoints(
   const deployment = result.deployment;
   if (!deployment || channels.length === 0) return;
   const client = new BroodsClient();
-  // The URL carries no agent, so every channel of one type shares it. Print it
-  // once with the aliases behind it rather than the same line N times.
+  // The URL carries no agent, so every channel of one type shares it.
   const aliasesByType = new Map<(typeof channels)[number]["type"], string[]>();
   for (const channel of channels) {
     if (!result.ids.agents[channel.agentName]) continue;
@@ -2050,8 +2337,6 @@ function printChannelEndpoints(
     aliasesByType.set(channel.type, aliases);
   }
 
-  // A stage that is not production gets its own URL, so pasting it into the
-  // provider moves traffic to this stage instead of contending for the account.
   const isProduction =
     deployment.stageKind === undefined || deployment.stageKind === "production";
   for (const [type, aliases] of aliasesByType) {
@@ -2068,12 +2353,6 @@ function printChannelEndpoints(
   }
 }
 
-/**
- * How one `env("NAME")` reference lines up between the local environment
- * (`.env.local`, already loaded into `process.env`) and the stage's stored
- * value. `drifted` is the one worth speaking up about: the stage holds a
- * value, it just is not the local one.
- */
 type EnvRefState = "synced" | "drifted" | "unset" | "stage-only" | "unresolved";
 
 interface EnvRef {
@@ -2081,48 +2360,59 @@ interface EnvRef {
   state: EnvRefState;
 }
 
-/**
- * Classifies every `env("NAME")` the manifest references against the stage's
- * stored value digests. `BROODS_*` control vars are left out: they configure the
- * CLI itself and never belong in a stage's variable store.
- */
+// `BROODS_*` configure the CLI itself and never belong in a stage's variable store.
 async function inspectEnvRefs(
   client: BroodsSyncClient,
   manifest: CliManifest,
 ): Promise<EnvRef[]> {
   const names = collectEnvRefNames(manifest).filter(
-    (name) => !name.startsWith("BROODS_"),
+    (name): boolean => !name.startsWith("BROODS_"),
   );
   if (names.length === 0) return [];
   const remote = new Map(
-    (await client.listEnv(manifest.project, manifest.stage)).map((entry) => [
-      entry.name,
-      entry.valueDigest,
-    ]),
+    (await client.listEnv(manifest.project, manifest.stage)).map(
+      (entry): [string, string] => [entry.name, entry.valueDigest],
+    ),
   );
 
-  return names.map((name) => ({
+  return names.map((name): EnvRef => ({
     name: name,
     state: envRefState(name, remote),
   }));
 }
 
-/**
- * One-way and set-only: pushes manifest-referenced names the stage does not
- * provably hold, never reads a value back, and never deletes one.
- */
+// In a TTY, asks for each `env()` value nothing holds yet and saves it to `.env.local`.
+async function askForUnresolvedEnv(refs: EnvRef[]): Promise<EnvRef[]> {
+  const missing = namesInState(refs, "unresolved");
+  if (missing.length === 0 || !process.stdin.isTTY) return refs;
+  console.log(
+    `The project needs ${missing.length === 1 ? "a value" : `${missing.length} values`} no one has set yet. ` +
+      "Input is hidden and saved to .env.local, which stays out of git.",
+  );
+  for (const name of missing) {
+    const value = await promptSecret(name, { optional: true });
+    if (value) await writeEnvValue(name, value);
+  }
+
+  return refs.map((ref): EnvRef =>
+    ref.state === "unresolved" && process.env[ref.name]
+      ? { ...ref, state: "unset" }
+      : ref,
+  );
+}
+
 async function pushLocalEnvVars(
   client: BroodsSyncClient,
   manifest: CliManifest,
   refs: EnvRef[],
 ): Promise<string[]> {
   const pushable = refs
-    .filter((ref) => ref.state === "unset" || ref.state === "drifted")
-    .map((ref) => ref.name);
+    .filter((ref): boolean => ref.state === "unset" || ref.state === "drifted")
+    .map((ref): string => ref.name);
   if (pushable.length === 0) return [];
 
   await Promise.all(
-    pushable.map((name) =>
+    pushable.map((name): Promise<void> =>
       client.setEnv(manifest.project, manifest.stage, name, process.env[name]!),
     ),
   );
@@ -2130,11 +2420,6 @@ async function pushLocalEnvVars(
   return pushable;
 }
 
-/**
- * Warns when the stage's value for an `env()` ref is not the local one. Nothing
- * else shows this: `env list` prints names, `diff` compares resources, and a
- * stale secret only ever surfaces as a runtime 401 from the channel that reads it.
- */
 function printEnvDriftWarning(refs: EnvRef[], target: string): void {
   const drifted = namesInState(refs, "drifted");
   if (drifted.length > 0) {
@@ -2161,19 +2446,33 @@ function hashEnvValue(value: string): string {
 }
 
 function namesInState(refs: EnvRef[], state: EnvRefState): string[] {
-  return refs.filter((ref) => ref.state === state).map((ref) => ref.name);
+  return refs
+    .filter((ref): boolean => ref.state === state)
+    .map((ref): string => ref.name);
 }
 
-async function printDevTarget(args: string[]): Promise<void> {
-  const runtime = loadBroodsRuntimeConfig();
-  const { manifest, config } = await compileProject({
+async function loadDevTarget(args: string[]): Promise<{
+  compiled: Awaited<ReturnType<typeof compileProject>>;
+  auth: Awaited<ReturnType<typeof requireAuth>>;
+}> {
+  const compiled = await compileProject({
     project: optionValue(args, "--project"),
     stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
-    optionValue(args, "--base-url") ?? config.baseUrl,
+    optionValue(args, "--base-url") ?? compiled.config.baseUrl,
   );
+
+  return { compiled: compiled, auth: auth };
+}
+
+function printDevTarget(
+  args: string[],
+  { manifest, config }: Awaited<ReturnType<typeof compileProject>>,
+  auth: Awaited<ReturnType<typeof requireAuth>>,
+): void {
+  const runtime = loadBroodsRuntimeConfig();
   printDeploymentTarget({
     project: manifest.project,
     stage: manifest.stage,
@@ -2186,7 +2485,6 @@ async function printDevTarget(args: string[]): Promise<void> {
   });
 }
 
-/** Reads the delete keys already declined this watch session, if any. */
 async function loadDeclinedDeletes(): Promise<Set<string>> {
   const path = process.env.BROODS_DECLINED_FILE;
   if (!path) return new Set();
@@ -2195,23 +2493,15 @@ async function loadDeclinedDeletes(): Promise<Set<string>> {
   return new Set(
     text
       .split(/\r?\n/)
-      .map((line) => line.trim())
+      .map((line): string => line.trim())
       .filter(Boolean),
   );
 }
 
-/** Appends declined delete keys so later watch syncs do not re-prompt for them. */
 async function rememberDeclinedDeletes(keys: string[]): Promise<void> {
   const path = process.env.BROODS_DECLINED_FILE;
   if (!path || keys.length === 0) return;
   await writeFile(path, `${keys.join("\n")}\n`, { flag: "a" });
-}
-
-/** Resets declined deletes after a prune so re-added-then-removed resources prompt again. */
-async function clearDeclinedDeletes(): Promise<void> {
-  const path = process.env.BROODS_DECLINED_FILE;
-  if (!path) return;
-  await writeFile(path, "", "utf8");
 }
 
 async function envCommand(args: string[]): Promise<void> {
@@ -2278,7 +2568,6 @@ async function envCommand(args: string[]): Promise<void> {
 
       return;
     }
-    // Print the raw value to stdout so it can be piped/captured.
     console.log(value);
 
     return;
@@ -2296,10 +2585,6 @@ async function envCommand(args: string[]): Promise<void> {
   printSuccess(`Stored ${name} for ${target}`);
 }
 
-/**
- * `broods env sync` pushes every `env("NAME")` the project references from
- * `.env.local`, then says what moved and what it left alone.
- */
 async function syncEnvFromLocal(
   client: BroodsSyncClient,
   manifest: CliManifest,
@@ -2321,9 +2606,6 @@ async function syncEnvFromLocal(
       : `${alreadyInStep} referenced variable(s) already in step with ${target}.`,
   );
 
-  // Naming the stage-only ones is the point of this line, not a complaint about
-  // them: they are the referenced names `.env.local` does not control, which is
-  // otherwise indistinguishable from the ones it does.
   const stageOnly = namesInState(refs, "stage-only");
   if (stageOnly.length > 0) {
     console.log(
@@ -2331,8 +2613,6 @@ async function syncEnvFromLocal(
     );
   }
 
-  // These are a real problem: the next manifest sync rejects the whole deploy
-  // over them, and until then the runtime sees a literal `${NAME}`.
   const unresolved = namesInState(refs, "unresolved");
   if (unresolved.length > 0) {
     printWarning(
@@ -2342,12 +2622,6 @@ async function syncEnvFromLocal(
   }
 }
 
-/**
- * Parse --all / --level <lvl> into a LogLevel. The terminal defaults
- * to WARN: a healthy run is not what a developer watches a terminal for, and
- * the full INFO/DEBUG narration belongs in the dashboard, which can page,
- * filter and search it.
- */
 function resolveMinLevel(args: string[]): LogLevel {
   if (hasFlag(args, "--all")) return "DEBUG";
   const raw = optionValue(args, "--level");
@@ -2367,13 +2641,12 @@ function resolveMinLevel(args: string[]): LogLevel {
   );
 }
 
-/** Resolve project + stage for observability commands (same as other commands). */
 async function resolveProjectStage(
   args: string[],
 ): Promise<{ project: string; stage: string }> {
   loadBroodsRuntimeConfig();
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
-  const stage = optionValue(args, "--stage") ?? stageFromEnv();
+  const stage = optionValue(args, "--stage") ?? process.env.BROODS_STAGE;
   if (!project) {
     throw new Error(
       "Project name is required. Pass --project <name> or set BROODS_PROJECT in .env.local.",
@@ -2388,12 +2661,8 @@ async function resolveProjectStage(
   return { project: project, stage: stage };
 }
 
-/**
- * The stage the logs, stream and machine commands act on, with a credential
- * for it: a 15-minute ticket minted from the `broods login` token and re-minted
- * once it nears expiry. Never the runtime key, which sits in frontends.
- * Project and stage come back as slugs, which the gateway paths match on.
- */
+// A stage ticket from the `broods login` token, never the runtime key: that one sits in
+// frontends. Project and stage come back as slugs, which the gateway paths match on.
 async function openStageSession(
   args: string[],
 ): Promise<ObservabilityClientOptions> {
@@ -2409,23 +2678,22 @@ async function openStageSession(
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  let session = await client.mintStageSession(
+  const session = await client.mintStageSession(
     configured.project,
     configured.stage,
   );
+  // A socket closes when its ticket expires, so each later call mints a full-lifetime one.
+  let unused: CliStageSession | undefined = session;
   const credential = async (): Promise<string> => {
-    if (session.expiresAt - Date.now() < STAGE_SESSION_REFRESH_MS) {
-      session = await client.mintStageSession(
-        configured.project,
-        configured.stage,
-      );
-    }
+    const fresh =
+      unused ??
+      (await client.mintStageSession(configured.project, configured.stage));
+    unused = undefined;
 
-    return session.token;
+    return fresh.token;
   };
 
-  // The socket must open on the server that issued the ticket; prod rejects a
-  // dev-minted stage session.
+  // The socket must open on the server that issued the ticket: prod rejects a dev-minted one.
   return {
     baseUrl: auth.baseUrl,
     credential: credential,
@@ -2434,12 +2702,11 @@ async function openStageSession(
   };
 }
 
-/** Point at --all whenever a tail is running on the quiet default. */
 function levelHint(minLevel: LogLevel): string {
   return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
-/** The `onReconnect` of every live tail: stderr, so `logs --json` stays parseable. */
+// stderr, so `logs --json` stays parseable.
 function printReconnect(attempt: number, reason: string): void {
   console.error(
     formatWarning(`Reconnecting to live logs (attempt ${attempt}): ${reason}`, {
@@ -2448,11 +2715,7 @@ function printReconnect(attempt: number, reason: string): void {
   );
 }
 
-/**
- * Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`.
- * A sandbox line is raw guest output, so terminal escapes are dropped before
- * they can move the cursor or retitle the window.
- */
+// Sandbox lines are raw guest output: strip escapes before they move the cursor or retitle.
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
   const level = entry.level.padEnd(5);
@@ -2461,8 +2724,6 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   return `${time} ${level} ${entry.eventType} ${message}`;
 }
 
-// `broods stream` live-tails the whole project/stage log stream until Ctrl-C,
-// with no backfill. Flags are documented in COMMAND_HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const session = await openStageSession(args);
   const { project, stage } = session;
@@ -2497,7 +2758,6 @@ async function streamLogs(args: string[]): Promise<void> {
   }
 }
 
-// `broods machine <sandbox>` runs until Ctrl-C or until core refuses it.
 async function machine(args: string[]): Promise<void> {
   if (hasFlag(args, "--doctor")) {
     await machineDoctor(hasFlag(args, "--request"));
@@ -2510,7 +2770,6 @@ async function machine(args: string[]): Promise<void> {
 
     return;
   }
-  // Lazy, so zod loads for this command only.
   const { runMachineDaemon } = await import("./machine.ts");
   const { baseUrl, credential } = await openStageSession(args);
   const cwd = resolve(optionValue(args, "--cwd") ?? process.cwd());
@@ -2544,10 +2803,8 @@ async function machine(args: string[]): Promise<void> {
   }
 }
 
-// `broods machine --doctor [--request]` checks the grants computer use needs.
 async function machineDoctor(request: boolean): Promise<void> {
   try {
-    // Lazy: desktop.ts embeds the Swift helper source.
     const { startDesktop } = await import("./desktop.ts");
     const { display, driver, permissions } = await startDesktop(request);
     driver.stop();
@@ -2571,30 +2828,36 @@ async function machineDoctor(request: boolean): Promise<void> {
   }
 }
 
-// `broods logs` backfills recent lines (Loki) then switches to a live tail
-// until Ctrl-C. Flags are documented in COMMAND_HELP.
 async function logs(args: string[]): Promise<void> {
   const session = await openStageSession(args);
   const { project, stage } = session;
   const sandboxId = optionValue(args, "--sandbox");
-  // A bare or malformed --sandbox must not fall through to the deployment tail.
   if (hasFlag(args, "--sandbox") && !isSandboxLogId(sandboxId))
     throw new Error(
       "--sandbox needs the instance log id, the UUID shown in the dashboard Instances sheet.",
     );
-  // Guest lines carry no level (the bridge stamps INFO), so the WARN default
-  // would show nothing; a sandbox tail is everything the guest wrote.
+  // Guest lines carry no level (the bridge stamps INFO), so WARN would show nothing.
   const minLevel: LogLevel = sandboxId ? "DEBUG" : resolveMinLevel(args);
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
   );
+  if (
+    !Number.isInteger(limit) ||
+    limit < 0 ||
+    limit > MAX_OBSERVABILITY_BACKFILL
+  ) {
+    throw new Error(
+      `--limit must be an integer between 0 and ${MAX_OBSERVABILITY_BACKFILL}`,
+    );
+  }
   const jsonMode = hasFlag(args, "--json");
 
   const controller = new AbortController();
   const onSigint = (): void => controller.abort();
   process.on("SIGINT", onSigint);
 
-  console.log(
+  // stderr under --json, so stdout carries only entries.
+  (jsonMode ? console.error : console.log)(
     `Logs for ${project}/${stage}` +
       (sandboxId ? ` sandbox ${sandboxId}` : "") +
       ` [${minLevel}+]` +
@@ -2626,12 +2889,158 @@ async function logs(args: string[]): Promise<void> {
   }
 }
 
-/**
- * `agent` subcommands: `list` (overview of the scope's agents) and
- * `get <name>` (one agent's resolved resources). Both read the locally compiled
- * manifest, which already has the full nested config, and annotate it with the
- * remote deploy ids, so no extra backend endpoint is needed.
- */
+async function accountClient(args: string[]): Promise<BroodsAccountClient> {
+  const runtime = loadBroodsRuntimeConfig();
+  const auth = await requireAuthOrLogin(
+    optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
+    optionValue(args, "--base-url"),
+  );
+
+  return new BroodsAccountClient({
+    baseUrl: auth.baseUrl,
+    sessionToken: auth.token,
+  });
+}
+
+function limitOption(args: string[]): { limit?: number } {
+  const limit = Number(optionValue(args, "--limit"));
+
+  return Number.isInteger(limit) && limit > 0 ? { limit: limit } : {};
+}
+
+async function audit(args: string[]): Promise<void> {
+  const agent = optionValue(args, "--agent");
+  const action = optionValue(args, "--action");
+  const result = await (
+    await accountClient(args)
+  ).readAudit({
+    ...limitOption(args),
+    ...(agent ? { agentId: agent } : {}),
+    ...(action ? { action: action } : {}),
+  });
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(result, null, 2));
+
+    return;
+  }
+  console.log(`${result.matched} matched, ${result.scanned}`);
+  for (const event of result.events)
+    console.log(
+      stripVTControlCharacters(
+        `${event.at} ${event.action} ${event.resource ?? ""} ${event.summary ?? ""}`.trimEnd(),
+      ),
+    );
+}
+
+async function runs(args: string[]): Promise<void> {
+  const configured = await resolveProjectStage(args);
+  const agent = optionValue(args, "--agent");
+  const status = optionValue(args, "--status");
+  const { incomplete, runs: found } = await (
+    await accountClient(args)
+  ).listRuns(configured, {
+    ...limitOption(args),
+    ...(agent ? { agentId: agent } : {}),
+    ...(status ? { status: status } : {}),
+  });
+  if (hasFlag(args, "--json")) {
+    console.log(
+      JSON.stringify({ runs: found, incomplete: incomplete }, null, 2),
+    );
+
+    return;
+  }
+  if (incomplete) printWarning(`Not every run could be read: ${incomplete}`);
+  for (const run of found)
+    console.log(
+      stripVTControlCharacters(
+        `${run.at} ${run.status.padEnd(11)} ${formatDuration(run.durationMs).padStart(8)} ${run.traceId} ${run.error ?? run.input ?? ""}`
+          .split("\n")[0]
+          ?.trimEnd() ?? "",
+      ),
+    );
+}
+
+async function usage(args: string[]): Promise<void> {
+  const configured = await resolveProjectStage(args);
+  const result = await (
+    await accountClient(args)
+  ).readUsage(configured, optionValue(args, "--range") ?? "7d");
+  if (!result)
+    throw new Error(
+      `No deployed stage ${configured.project}/${configured.stage}.`,
+    );
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(result.totals, null, 2));
+
+    return;
+  }
+  const { totals } = result;
+  console.log(
+    `Usage for ${configured.project}/${configured.stage}, ${result.range}`,
+  );
+  console.log(`  invocations   ${totals.invocations}`);
+  console.log(`  model calls   ${totals.modelCalls}`);
+  console.log(
+    `  tokens        ${totals.totalTokens} (${totals.inputTokens} in, ${totals.outputTokens} out, ${totals.cachedInputTokens} cached)`,
+  );
+  console.log(`  run time      ${formatDuration(totals.runtimeWallMs)}`);
+  console.log(
+    `  sandbox CPU   ${formatDuration((totals.agentSandboxCpuUsec + totals.toolSandboxCpuUsec) / 1000)}`,
+  );
+}
+
+async function trace(args: string[]): Promise<void> {
+  const [traceId] = positionalArgs(args);
+  if (!isTraceId(traceId))
+    throw new Error(
+      `Missing or malformed trace id: 32 lowercase hex characters, as the dashboard copies it.\n\n${commandHelp("trace")}`,
+    );
+  const session = await openStageSession(args);
+  const spans = (await fetchObservabilityTrace(session, traceId)).toSorted(
+    (a, b): number => a.startTimeMs - b.startTimeMs,
+  );
+  if (hasFlag(args, "--json")) {
+    console.log(JSON.stringify(spans, null, 2));
+
+    return;
+  }
+  console.log(`Trace ${traceId} in ${session.project}/${session.stage}`);
+  const ids = new Set(spans.map((span): string => span.spanId));
+  const children = Map.groupBy(spans, (span): string =>
+    span.parentSpanId &&
+    span.parentSpanId !== span.spanId &&
+    ids.has(span.parentSpanId)
+      ? span.parentSpanId
+      : "",
+  );
+  const print = (parent: string, depth: number): void => {
+    for (const span of children.get(parent) ?? []) {
+      console.log(formatTraceSpan(span, depth));
+      print(span.spanId, depth + 1);
+    }
+  };
+  print("", 0);
+}
+
+function formatTraceSpan(span: ObservabilitySpanRow, depth: number): string {
+  const time = new Date(span.startTimeMs).toISOString().slice(11, 23);
+  const indent = "  ".repeat(depth);
+  const tool = span.attributes?.["tool.name"];
+  const name = typeof tool === "string" ? `${span.name} ${tool}` : span.name;
+  const prefix = `${time} ${span.status.padEnd(11)} ${indent}`;
+  const line = `${prefix}${name} ${formatDuration(span.durationMs)}`;
+
+  if (!span.error) return stripVTControlCharacters(line);
+  const pad = " ".repeat(prefix.length);
+  // A bare \r splits too, so no error line can overwrite another.
+  const error = span.error.replaceAll(/\r\n?|\n/g, `\n${pad}       `);
+
+  return stripVTControlCharacters(`${line}\n${pad}error: ${error}`);
+}
+
 async function agentCommand(args: string[]): Promise<void> {
   const [subcommand, name] = positionalArgs(args);
   if (!subcommand) {
@@ -2655,14 +3064,15 @@ async function agentCommand(args: string[]): Promise<void> {
   );
 }
 
-/** Compile the local manifest and pair each agent with its remote deploy id. */
+interface AgentWithId {
+  name: string;
+  config: Record<string, unknown>;
+  agentId?: string;
+}
+
 async function loadAgentsWithIds(args: string[]): Promise<{
   manifest: CliManifest;
-  agents: Array<{
-    name: string;
-    config: Record<string, unknown>;
-    agentId?: string;
-  }>;
+  agents: AgentWithId[];
 }> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
@@ -2677,8 +3087,8 @@ async function loadAgentsWithIds(args: string[]): Promise<{
     token: auth.token,
   }).getManifest(manifest.project, manifest.stage);
   const agents = manifest.resources
-    .filter((resource) => resource.kind === "agent")
-    .map((resource) => ({
+    .filter((resource): boolean => resource.kind === "agent")
+    .map((resource): AgentWithId => ({
       name: resource.name,
       config: (resource.config ?? {}) as Record<string, unknown>,
       agentId: remote?.ids.agents[resource.name],
@@ -2695,6 +3105,8 @@ async function agentList(args: string[]): Promise<void> {
     return;
   }
   console.log(`Agents in ${manifest.project}/${manifest.stage}:`);
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel } = await import("./manifest-branches.ts");
   for (const agent of agents) {
     const model = agentModelLabel(agent.config);
     const access = agent.config.publicAccess === true ? "public" : "private";
@@ -2709,11 +3121,13 @@ async function agentGet(
 ): Promise<void> {
   if (!name) throw new Error(`Missing agent name.\n\n${commandHelp("agent")}`);
   const { manifest, agents } = await loadAgentsWithIds(args);
-  const agent = agents.find((entry) => entry.name === name);
+  const agent = agents.find((entry): boolean => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
+  // Lazy: zod loads for the two commands that read a manifest branch, not for every command.
+  const { agentModelLabel, CONFIG_BRANCH, SUBAGENT_REFS, WEBHOOK_LIST } =
+    await import("./manifest-branches.ts");
   const config = agent.config;
-  // `[x].flat()` reads an absent list as empty without another branch here.
   const sandboxes = [config.sandboxes]
     .flat()
     .filter((entry): entry is string => typeof entry === "string")
@@ -2722,31 +3136,29 @@ async function agentGet(
     );
   const workspaces = Array.isArray(config.workspaces)
     ? config.workspaces
-        .map((ref) =>
+        .map((ref): string | undefined =>
           typeof ref === "string" ? ref : (ref as { name?: string }).name,
         )
         .filter(Boolean)
     : [];
-  const tools = isPlainObject(config.tools) ? Object.keys(config.tools) : [];
-  const channels = isPlainObject(config.channels)
-    ? Object.keys(config.channels)
-    : [];
-  const subagents =
-    isPlainObject(config.subagent) &&
-    Array.isArray((config.subagent as { allowed?: unknown }).allowed)
-      ? (config.subagent as { allowed: unknown[] }).allowed
-          .map((entry) =>
-            typeof entry === "string"
-              ? entry
-              : (entry as { name?: string }).name,
-          )
-          .filter(Boolean)
-      : [];
-  const webhooks =
-    isPlainObject(config.hooks) &&
-    Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
-      ? (config.hooks as { webhooks: unknown[] }).webhooks.filter(isPlainObject)
-      : [];
+  const tools = Object.keys(CONFIG_BRANCH.safeParse(config.tools).data ?? {});
+  const channels = Object.keys(
+    CONFIG_BRANCH.safeParse(config.channels).data ?? {},
+  );
+  const subagents = (
+    SUBAGENT_REFS.safeParse(config.subagent).data?.allowed ?? []
+  )
+    .map((entry): string | undefined =>
+      typeof entry === "string" ? entry : (entry as { name?: string }).name,
+    )
+    .filter(Boolean);
+  const webhooks = (
+    WEBHOOK_LIST.safeParse(config.hooks).data?.webhooks ?? []
+  ).flatMap((webhook): Record<string, unknown>[] => {
+    const parsed = CONFIG_BRANCH.safeParse(webhook);
+
+    return parsed.success ? [parsed.data] : [];
+  });
 
   console.log(`Agent: ${agent.name}`);
   console.log(`  Project/Stage: ${manifest.project}/${manifest.stage}`);
@@ -2772,7 +3184,7 @@ async function agentGet(
   );
   if (webhooks.length > 0) {
     console.log(`  Webhooks:`);
-    webhooks.forEach((webhook, index) => {
+    webhooks.forEach((webhook, index): void => {
       const events =
         Array.isArray(webhook.events) && webhook.events.length > 0
           ? webhook.events.join(", ")
@@ -2784,24 +3196,11 @@ async function agentGet(
   }
 }
 
-/** A compact `provider/modelId` label from an agent's nested config. */
-function agentModelLabel(config: Record<string, unknown>): string {
-  const model = isPlainObject(config.model) ? config.model : {};
-  const provider =
-    typeof model.provider === "string" ? model.provider : undefined;
-  const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
-  if (provider && modelId) return `${provider}/${modelId}`;
-
-  return modelId ?? provider ?? "unconfigured model";
-}
-
 async function run(args: string[]): Promise<void> {
   const [agentName, ...promptParts] = positionalArgs(args);
   if (!agentName) {
     throw new Error(`Missing agent name.\n\n${commandHelp("run")}`);
   }
-  // The terminal UI needs a terminal to draw into. Redirected output falls back
-  // to plain text, which in turn needs a prompt since nothing can be typed.
   const prompt = promptParts.join(" ");
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   if (!interactive && !prompt) {
@@ -2818,48 +3217,76 @@ async function run(args: string[]): Promise<void> {
     optionValue(args, "--base-url") ?? config.baseUrl,
   );
   const agent = manifest.resources.find(
-    (resource) => resource.kind === "agent" && resource.name === agentName,
+    (resource): boolean =>
+      resource.kind === "agent" && resource.name === agentName,
   );
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
-  const remote = await new BroodsSyncClient({
+  const syncClient = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
-  }).getManifest(manifest.project, manifest.stage);
+  });
+  const remote = await syncClient.getManifest(manifest.project, manifest.stage);
   const agentId = remote?.ids.agents[agentName];
   if (!agentId)
     throw new Error(
       `Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`,
     );
-  const runtimeKey = await new BroodsSyncClient({
-    baseUrl: auth.baseUrl,
-    token: auth.token,
-  })
+  const runtimeKey = await syncClient
     .getRuntimeKey(manifest.project, manifest.stage)
-    .catch(() => null);
+    .catch((): null => null);
   if (runtimeKey?.apiKey) {
     await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
   }
 
-  // `run` reaches the agent over the public SSE endpoint, which is off by
-  // default (issue #65). Warn early if the local config has not opted in; the
-  // server is still the source of truth, so we also surface its 403 below.
-  if ((agent.config as Record<string, unknown>).publicAccess !== true) {
+  // A `broods login` mints the stage ticket `logs` uses: it runs private agents with no user
+  // token. It lasts 15 minutes, so a request re-mints it near expiry. Keys keep the runtime key.
+  let session = await syncClient
+    .mintStageSession(manifest.project, manifest.stage)
+    .catch((error: unknown): null => {
+      if (error instanceof StageSessionRefusedError) return null;
+      throw error;
+    });
+  if (!session) {
     printWarning(
-      `Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
-        "if the deployed agent has not enabled it, this run will be refused.",
+      "No broods login, so run uses the runtime key: it reaches only agents with publicAccess that need no user token. Run `broods login` to reach every agent.",
     );
   }
+  const credential = async (): Promise<string> => {
+    if (session && session.expiresAt - Date.now() < 60_000) {
+      session = await syncClient.mintStageSession(
+        manifest.project,
+        manifest.stage,
+      );
+    }
 
-  // Runtime traffic has to reach the same deployment the control plane resolved.
-  // Without an explicit base URL the SDK falls back to prod, which rejects a
-  // dev-issued runtime key with a 401.
+    return session?.token ?? "";
+  };
+  const clientAuth = session
+    ? {
+        apiKey: session.token,
+        fetch: Object.assign(
+          async (
+            ...[input, init]: Parameters<typeof fetch>
+          ): Promise<Response> => {
+            const headers = new Headers(init?.headers);
+            headers.set("Authorization", `Bearer ${await credential()}`);
+
+            return await fetch(input, { ...init, headers: headers });
+          },
+          { preconnect: fetch.preconnect },
+        ),
+      }
+    : runtimeKey?.apiKey
+      ? { apiKey: runtimeKey.apiKey }
+      : {};
+  // Without a base URL the SDK falls back to prod, which rejects a dev credential.
   const client = new BroodsClient({
     baseUrl:
       optionValue(args, "--base-url") ??
       process.env.BROODS_BASE_URL ??
       process.env.BROODS_HOST ??
       auth.baseUrl,
-    ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+    ...clientAuth,
   });
   const ref: AgentReference = {
     kind: "agent",
@@ -2871,29 +3298,17 @@ async function run(args: string[]): Promise<void> {
     ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
     ...(runtimeKey?.stageSlug ? { stageSlug: runtimeKey.stageSlug } : {}),
   };
-  // Lazy, so `ai` and the terminal UI load for this command only.
   const { runAgentTui, streamAgentText } = await import("./tui.ts");
-  try {
-    if (interactive) {
-      await runAgentTui({
-        client: client,
-        agent: ref,
-        ...(prompt ? { prompt: prompt } : {}),
-      });
+  if (interactive) {
+    await runAgentTui({
+      client: client,
+      agent: ref,
+      ...(prompt ? { prompt: prompt } : {}),
+    });
 
-      return;
-    }
-    await streamAgentText({ client: client, agent: ref, prompt: prompt });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("public_access_disabled")) {
-      throw new Error(
-        `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
-      );
-    }
-    throw error;
+    return;
   }
+  await streamAgentText({ client: client, agent: ref, prompt: prompt });
 }
 
 async function writeStarter(
@@ -2909,7 +3324,6 @@ async function writeStarter(
   }
 }
 
-/** `.env.local` holds the runtime key, so keep it out of the repo. */
 async function ensureEnvLocalIgnored(): Promise<void> {
   const path = resolve(process.cwd(), ".gitignore");
   const existing = await readTextIfExists(path);
@@ -2927,13 +3341,13 @@ async function ensureEnvLocalIgnored(): Promise<void> {
   await writeFile(path, body, "utf8");
 }
 
-/** Adds any missing generated-file lines to the project directory's .gitignore. */
 async function ensureGitIgnore(): Promise<void> {
   const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
   const existing = await readTextIfExists(path);
   const needed = ["_generated", ".cache"];
   const missing = needed.filter(
-    (line) => !existing.split(/\r?\n/).some((l) => l.trim() === line),
+    (line): boolean =>
+      !existing.split(/\r?\n/).some((l): boolean => l.trim() === line),
   );
   if (missing.length === 0) return;
   const body = existing
@@ -2952,10 +3366,7 @@ async function writeLocalEnvDefaults(options: {
 }): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
-  const values = parseEnv(current);
-  // Only pin the values that are known. Guessing a base URL for a deployment
-  // we do not host would write an address that never resolves, and guessing a
-  // project would pin a scope nobody chose.
+  const values = parseDotenv(current);
   const nextValues: Record<string, string | undefined> = {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
     BROODS_BASE_URL: options.baseUrl,
@@ -2965,13 +3376,15 @@ async function writeLocalEnvDefaults(options: {
   };
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
-    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
+    : ["# Local broods settings and stage keys. Keep this file out of git."];
   let changed = false;
 
   for (const [key, value] of Object.entries(nextValues)) {
     if (!value) continue;
     if (values[key] !== undefined && !options.force) continue;
-    const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+    const index = lines.findIndex((line): boolean =>
+      line.trim().startsWith(`${key}=`),
+    );
     if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
     else lines.push(`${key}=${quoteEnv(value)}`);
     if (process.env[key] === undefined) process.env[key] = value;
@@ -2979,23 +3392,24 @@ async function writeLocalEnvDefaults(options: {
   }
 
   if (!changed && current) return;
-  const body = `${lines.filter((line, index, all) => !(line === "" && index === all.length - 1)).join("\n")}\n`;
+  const body = `${lines.filter((line, index, all): boolean => !(line === "" && index === all.length - 1)).join("\n")}\n`;
   await writePrivateFile(path, body);
   await ensureEnvLocalIgnored();
 }
 
-/** Upsert a single KEY=value into `.env.local`, preserving other lines. */
 async function writeEnvValue(key: string, value: string): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
   const lines = current
     ? current.replace(/\n?$/, "\n").split(/\n/)
-    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
-  const index = lines.findIndex((line) => line.trim().startsWith(`${key}=`));
+    : ["# Local broods settings and stage keys. Keep this file out of git."];
+  const index = lines.findIndex((line): boolean =>
+    line.trim().startsWith(`${key}=`),
+  );
   if (index >= 0) lines[index] = `${key}=${quoteEnv(value)}`;
   else lines.push(`${key}=${quoteEnv(value)}`);
   process.env[key] = value;
-  const body = `${lines.filter((line, i, all) => !(line === "" && i === all.length - 1)).join("\n")}\n`;
+  const body = `${lines.filter((line, i, all): boolean => !(line === "" && i === all.length - 1)).join("\n")}\n`;
   await writePrivateFile(path, body);
   await ensureEnvLocalIgnored();
 }
@@ -3007,19 +3421,6 @@ async function readTextIfExists(path: string): Promise<string> {
     if ((error as { code?: string }).code === "ENOENT") return "";
     throw error;
   }
-}
-
-function parseEnv(source: string): Record<string, string> {
-  const values: Record<string, string> = {};
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const index = line.indexOf("=");
-    if (index <= 0) continue;
-    values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
-  }
-
-  return values;
 }
 
 function quoteEnv(value: string): string {
@@ -3036,50 +3437,13 @@ function inferProjectName(cwd: string): string {
   );
 }
 
-async function sourceSignature(): Promise<string> {
-  const root = resolve(process.cwd(), PROJECT_DIR);
-  const files: string[] = [];
-  await collectSourceFiles(root, files);
-  const hash = createHash("sha256");
-  for (const file of files.sort()) {
-    hash.update(relative(root, file));
-    hash.update("\0");
-    hash.update(await readFile(file));
-    hash.update("\0");
-  }
+// A source over the limit still deploys; the stage just keeps its previous stored source.
+async function sourceToStore(): Promise<StageSource | undefined> {
+  const read = await readStageSource(process.cwd());
+  if ("skipped" in read)
+    printWarning(`Deploying without storing the source: ${read.skipped}.`);
 
-  return hash.digest("hex");
-}
-
-async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (
-        entry.name === GENERATED_DIR ||
-        entry.name === "generated" ||
-        entry.name === ".cache"
-      )
-        continue;
-      await collectSourceFiles(full, files);
-      continue;
-    }
-    if (
-      entry.isFile() &&
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))
-    )
-      files.push(full);
-  }
-}
-
-function isGeneratedPath(path: string): boolean {
-  return path
-    .split(/[\\/]/)
-    .some(
-      (part) =>
-        part === GENERATED_DIR || part === "generated" || part === ".cache",
-    );
+  return "source" in read ? read.source : undefined;
 }
 
 function starterAgent(): string {
@@ -3106,18 +3470,15 @@ function starterAgent(): string {
     `    system: "You are a helpful assistant.",\n` +
     `  },\n` +
     `  sandboxes: [lambdaSandbox],\n` +
-    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and\n` +
-    `  // \`broods run\` can reach this agent. Off by default: a private agent is\n` +
-    `  // only reachable via internal endpoints or channel webhooks.\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key can\n` +
+    `  // reach this agent. Off by default: a private agent is only reachable via\n` +
+    `  // internal endpoints, channel webhooks or \`broods run\`.\n` +
     `  publicAccess: true,\n` +
     `});\n`
   );
 }
 
-/**
- * Refuses a Node older than `engines`. Without `module.registerHooks` the
- * compile cannot load `broods/*.ts`, and it would fail far from the cause.
- */
+// Fail here: without `module.registerHooks` the compile cannot load `broods/*.ts`.
 function assertSupportedRuntime(): void {
   if ("bun" in process.versions) return;
   if (typeof module.registerHooks === "function") return;
@@ -3127,10 +3488,7 @@ function assertSupportedRuntime(): void {
   );
 }
 
-// Renames ship no compatibility shim, so the pre-rename names have to fail
-// here. `--env`/BROODS_ENVIRONMENT left alone resolve to Development and the
-// command acts on a stage the user never named; `status` would only reach the
-// unknown-command page, which does not say where the command went.
+// Ignored, --env or BROODS_ENVIRONMENT would act on Development, a stage the user never named.
 function assertNoPreRenameConfig(command: string, args: string[]): void {
   if (command === "status") {
     throw new Error("status was renamed to whoami. Run `broods whoami`.");
@@ -3151,40 +3509,35 @@ function assertNoPreRenameConfig(command: string, args: string[]): void {
   }
 }
 
-/**
- * Serve the config plane over MCP on stdio. The client resolves its credential
- * from the environment at startup, so no token reaches a tool argument. Runs
- * until the MCP client closes the connection.
- */
 async function mcp(): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
   const auth = readStoredAuth();
-  // A stored login adds the org, project and stage tools; those routes live
-  // behind the CLI router, which rejects an account key or role session.
-  const [{ createBroodsMcpServer }, { serveStdio }] = await Promise.all([
-    import("../mcp.ts"),
-    import("@modelcontextprotocol/server/stdio"),
-  ]);
+  // The org, project and stage tools need a stored login: the CLI router refuses other keys.
+  const { createBroodsMcpServer, serveBroodsMcp } = await import("../mcp.ts");
   const cli = auth
     ? new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
     : null;
-  // Constructed once, before serving, so having no credential at all fails
-  // loudly here instead of on the first tool call. The destructive gate must
-  // be shell-owned: `.env.local` is writable by the very agent it fences.
+  // Shell-owned only: `.env.local` is writable by the very agent this gate fences.
   const server = createBroodsMcpServer({
     allowDestructive:
       process.env.BROODS_MCP_ALLOW_DESTRUCTIVE === "1" &&
       isShellOwnedEnv("BROODS_MCP_ALLOW_DESTRUCTIVE"),
     cli: cli,
+    login: auth
+      ? new BroodsAccountClient({
+          baseUrl: auth.baseUrl,
+          sessionToken: auth.token,
+        })
+      : null,
     scope: { project: runtime.project, stage: runtime.stage },
   });
-  serveStdio(() => server);
-  await new Promise<void>((resolve) => {
+  serveBroodsMcp(server);
+  await new Promise<void>((resolve): void => {
     process.stdin.on("close", resolve);
   });
 }
 
-main().catch((error) => {
+main().catch((error): never => {
   printError(error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

@@ -1,10 +1,3 @@
-/**
- * The signed-in shell at laptop, tablet and phone viewports: header and
- * sidebar fit with no sideways scroll on every project page, with the sidebar
- * pinned and collapsed.
- * The header once ran 127px past 1280, cutting off the last nav links and the
- * avatar and scrolling the page on every hover.
- */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { NAV_ITEMS } from "../../app/lib/navigation";
 import {
@@ -17,6 +10,9 @@ import {
 test.skip(!hasProbe(), MISSING_PROBE);
 const RAIL_WIDTH = 48;
 const SIDEBAR_WIDTH = 256;
+// The server's sidebar copy can sit beside React's for a moment; only React's is hydrated.
+const SIDEBAR_CONTAINER =
+  '[data-slot="sidebar-container"][data-hydrated="true"]';
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -35,13 +31,12 @@ test("every project page fits 1280 wide, sidebar pinned and collapsed", async ({
     expect(await horizontalOverflow(page), item.label).toBe(0);
   }
 
+  await page.locator(SIDEBAR_CONTAINER).waitFor();
   await page.getByRole("button", { name: "Toggle sidebar" }).click();
   await expect(sidebarState(page)).toHaveAttribute("data-state", "collapsed");
   expect(await horizontalOverflow(page), "collapsed").toBe(0);
 });
 
-// A phone gets the sidebar as a sheet and a tablet the icon rail; the header's
-// switchers once ran 500px past a phone and 107px past a tablet.
 for (const viewport of [
   { width: 375, height: 812 },
   { width: 768, height: 1024 },
@@ -70,11 +65,11 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload", async ({
+test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and stays collapsed across a reload @post-rollout", async ({
   page,
 }) => {
   await page.goto(`/${readProjectId()}/dashboard?tab=tracing`);
-  const container = page.locator('[data-slot="sidebar-container"]');
+  const container = page.locator(SIDEBAR_CONTAINER);
   await expect(container).toBeInViewport();
 
   await page.mouse.move(800, 400);
@@ -86,7 +81,6 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: RAIL_WIDTH });
-  // The rail stays in the tab order, so the focused link keeps its focus.
   await expect(container).not.toHaveAttribute("inert");
   await expect(link).toBeFocused();
 
@@ -94,7 +88,6 @@ test("a collapsed sidebar keeps its icon rail, opens over the page on hover, and
   await expect
     .poll(() => container.boundingBox())
     .toMatchObject({ width: SIDEBAR_WIDTH });
-  // The log table's sticky header and the search icon once painted over it.
   await expect.poll(() => pointsCoveringSidebar(page)).toEqual([]);
   await page.mouse.move(800, 400);
   await expect
@@ -117,18 +110,16 @@ test("on a phone the sidebar sheet closes once a link moves the page", async ({
   await expect(sheet).toBeHidden();
 });
 
-// Points on a 16px grid over the sidebar where something other than the
-// sidebar is the topmost element, as "x,y". The `next dev` badge in the
-// corner does not count: builds do not render it.
 async function pointsCoveringSidebar(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const container = document.querySelector('[data-slot="sidebar-container"]');
+  return page.evaluate((selector) => {
+    const container = document.querySelector(selector);
     if (!container) throw new Error("no sidebar container");
     const rect = container.getBoundingClientRect();
     const covered: string[] = [];
     for (let y = rect.top + 4; y < rect.bottom; y += 16) {
       for (let x = rect.left + 4; x < rect.right; x += 16) {
         const hit = document.elementFromPoint(x, y);
+        // The `next dev` badge does not count: builds do not render it.
         if (hit?.tagName === "NEXTJS-PORTAL") continue;
         if (!hit || !container.contains(hit)) {
           covered.push(`${Math.round(x)},${Math.round(y)}`);
@@ -137,9 +128,11 @@ async function pointsCoveringSidebar(page: Page): Promise<string[]> {
     }
 
     return covered;
-  });
+  }, SIDEBAR_CONTAINER);
 }
 
 function sidebarState(page: Page): Locator {
-  return page.locator('[data-slot="sidebar"]');
+  return page.locator('[data-slot="sidebar"]', {
+    has: page.locator(SIDEBAR_CONTAINER),
+  });
 }

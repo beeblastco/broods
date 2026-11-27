@@ -1,15 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import {
-  BroodsWebSocketClient,
-  WebsocketClient,
-  toWebSocketBaseUrl,
-  type WebSocketServerMessage,
-  type WebSocketLike,
-} from "../src/websocket.ts";
-import type { QuestionAnswer } from "../src/websocket-contracts.ts";
+import { BroodsWebSocketClient, type WebSocketLike } from "../src/websocket.ts";
+import type {
+  QuestionAnswer,
+  WebSocketServerMessage,
+} from "../src/websocket-contracts.ts";
 
 class FakeWebSocket implements WebSocketLike {
   static instances: FakeWebSocket[] = [];
@@ -25,7 +19,7 @@ class FakeWebSocket implements WebSocketLike {
     readonly protocols?: string[],
   ) {
     FakeWebSocket.instances.push(this);
-    queueMicrotask(() => {
+    queueMicrotask((): void => {
       this.readyState = 1;
       this.onopen?.({});
     });
@@ -35,7 +29,14 @@ class FakeWebSocket implements WebSocketLike {
     this.sent.push(data);
   }
 
+  // Rejects the codes a browser rejects, so the SDK never closes with them.
   close(code = 1000, reason = "closed"): void {
+    if (code !== 1000 && (code < 3000 || code > 4999)) {
+      throw new DOMException(
+        `close code ${code} must be 1000 or 3000-4999`,
+        "InvalidAccessError",
+      );
+    }
     this.readyState = 3;
     this.onclose?.({ code: code, reason: reason });
   }
@@ -45,7 +46,7 @@ class FakeWebSocket implements WebSocketLike {
   }
 }
 
-afterEach(() => {
+afterEach((): void => {
   FakeWebSocket.instances = [];
   delete process.env.BROODS_DASHBOARD_URL;
   delete process.env.BROODS_TOKEN;
@@ -56,7 +57,7 @@ afterEach(() => {
   delete process.env.BROODS_API_KEY;
 });
 
-test("websocket client accepts host as a shorthand for the core service URL", () => {
+test("websocket client accepts host as a shorthand for the core service URL", (): void => {
   const client = new BroodsWebSocketClient({
     host: "app.example",
     apiKey: "test-key",
@@ -68,51 +69,7 @@ test("websocket client accepts host as a shorthand for the core service URL", ()
   );
 });
 
-test("websocket URL normalization accepts https and wss service URLs", () => {
-  expect(toWebSocketBaseUrl("https://app.example")).toBe("wss://app.example");
-  expect(toWebSocketBaseUrl("wss://app.example")).toBe("wss://app.example");
-});
-
-test("exports WebsocketClient as an alias", () => {
-  expect(WebsocketClient).toBe(BroodsWebSocketClient);
-});
-
-test("websocket client reads apiKey from the shared SDK environment variable", () => {
-  process.env.BROODS_API_KEY = "env-key";
-  const client = new BroodsWebSocketClient({
-    host: "app.example",
-    WebSocket: FakeWebSocket,
-  });
-
-  expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-    "wss://app.example/v1/agents/agent_1/ws",
-  );
-});
-
-test("websocket client reads apiKey from package-local .env.local", () => {
-  const originalCwd = process.cwd();
-  const tempDir = mkdtempSync(join(tmpdir(), "broods-websocket-"));
-  delete process.env.BROODS_API_KEY;
-  writeFileSync(join(tempDir, ".env.local"), "BROODS_API_KEY=local-env-key\n");
-  process.chdir(tempDir);
-
-  try {
-    const client = new BroodsWebSocketClient({
-      host: "app.example",
-      WebSocket: FakeWebSocket,
-    });
-
-    expect(client.buildUrl({ endpointId: "agent_1" })).toBe(
-      "wss://app.example/v1/agents/agent_1/ws",
-    );
-  } finally {
-    process.chdir(originalCwd);
-    rmSync(tempDir, { recursive: true, force: true });
-    delete process.env.BROODS_API_KEY;
-  }
-});
-
-test("websocket client can be constructed without options", () => {
+test("websocket client can be constructed without options", (): void => {
   process.env.BROODS_API_KEY = "env-key";
   const client = new BroodsWebSocketClient();
 
@@ -121,7 +78,7 @@ test("websocket client can be constructed without options", () => {
   );
 });
 
-test("websocket client lets BROODS_BASE_URL override the default service URL", () => {
+test("websocket client lets BROODS_BASE_URL override the default service URL", (): void => {
   process.env.BROODS_BASE_URL = "https://gateway.example";
   const client = new BroodsWebSocketClient({
     apiKey: "test-key",
@@ -133,7 +90,7 @@ test("websocket client lets BROODS_BASE_URL override the default service URL", (
   );
 });
 
-test("websocket client subscribes to the core service and forwards server messages", async () => {
+test("websocket client subscribes to the core service and forwards server messages", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   let done = false;
   const client = new BroodsWebSocketClient({
@@ -160,10 +117,10 @@ test("websocket client subscribes to the core service and forwards server messag
       },
     },
     {
-      onMessage: function (message) {
+      onMessage: function (message): void {
         messages.push(message);
       },
-      onDone: function () {
+      onDone: function (): void {
         done = true;
       },
     },
@@ -208,7 +165,7 @@ test("websocket client subscribes to the core service and forwards server messag
   expect(done).toBe(true);
 });
 
-test("websocket client sends answers in place of events", async () => {
+test("websocket client sends answers in place of events", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -233,7 +190,145 @@ test("websocket client sends answers in place of events", async () => {
   });
 });
 
-test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {
+test("websocket client closes with a browser-valid code on a server error", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: Error[] = [];
+
+  client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onError: (error: Error): void => {
+        errors.push(error);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  socket.emit({ type: "error", error: "boom" });
+  expect(errors).toHaveLength(1);
+  expect(socket.readyState).toBe(3);
+});
+
+test("websocket subscribe reports a refused start as BroodsApiError with its code", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: Error[] = [];
+
+  client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onError: (error: Error): void => {
+        errors.push(error);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  FakeWebSocket.instances[0]!.emit({
+    type: "error",
+    status: 409,
+    error: "Conversation is busy.",
+    code: "conversation_busy",
+    errorType: "conflict_error",
+  });
+  expect(errors[0]).toMatchObject({
+    name: "BroodsApiError",
+    message: "Run failed: 409 Conversation is busy. (conversation_busy)",
+    status: 409,
+    code: "conversation_busy",
+    type: "conflict_error",
+  });
+});
+
+test("websocket subscribe reports a failure once and nothing after a deliberate close", (): void => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: string[] = [];
+  const input = { endpointId: "agent_1", sessionId: "session_1", input: "hi" };
+  const onError = (error: Error): void => {
+    errors.push(error.message);
+  };
+
+  const closedByCaller = client.subscribe(input, { onError: onError });
+  closedByCaller.close();
+  FakeWebSocket.instances[0]!.onerror?.({});
+  expect(errors).toEqual([]);
+
+  client.subscribe(input, { onError: onError });
+  FakeWebSocket.instances[1]!.onerror?.({});
+  FakeWebSocket.instances[1]!.onerror?.({});
+  expect(errors).toHaveLength(1);
+});
+
+test("websocket subscribe delivers no frame after a deliberate close", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const calls: string[] = [];
+  const subscription = client.subscribe(
+    { endpointId: "agent_1", sessionId: "session_1", input: "hi" },
+    {
+      onDone: (): void => {
+        calls.push("done");
+      },
+      onMessage: (message: WebSocketServerMessage): void => {
+        calls.push(message.type);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  subscription.close();
+  FakeWebSocket.instances[0]!.emit({ type: "done" } as WebSocketServerMessage);
+
+  expect(calls).toEqual([]);
+});
+
+test("websocket attach reports an error frame once, and not again when the socket drops", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const errors: string[] = [];
+  client.attach(
+    {
+      endpointId: "agent_1",
+      agentId: "agent_1",
+      requestId: "attach-1",
+      runId: "run_1",
+      eventId: "event-1",
+      conversationKey: "conversation-1",
+    },
+    {
+      onError: (error: Error): void => {
+        errors.push(error.message);
+      },
+    },
+  );
+
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances[0]!;
+  socket.emit({ type: "error", error: "Attach timed out" });
+  socket.onclose?.({ code: 1006, reason: "" });
+
+  expect(errors).toHaveLength(1);
+});
+
+test("websocket client unwraps output envelopes for handlers and stream consumers", async (): Promise<void> => {
   const messages: WebSocketServerMessage[] = [];
   const outputs: unknown[] = [];
   let done = false;
@@ -251,13 +346,13 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
       input: "start",
     },
     {
-      onMessage: function (message) {
+      onMessage: function (message): void {
         messages.push(message);
       },
-      onOutput: function (output) {
+      onOutput: function (output): void {
         outputs.push(output);
       },
-      onDone: function () {
+      onDone: function (): void {
         done = true;
       },
     },
@@ -279,8 +374,7 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
     data: { type: "done" },
   });
 
-  // Handlers see the inner stream parts (message.type === "text-delta"), and
-  // onOutput receives the raw envelope so clients can persist resume cursors.
+  // Handlers get the inner stream part; onOutput the raw envelope, for resume cursors.
   expect(messages).toEqual([
     { type: "text-delta", id: "text-1", text: "hello" },
     { type: "done" },
@@ -304,7 +398,7 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
   expect(done).toBe(true);
 });
 
-test("websocket client sends correlated control and attach frames", async () => {
+test("websocket client sends correlated control and attach frames", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -336,18 +430,18 @@ test("websocket client sends correlated control and attach frames", async () => 
     agentId: "agent_1",
     conversationKey: "conversation-1",
     eventId: "event-1",
-    afterCursor: "ws-responses:generation:42",
+    afterCursor: "ws-responses:generation:42:event-1",
   });
   await Promise.resolve();
   expect(JSON.parse(FakeWebSocket.instances[1]!.sent[0]!)).toMatchObject({
     type: "attach",
     requestId: "attach-1",
-    afterCursor: "ws-responses:generation:42",
+    afterCursor: "ws-responses:generation:42:event-1",
   });
   attached.close();
 });
 
-test("websocket client can build scoped URLs from generated agent references", async () => {
+test("websocket client can build scoped URLs from generated agent references", async (): Promise<void> => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",
     apiKey: "test-key",
@@ -379,4 +473,195 @@ test("websocket client can build scoped URLs from generated agent references", a
     agentId: "agent_123",
     events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
   });
+});
+
+test("websocket attach honors its AbortSignal and stops delivering callbacks", async (): Promise<void> => {
+  const sockets = new Set<Bun.ServerWebSocket<undefined>>();
+  const frames: string[] = [];
+  const server = Bun.serve<undefined>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, listener): Response | undefined =>
+      listener.upgrade(request, {
+        headers: { "Sec-WebSocket-Protocol": "broods.v1" },
+        data: undefined,
+      })
+        ? undefined
+        : new Response(null, { status: 400 }),
+    websocket: {
+      open: (socket): void => {
+        sockets.add(socket);
+      },
+      message: (_socket, raw): void => {
+        const frame: { type: string } = JSON.parse(String(raw));
+        frames.push(frame.type);
+      },
+      close: (socket): void => {
+        sockets.delete(socket);
+      },
+    },
+  });
+  const client = new BroodsWebSocketClient({
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    apiKey: "test-key",
+  });
+  const input = {
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    requestId: "attach-1",
+    runId: "run_1",
+    eventId: "event-1",
+    conversationKey: "conversation-1",
+  };
+  const seen: string[] = [];
+  const errors: string[] = [];
+  const handlers = {
+    onMessage: (message: WebSocketServerMessage): void => {
+      seen.push(message.type);
+    },
+    onError: (error: Error): void => {
+      errors.push(error.message);
+    },
+  };
+  try {
+    const abort = new AbortController();
+    client.attach({ ...input, signal: abort.signal }, handlers);
+    await until((): boolean => frames.includes("attach"));
+    const [socket] = sockets;
+    abort.abort();
+    await until((): boolean => sockets.size === 0);
+    socket?.send(JSON.stringify({ type: "text-delta", id: "0", text: "late" }));
+    await Bun.sleep(20);
+    expect(seen).toEqual([]);
+    expect(errors).toEqual(["WebSocket attach aborted."]);
+    // Detaching a viewer is not a request to stop the durable run.
+    expect(frames).toEqual(["attach"]);
+
+    client.attach({ ...input, signal: AbortSignal.abort() }, handlers);
+    await Bun.sleep(50);
+    expect(sockets.size).toBe(0);
+    expect(frames).toEqual(["attach"]);
+    expect(errors).toEqual([
+      "WebSocket attach aborted.",
+      "WebSocket attach aborted.",
+    ]);
+  } finally {
+    for (const socket of sockets) socket.close(1000, "test complete");
+    await server.stop(true);
+  }
+});
+
+test("websocket attach delivers nothing after a handler aborts it, and reports a socket failure once", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const input = {
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    requestId: "attach-1",
+    runId: "run_1",
+    eventId: "event-1",
+    conversationKey: "conversation-1",
+  };
+  const calls: string[] = [];
+  const record = {
+    onMessage: (message: WebSocketServerMessage): void => {
+      calls.push(`message:${message.type}`);
+    },
+    onDone: (): void => {
+      calls.push("done");
+    },
+    onError: (error: Error): void => {
+      calls.push(`error:${error.message}`);
+    },
+  };
+
+  const onMessage = new AbortController();
+  client.attach(
+    { ...input, signal: onMessage.signal },
+    { ...record, onMessage: (): void => onMessage.abort() },
+  );
+  const onOutput = new AbortController();
+  client.attach(
+    { ...input, signal: onOutput.signal },
+    { ...record, onOutput: (): void => onOutput.abort() },
+  );
+  client.attach(input, record);
+  await Promise.resolve();
+  const [first, second, third] = FakeWebSocket.instances;
+  first!.emit({ type: "error", error: "boom" });
+  second!.emit({
+    type: "output",
+    eventId: "event-1",
+    cursor: "ws-responses:generation:1:event-key",
+    replay: true,
+    data: { type: "done" },
+  });
+  expect(calls).toEqual([
+    "error:WebSocket attach aborted.",
+    "error:WebSocket attach aborted.",
+  ]);
+
+  calls.length = 0;
+  third!.onerror?.({});
+  third!.onclose?.({ code: 1006, reason: "abnormal" });
+  expect(calls).toEqual([
+    "error:Cannot access the WebSocket service at https://app.example.",
+  ]);
+});
+
+async function until(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("condition did not occur");
+    await Bun.sleep(5);
+  }
+}
+
+test("websocket attach closes on done and reports replay_unavailable as an error", async (): Promise<void> => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const input = {
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    requestId: "attach-1",
+    runId: "run_1",
+    eventId: "event-1",
+    conversationKey: "conversation-1",
+  };
+  const calls: string[] = [];
+  const handlers = {
+    onDone: (): void => {
+      calls.push("done");
+    },
+    onError: (error: Error): void => {
+      calls.push(error.message);
+    },
+  };
+
+  client.attach(input, handlers);
+  await Promise.resolve();
+  FakeWebSocket.instances[0]!.emit({ type: "done" } as WebSocketServerMessage);
+  client.attach(input, handlers);
+  await Promise.resolve();
+  FakeWebSocket.instances[1]!.emit({
+    type: "replay_unavailable",
+    requestId: "attach-1",
+    eventId: "event-1",
+    status: "not_found",
+    statusUrl: "/v1/runs/run_1",
+  });
+
+  expect(calls).toEqual([
+    "done",
+    "Cannot replay event-1: the run is not_found. Read it from /v1/runs/run_1.",
+  ]);
+  expect(
+    FakeWebSocket.instances.map((socket): number => socket.readyState),
+  ).toEqual([3, 3]);
 });

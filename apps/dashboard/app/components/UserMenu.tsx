@@ -1,6 +1,5 @@
 "use client";
 
-/** The account row at the sidebar's foot, and the menu it opens upward. */
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import {
   Avatar,
@@ -13,7 +12,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
 import {
@@ -32,29 +36,63 @@ import {
   FileText,
   HelpCircle,
   LogOut,
+  Monitor,
   Moon,
   ScrollText,
   Settings,
   Shield,
   Sparkles,
   Sun,
+  type LucideIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useParams, useRouter } from "next/navigation";
+import { analytics } from "@/app/lib/analytics";
 import { useCallback } from "react";
+
+const THEMES: ReadonlyArray<{
+  value: "dark" | "light" | "system";
+  icon: LucideIcon;
+  label: string;
+}> = [
+  { value: "light", icon: Sun, label: "Light" },
+  { value: "dark", icon: Moon, label: "Dark" },
+  { value: "system", icon: Monitor, label: "System" },
+];
+
+const DOC_LINKS: ReadonlyArray<{
+  href: string;
+  icon: LucideIcon;
+  label: string;
+}> = [
+  { href: "https://docs.broods.app/", icon: FileText, label: "Documents" },
+  {
+    href: "https://docs.broods.app/terms",
+    icon: ScrollText,
+    label: "Terms of Service",
+  },
+  {
+    href: "https://docs.broods.app/privacy",
+    icon: Shield,
+    label: "Privacy Policy",
+  },
+  {
+    href: "https://docs.broods.app/support",
+    icon: HelpCircle,
+    label: "Support",
+  },
+];
 
 export function UserMenu(): React.JSX.Element | null {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signOut } = useSession();
-  const { theme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();
-  const currentUser = useQuery(
-    api.user.getCurrent,
+  const activeOrg = useQuery(
+    api.dashboardReads.activeOrg,
     useSignedIn() ? {} : "skip",
   );
-  // Warm the account/org routes the moment the menu opens so the first click
-  // paints instantly instead of stalling on a cold chunk + data fetch.
   const warmAccountRoutes = useCallback(
     (open: boolean) => {
       if (!open) return;
@@ -81,9 +119,8 @@ export function UserMenu(): React.JSX.Element | null {
     .slice(0, 2)
     .join("")
     .toUpperCase();
-  const plan = currentUser?.plan ?? DEFAULT_PLAN;
-  const isDark = theme === "dark";
-  // Billing lives on a project's dashboard, so the upgrade needs one open.
+  const plan = activeOrg?.plan ?? DEFAULT_PLAN;
+  const ThemeIcon = resolvedTheme === "dark" ? Moon : Sun;
   const upgradeHref =
     params.projectId && !isMaxPlan(plan)
       ? `/${params.projectId}/dashboard?tab=billing`
@@ -141,14 +178,26 @@ export function UserMenu(): React.JSX.Element | null {
               </>
             )}
             <DropdownMenuGroup>
-              <DropdownMenuItem
-                closeOnClick={false}
-                className="cursor-pointer"
-                onClick={() => setTheme(isDark ? "light" : "dark")}
-              >
-                {isDark ? <Sun /> : <Moon />}
-                {isDark ? "Light mode" : "Dark mode"}
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <ThemeIcon />
+                  Theme
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup value={theme}>
+                    {THEMES.map((item) => (
+                      <DropdownMenuRadioItem
+                        key={item.value}
+                        value={item.value}
+                        onClick={() => setTheme(item.value)}
+                      >
+                        <item.icon />
+                        {item.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem
                 className="cursor-pointer"
                 onClick={() => router.push("/settings/account")}
@@ -166,64 +215,33 @@ export function UserMenu(): React.JSX.Element | null {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem
-                className="cursor-pointer"
-                render={
-                  <a
-                    href="https://docs.broods.app/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                <FileText />
-                Documents
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="cursor-pointer"
-                render={
-                  <a
-                    href="https://docs.broods.app/terms"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                <ScrollText />
-                Terms of Service
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="cursor-pointer"
-                render={
-                  <a
-                    href="https://docs.broods.app/privacy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                <Shield />
-                Privacy Policy
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="cursor-pointer"
-                render={
-                  <a
-                    href="https://docs.broods.app/support"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  />
-                }
-              >
-                <HelpCircle />
-                Support
-              </DropdownMenuItem>
+              {DOC_LINKS.map((link) => (
+                <DropdownMenuItem
+                  key={link.href}
+                  className="cursor-pointer"
+                  render={
+                    <a
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <link.icon />
+                      {link.label}
+                    </a>
+                  }
+                />
+              ))}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
               className="cursor-pointer"
-              onClick={() => signOut()}
+              onClick={() => {
+                void analytics.then((posthog): void => {
+                  posthog.reset();
+                });
+                signOut();
+              }}
             >
               <LogOut />
               Sign out

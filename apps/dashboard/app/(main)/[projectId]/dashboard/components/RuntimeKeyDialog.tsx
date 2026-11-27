@@ -15,8 +15,9 @@ import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { formatDate } from "@/app/lib/formatTime";
 import { navHref } from "@/app/lib/navigation";
-import type { api } from "@broods/convex/_generated/api";
+import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
@@ -28,8 +29,7 @@ const DESCRIPTION = "Runs and observes this stage. Rotate it when it leaks.";
 
 const DOCS_URL = "https://docs.broods.app/reference/sdk";
 
-// VSCode Dark+ token palette, applied by a tiny tokenizer below so the snippet
-// reads like an editor without pulling in a full highlighter dependency.
+// VSCode Dark+ colors for a tiny tokenizer, not a whole highlighter dependency.
 const COLOR = {
   comment: "text-code-comment",
   string: "text-code-string",
@@ -48,30 +48,25 @@ type RevealedKey = NonNullable<
   FunctionReturnType<typeof api.agent.deployments.revealKeyForStage>
 >;
 
-/** Who minted the key and when it last authenticated; absent fields render as nothing. */
 type RuntimeKeyMeta = Omit<RevealedKey, "apiKey">;
 
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (bsk_…) for the active stage. */
   apiKey: string;
-  /** Whether the key was just minted (changes the title). */
   justCreated?: boolean;
 }
 
 interface ViewProps {
   apiKey: string;
-  /** The reveal query's result; its metadata shows only while it describes `apiKey`. */
   revealed?: RevealedKey | null;
   onRotate?: () => Promise<void>;
-  /** The project and stage the key belongs to, for the Deployment section. */
   projectId?: Id<"projects">;
+  stageId?: Id<"stages">;
   projectSlug?: string;
   stageSlug?: string;
 }
 
-/** Opened by the dashboard page right after it mints the stage's first key. */
 export function RuntimeKeyDialog({
   open,
   onOpenChange,
@@ -94,16 +89,12 @@ export function RuntimeKeyDialog({
   );
 }
 
-/**
- * The dashboard's "Runtime key" tab in the Convex settings shape: a title and
- * one sentence on the left, the control on the right, one rule between
- * sections, no card, no numbered steps, no tabs.
- */
 export function RuntimeKeyView({
   apiKey,
   revealed,
   onRotate,
   projectId,
+  stageId,
   projectSlug,
   stageSlug,
 }: ViewProps): React.JSX.Element {
@@ -161,6 +152,15 @@ export function RuntimeKeyView({
         </p>
       </SettingsRow>
 
+      {projectId && stageId && (
+        <SettingsRow
+          title="User token signing secret"
+          description="Your server signs each user's token with it. Shown once."
+        >
+          <SigningSecretRow projectId={projectId} stageId={stageId} />
+        </SettingsRow>
+      )}
+
       <SettingsRow title="Connect" description="Three lines to a first run.">
         <ConnectSnippet key={apiKey} apiKey={apiKey} gatewayUrl={gatewayUrl} />
       </SettingsRow>
@@ -168,7 +168,6 @@ export function RuntimeKeyView({
   );
 }
 
-/** One settings section: words on the left, the control on the right. */
 function SettingsRow({
   title,
   description,
@@ -189,7 +188,6 @@ function SettingsRow({
   );
 }
 
-/** A labeled value with its controls beside it. */
 function ValueRow({
   label,
   children,
@@ -205,7 +203,6 @@ function ValueRow({
   );
 }
 
-/** The masked key with reveal, copy and, on the tab, rotate. */
 function KeyRow({
   apiKey,
   onRotate,
@@ -240,7 +237,6 @@ function KeyRow({
   );
 }
 
-/** The three lines that reach a first run, and where to read on. */
 function ConnectSnippet({
   apiKey,
   gatewayUrl,
@@ -259,9 +255,9 @@ function ConnectSnippet({
     ].join("\n");
 
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 grid-cols-1 gap-2">
       <div className="relative">
-        <pre className="overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
+        <pre className="scheme-dark overflow-x-auto rounded-md border border-border bg-code-background px-4 py-3 font-mono text-xs leading-relaxed text-code-foreground">
           <code>{highlight(lines(showKey ? apiKey : maskedKey))}</code>
         </pre>
         <div className="absolute top-2 right-2 flex items-center gap-1">
@@ -310,7 +306,6 @@ function ConnectSnippet({
   );
 }
 
-/** Copies a cURL request for the stage; the plain HTTP route for anyone without the SDK. */
 function CurlLink({ gatewayUrl }: { gatewayUrl: string }): React.JSX.Element {
   const snippet = [
     `curl -N ${gatewayUrl}/v1/runs \\`,
@@ -368,7 +363,6 @@ function highlight(code: string): ReactNode[] {
   return out;
 }
 
-// "Created Sep 2 by Ada, last used 4m ago", dropping each part the row does not know.
 function KeyMetaLine({ meta }: { meta?: RuntimeKeyMeta }): React.JSX.Element {
   const now = useNow();
   const created = meta?.createdAt
@@ -447,7 +441,83 @@ function RotateButton({
       >
         Rotate
       </Button>
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+      {error ? (
+        <span role="alert" className="text-xs text-destructive">
+          {error}
+        </span>
+      ) : null}
     </span>
+  );
+}
+
+function SigningSecretRow({
+  projectId,
+  stageId,
+}: {
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+}): React.JSX.Element {
+  const current = useQuery(api.agent.deployments.userTokenSecretForStage, {
+    projectId: projectId,
+    stageId: stageId,
+  });
+  const rotate = useMutation(api.agent.deployments.rotateUserTokenSecret);
+  const [minted, setMinted] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function mint(): Promise<void> {
+    const result = await rotate({ projectId: projectId, stageId: stageId });
+    setMinted(result.secret);
+  }
+
+  return (
+    <>
+      {minted ? (
+        <ValueRow label="Copy it now. It is not shown again.">
+          <Input readOnly value={minted} className="font-mono text-xs" />
+          <CopyButton value={minted} label="signing secret" />
+        </ValueRow>
+      ) : (
+        <ValueRow label="BROODS_USER_TOKEN_SECRET">
+          <Input
+            readOnly
+            value={current ? current.hint : "Not generated"}
+            className="font-mono text-xs"
+          />
+          {current ? (
+            <RotateButton onRotate={mint} />
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              tone="muted"
+              className="cursor-pointer"
+              onClick={() => {
+                setError(null);
+                mint().catch((e: unknown) => setError(toErrorMessage(e)));
+              }}
+            >
+              Generate
+            </Button>
+          )}
+        </ValueRow>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+      <p className="text-2xs text-muted-foreground">
+        Keep it on your server. Rotating it voids every token it signed.{" "}
+        <a
+          href={`${DOCS_URL}#user-tokens`}
+          target="_blank"
+          rel="noreferrer"
+          className="cursor-pointer text-foreground underline-offset-3 hover:underline"
+        >
+          User tokens
+        </a>
+      </p>
+    </>
   );
 }

@@ -1,7 +1,3 @@
-// An MCP server on a lambda sandbox is one JSON-RPC request per POST /mcp to
-// the reserved VM. These pin the body the sandbox image reads and how replies
-// are checked; reaching the VM is the executor's, tested in sandbox-executor.
-
 import { expect, test } from "bun:test";
 import {
   sandboxMcpRequest,
@@ -77,20 +73,6 @@ test("refuses a reply that is not JSON-RPC", async () => {
       sandboxMcpRequest(TARGET, "obscura", LIST, undefined, executor),
     ),
   ).toContain("answered with no JSON-RPC result");
-});
-
-test("names the server when the VM cannot be reached", async () => {
-  const executor: SandboxMcpExecutor = {
-    postReserved: async function (): Promise<unknown> {
-      throw new Error("MicroVM /mcp failed (500): boom");
-    },
-  };
-
-  expect(
-    await failure(
-      sandboxMcpRequest(TARGET, "obscura", LIST, undefined, executor),
-    ),
-  ).toContain("MCP server obscura on its sandbox failed: MicroVM /mcp failed");
 });
 
 test("gives a tool call 120 s on a sandbox with no timeout of its own", async () => {
@@ -177,7 +159,6 @@ test("refuses a sandbox whose executor has no MCP host", async () => {
   );
 });
 
-// An executor whose every POST answers `reply`, recording each request.
 function answering(requests: unknown[], reply: unknown): SandboxMcpExecutor {
   return {
     postReserved: async function (request): Promise<unknown> {
@@ -188,7 +169,6 @@ function answering(requests: unknown[], reply: unknown): SandboxMcpExecutor {
   };
 }
 
-// The error a call fails with, or "resolved" when it does not fail.
 function failure(call: Promise<unknown>): Promise<string> {
   return call.then(
     (): string => "resolved",

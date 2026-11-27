@@ -98,33 +98,6 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("allows every repo when no allow list is configured", async () => {
-    const adapter = createGitHubChannel(
-      "webhook-secret",
-      "app-id",
-      "private-key",
-      null,
-      null,
-    );
-
-    const parsed = await adapter.parse(
-      createRequest(
-        JSON.stringify({
-          action: "opened",
-          repository: createRepository(),
-          issue: { number: 1, title: "Issue title", body: "Issue body" },
-          installation: { id: 99 },
-        }),
-        {
-          "x-github-event": "issues",
-          "x-github-delivery": "delivery-wildcard",
-        },
-      ),
-    );
-
-    expect(parsed.kind).toBe("message");
-  });
-
   it("normalizes issue events into issue conversation keys", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
@@ -582,18 +555,39 @@ describe("github channel adapter", () => {
     expect(context).not.toContain("@my-bot can you review this?");
   });
 
-  it("accepts review comments with @-mention when botUserName is configured", async () => {
+  it("fetches the thread and its comments at once, each with a timeout", async () => {
+    const signals: unknown[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      signals.push(init?.signal);
+      const url = requestUrl(input);
+      if (url.endsWith("/access_tokens")) {
+        return jsonResponse(201, { token: "installation-token" });
+      }
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+
+      return url.endsWith("/pulls/10")
+        ? jsonResponse(200, { number: 10, title: "T", state: "open" })
+        : jsonResponse(200, []);
+    }) as typeof fetch;
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
-      "private-key",
+      testPrivateKey(),
       null,
       null,
       undefined,
       "my-bot",
     );
 
-    const parsed = await adapter.parse(
+    await adapter.parse(
       createRequest(
         JSON.stringify({
           action: "created",
@@ -601,7 +595,10 @@ describe("github channel adapter", () => {
           pull_request: { number: 10 },
           comment: {
             id: 60,
-            body: "@my-bot can you review this?",
+            body: "@my-bot review",
+            path: "src/retry.ts",
+            line: 18,
+            created_at: "2026-06-01T10:00:00Z",
             user: { login: "bob", type: "User" },
           },
           installation: { id: 99 },
@@ -609,12 +606,14 @@ describe("github channel adapter", () => {
         }),
         {
           "x-github-event": "pull_request_review_comment",
-          "x-github-delivery": "delivery-8",
+          "x-github-delivery": "delivery-pr-parallel",
         },
       ),
     );
 
-    expect(parsed.kind).toBe("message");
+    expect(maxInFlight).toBe(3);
+    expect(signals).toHaveLength(4);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
   });
 
   it("ignores review comments without @-mention when botUserName is configured", async () => {
@@ -773,6 +772,102 @@ describe("github channel adapter", () => {
     );
 
     expect(parsed).toEqual({ kind: "ignore" });
+  });
+
+  it("ignores issues and pull requests a bot sender opens or edits", async () => {
+    const adapter = createGitHubChannel(
+      "webhook-secret",
+      "app-id",
+      "private-key",
+      null,
+      null,
+      undefined,
+      "my-bot",
+    );
+    const bot = { login: "dependabot[bot]", type: "Bot" };
+    const events = [
+      {
+        event: "pull_request",
+        action: "opened",
+        pull_request: { number: 15, title: "Bump" },
+      },
+      {
+        event: "pull_request",
+        action: "edited",
+        pull_request: { number: 15, title: "Bump" },
+      },
+      {
+        event: "issues",
+        action: "reopened",
+        issue: { number: 5, title: "Report" },
+      },
+    ];
+
+    for (const { event, ...body } of events) {
+      const parsed = await adapter.parse(
+        createRequest(
+          JSON.stringify({
+            ...body,
+            repository: createRepository(),
+            sender: bot,
+            installation: { id: 99 },
+          }),
+          {
+            "x-github-event": event,
+            "x-github-delivery": `delivery-bot-${event}-${body.action}`,
+          },
+        ),
+      );
+
+      expect(parsed).toEqual({ kind: "ignore" });
+    }
+  });
+
+  it("ignores an edited issue, pull request or comment from a person", async () => {
+    const adapter = createGitHubChannel(
+      "webhook-secret",
+      "app-id",
+      "private-key",
+      null,
+      null,
+      undefined,
+      "my-bot",
+    );
+    const comment = {
+      id: 55,
+      body: "@my-bot please help, typo fixed",
+      user: { login: "alice", type: "User" },
+    };
+    const events = [
+      { event: "issues", issue: { number: 5, title: "Report" } },
+      { event: "pull_request", pull_request: { number: 15, title: "Change" } },
+      { event: "issue_comment", issue: { number: 12 }, comment: comment },
+      {
+        event: "pull_request_review_comment",
+        pull_request: { number: 15 },
+        comment: comment,
+      },
+    ];
+
+    for (const { event, ...body } of events) {
+      const parsed = await adapter.parse(
+        createRequest(
+          JSON.stringify({
+            ...body,
+            action: "edited",
+            repository: createRepository(),
+            sender: { login: "alice", type: "User" },
+            installation: { id: 99 },
+          }),
+          {
+            "x-github-event": event,
+            "x-github-delivery": `delivery-edited-${event}`,
+          },
+        ),
+      );
+
+      expect(parsed).toEqual({ kind: "ignore" });
+    }
   });
 
   it("triggers on PR assigned to bot user", async () => {

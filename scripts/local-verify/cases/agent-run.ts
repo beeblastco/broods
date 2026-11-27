@@ -1,6 +1,7 @@
 import type { CreateAgentResult } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  OK_AGENT,
   MODEL_KEY_HINT,
   assertStep,
   lastJsonLine,
@@ -23,10 +24,6 @@ interface ContextPreparedLog {
   subagentsMs: number;
 }
 
-/**
- * A cold run, then a warm turn on the same conversation. The warm turn's
- * context prepare, read from the core log, must stay under budget.
- */
 export async function agentRun(context: VerifyContext): Promise<void> {
   const key = `smoke-${context.runId}`;
   const { agentId } = await context.measure(
@@ -36,7 +33,7 @@ export async function agentRun(context: VerifyContext): Promise<void> {
         name: key,
         config: {
           ...context.model,
-          instructions: "Reply with the single word OK.",
+          agent: OK_AGENT,
         },
       }),
   );

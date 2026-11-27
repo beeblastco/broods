@@ -1,8 +1,3 @@
-/**
- * Agent records as core reads them from storage. Agent CRUD and its input
- * validation live in the config plane (packages/convex/config/routes/agents.ts).
- */
-
 import type { AgentConfig } from "./agent-config.ts";
 
 export interface AgentRecord {
@@ -11,6 +6,8 @@ export interface AgentRecord {
   name: string;
   description?: string;
   config: AgentConfig;
+  /** Runtime-key requests must carry a signed user token. */
+  requireUserToken?: boolean;
   createdAt: string;
   updatedAt: string;
 }

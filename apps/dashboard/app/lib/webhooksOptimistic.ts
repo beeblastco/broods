@@ -1,10 +1,7 @@
-/** Optimistic-update helper for the webhooks panel's active/inactive toggle. */
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { OptimisticLocalStore } from "convex/browser";
 
-// Convex reverts this on its own when the mutation fails, so the pill snaps
-// back to the server's truth without a rollback path here.
 export function applyWebhookEnabledToggle(
   localStore: OptimisticLocalStore,
   args: {
@@ -13,8 +10,7 @@ export function applyWebhookEnabledToggle(
     enabled: boolean;
   },
 ): void {
-  // The panel's query args carry the stage, which this mutation never
-  // sees, so patch whichever listing the panel currently holds.
+  // The panel's query args carry a stage this mutation never sees: patch every listing held.
   for (const { args: queryArgs, value } of localStore.getAllQueries(
     api.webhooks.listAgentWebhooks,
   )) {
@@ -35,8 +31,7 @@ export function applyWebhookEnabledToggle(
       };
     });
 
-    // A listing without this webhook must not be rewritten, or its observers
-    // re-render for a change that never touched them.
+    // Rewriting an untouched listing would re-render its observers for nothing.
     if (!touched) continue;
 
     localStore.setQuery(api.webhooks.listAgentWebhooks, queryArgs, next);

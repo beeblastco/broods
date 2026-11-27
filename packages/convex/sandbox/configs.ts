@@ -1,44 +1,11 @@
-/**
- * Sandbox config CRUD scoped to an account. Mirrors agents.ts: the doc _id is
- * the public sandboxId, every mutation revalidates the doc's accountId against
- * the caller-supplied accountId, and the config blob is stored encrypted
- * (broods encrypts before writing; the dashboard never reads it).
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { sandboxConfigsFields, paginationCursorFields } from "../schema";
+import { paginationCursorFields } from "../schema";
 import { assertSealedUnderCurrentKey } from "../model/accountKeys";
 import { ClientError } from "../model/clientError";
-
-const sandboxConfigDoc = v.object({
-  ...sandboxConfigsFields,
-  _id: v.id("sandboxConfigs"),
-  _creationTime: v.number(),
-});
-
-/**
- * Look up a sandbox config by the public string id. The validator accepts
- * `v.string()` (not `v.id`) so unknown / non-Convex-id values resolve to `null`
- * (= "not found") instead of throwing at the adapter boundary.
- */
-export const getById = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    sandboxId: v.string(),
-  },
-  returns: v.union(sandboxConfigDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"sandboxConfigs"> | null> => {
-    const normalized = ctx.db.normalizeId("sandboxConfigs", args.sandboxId);
-    if (!normalized) return null;
-    const doc = await ctx.db.get(normalized);
-    if (!doc || doc.accountId !== args.accountId) return null;
-
-    return doc;
-  },
-});
+import { sandboxConfigDoc } from "../model/sandboxConfigDoc";
 
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },

@@ -1,0 +1,34 @@
+# One step for every job that installs the workspace: Bun from .bun-version,
+# the package cache keyed on bun.lock, then bun install with the caller's flags.
+name: Install with bun
+description: Setup Bun, restore the package cache and run bun install.
+
+inputs:
+  args:
+    description: Flags for bun install. Every job skips the postinstall (`sst install`).
+    required: false
+    default: --frozen-lockfile --ignore-scripts
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      with:
+        bun-version-file: .bun-version
+
+    - name: Cache the bun package cache
+      # Package tarballs only; bun install still links node_modules from them.
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-
+
+    - name: Install dependencies
+      shell: bash
+      # Composite steps ignore the job's run defaults, so the directory is explicit.
+      working-directory: ${{ github.workspace }}
+      env:
+        ARGS: ${{ inputs.args }}
+      run: bun install $ARGS

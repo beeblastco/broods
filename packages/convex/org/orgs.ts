@@ -1,55 +1,20 @@
-/**
- * Public org (workspace) queries and mutations. Each authenticated user can
- * own multiple orgs; membership is tracked in the `orgMembers` join table.
- */
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
-import {
-  internalMutation,
-  internalQuery,
-  mutation,
-  query,
-} from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
+import { internalQuery, mutation } from "../_generated/server";
 import { authKit } from "../auth";
+import { orgDoc } from "../dashboardReads";
 import { purgeOrg } from "../model/cascade";
-import { slugifyName } from "../lib/slug";
+import { uniqueOrgSlug } from "../lib/slug";
 import { ClientError } from "../model/clientError";
 import { hasDashboardPermission } from "../model/access";
+import { assertCanCreateOrg } from "../model/orgBilling";
 import {
   getActiveOrgForUser,
-  getOrgMembership,
-  orgRoleMeets,
   requireOrgMember,
   userByAuthId,
-  type OrgRole,
 } from "../model/ownership/org";
-import { orgsFields } from "../schema";
 
-/**
- * Accounts provisioned straight against the account API, the per-stack service
- * accounts rather than dashboard signups, carry a synthetic `external:<name>` binding
- * instead of an `orgs` id. `accounts.orgId` is a plain string, so that is legal
- * and nothing rejects it, but the consequence is that such an account is
- * unreachable from the dashboard: `orgMembers.orgId` is an `Id<"orgs">`, so no
- * membership row can point at it, and every dashboard read resolves accounts
- * through org membership. Nobody can see or operate it.
- */
-export const EXTERNAL_ORG_PREFIX = "external:";
-
-const orgDoc = v.object({
-  ...orgsFields,
-  _id: v.id("orgs"),
-  _creationTime: v.number(),
-});
-
-const orgRoleValidator = v.union(
-  v.literal("owner"),
-  v.literal("admin"),
-  v.literal("member"),
-);
-
-/** What `getOrCreateActiveOrg` answers: the active org and whether it still needs an API account. */
 export const orgBootstrapValidator = v.object({
   orgId: v.id("orgs"),
   needsProvision: v.boolean(),
@@ -57,117 +22,6 @@ export const orgBootstrapValidator = v.object({
 
 export type OrgBootstrap = Infer<typeof orgBootstrapValidator>;
 
-export interface ActiveAccount {
-  account: Doc<"accounts">;
-  role: OrgRole;
-  user: Doc<"users">;
-}
-
-/**
- * Adopts an `external:`-bound account into a real org owned by a human, so it
- * can be operated like any other account.
- *
- * Internal + un-gated by design: the whole point is that these accounts have no
- * org, so there is no admin to authorize against, and the dashboard's
- * `requireOrgMember` path cannot express this operation. Run it deliberately
- * (`npx convex run`), not from the UI.
- *
- * Always mints a NEW org rather than moving the account into the owner's
- * existing one: `accounts.getByOrgId` resolves with `.unique()`, so a second
- * account bound to an org that already has one makes that query throw for every
- * caller, taking down the org the owner already depends on.
- */
-export const adoptExternalAccount = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    ownerEmail: v.string(),
-    orgName: v.string(),
-  },
-  returns: v.object({
-    orgId: v.id("orgs"),
-    slug: v.string(),
-    membershipId: v.id("orgMembers"),
-  }),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{
-    orgId: Id<"orgs">;
-    slug: string;
-    membershipId: Id<"orgMembers">;
-  }> => {
-    const account = await ctx.db.get(args.accountId);
-    if (!account) {
-      throw new Error("Account not found");
-    }
-    // Refuse to re-home an account that a real org already owns: that org's
-    // members would silently lose it.
-    if (!account.orgId.startsWith(EXTERNAL_ORG_PREFIX)) {
-      throw new Error(
-        `Account ${account.username} is already bound to org ${account.orgId}; refusing to move it`,
-      );
-    }
-
-    const email = args.ownerEmail.trim().toLowerCase();
-    const ownerMatches = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .collect();
-    if (ownerMatches.length === 0) {
-      throw new Error(
-        `No user with email ${email}; they must sign in to the dashboard once first`,
-      );
-    }
-    if (ownerMatches.length > 1) {
-      throw new Error(
-        `Multiple users found with email ${email}; database integrity violation`,
-      );
-    }
-    const owner = ownerMatches[0];
-
-    const now = Date.now();
-    const slug = await uniqueOrgSlug(ctx, args.orgName);
-    const orgId = await ctx.db.insert("orgs", {
-      name: args.orgName,
-      slug: slug,
-      ownerAuthId: owner.authId,
-      plan: owner.plan,
-      createdAt: now,
-      // An adopted org is not a first-time signup: without this,
-      // project.openHome treats the owner's first dashboard
-      // visit as onboarding and mints a randomly-named empty project.
-      // This account's agents get their project from the back-sync path
-      // instead, named after the account.
-      onboardedAt: now,
-    });
-    const membershipId = await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: owner._id,
-      role: "owner",
-      createdAt: now,
-    });
-    // The secret hash is untouched, so whatever service holds this account's
-    // secret keeps authenticating exactly as before.
-    await ctx.db.patch(account._id, { orgId: orgId, updatedAt: now });
-
-    console.log("AUDIT external account adopted", {
-      accountId: account._id,
-      username: account.username,
-      previousOrgId: account.orgId,
-      orgId: orgId,
-      ownerId: owner._id,
-    });
-
-    return { orgId: orgId, slug: slug, membershipId: membershipId };
-  },
-});
-
-/**
- * Creates an org owned by the caller, inserts an owner membership row, and sets
- * it as the caller's active org (defense in depth, so create alone activates it
- * without relying on the UI calling setActive). The matching backend `accounts`
- * row is provisioned by `org/lifecycle:provision`.
- */
 export const create = mutation({
   args: {
     name: v.string(),
@@ -176,7 +30,6 @@ export const create = mutation({
   handler: async (ctx, args): Promise<Id<"orgs">> => {
     const { name } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -194,71 +47,6 @@ export const create = mutation({
   },
 });
 
-/**
- * Returns the caller's active org (chosen, else the oldest membership), or null
- * when they have not yet created or joined one.
- */
-export const getActive = query({
-  args: {},
-  returns: v.union(orgDoc, v.null()),
-  handler: async (ctx): Promise<Doc<"orgs"> | null> => {
-    // Check authenticated user
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      return null;
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) {
-      return null;
-    }
-
-    const org = await getActiveOrgForUser(ctx, user._id);
-
-    return org ?? null;
-  },
-});
-
-/**
- * The active org's broods account id, status and the caller's role, or null
- * when the user has no active org or it is not provisioned. The role only
- * drives what the dashboard shows; every mutation checks it again.
- */
-export const getActiveAccount = query({
-  args: {
-    requiredRole: v.optional(orgRoleValidator),
-  },
-  returns: v.union(
-    v.object({
-      accountId: v.id("accounts"),
-      status: v.union(v.literal("active"), v.literal("disabled")),
-      role: orgRoleValidator,
-    }),
-    v.null(),
-  ),
-  handler: async (
-    ctx,
-    { requiredRole },
-  ): Promise<{
-    accountId: Id<"accounts">;
-    status: "active" | "disabled";
-    role: OrgRole;
-  } | null> => {
-    const active = await getActiveCaller(ctx, requiredRole);
-    if (!active) return null;
-
-    return {
-      accountId: active.account._id,
-      status: active.account.status,
-      role: active.role,
-    };
-  },
-});
-
-/** The user id behind an auth id, for actions that record who acted. */
 export const userIdByAuthId = internalQuery({
   args: { authId: v.string() },
   returns: v.union(v.id("users"), v.null()),
@@ -269,12 +57,10 @@ export const userIdByAuthId = internalQuery({
   },
 });
 
-/** One org by id when the caller holds `keys:write` for it, so may mint or rotate its account key; null otherwise. */
 export const getByIdForKeyWriter = internalQuery({
   args: { orgId: v.id("orgs") },
   returns: v.union(orgDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"orgs"> | null> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return null;
@@ -291,16 +77,10 @@ export const getByIdForKeyWriter = internalQuery({
   },
 });
 
-/**
- * Gets or creates the caller's active org and says whether its API account
- * still needs `org/lifecycle:provision`. `broods login` bootstraps through it
- * before minting a code; the dashboard home does the same in `project.openHome`.
- */
 export const getOrCreate = mutation({
   args: {},
   returns: orgBootstrapValidator,
   handler: async (ctx): Promise<OrgBootstrap> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -310,49 +90,12 @@ export const getOrCreate = mutation({
   },
 });
 
-/** Lists every org the caller is a member of. */
-export const list = query({
-  args: {},
-  returns: v.array(orgDoc),
-  handler: async (ctx): Promise<Doc<"orgs">[]> => {
-    // Check authenticated user
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      return [];
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) {
-      return [];
-    }
-
-    const memberships = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .collect();
-
-    const orgs = await Promise.all(
-      memberships.map((membership) => ctx.db.get(membership.orgId)),
-    );
-
-    return orgs.filter((org): org is NonNullable<typeof org> => org !== null);
-  },
-});
-
-/**
- * Removes an org, its memberships, and its backend `accounts` row plus
- * everything that cascades from it. Owner only.
- */
 export const remove = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -368,24 +111,18 @@ export const remove = mutation({
 
     await requireOrgMember(ctx, orgId, user._id, "owner");
 
-    // Full cascade: projects (+ stages/keys/files), account, memberships.
     await purgeOrg(ctx, orgId);
 
     return null;
   },
 });
 
-/**
- * Sets the caller's active org. The user must be a member; the choice is
- * persisted on the users row so future sessions remember it.
- */
 export const setActive = mutation({
   args: { orgId: v.id("orgs") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { orgId } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -407,7 +144,7 @@ export const setActive = mutation({
   },
 });
 
-/** Renames an org. Owner/admin only. The plan comes from Stripe, never from here. */
+// The plan comes from Stripe, never from here.
 export const update = mutation({
   args: {
     orgId: v.id("orgs"),
@@ -417,7 +154,6 @@ export const update = mutation({
   handler: async (ctx, args): Promise<null> => {
     const { orgId, name } = args;
 
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       throw new Error("User not found or not authenticated");
@@ -439,42 +175,6 @@ export const update = mutation({
   },
 });
 
-/**
- * Resolves the broods `accounts` doc for the caller's active org, or null when
- * the user is unauthenticated, has no active org, or it has not been
- * provisioned yet. Shared by the account-scoped public queries so the
- * auth -> user -> org -> account chain lives in one place.
- * @param ctx query/mutation context.
- * @param requiredRole minimum org role; omitted means any membership.
- * @returns the account document, or null when none resolves or the role is short.
- */
-export async function getActiveAccountForUser(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<Doc<"accounts"> | null> {
-  const active = await getActiveCaller(ctx, requiredRole);
-
-  return active ? active.account : null;
-}
-
-/** The caller's account, role and user row together; null when none resolves or the role is short. */
-export async function getActiveCaller(
-  ctx: QueryCtx,
-  requiredRole?: OrgRole,
-): Promise<ActiveAccount | null> {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) return null;
-  const active = await resolveActiveAccount(ctx, authUser.id);
-  if (!active || !orgRoleMeets(active.role, requiredRole)) return null;
-
-  return active;
-}
-
-/**
- * The user's active org, created as "<name>'s Workspace" with an owner
- * membership on first sign-in, and whether its API account is still missing.
- * The one bootstrap behind `getOrCreate` and `project.openHome`.
- */
 export async function getOrCreateActiveOrg(
   ctx: MutationCtx,
   authId: string,
@@ -502,45 +202,18 @@ export async function getOrCreateActiveOrg(
   return { orgId: orgId, needsProvision: account === null };
 }
 
-/**
- * The account behind a user's active org plus the role they hold there. The
- * org owner is an owner even when their membership row says otherwise.
- */
-export async function resolveActiveAccount(
-  ctx: QueryCtx,
-  authId: string,
-): Promise<ActiveAccount | null> {
-  const user = await userByAuthId(ctx, authId);
-  if (!user) return null;
-
-  const org = await getActiveOrgForUser(ctx, user._id);
-  if (!org) return null;
-  const membership = await getOrgMembership(ctx, org._id, user._id);
-  const role: OrgRole | undefined =
-    org.ownerAuthId === authId ? "owner" : membership?.role;
-  if (!role) return null;
-
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-    .unique();
-  if (!account) return null;
-
-  return { account: account, role: role, user: user };
-}
-
-/** Inserts an org the user owns, with an owner membership, and makes it their active org. */
-async function insertOwnedOrg(
+export async function insertOwnedOrg(
   ctx: MutationCtx,
   user: Doc<"users">,
   name: string,
 ): Promise<Id<"orgs">> {
+  const plan = await assertCanCreateOrg(ctx, user.authId);
   const now = Date.now();
   const orgId = await ctx.db.insert("orgs", {
     name: name,
     slug: await uniqueOrgSlug(ctx, name),
     ownerAuthId: user.authId,
-    plan: user.plan,
+    plan: plan,
     createdAt: now,
   });
   await ctx.db.insert("orgMembers", {
@@ -552,23 +225,4 @@ async function insertOwnedOrg(
   await ctx.db.patch(user._id, { activeOrgId: orgId });
 
   return orgId;
-}
-
-async function uniqueOrgSlug(
-  ctx: MutationCtx,
-  baseName: string,
-): Promise<string> {
-  const baseSlug = slugifyName(baseName);
-  let suffix = 0;
-  for (;;) {
-    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
-      .query("orgs")
-      .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!existing) {
-      return candidate;
-    }
-    suffix += 1;
-  }
 }

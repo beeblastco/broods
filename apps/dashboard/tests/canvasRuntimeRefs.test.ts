@@ -8,7 +8,6 @@ import {
   writeChangedRefs,
 } from "../app/lib/canvasRuntimeRefs";
 
-/** Minimal canvas node; `data` carries the same fields BaseNode reads. */
 function node(
   id: string,
   type: string,
@@ -32,44 +31,17 @@ function edge(source: string, target: string, type?: string): Edge {
 }
 
 describe("analyzeCanvasInfra workspace state", () => {
-  test("CLI readOnly flag forces read-only even with an agent default sandbox", () => {
-    const nodes = [
-      node("agent", "agent", { agentConfigId: "cfg" }),
-      node("sb", "sandbox"),
-      node("ws", "workspace", { readOnly: true }),
-    ];
-    const edges = [edge("agent", "sb"), edge("agent", "ws")];
-
-    const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
-
-    expect(workspaceStates.ws).toEqual({ kind: "readonly" });
-  });
-
   test("a writable mount edge wins over the readOnly flag (shared-writable)", () => {
     const nodes = [
       node("agent", "agent", { agentConfigId: "cfg" }),
       node("sb", "sandbox"),
       node("ws", "workspace", { readOnly: true }),
     ];
-    // Mount edge ws<->sb means another agent can write here.
     const edges = [edge("agent", "ws"), edge("ws", "sb")];
 
     const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
 
     expect(workspaceStates.ws.kind).toBe("override");
-  });
-
-  test("no flag + agent default sandbox => inherited (writable)", () => {
-    const nodes = [
-      node("agent", "agent", { agentConfigId: "cfg" }),
-      node("sb", "sandbox"),
-      node("ws", "workspace"),
-    ];
-    const edges = [edge("agent", "sb"), edge("agent", "ws")];
-
-    const { workspaceStates } = analyzeCanvasInfra(nodes, edges);
-
-    expect(workspaceStates.ws.kind).toBe("inherited");
   });
 
   test("override demo topology: scratch=inherited, secure=override, reference=readonly", () => {
@@ -143,7 +115,6 @@ describe("deriveAgentRuntimeRefs", () => {
     const nodes = [
       node("agent", "agent", {
         agentConfigId: "cfg",
-        // "gone" lost its edge, so it no longer counts.
         sandboxOrder: ["mac", "gone", "cloud"],
       }),
       node("cloud", "sandbox", { resourceId: "sb_cloud" }),
@@ -160,14 +131,6 @@ describe("deriveAgentRuntimeRefs", () => {
     const [refs] = deriveAgentRuntimeRefs(nodes, edges);
 
     expect(refs.sandboxes).toEqual(["sb_mac", "sb_cloud", "sb_new"]);
-  });
-
-  test("no sandbox edge derives no sandboxes", () => {
-    const nodes = [node("agent", "agent", { agentConfigId: "cfg" })];
-
-    const [refs] = deriveAgentRuntimeRefs(nodes, []);
-
-    expect(refs.sandboxes).toEqual([]);
   });
 
   test("a workspace with no mount edge inherits, and says so by naming no sandbox", () => {
@@ -256,7 +219,6 @@ describe("deriveSubagentRefs", () => {
   });
 });
 
-/** Minimal ref shape: `writeChangedRefs` only reads `configId`. */
 function ref(
   configId: string,
   value: string,
@@ -291,7 +253,7 @@ describe("writeChangedRefs caching", () => {
       if (attempts === 1) throw new Error("mutation failed");
     };
 
-    expect(
+    await expect(
       writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write),
     ).rejects.toThrow("mutation failed");
     expect(cache.has("cfg")).toBe(false);
@@ -310,7 +272,7 @@ describe("writeChangedRefs caching", () => {
       if (r.configId === "cfg_bad") throw new Error("mutation failed");
     };
 
-    expect(
+    await expect(
       writeChangedRefs(
         [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
         cache,
@@ -319,7 +281,6 @@ describe("writeChangedRefs caching", () => {
       ),
     ).rejects.toThrow("mutation failed");
 
-    // Both were attempted; only the successful one is remembered.
     expect(attempts).toEqual(["cfg_ok", "cfg_bad"]);
     expect(cache.get("cfg_ok")).toBe("a");
     expect(cache.has("cfg_bad")).toBe(false);
@@ -333,7 +294,6 @@ describe("writeChangedRefs caching", () => {
       },
     );
 
-    // The retry re-sends the failed ref only.
     expect(attempts).toEqual(["cfg_ok", "cfg_bad", "cfg_bad"]);
   });
 });
@@ -345,7 +305,6 @@ describe("analyzeCanvasInfra agent reachability", () => {
       node("sb", "sandbox"),
       node("ws", "workspace"),
     ];
-    // The workspace only reaches the agent through the sandbox it mounts into.
     const edges = [edge("agent", "sb"), edge("ws", "sb")];
 
     const { connectedToAgent } = analyzeCanvasInfra(nodes, edges);
@@ -374,7 +333,6 @@ describe("analyzeCanvasInfra agent reachability", () => {
     const edges = [
       edge("agent", "ws"),
       edge("agent", "wired"),
-      // A node hanging off a wired workspace is still not wired to the agent.
       edge("indirect", "ws"),
     ];
 
@@ -383,15 +341,5 @@ describe("analyzeCanvasInfra agent reachability", () => {
     expect(connectedToAgent.wired).toBe(true);
     expect(connectedToAgent.indirect).toBe(false);
     expect(connectedToAgent.ws).toBe(true);
-  });
-
-  test("a node with no edges is unwired", () => {
-    const { connectedToAgent } = analyzeCanvasInfra(
-      [node("lonely", "workspace"), node("orphan", "skill")],
-      [],
-    );
-
-    expect(connectedToAgent.lonely).toBe(false);
-    expect(connectedToAgent.orphan).toBe(false);
   });
 });

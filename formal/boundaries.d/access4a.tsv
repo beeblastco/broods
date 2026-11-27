@@ -1,0 +1,2 @@
+kind	name	reason
+opaque	RateLimiter	The recorder writes its private limit, window length and window map under $fields at entry; the twin computes its answer from exactly those values.

@@ -2,6 +2,7 @@
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -12,18 +13,15 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
+import { analytics } from "@/app/lib/analytics";
 import { Check, Eye, EyeOff, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
-// A single masked variable as returned by the `list` query (no encrypted fields).
 type EnvironmentVariable = FunctionReturnType<
   typeof api.environmentVariables.list
 >[number];
 
-// Shared sizing so read-only value chips and the add inputs match height, font,
-// and shrink behaviour exactly. `md:text-xs` overrides the Input's `md:text-sm`
-// so typed text stays the same size as the chips; `min-w-0` lets long values
-// truncate instead of widening the row.
+// The add inputs also need `md:text-xs`: the Input's own `md:text-sm` beats `text-xs`.
 const FIELD_CLASS = "h-8 min-w-0 flex-1 font-mono text-xs";
 
 interface Props {
@@ -49,7 +47,7 @@ export function EnvironmentVariablesPanel({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Keyed by variable id. Every reveal is audited server-side.
+  // Keyed by id and updatedAt, so a value set after the reveal is not shown as current.
   const [revealedState, setRevealedState] = useState<{
     stageId: Id<"stages"> | null;
     values: Record<string, string>;
@@ -62,16 +60,15 @@ export function EnvironmentVariablesPanel({
   );
   const [isDeletingVar, setIsDeletingVar] = useState(false);
 
-  async function toggleReveal(
-    variableId: Id<"environmentVariables">,
-  ): Promise<void> {
+  async function toggleReveal(variable: EnvironmentVariable): Promise<void> {
     if (!stageId) return;
-    if (revealed[variableId] !== undefined) {
+    const revealKey = `${variable._id}:${variable.updatedAt}`;
+    if (revealed[revealKey] !== undefined) {
       setRevealedState((prev) => {
         const next = {
           ...(prev.stageId === stageId ? prev.values : {}),
         };
-        delete next[variableId];
+        delete next[revealKey];
 
         return { stageId: stageId, values: next };
       });
@@ -81,13 +78,13 @@ export function EnvironmentVariablesPanel({
     const { value: plaintext } = await revealVariable({
       projectId: projectId,
       stageId: stageId,
-      variableId: variableId,
+      variableId: variable._id,
     });
     setRevealedState((prev) => ({
       stageId: stageId,
       values: {
         ...(prev.stageId === stageId ? prev.values : {}),
-        [variableId]: plaintext,
+        [revealKey]: plaintext,
       },
     }));
   }
@@ -102,6 +99,11 @@ export function EnvironmentVariablesPanel({
         stageId: stageId,
         name: name.trim(),
         value: value,
+      });
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_added", {
+          has_value: Boolean(value),
+        });
       });
       setName("");
       setValue("");
@@ -118,6 +120,9 @@ export function EnvironmentVariablesPanel({
     setIsDeletingVar(true);
     try {
       await removeVariable({ variableId: deletingVar._id });
+      void analytics.then((posthog): void => {
+        posthog.capture("environment_variable_removed");
+      });
       setDeletingVar(null);
     } finally {
       setIsDeletingVar(false);
@@ -141,74 +146,74 @@ export function EnvironmentVariablesPanel({
           <p className="text-sm text-muted-foreground">No variables yet.</p>
         )}
         <div className="grid grid-cols-1 gap-2">
-          {variables?.map((v) => (
-            <div key={v._id} className="flex min-w-0 items-center gap-2">
-              <code
-                className={cn(
-                  FIELD_CLASS,
-                  "truncate rounded-md bg-muted px-3 leading-8",
-                )}
-              >
-                {v.name}
-              </code>
-              <code
-                className={cn(
-                  FIELD_CLASS,
-                  "truncate rounded-md bg-muted px-3 leading-8",
-                )}
-              >
-                {revealed[v._id] !== undefined ? (
-                  revealed[v._id] || (
-                    <span className="text-muted-foreground">empty</span>
-                  )
-                ) : v.value ? (
-                  "••••••••"
-                ) : (
-                  <span className="text-muted-foreground">empty</span>
-                )}
-              </code>
-              {canWrite && (
-                <>
-                  <IconTooltip
-                    label={
-                      revealed[v._id] !== undefined
-                        ? `Hide ${v.name}`
-                        : `Reveal ${v.name}`
-                    }
-                  >
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() =>
-                        toggleReveal(v._id).catch((err) =>
-                          setError(toErrorMessage(err)),
-                        )
+          {variables?.map((v) => {
+            const shown = revealed[`${v._id}:${v.updatedAt}`];
+
+            return (
+              <div key={v._id} className="flex min-w-0 items-center gap-2">
+                <code
+                  className={cn(
+                    FIELD_CLASS,
+                    "truncate rounded-md bg-muted px-3 leading-8",
+                  )}
+                >
+                  {v.name}
+                </code>
+                <code
+                  className={cn(
+                    FIELD_CLASS,
+                    "truncate rounded-md bg-muted px-3 leading-8",
+                  )}
+                >
+                  {shown !== undefined
+                    ? shown || (
+                        <span className="text-muted-foreground">empty</span>
+                      )
+                    : "••••••••"}
+                </code>
+                {canWrite && (
+                  <>
+                    <IconTooltip
+                      label={
+                        shown !== undefined
+                          ? `Hide ${v.name}`
+                          : `Reveal ${v.name}`
                       }
                     >
-                      {revealed[v._id] !== undefined ? (
-                        <EyeOff className="size-3.5" />
-                      ) : (
-                        <Eye className="size-3.5" />
-                      )}
-                    </Button>
-                  </IconTooltip>
-                  <IconTooltip label={`Delete ${v.name}`}>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      tone="muted-destructive"
-                      className="shrink-0 cursor-pointer"
-                      onClick={() => setDeletingVar(v)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </IconTooltip>
-                </>
-              )}
-            </div>
-          ))}
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        tone="muted"
+                        className="shrink-0 cursor-pointer"
+                        onClick={() =>
+                          toggleReveal(v).catch((err) =>
+                            setError(toErrorMessage(err)),
+                          )
+                        }
+                      >
+                        {shown !== undefined ? (
+                          <EyeOff className="size-3.5" />
+                        ) : (
+                          <Eye className="size-3.5" />
+                        )}
+                      </Button>
+                    </IconTooltip>
+                    <IconTooltip label={`Delete ${v.name}`}>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        tone="muted-destructive"
+                        className="shrink-0 cursor-pointer"
+                        onClick={() => setDeletingVar(v)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </IconTooltip>
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
         {adding ? (
           <div className="flex min-w-0 items-center gap-2">
@@ -217,10 +222,15 @@ export function EnvironmentVariablesPanel({
               onChange={(e) => setName(e.target.value)}
               placeholder="KEY_NAME"
               aria-label="Variable name"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
               className={cn(FIELD_CLASS, "md:text-xs")}
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
               autoFocus
             />
-            <Input
+            <SecretInput
+              noun="value"
               value={value}
               onChange={(e) => setValue(e.target.value)}
               placeholder="value"
@@ -267,7 +277,11 @@ export function EnvironmentVariablesPanel({
             Add Variable
           </Button>
         ) : null}
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
       </Section>
 
       {deletingVar && (

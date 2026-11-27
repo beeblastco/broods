@@ -1,0 +1,2 @@
+kind	name	reason
+external	^new BroodsWhatsAppAdapter$	Chat SDK adapter construction; every option is compared and the instance is only stored or handed on.

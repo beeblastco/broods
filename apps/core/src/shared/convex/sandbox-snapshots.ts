@@ -1,17 +1,8 @@
-/**
- * Storage mirror writes for sandbox snapshot/image build state. The account-manage
- * snapshot endpoint calls this after the provider captures a snapshot so the
- * dashboard's live sandboxSnapshots query reflects it. A mirror outage never fails
- * the request; a refusal (a name another provider's snapshot holds) is rethrown.
- */
-
-const internal: any = require("@broods/convex/_generated/api").internal;
+import type { SandboxScope } from "@broods/convex/model/sandboxRules";
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
-import { logError } from "../log.ts";
-import { getConvexClient } from "./client.ts";
-import { ConvexError } from "convex/values";
+import { adminMutation, adminQuery, internal } from "./client.ts";
 
-/** Unified (Daytona-aligned) snapshot build status; mirrors sandboxSnapshotsFields.status. */
+// Keep in step with sandboxSnapshotsFields.status in the Convex schema.
 export type SandboxSnapshotStatus =
   | "pending"
   | "building"
@@ -21,45 +12,41 @@ export type SandboxSnapshotStatus =
   | "error"
   | "build_failed";
 
-/**
- * The account's snapshot row for one provider image, or null when it has none.
- * The lambda executor refuses to boot a snapshot image the account does not own,
- * and the snapshot verb reads the variant a pinned snapshot was built from.
- */
+export interface SandboxSnapshotRecord {
+  accountId: string;
+  scope?: SandboxScope;
+  baseImage: string;
+  status: SandboxSnapshotStatus;
+}
+
+// Null when no account registered the image: a provider image, not a Broods snapshot.
 export async function findSandboxSnapshot(
-  accountId: string,
+  accountId: string | undefined,
   externalImageId: string,
-): Promise<{ baseImage: string; status: SandboxSnapshotStatus } | null> {
-  return getConvexClient().query(internal.sandbox.snapshots.findByImage, {
-    accountId: accountId,
+): Promise<SandboxSnapshotRecord | null> {
+  return adminQuery(internal.sandbox.snapshots.findByImage, {
+    ...(accountId ? { accountId: accountId } : {}),
     externalImageId: externalImageId,
   });
 }
 
-/**
- * Mirrors a captured/registered snapshot into Convex. Idempotent by (account, name).
- */
+// Throws on failure: the row locks the image to its stage, so an unrecorded capture fails.
 export async function upsertSandboxSnapshot(input: {
   accountId: string;
+  scope: SandboxScope;
   name: string;
   provider: SandboxProvider;
   baseImage: string;
   externalImageId: string;
   status?: SandboxSnapshotStatus;
 }): Promise<void> {
-  try {
-    await getConvexClient().mutation(internal.sandbox.snapshots.upsert, {
-      accountId: input.accountId as any,
-      name: input.name,
-      provider: input.provider,
-      baseImage: input.baseImage,
-      externalImageId: input.externalImageId,
-      ...(input.status ? { status: input.status } : {}),
-    });
-  } catch (err) {
-    if (err instanceof ConvexError) throw err;
-    logError("Sandbox snapshot mirror failed (convex)", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  await adminMutation(internal.sandbox.snapshots.upsert, {
+    accountId: input.accountId,
+    scope: input.scope,
+    name: input.name,
+    provider: input.provider,
+    baseImage: input.baseImage,
+    externalImageId: input.externalImageId,
+    ...(input.status ? { status: input.status } : {}),
+  });
 }

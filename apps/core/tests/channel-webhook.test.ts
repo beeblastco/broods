@@ -1,5 +1,3 @@
-/** Channel adapters ignore webhook bodies that are not a JSON object and keep every real payload. */
-
 import { describe, expect, it } from "bun:test";
 import {
   parseChannelWebhookBody,
@@ -9,7 +7,6 @@ import {
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 import { createLinearChannel } from "../src/shared/linear-channel.ts";
-import { createMatrixChannel } from "../src/shared/matrix-channel.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 import { createSlackChannel } from "../src/shared/slack-channel.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
@@ -32,13 +29,6 @@ const adapters: ChannelAdapter[] = [
     apiKey: "key",
     userName: "agent",
     webhookSecret: "secret",
-  }),
-  createMatrixChannel({
-    accessToken: "secret",
-    apiUrl: "https://matrix.test",
-    forwarderUrl: "https://forwarder.test",
-    allowedChannelIds: null,
-    allowedUserIds: null,
   }),
   pancake,
   createSlackChannel("token", "secret", null, null),
@@ -67,11 +57,12 @@ describe("parseChannelWebhookBody", (): void => {
   });
 });
 
-for (const adapter of adapters) {
-  it(`${adapter.name} ignores a non-object body`, async (): Promise<void> => {
+it.each(adapters)(
+  "$name ignores a non-object body",
+  async (adapter): Promise<void> => {
     expect(await adapter.parse(request("[]"))).toEqual(INVALID_PAYLOAD);
-  });
-}
+  },
+);
 
 describe("provider payloads with null fields", (): void => {
   it("accepts a Pancake message with null fields", async (): Promise<void> => {

@@ -1,17 +1,19 @@
 "use client";
 
-/**
- * Streams live logs or traces from the gateway observability WS, merging backfill
- * (spliced first) with live entries (appended): the NATS relay, or the gateway's
- * Loki poll when tailing one sandbox. The list is never cleared into a spinner
- * on reconnect. Protocol: ../observability-contracts.ts.
- */
-
+import { useParams } from "next/navigation";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { STREAM_COMMIT_MS } from "@/app/lib/perfReport";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   isRootSpanKind,
   isTraceId,
+  MAX_OBSERVABILITY_RANGE_MS,
 } from "../../../../packages/broods/src/observability-contracts";
 import type {
   LogLevel,
@@ -36,11 +38,6 @@ export type ObservabilityStreamStatus =
   | "live"
   | "error";
 
-/**
- * Where the durable backfill (Loki or Tempo) stands for this connection. The
- * live relay keeps flowing whatever this says; it decides only what an empty
- * list means. "none" = no backfill was asked for.
- */
 export type ObservabilityHistoryStatus =
   | "none"
   | "loading"
@@ -48,22 +45,14 @@ export type ObservabilityHistoryStatus =
   | "failed";
 
 interface UseObservabilityStreamOptions {
-  /** Which realtime stream to subscribe to. */
   stream: "logs" | "traces";
-  /** Project slug, used in the WS path. Required to open the socket. */
   projectSlug: string | undefined;
-  /** Stage slug, used in the WS path. Required to open the socket. */
   stageSlug: string | undefined;
-  /** Stage session ticket (`bdts_…`), sent as the `broods.token.` subprotocol. Required to open the socket. */
   apiKey: string | undefined;
-  /** Number of historic entries to request as backfill before live stream. 0 = live only. */
   backfill?: number;
-  /** Minimum log level for live NATS relay (applies to "logs" stream only). Default: INFO. */
+  rangeMs?: number;
+  window?: { from: number; to: number } | null;
   minLevel?: LogLevel;
-  /**
-   * Tail one sandbox instance's guest output instead of the deployment's logs
-   * ("logs" stream only). The last segment of the instance's `logStream`.
-   */
   sandboxId?: string;
 }
 
@@ -73,31 +62,35 @@ interface UseObservabilityStreamResult<T> {
   history: ObservabilityHistoryStatus;
   error: string | null;
   refresh: () => void;
-  /**
-   * Pull one trace by id from Tempo, for a trace older than the backfill
-   * window ("traces" stream only). Its spans merge into `entries`; a miss
-   * lands in `error`. Returns whether the request was sent. False
-   * when the socket is not live, so the caller does not record a request that
-   * never went out.
-   */
+  hasOlder: boolean;
+  loadOlder: () => void;
+  newCount: number;
+  showNew: () => void;
+  /** False when the socket is not live, so the caller records no request that never went out. */
   fetchTrace: (traceId: string) => boolean;
 }
 
+// Tempo's `tempo.retention` in the infra repo's tempo chart; older traces cannot be fetched.
+export const TRACE_RETENTION_DAYS = 30;
 const RECONNECT_DELAY_MS = 3_000;
-// Caps the accumulated list (keeping the most recent) so a long tail can't grow
-// unbounded and the per-message dedup scan stays bounded.
+const RECONNECT_MAX_DELAY_MS = 60_000;
+// The gateway revoked the stage session: redialling with it only counts auth failures.
+const REVOKED_CLOSE_CODE = 4401;
 const MAX_ENTRIES = 2_000;
+// The gateway's own replay window: a cursor older than this may have aged out of the stream.
+const RESUME_WINDOW_MS = 30 * 60 * 1000;
 
-// Module-level cache keyed by the connection key (stream + scope). Switching
-// dashboard tabs unmounts the panel; on remount we seed from this cache so the
-// last entries paint instantly while the socket reconnects and refreshes in the
-// background, with no re-spinner and no wait on the slow durable backfill.
+export interface ResumeCursor {
+  key: string;
+  seq: string;
+  at: number;
+  historyLoaded: boolean;
+}
+
 const STREAM_CACHE = new Map<
   string,
   (ObservabilityLogEntry | ObservabilitySpanRow)[]
 >();
-// Bounds the cache across scopes. Without it every stream/stage/key combo
-// visited in a session pins up to MAX_ENTRIES rows for the page's lifetime.
 const STREAM_CACHE_MAX_KEYS = 8;
 
 export function useObservabilityStream(
@@ -117,12 +110,15 @@ export function useObservabilityStream(
     backfill = 0,
     minLevel,
     sandboxId,
+    rangeMs,
+    window: timeWindow,
   } = options;
 
-  // Cache key for this stream + scope + level; entries are seeded from / written
-  // back to STREAM_CACHE so remounts (tab switches) are instant, and a level
-  // change never keeps rows the new level excludes.
-  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  // The project id, not its slug (unique per org), and no credential: a renewed ticket
+  // reconnects the same stream and keeps its entries.
+  const { projectId } = useParams<{ projectId: string }>();
+  const streamScopeKey = `${stream}|${projectId}|${stageSlug ?? ""}|${sandboxId ?? ""}|${minLevel ?? ""}`;
+  const connKey = `${streamScopeKey}|${rangeMs ?? ""}|${timeWindow?.from ?? ""}|${timeWindow?.to ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -130,34 +126,72 @@ export function useObservabilityStream(
   const [status, setStatus] = useState<ObservabilityStreamStatus>("idle");
   const [history, setHistory] = useState<ObservabilityHistoryStatus>("none");
   const [error, setError] = useState<string | null>(null);
+  const [nextTo, setNextTo] = useState<number | undefined>();
+  const [pending, setPending] = useState<
+    (ObservabilityLogEntry | ObservabilitySpanRow)[]
+  >([]);
+  const entriesRef = useRef(entries);
+  const pendingRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>(
+    [],
+  );
+  const historyBusyRef = useRef(false);
+  const historyRangeRef = useRef<{ from: number; to: number } | undefined>(
+    undefined,
+  );
 
-  // Seed from cache when the connection target changes (e.g. switching
-  // stage) so one stage's entries never bleed into the next while still
-  // painting instantly if we've seen this scope before. React's render-time
-  // "adjust state when a prop changes" pattern, not an effect.
-  const [prevConnKey, setPrevConnKey] = useState(connKey);
-  if (connKey !== prevConnKey) {
-    setPrevConnKey(connKey);
-    setEntries(STREAM_CACHE.get(connKey) ?? []);
+  const pendingRangeRef = useRef<{ from: number; to: number } | undefined>(
+    undefined,
+  );
+  const historyErrorRef = useRef<string | undefined>(undefined);
+
+  const [previousConnection, setPreviousConnection] = useState({
+    key: connKey,
+    scope: streamScopeKey,
+  });
+  if (connKey !== previousConnection.key) {
+    setPreviousConnection({ key: connKey, scope: streamScopeKey });
+    setEntries(
+      previousConnection.scope === streamScopeKey
+        ? mergeBackfill(STREAM_CACHE.get(connKey) ?? [], entries)
+        : (STREAM_CACHE.get(connKey) ?? []),
+    );
+    setNextTo(undefined);
+    setPending([]);
     setError(null);
   }
 
-  // Persist the latest list so the next mount with the same scope can seed from it.
+  const liveRef = useRef<(ObservabilityLogEntry | ObservabilitySpanRow)[]>([]);
+  const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scopeRef = useRef(connKey);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- commit timer, cut before paint
+  useLayoutEffect(() => {
+    scopeRef.current = connKey;
+    entriesRef.current = STREAM_CACHE.get(connKey) ?? [];
+    pendingRef.current = [];
+
+    return () => {
+      if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+      liveRef.current = [];
+    };
+  }, [connKey]);
+
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- module-level STREAM_CACHE
   useEffect(() => {
     cacheEntries(connKey, entries);
+    entriesRef.current = entries;
   }, [connKey, entries]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attemptRef = useRef(0);
   const destroyedRef = useRef(false);
-  // Holds the latest `connect` so the reconnect timer can call it without
-  // `connect` referencing itself (which would capture a stale closure / trip the
-  // "used before declared" lint).
   const connectRef = useRef<() => void>(() => {});
+  const cursorRef = useRef<ResumeCursor | null>(null);
+  // A trace lookup answers with a backfill frame too; it says nothing about the list.
+  const traceFetchRef = useRef(false);
 
   const coreEndpoint = resolveCoreEndpoint();
-  // Extract the ok-guarded fields so the connect deps below stay stable primitives
-  // (and statically checkable by the hooks lint).
   const wsBaseUrl = coreEndpoint.ok ? coreEndpoint.websocketBaseUrl : "";
   const coreErrorMessage = coreEndpoint.ok ? "" : coreEndpoint.message;
 
@@ -175,15 +209,50 @@ export function useObservabilityStream(
     if (s.readyState === WebSocket.OPEN) {
       s.close(1000, "cleanup");
     } else if (s.readyState === WebSocket.CONNECTING) {
-      // Closing mid-handshake makes the browser log "WebSocket is closed
-      // before the connection is established" and counts as a failed
-      // connection; let the handshake finish, then hang up cleanly.
+      // Closing mid-handshake logs a browser error and counts as a failed connection.
       s.onopen = () => s.close(1000, "superseded");
       s.onmessage = null;
       s.onerror = null;
       s.onclose = null;
     }
   }, []);
+
+  const flushLive = useCallback(() => {
+    if (commitTimerRef.current !== null) clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = null;
+    const known = new Set(
+      entriesRef.current.map((entry) =>
+        "traceId" in entry && "spanId" in entry
+          ? entry.traceId
+          : entryKey(entry),
+      ),
+    );
+    const batch = liveRef.current.filter((entry) => {
+      const range = historyRangeRef.current;
+
+      return (
+        !range ||
+        ("spanId" in entry && known.has(entry.traceId)) ||
+        (entryTime(entry) >= range.from &&
+          (!Number.isFinite(timeWindow?.to) || entryTime(entry) < range.to))
+      );
+    });
+    liveRef.current = [];
+    if (batch.length === 0) return;
+    if (rangeMs === undefined) setEntries((prev) => mergeLive(prev, batch));
+    else {
+      const updates = batch.filter((entry) =>
+        known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+      );
+      const fresh = batch.filter(
+        (entry) =>
+          !known.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+      );
+      setEntries((prev) => mergeBackfill(prev, updates));
+      pendingRef.current = mergeLive(pendingRef.current, fresh);
+      setPending(pendingRef.current);
+    }
+  }, [rangeMs, timeWindow]);
 
   const connect = useCallback(() => {
     if (destroyedRef.current) return;
@@ -193,18 +262,37 @@ export function useObservabilityStream(
 
       return;
     }
-    if (!projectSlug || !stageSlug || !apiKey) {
-      // Not enough info yet. Stay idle; reconnects when props settle.
-      setStatus("idle");
-
-      return;
-    }
+    if (!projectSlug || !stageSlug || !apiKey) return;
 
     closeSocket();
     clearReconnect();
     setStatus("connecting");
-    setHistory(backfill > 0 ? "loading" : "none");
+    const resumeSeq = resumeSeqFor(
+      cursorRef.current,
+      connKey,
+      minLevel,
+      Date.now(),
+    );
+    if (resumeSeq === undefined) setHistory(backfill > 0 ? "loading" : "none");
     setError(null);
+    historyBusyRef.current = resumeSeq === undefined && backfill > 0;
+    const to = Number.isFinite(timeWindow?.to) ? timeWindow!.to : Date.now();
+    if (resumeSeq === undefined)
+      historyRangeRef.current =
+        rangeMs === undefined
+          ? undefined
+          : {
+              from: Math.max(
+                timeWindow?.from ?? to - rangeMs,
+                to - MAX_OBSERVABILITY_RANGE_MS,
+                0,
+              ),
+              to: to,
+            };
+    pendingRangeRef.current =
+      resumeSeq === undefined ? historyRangeRef.current : undefined;
+    historyErrorRef.current = undefined;
+    if (resumeSeq === undefined) setNextTo(undefined);
 
     const wsUrl =
       `${wsBaseUrl}/v1/projects/${encodeURIComponent(projectSlug)}` +
@@ -216,6 +304,7 @@ export function useObservabilityStream(
       `broods.token.${apiKey}`,
     ]);
     socketRef.current = socket;
+    traceFetchRef.current = false;
 
     socket.onopen = () => {
       if (destroyedRef.current || socketRef.current !== socket) {
@@ -227,7 +316,12 @@ export function useObservabilityStream(
       const subscribeMsg: ObservabilityClientMessage = {
         type: "subscribe",
         stream: stream,
-        ...(backfill > 0 ? { backfill: backfill } : {}),
+        ...(historyRangeRef.current ? { range: historyRangeRef.current } : {}),
+        ...(resumeSeq !== undefined
+          ? { afterSeq: resumeSeq }
+          : backfill > 0
+            ? { backfill: backfill }
+            : {}),
         ...(minLevel ? { minLevel: minLevel } : {}),
         ...(sandboxId ? { sandboxId: sandboxId } : {}),
       };
@@ -235,7 +329,13 @@ export function useObservabilityStream(
     };
 
     socket.onmessage = (event) => {
-      if (destroyedRef.current || socketRef.current !== socket) return;
+      if (
+        destroyedRef.current ||
+        socketRef.current !== socket ||
+        scopeRef.current !== connKey
+      ) {
+        return;
+      }
       if (typeof event.data !== "string") return;
 
       let msg: ObservabilityServerMessage;
@@ -246,54 +346,88 @@ export function useObservabilityStream(
       }
 
       if (msg.type === "ready") {
+        attemptRef.current = 0;
         setStatus("live");
+        cursorRef.current =
+          msg.seq === undefined
+            ? null
+            : {
+                key: connKey,
+                seq: msg.seq,
+                at: Date.now(),
+                historyLoaded: resumeSeq !== undefined,
+              };
 
         return;
       }
 
       if (msg.type === "backfill") {
-        // A traces backfill arrives newest-first in pieces flagged `more`;
-        // the closing piece (no flag) settles history and names a failure
-        // instead of looking empty. Logs and fetchTrace answer in one piece.
-        if (!msg.more) setHistory(msg.error ? "failed" : "loaded");
+        const expected = pendingRangeRef.current;
+        if (!traceFetchRef.current && expected) {
+          if (
+            (!msg.error || msg.entries.length > 0) &&
+            (msg.range?.from !== expected.from || msg.range?.to !== expected.to)
+          )
+            historyErrorRef.current =
+              "This gateway did not confirm the requested history range. Update the gateway before reading pages.";
+          if (historyErrorRef.current) {
+            setHistory("failed");
+            setError(historyErrorRef.current);
+            historyBusyRef.current = Boolean(msg.more);
+            if (cursorRef.current) cursorRef.current.historyLoaded = false;
+
+            return;
+          }
+        }
+        if (!msg.more) {
+          setHistory(msg.error ? "failed" : "loaded");
+          historyBusyRef.current = false;
+          if (!traceFetchRef.current && !msg.error) setNextTo(msg.nextTo);
+          if (traceFetchRef.current) traceFetchRef.current = false;
+          else if (cursorRef.current)
+            cursorRef.current.historyLoaded = !msg.error;
+        }
         if (msg.error) setError(msg.error);
-        setEntries((prev) => mergeBackfill(prev, msg.entries));
+        flushLive();
+        const loaded = new Set(
+          msg.entries.map((entry) =>
+            "spanId" in entry ? entry.traceId : entryKey(entry),
+          ),
+        );
+        const overlaps = pendingRef.current.filter((entry) =>
+          loaded.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+        );
+        const combined = mergeBackfill(msg.entries, overlaps);
+        // Live frames before the next render must see these rows as loaded.
+        entriesRef.current = mergeBackfill(entriesRef.current, combined);
+        setEntries((prev) => mergeBackfill(prev, combined));
+        pendingRef.current = pendingRef.current.filter(
+          (entry) =>
+            !loaded.has("spanId" in entry ? entry.traceId : entryKey(entry)),
+        );
+        setPending(pendingRef.current);
 
         return;
       }
 
       if (msg.type === "log" || msg.type === "span") {
-        const entry = msg.entry;
-        setEntries((prev) => {
-          const key = entryKey(entry);
-          const existingIndex = prev.findIndex(
-            (candidate) => entryKey(candidate) === key,
-          );
-          // A replacement keeps its slot (the dedup key pins the timestamp),
-          // and live entries almost always arrive in order, so the full
-          // re-sort runs only for a genuinely out-of-order arrival instead of
-          // on every message.
-          if (existingIndex !== -1) {
-            return prev.map((candidate, index) =>
-              index === existingIndex
-                ? preferEntry(candidate, entry)
-                : candidate,
-            );
-          }
-          const next = [entry, ...prev];
-          if (prev.length > 0 && entryTime(entry) < entryTime(prev[0])) {
-            next.sort((a, b) => entryTime(b) - entryTime(a));
-          }
-
-          return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
-        });
+        // A hidden tab throttles timers, so a full queue folds now instead of growing.
+        liveRef.current.push(msg.entry);
+        if (msg.seq !== undefined && cursorRef.current) {
+          cursorRef.current.seq = msg.seq;
+          cursorRef.current.at = Date.now();
+        }
+        if (liveRef.current.length >= MAX_ENTRIES) flushLive();
+        else commitTimerRef.current ??= setTimeout(flushLive, STREAM_COMMIT_MS);
 
         return;
       }
 
       if (msg.type === "error") {
+        historyBusyRef.current = false;
         setStatus("error");
         setError(msg.error);
+        setHistory((current) => (current === "loading" ? "failed" : current));
       }
     };
 
@@ -301,6 +435,7 @@ export function useObservabilityStream(
       if (destroyedRef.current || socketRef.current !== socket) return;
       setStatus("error");
       setError("WebSocket transport error.");
+      setHistory((current) => (current === "loading" ? "failed" : current));
     };
 
     socket.onclose = (event) => {
@@ -308,22 +443,23 @@ export function useObservabilityStream(
       socketRef.current = null;
 
       if (event.code === 1000) {
-        // Normal close. Do not reconnect.
         setStatus("idle");
 
         return;
       }
 
-      // Unexpected close. Show the failure while waiting, then reconnect after
-      // a delay without clearing existing entries.
       setStatus("error");
       setError(
         (current) =>
           (current ?? event.reason) || `WebSocket closed (${event.code}).`,
       );
+      setHistory((current) => (current === "loading" ? "failed" : current));
+      const delay = reconnectDelay(event.code, attemptRef.current);
+      if (delay === null) return;
+      attemptRef.current += 1;
       reconnectTimerRef.current = setTimeout(() => {
         if (!destroyedRef.current) connectRef.current();
-      }, RECONNECT_DELAY_MS);
+      }, delay);
     };
   }, [
     wsBaseUrl,
@@ -335,20 +471,20 @@ export function useObservabilityStream(
     backfill,
     minLevel,
     sandboxId,
+    rangeMs,
+    timeWindow,
+    connKey,
     closeSocket,
     clearReconnect,
+    flushLive,
   ]);
 
-  // Keep the reconnect timer pointed at the latest connect.
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- the observability WebSocket
   useEffect(() => {
     connectRef.current = connect;
-  }, [connect]);
-
-  // `connect` already changes whenever a connection parameter does; the other
-  // deps only satisfy the hooks lint. Connecting is the effect's purpose; the
-  // status setState it performs is external-system synchronization.
-  useEffect(() => {
     destroyedRef.current = false;
+    attemptRef.current = 0;
+    // oxlint-disable-next-line react/set-state-in-effect -- connect marks the socket connecting
     if (projectSlug && stageSlug && apiKey) connect();
 
     return () => {
@@ -359,36 +495,83 @@ export function useObservabilityStream(
   }, [projectSlug, stageSlug, apiKey, connect, clearReconnect, closeSocket]);
 
   const refresh = useCallback(() => {
+    cursorRef.current = null;
     if (projectSlug && stageSlug && apiKey) connect();
   }, [projectSlug, stageSlug, apiKey, connect]);
 
   const fetchTrace = useCallback((traceId: string): boolean => {
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    if (
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      historyBusyRef.current
+    )
+      return false;
+    historyBusyRef.current = true;
     const message: ObservabilityClientMessage = {
       type: "fetchTrace",
       traceId: traceId,
     };
     setHistory("loading");
+    traceFetchRef.current = true;
     setError(null);
     socket.send(JSON.stringify(message));
 
     return true;
   }, []);
 
+  const loadOlder = useCallback((): void => {
+    const range = historyRangeRef.current;
+    const socket = socketRef.current;
+    if (
+      nextTo === undefined ||
+      !range ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN ||
+      historyBusyRef.current
+    )
+      return;
+    historyBusyRef.current = true;
+    setHistory("loading");
+    setError(null);
+    const message: ObservabilityClientMessage = {
+      type: "subscribe",
+      stream: stream,
+      backfill: backfill,
+      historyOnly: true,
+      range: { from: range.from, to: nextTo },
+      ...(minLevel ? { minLevel: minLevel } : {}),
+    };
+    pendingRangeRef.current = message.range;
+    historyErrorRef.current = undefined;
+    socket.send(JSON.stringify(message));
+  }, [nextTo, stream, backfill, minLevel]);
+
+  const showNew = useCallback((): void => {
+    const revealed = pendingRef.current;
+    pendingRef.current = [];
+    setEntries((prev) => mergeBackfill(prev, revealed));
+    setPending([]);
+  }, []);
+
   return {
     entries: entries,
-    status: status,
+    status: projectSlug && stageSlug && apiKey ? status : "idle",
     history: history,
     error: error,
     refresh: refresh,
+    newCount: new Set(
+      pending.map((entry) =>
+        "spanId" in entry ? entry.traceId : entryKey(entry),
+      ),
+    ).size,
+    showNew: showNew,
+    hasOlder: nextTo !== undefined,
+    loadOlder: loadOlder,
     fetchTrace: fetchTrace,
   };
 }
 
-// Dedup key: spans use the stable traceId+spanId; logs have no wire id, so fall
-// back to ts + eventType + message. Also the React key for a row: an index key
-// remounts every row when a live entry is prepended.
 export function entryKey(
   entry: ObservabilityLogEntry | ObservabilitySpanRow,
 ): string {
@@ -396,12 +579,11 @@ export function entryKey(
     return `span:${entry.traceId}:${entry.spanId}`;
   }
 
-  return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
+  return entry.logId
+    ? `log:${entry.logId}`
+    : `log:${entry.ts}:${entry.eventType}:${entry.message}`;
 }
 
-// Fold one backfill piece into the list: dedup by key, keep the better copy of
-// a span seen twice, newest first, capped. The closing piece of a traces
-// backfill carries no rows and leaves the list untouched.
 export function mergeBackfill<
   T extends ObservabilityLogEntry | ObservabilitySpanRow,
 >(prev: T[], incoming: T[]): T[] {
@@ -416,16 +598,64 @@ export function mergeBackfill<
     (a, b) => entryTime(b) - entryTime(a),
   );
 
-  return combined.length > MAX_ENTRIES
-    ? combined.slice(0, MAX_ENTRIES)
-    : combined;
+  return combined;
+}
+
+// Same list as applying the batch one entry at a time in arrival order, capped once at the end.
+export function mergeLive<
+  T extends ObservabilityLogEntry | ObservabilitySpanRow,
+>(prev: T[], batch: T[]): T[] {
+  if (batch.length === 0) return prev;
+  const listed = [...prev];
+  const slots = new Map(prev.map((entry, index) => [entryKey(entry), index]));
+  const fresh = new Map<string, T>();
+  for (const entry of batch) {
+    const key = entryKey(entry);
+    const slot = slots.get(key);
+    if (slot !== undefined) {
+      listed[slot] = preferEntry(listed[slot], entry);
+      continue;
+    }
+    const queued = fresh.get(key);
+    fresh.set(key, queued ? preferEntry(queued, entry) : entry);
+  }
+  const next = [...fresh.values()]
+    .reverse()
+    .concat(listed)
+    .sort((a, b) => entryTime(b) - entryTime(a));
+
+  const limit = Math.max(MAX_ENTRIES, prev.length);
+
+  return next.length > limit ? next.slice(0, limit) : next;
+}
+
+/** Doubles from 3 s to a minute; null when the close means a new credential is needed. */
+export function reconnectDelay(code: number, attempt: number): number | null {
+  if (code === REVOKED_CLOSE_CODE) return null;
+
+  return Math.min(RECONNECT_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
+}
+
+/** The cursor a reconnect resumes after, or undefined when it must load history again. */
+export function resumeSeqFor(
+  cursor: ResumeCursor | null,
+  key: string,
+  minLevel: LogLevel | undefined,
+  now: number,
+): string | undefined {
+  // DEBUG lines never ride the live relay, so only a backfill brings the new ones.
+  return cursor?.key === key &&
+    cursor.historyLoaded &&
+    minLevel !== "DEBUG" &&
+    now - cursor.at < RESUME_WINDOW_MS
+    ? cursor.seq
+    : undefined;
 }
 
 function cacheEntries(
   key: string,
   entries: (ObservabilityLogEntry | ObservabilitySpanRow)[],
 ): void {
-  // Re-insert so iteration order doubles as LRU order.
   STREAM_CACHE.delete(key);
   STREAM_CACHE.set(key, entries);
   while (STREAM_CACHE.size > STREAM_CACHE_MAX_KEYS) {
@@ -441,11 +671,7 @@ function entryTime(
   return "spanId" in entry ? entry.startTimeMs : entry.ts;
 }
 
-// The same span arrives more than once: as it progresses (running -> ok/error) and
-// from two sources (full-fidelity JetStream replay vs a Tempo backfill that
-// truncates large attributes). Keep the better copy so a reload never downgrades a
-// span: a terminal status beats "running", and among equals the richer payload
-// wins. Logs have no such progression, so the incoming copy wins.
+// A span re-arrives as it ends and from Tempo, which truncates attributes: keep the better copy.
 function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   existing: T,
   incoming: T,
@@ -458,8 +684,6 @@ function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
   if (rank(b.status) !== rank(a.status)) {
     return rank(b.status) > rank(a.status) ? incoming : existing;
   }
-  // Payload chars without serializing: a string's length is free, and a live
-  // root span re-arrives with tens of KB of attributes several times a run.
   const size = (span: ObservabilitySpanRow): number =>
     Object.values(span.attributes ?? {}).reduce<number>(
       (total, value) => total + (typeof value === "string" ? value.length : 1),

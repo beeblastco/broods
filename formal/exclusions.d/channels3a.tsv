@@ -1,0 +1,2 @@
+pattern	category	reason
+apps/core/src/harness/integrations.ts#routeIncomingEvent	delegate	Builds the router with createIncomingEventRouter and calls it; no decision of its own.

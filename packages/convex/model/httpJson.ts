@@ -1,8 +1,3 @@
-/**
- * JSON response helpers shared by the config plane and the CLI plane, so both
- * answer non-2xx with the same envelope.
- */
-
 import { apiErrorBody, type ApiErrorInit } from "./apiError";
 
 export function json(
@@ -25,7 +20,6 @@ export function jsonError(
   return json(apiErrorBody(status, message, init), status, headers);
 }
 
-/** 405 with the `Allow` header RFC 9110 requires. */
 export function methodNotAllowed(allowedMethods: string[]): Response {
   return jsonError(
     405,
@@ -35,11 +29,7 @@ export function methodNotAllowed(allowedMethods: string[]): Response {
   );
 }
 
-/**
- * RFC 6585 `Retry-After` plus the IETF RateLimit fields for a window with no
- * budget left. Floors at one second: a 429 that says retry in zero seconds
- * tells the client to hammer.
- */
+// Floors at one second: a 429 that says retry in zero seconds tells the client to hammer.
 export function rateLimitHeaders(
   limit: number,
   resetSeconds: number,

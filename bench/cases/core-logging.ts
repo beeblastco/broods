@@ -1,13 +1,3 @@
-/**
- * Core's logging chokepoint. Every INFO/WARN/ERROR/DEBUG line in the agent
- * runtime is redacted here before it reaches stdout, OTLP and NATS, so this is
- * the most-executed CPU path in the pod.
- *
- * `process.env` is replaced with a fixed deployment-shaped fixture for the
- * duration of these cases. Without that the number would track whatever the CI
- * runner happens to export, and no baseline would ever hold.
- */
-
 import {
   collectSecretValues,
   redact,
@@ -15,8 +5,7 @@ import {
 } from "../../apps/core/src/shared/log.ts";
 import type { BenchCase } from "../runner.ts";
 
-// A deployed core pod's environment, trimmed to the shape that matters: a few
-// dozen names, several sensitive, and two large JSON values the redactor parses.
+// Replaces process.env during these cases, or the number tracks whatever the CI runner exports.
 const ENV_FIXTURE: Readonly<Record<string, string>> = {
   ADMIN_ACCOUNT_SECRET: "admin-secret-9d2f41ba7c3e5089bd6a",
   AGENT_TABLE_NAME: "broods-dev-agents",
@@ -60,8 +49,6 @@ const ENV_FIXTURE: Readonly<Record<string, string>> = {
   WORKSPACE_BUCKET_NAME: "broods-prod-workspaces",
 };
 
-// A representative structured log payload: an agent turn completing, with the
-// nesting and the sensitive-key mix real entries carry.
 const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
   eventType: "agent.turn.completed",
   accountId: "acc_5f21c9",
@@ -91,14 +78,11 @@ const LOG_PAYLOAD: Readonly<Record<string, unknown>> = {
   ],
 };
 
-// A free-form line of the kind provider errors and tool stderr produce.
 const LOG_LINE =
   "provider call failed for agent agt_7f3c9d21: POST https://api.anthropic.com/v1/messages " +
   "with Authorization: Bearer sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6 " +
   "(runtime key bsk_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p) returned 529 overloaded_error after 3 retries";
 
-// The decrypted agent record the runtime scans once per run to learn which
-// values must never reach a log line.
 const AGENT_RECORD: Readonly<Record<string, unknown>> = {
   agentId: "agt_7f3c9d21",
   model: { provider: "anthropic", id: "claude-opus-5" },
@@ -132,8 +116,6 @@ export const coreLoggingCases: readonly BenchCase[] = [
     iterations: 1_000,
     setup: installEnvFixture,
     teardown: restoreEnv,
-    // The redaction itself, with the secret set already in hand: what an
-    // emit() would cost if the env scan were hoisted out of the per-line path.
     run: (): unknown => redact(LOG_PAYLOAD, PRECOMPUTED_SECRETS),
   },
   {
@@ -141,8 +123,6 @@ export const coreLoggingCases: readonly BenchCase[] = [
     iterations: 400,
     setup: installEnvFixture,
     teardown: restoreEnv,
-    // What a line costs today: the env walk, the JSON parses and the scrub,
-    // all of it repeated per line. Compare against log-redact-payload.
     run: (): unknown => redactSensitiveText(LOG_LINE),
   },
   {
@@ -150,10 +130,7 @@ export const coreLoggingCases: readonly BenchCase[] = [
     iterations: 20_000,
     setup: installEnvFixture,
     teardown: restoreEnv,
-    // The same line scrubbed against a secret set that was already collected.
-    // `redact` on a string is the scrub with nothing else attached, so the gap
-    // between this and log-redact-text-with-env-scan is exactly what re-deriving
-    // the env secrets costs on every single log line.
+    // The gap to log-redact-text-with-env-scan is what re-deriving env secrets costs per line.
     run: (): unknown => redact(LOG_LINE, PRECOMPUTED_SECRETS),
   },
   {
@@ -165,8 +142,6 @@ export const coreLoggingCases: readonly BenchCase[] = [
   },
 ];
 
-// Collected once from the fixture so the pure-redaction case is not charged for
-// the scan the other case exists to measure.
 const PRECOMPUTED_SECRETS: readonly string[] = [
   "sk-ant-api03-8f2c1d9e4b7a6350c8e1f0a2d3b4c5e6",
   "sk-proj-1a2b3c4d5e6f708192a3b4c5d6e7f809",

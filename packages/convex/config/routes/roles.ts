@@ -1,19 +1,13 @@
-/**
- * Account role CRUD (`/v1/roles*`) and the assume-role exchange
- * (`POST /v1/account/assume-role`). Role CRUD is account-secret only; the
- * exchange also accepts CLI tokens and runtime keys (the latter only
- * into roles scoped to the key's own project/stage).
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import type { AccountLogin } from "../../cli/auth";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
-import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import { auditDetailsJson, type AuditActor } from "../../model/auditEvents";
 import { toPublicRoleResponse } from "../../model/responses";
 import {
@@ -41,7 +35,6 @@ type AccountCaller = {
 
 type CreatedRole = Omit<Doc<"accountRoles">, "_id" | "_creationTime">;
 
-/** Exchange a role for a short-lived bsts_ session token. */
 export async function handleAssumeRoleRoute(
   ctx: ActionCtx,
   req: Request,
@@ -57,8 +50,7 @@ export async function handleAssumeRoleRoute(
   );
   if (!role) return jsonError(404, "Role not found");
   if (role.status !== "active") return jsonError(403, "Role is disabled");
-  // A runtime key may only assume roles pinned to its own stage: a leaked
-  // bsk_ key must not widen past the stage it already controls.
+  // A leaked runtime key must not widen past the stage it already controls.
   if (caller.deploymentScope) {
     if (
       role.projectId !== caller.deploymentScope.projectId ||
@@ -92,10 +84,6 @@ export async function handleAssumeRoleRoute(
   return json({ token: token, expiresAt: new Date(expiresAt).toISOString() });
 }
 
-/**
- * Account role CRUD: list/create on the collection, get/patch/delete by
- * public role id. Mirrors the policy route contract.
- */
 export async function handleRoleRoute(
   ctx: ActionCtx,
   req: Request,
@@ -207,12 +195,7 @@ export async function handleRoleRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/**
- * Resolve an account-level caller by prefix: CLI login token, runtime key or
- * account key, one lookup each. Assume-role and connections use it; any
- * other prefix, a bsts_ role session included, resolves to nothing, so a role
- * session never mints sessions or reads connections.
- */
+// A bsts_ role session resolves to null here: it never mints sessions or reads connections.
 export async function resolveAccountCaller(
   ctx: ActionCtx,
   req: Request,
@@ -222,13 +205,16 @@ export async function resolveAccountCaller(
   const tokenHash = await sha256Hex(token);
 
   if (token.startsWith(CLI_TOKEN_PREFIX)) {
-    const resolved: { accountId: Id<"accounts"> } | null =
-      await ctx.runMutation(internal.cli.auth.resolveCliToken, {
-        tokenHash: tokenHash,
-      });
-    if (!resolved) return null;
+    const login: AccountLogin | null = await ctx.runMutation(
+      internal.cli.auth.resolveAccountLogin,
+      { tokenHash: tokenHash },
+    );
+    if (!login) return null;
 
-    return { accountId: resolved.accountId, actor: { kind: "cli" } };
+    return {
+      accountId: login.account._id,
+      actor: { kind: "cli", id: login.authId },
+    };
   }
 
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {
@@ -236,9 +222,12 @@ export async function resolveAccountCaller(
       accountId: Id<"accounts">;
       projectId: Id<"projects">;
       stageId: Id<"stages">;
-    } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: tokenHash,
-    });
+    } | null = await ctx.runQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: tokenHash,
+      },
+    );
     if (!deployment) return null;
 
     return {
@@ -254,7 +243,7 @@ export async function resolveAccountCaller(
   if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
 
   const account: Doc<"accounts"> | null = await ctx.runQuery(
-    internal.account.accounts.getBySecretHash,
+    internal.runtimeLookups.accountBySecretHash,
     { secretHash: tokenHash },
   );
   if (!account || account.status !== "active") return null;

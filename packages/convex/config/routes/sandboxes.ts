@@ -1,8 +1,3 @@
-/**
- * Sandbox config CRUD (`/v1/sandboxes*`): stores encrypted config blobs,
- * redacts secrets on read, and tears down reserved instances on delete.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -13,6 +8,7 @@ import {
   DEFAULT_SANDBOX_PROVIDER,
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
+  sandboxScope,
   type SandboxConfig,
 } from "../../model/sandboxRules";
 import {
@@ -55,6 +51,12 @@ export async function handleSandboxConfigRoute(
     }
     if (req.method === "POST") {
       const input = normalizeCreateSandboxConfigInput(await req.json());
+      // API-created sandboxes are account-scoped and boot only account-scoped snapshots.
+      await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
+        accountId: accountId,
+        scope: "account",
+        snapshot: input.config.snapshot,
+      });
       const cipher = await accountCipherForAction(ctx, accountId, "write");
       const encrypted = await encryptSandboxConfig(cipher, input.config);
       const createdId: Id<"sandboxConfigs"> = await ctx.runMutation(
@@ -69,7 +71,7 @@ export async function handleSandboxConfigRoute(
         },
       );
       const created: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-        internal.sandbox.configs.getById,
+        internal.runtimeLookups.sandboxConfigById,
         {
           accountId: accountId,
           sandboxId: createdId,
@@ -101,7 +103,7 @@ export async function handleSandboxConfigRoute(
 
   if (req.method === "GET") {
     const record: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -122,7 +124,7 @@ export async function handleSandboxConfigRoute(
   }
   if (req.method === "PATCH") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -135,6 +137,14 @@ export async function handleSandboxConfigRoute(
       existingConfig,
       await req.json(),
     );
+    // A snapshot copies another sandbox's disk: one from another scope is refused for anyone.
+    if (patch.config.snapshot !== existingConfig.snapshot) {
+      await ctx.runQuery(internal.sandbox.snapshots.assertInScope, {
+        accountId: accountId,
+        scope: sandboxScope(existing),
+        snapshot: patch.config.snapshot,
+      });
+    }
     const encrypted = await encryptSandboxConfig(cipher, patch.config);
     await ctx.runMutation(internal.sandbox.configs.update, {
       accountId: accountId,
@@ -148,7 +158,7 @@ export async function handleSandboxConfigRoute(
       encryptionTag: encrypted.tag,
     });
     const updated: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,
@@ -178,7 +188,7 @@ export async function handleSandboxConfigRoute(
   }
   if (req.method === "DELETE") {
     const existing: Doc<"sandboxConfigs"> | null = await ctx.runQuery(
-      internal.sandbox.configs.getById,
+      internal.runtimeLookups.sandboxConfigById,
       {
         accountId: accountId,
         sandboxId: sandboxId,

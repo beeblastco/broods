@@ -1,13 +1,6 @@
 "use client";
 
-/**
- * Project › Settings › Keys: two lists with two purposes. Runtime keys are
- * minted with the stage, one each; the only actions are rotate and reveal
- * (on the Runtime key tab). API keys are made by people for deploys and
- * integrations and carry a name and a description. Each stage answers for
- * itself: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and
- * New key for it; a member without either sees a lock.
- */
+// Per stage: `keys:read` shows its rows, `keys:write` unlocks Rotate, Revoke and New key.
 
 import { ConfirmDialog } from "@/app/components/ConfirmDialog";
 import { CopyButton } from "@/app/components/CopyButton";
@@ -59,6 +52,7 @@ import type { Id } from "@broods/convex/_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { Plus } from "lucide-react";
+import { analytics } from "@/app/lib/analytics";
 import { useState } from "react";
 import { relativeTime } from "../../sandbox/components/sandboxFormat";
 
@@ -78,10 +72,8 @@ type ApiColumn =
   | "createdBy";
 type ApiField = (typeof API_QUERY_FIELDS)[number];
 
-// The `field:value` tokens the API key search box understands.
 const API_QUERY_FIELDS = ["stage"] as const;
 
-// The runtime list has no search box.
 const NO_FIELDS: readonly never[] = [];
 
 const RUNTIME_SORT: Record<RuntimeColumn, (key: RuntimeKey) => SortKey> = {
@@ -132,7 +124,6 @@ export function KeysPanel({ projectId, stageId }: Props): React.JSX.Element {
   );
 }
 
-/** One row per stage: the key minted with it, when it was rotated and by whom. Rotate is for the stages in `writable`. */
 function RuntimeKeysTable({
   projectId,
   keys,
@@ -145,6 +136,10 @@ function RuntimeKeysTable({
   const now = useNow();
   const rotate = useMutation(api.agent.deployments.rotate);
   const [rotating, setRotating] = useState<RuntimeKey | null>(null);
+  const [rotated, setRotated] = useState<{
+    stageName: string;
+    secret: string;
+  } | null>(null);
   const { pending, error, run } = useSubmit();
   const list = useListState({
     rows: keys,
@@ -157,11 +152,13 @@ function RuntimeKeysTable({
 
   async function confirmRotate(): Promise<void> {
     if (!rotating) return;
-    const done = await run(() =>
-      rotate({ projectId: projectId, stageId: rotating.stageId }).then(
-        () => undefined,
-      ),
-    );
+    const done = await run(async () => {
+      const result = await rotate({
+        projectId: projectId,
+        stageId: rotating.stageId,
+      });
+      setRotated({ stageName: rotating.stageName, secret: result.rawApiKey });
+    });
     if (done) setRotating(null);
   }
 
@@ -256,11 +253,18 @@ function RuntimeKeysTable({
           onClose={() => setRotating(null)}
         />
       )}
+      {rotated && (
+        <RevealSecretDialog
+          title={`Save the new ${rotated.stageName} runtime key`}
+          label="runtime key"
+          secret={rotated.secret}
+          onClose={() => setRotated(null)}
+        />
+      )}
     </section>
   );
 }
 
-/** Keys people make: name, description, the stage they reach, and who made them. Revoke and New key are for the stages in `writable`. */
 function ApiKeysTable({
   projectId,
   keys,
@@ -453,7 +457,6 @@ function ApiKeysTable({
   );
 }
 
-/** Name, description and stage for a new API key. */
 function NewKeyDialog({
   projectId,
   stages,
@@ -485,12 +488,17 @@ function NewKeyDialog({
         name: name.trim(),
         description: description.trim() || undefined,
       });
+      void analytics.then((posthog): void => {
+        posthog.capture("api_key_created", {
+          has_description: Boolean(description.trim()),
+        });
+      });
       onCreated(result.token, stage.name);
     });
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New API key</DialogTitle>
@@ -555,7 +563,11 @@ function NewKeyDialog({
               </SelectContent>
             </Select>
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -581,7 +593,6 @@ function NewKeyDialog({
   );
 }
 
-/** The one-time plaintext, with the deploy line that uses it. */
 function RevealedKeyDialog({
   token,
   stageName,

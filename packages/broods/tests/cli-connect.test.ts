@@ -1,10 +1,4 @@
-/**
- * `broods connect` against a stubbed deployment: the browser redirect is
- * played by the test, the CLI keeps the PKCE verifier, state and nonce, and
- * only the code the redirect brought back goes to the deployment.
- */
-
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type {
   BroodsAccountClient,
@@ -22,19 +16,19 @@ let starts: ConnectionStart[];
 let codes: ConnectionCode[];
 let redirectParams: Record<string, string>;
 
-beforeEach(() => {
+beforeEach((): void => {
   starts = [];
   codes = [];
   redirectParams = { code: "code-1", client_id: "client-issued" };
   console.log = (): void => {};
 });
 
-afterEach(() => {
+afterEach((): void => {
   console.log = realLog;
 });
 
-describe("connectInBrowser", () => {
-  it("starts on the deployment and hands back only the code", async () => {
+describe("connectInBrowser", (): void => {
+  it("starts on the deployment and hands back only the code", async (): Promise<void> => {
     const connection = await runConnect("chatgpt");
 
     const start = starts[0];
@@ -57,7 +51,7 @@ describe("connectInBrowser", () => {
     expect(connection.type).toBe("chatgpt");
   });
 
-  it("signs in again on the started client when the redirect omits it", async () => {
+  it("signs in again on the started client when the redirect omits it", async (): Promise<void> => {
     redirectParams = { code: "code-1" };
 
     await runConnect("chatgpt");
@@ -65,11 +59,11 @@ describe("connectInBrowser", () => {
     expect(codes[0]?.clientId).toBe("client-saved");
   });
 
-  it("fails when the provider refuses the sign-in", async () => {
+  it("fails when the provider refuses the sign-in", async (): Promise<void> => {
     redirectParams = { error: "access_denied" };
 
     const error = await runConnect("chatgpt").catch(
-      (caught: unknown) => caught,
+      (caught: unknown): unknown => caught,
     );
 
     expect(String(error)).toContain("Sign-in failed: access_denied");
@@ -77,7 +71,77 @@ describe("connectInBrowser", () => {
   });
 });
 
-/** Plays the deployment and the browser: start answers a consent URL, the browser redirects back. */
+test("connect lists a connection type this CLI does not know", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response =>
+      Response.json({
+        connections: [{ type: "future-plan", clientId: "client-1" }],
+      }),
+  });
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "connect",
+        "--base-url",
+        `http://127.0.0.1:${server.port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        BROODS_ACCOUNT_SECRET: "bsa_test",
+      },
+    });
+    const [exitCode, stdout] = await Promise.all([
+      proc.exited,
+      new Response(proc.stdout).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toMatch(/future-plan +client-1/);
+  } finally {
+    await server.stop(true);
+  }
+});
+test("connect keeps the method, path and status when the error body is not JSON", async (): Promise<void> => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: (): Response => new Response("Bad Gateway", { status: 502 }),
+  });
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "connect",
+        "chatgpt",
+        "--base-url",
+        `http://127.0.0.1:${server.port}`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        BROODS_ACCOUNT_SECRET: "bsa_test",
+      },
+    });
+    const [exitCode, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+    ]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/POST \/v1\/\S+ failed with 502: Bad Gateway/);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 async function runConnect(type: ConnectionType): Promise<Connection> {
   let redirectUri = "";
   let state = "";

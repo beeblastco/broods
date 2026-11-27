@@ -1,0 +1,5 @@
+kind	name	reason
+external	^new DataView\( packed\.buffer, packed\.byteOffset, HEADER_LENGTH_BYTES, \)\.getUint32$	ECMAScript DataView reads the checked big-endian packed header length.
+external	^fs\.(mkdirSync|chmod|writeFileSync|symlink)$	The just-bash filesystem performs these checked restores; entry selection and byte slicing are computed by the twin.
+external	^sandbox\.(runCommand|stop|update|extendTimeout)$	Methods of the @vercel/sandbox SDK object: the Vercel API decides these answers, outside the runtime.
+external	^result\.(stdout|stderr)$	Output readers on the @vercel/sandbox command result: the bytes come from the remote command.

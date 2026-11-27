@@ -1,11 +1,3 @@
-/**
- * Internal storage for connections: external accounts signed in by `broods
- * connect`. The config plane writes a fresh sign-in, core loads it per call
- * and saves each rotated refresh back, and a disconnect forgets it, then
- * revokes at the provider. Tokens are sealed under the account's envelope
- * key; only metadata leaves through `list`.
- */
-
 import { v, type Infer } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -49,7 +41,6 @@ export type ConnectionStatus = Infer<typeof statusValidator>;
 export type StoredConnection = Infer<typeof storedValidator>;
 type ConnectionSecrets = Infer<typeof secretsValidator>;
 
-/** Every connection the account holds, never their tokens. */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(statusValidator),
@@ -65,7 +56,6 @@ export const list = internalQuery({
   },
 });
 
-/** The account's connection of one type, never its tokens. */
 export const status = internalQuery({
   args: ref,
   returns: v.union(v.null(), statusValidator),
@@ -76,7 +66,6 @@ export const status = internalQuery({
   },
 });
 
-/** The decrypted connection, for core's refresh and calls. */
 export const load = internalQuery({
   args: ref,
   returns: v.union(v.null(), storedValidator),
@@ -91,7 +80,6 @@ export const load = internalQuery({
   },
 });
 
-/** Store a fresh sign-in, replacing the type's previous one; answers what is stored. */
 export const set = internalMutation({
   args: { ...ref, ...signInFields, ...secretFields },
   returns: statusValidator,
@@ -113,10 +101,7 @@ export const set = internalMutation({
   },
 });
 
-/**
- * Save a refreshed token pair over the one core loaded. False when the row
- * changed since (a new sign-in, a disconnect), so a refresh never overwrites it.
- */
+// A sign-in or disconnect since core loaded the row wins over this refresh.
 export const saveRefreshed = internalMutation({
   args: {
     ...ref,
@@ -142,7 +127,6 @@ export const saveRefreshed = internalMutation({
   },
 });
 
-/** Forget the connection, then revoke it at the provider. False when there was none. */
 export const disconnect = internalMutation({
   args: ref,
   returns: v.boolean(),
@@ -167,10 +151,7 @@ export const disconnect = internalMutation({
   },
 });
 
-/**
- * Best effort: a disconnect must still forget the tokens when the provider is
- * down, and the user can always end the grant in the provider's own settings.
- */
+// Best effort: the row is already gone, and the user can end the grant at the provider.
 export const revoke = internalAction({
   args: {
     accountId: v.id("accounts"),
@@ -210,7 +191,6 @@ export const revoke = internalAction({
   },
 });
 
-/** The tokens out of a row's encrypted blob. */
 async function decryptSecrets(
   cipher: AccountCipher,
   blob: EncryptedBlob,
@@ -229,7 +209,6 @@ async function decryptSecrets(
   };
 }
 
-/** The tokens as one encrypted blob for the row. */
 async function encryptSecrets(
   cipher: AccountCipher,
   secrets: ConnectionSecrets,
@@ -240,7 +219,6 @@ async function encryptSecrets(
   });
 }
 
-/** The account's connection of a type, if any. */
 async function findRow(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -254,7 +232,6 @@ async function findRow(
     .unique();
 }
 
-/** What a connection holds, never its secrets. */
 function statusOf(
   row: Omit<Doc<"connections">, "_id" | "_creationTime">,
 ): ConnectionStatus {

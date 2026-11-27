@@ -1,13 +1,13 @@
-/**
- * These use an in-memory executor and loopback proxy only; no AWS or shared
- * control plane is touched.
- */
-
 import { describe, expect, test } from "bun:test";
 import {
   MicrovmHarnessDriver,
   type MicrovmHarnessDriverOptions,
 } from "../src/harness/sandbox/microvm-harness-driver.ts";
+import {
+  HARNESS_FILE_MAX_BYTES,
+  HARNESS_OUTPUT_MAX_BYTES,
+} from "../src/harness/sandbox/harness-shell-process.ts";
+import { SandboxOutputTooLargeError } from "../src/shared/errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -43,6 +43,9 @@ describe("MicrovmHarnessDriver", () => {
     expect(executor.launchEnvs).toEqual([
       { CONFIGURED: "base", OVERRIDDEN: "configured" },
     ]);
+    expect([...executor.commandReservationKeys]).toEqual([
+      "acct:agent:harness",
+    ]);
 
     await created.session.writeFile({
       path: "/workspace/data.bin",
@@ -63,7 +66,7 @@ describe("MicrovmHarnessDriver", () => {
     expect(portUrl).not.toContain("microvm-1");
     expect(portUrl).not.toContain("secret-token");
     expect(executor.authRequests).toHaveLength(0);
-    expect(
+    await expect(
       created.session.getPortUrl!({ port: 4_321, protocol: "http" }),
     ).rejects.toThrow("supports WebSocket ports only");
 
@@ -107,6 +110,51 @@ describe("MicrovmHarnessDriver", () => {
     ]);
   });
 
+  test("refuses a file over the harness read cap after its first chunk", async () => {
+    const executor = fakeExecutor(true);
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+    executor.files.set(
+      "/workspace/huge.bin",
+      new Uint8Array(HARNESS_FILE_MAX_BYTES + 1),
+    );
+
+    const read = session.readFile({ path: "/workspace/huge.bin" });
+
+    await expect(read).rejects.toThrow(
+      `/workspace/huge.bin is ${HARNESS_FILE_MAX_BYTES + 1} bytes, over the`,
+    );
+    expect(executor.chunkReads).toEqual(["/workspace/huge.bin@0"]);
+  });
+
+  test("kills a still-running command past the output cap and stops polling it", async () => {
+    const executor = fakeExecutor(true);
+    executor.runProcessesUntilKilled(
+      new Uint8Array(HARNESS_OUTPUT_MAX_BYTES + 1).fill(120),
+    );
+    const driver = new MicrovmHarnessDriver(
+      driverOptions(),
+      executor.value as never,
+    );
+    const { session } = await driver.createSession({
+      identity: "bootstrap-v1",
+    });
+
+    const run = session.runCommand({ command: "cat big.bin" });
+
+    await expect(run).rejects.toBeInstanceOf(SandboxOutputTooLargeError);
+    expect(executor.killCalls).toBe(1);
+    expect(executor.runningProcesses).toBe(0);
+    const commandCalls = executor.commandCalls;
+    await Bun.sleep(200);
+    expect(executor.commandCalls).toBe(commandCalls);
+  });
+
   test("refuses to stitch a file that changed between chunks", async () => {
     const executor = fakeExecutor(true);
     const driver = new MicrovmHarnessDriver(
@@ -124,9 +172,9 @@ describe("MicrovmHarnessDriver", () => {
       executor.files.set("/workspace/shot.png", new Uint8Array(300_000)),
     );
 
-    expect(session.readFile({ path: "/workspace/shot.png" })).rejects.toThrow(
-      "changed while it was being read",
-    );
+    await expect(
+      session.readFile({ path: "/workspace/shot.png" }),
+    ).rejects.toThrow("changed while it was being read");
   });
 
   test("resumes the same reservation and validates bootstrap identity", async () => {
@@ -136,7 +184,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({ identity: "other-bootstrap" }),
     ).rejects.toThrow("bootstrap identity does not match");
 
@@ -160,7 +208,7 @@ describe("MicrovmHarnessDriver", () => {
       executor.value as never,
     );
 
-    expect(
+    await expect(
       driver.createSession({
         identity: "bootstrap-v1",
         abortSignal: controller.signal,
@@ -197,14 +245,23 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   const releases: unknown[] = [];
   const authRequests: unknown[] = [];
   const launchEnvs: Array<Record<string, string> | undefined> = [];
+  const commandReservationKeys = new Set<string>();
   const chunkReads: string[] = [];
   const files = new Map<string, Uint8Array>();
   // Bumped on every write, standing in for the inode and change time in a stamp.
   const versions = new Map<Uint8Array, number>();
   let afterChunkRead: (() => void) | undefined;
+  let longRunningStdout: Uint8Array | undefined;
+  let killCalls = 0;
+  let commandCalls = 0;
   const processes = new Map<
     string,
-    { stdout: Uint8Array; stderr: Uint8Array; exitCode: number }
+    {
+      stdout: Uint8Array;
+      stderr: Uint8Array;
+      exitCode: number;
+      running: boolean;
+    }
   >();
 
   return {
@@ -214,10 +271,24 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     releases: releases,
     authRequests: authRequests,
     launchEnvs: launchEnvs,
+    commandReservationKeys: commandReservationKeys,
     chunkReads: chunkReads,
     files: files,
     onChunkRead: function (callback: () => void): void {
       afterChunkRead = callback;
+    },
+    runProcessesUntilKilled: function (stdout: Uint8Array): void {
+      longRunningStdout = stdout;
+    },
+    get killCalls() {
+      return killCalls;
+    },
+    get commandCalls() {
+      return commandCalls;
+    },
+    get runningProcesses() {
+      return [...processes.values()].filter((process) => process.running)
+        .length;
     },
     value: {
       acquireHarnessReservation: async function (request: unknown) {
@@ -239,19 +310,33 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         };
       },
       runHarnessCommand: async function (request: {
+        reservationKey: string;
         code: string;
         env?: Record<string, string>;
       }) {
+        commandCalls += 1;
+        commandReservationKeys.add(request.reservationKey);
         const processRoot = request.code.match(
           /(\/tmp\/broods-harness-process-[0-9a-f-]+)/,
         )?.[1];
         if (request.code.includes("setsid bash") && processRoot) {
           launchEnvs.push(request.env);
           processes.set(processRoot, {
-            stdout: encoder.encode("hello\n"),
+            stdout: longRunningStdout ?? encoder.encode("hello\n"),
             stderr: encoder.encode("warning\n"),
             exitCode: 0,
+            running: longRunningStdout !== undefined,
           });
+
+          return result();
+        }
+        if (request.code.includes("kill -TERM") && processRoot) {
+          killCalls += 1;
+          const process = processes.get(processRoot);
+          if (process) {
+            process.running = false;
+            process.exitCode = 143;
+          }
 
           return result();
         }
@@ -278,7 +363,11 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         if (request.code.includes('echo "done $(cat') && processRoot) {
           const process = processes.get(processRoot);
 
-          return result(process ? `done ${process.exitCode}\n` : "unknown\n");
+          if (!process) return result("unknown\n");
+
+          return result(
+            process.running ? "running\n" : `done ${process.exitCode}\n`,
+          );
         }
 
         const write = request.code.match(

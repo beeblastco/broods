@@ -4,15 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
-/**
- * The CLI ships for Node as well as Bun, and Node only erases type syntax: an
- * `enum` in a `broods/` file throws there unless the compiler hooks esbuild in.
- * These run the real compile path in a `node` child, because a `bun` runner
- * loads TypeScript natively and would pass either way.
- */
-
-// File URLs, not paths: a Windows path interpolated into a module specifier
-// turns its separators into string escapes.
+// Run in a `node` child: Bun loads TypeScript natively and would pass either way.
+// File URLs: a Windows path in a module specifier turns its separators into escapes.
 const MANIFEST_MODULE = pathToFileURL(
   join(import.meta.dir, "..", "src", "manifest.ts"),
 ).href;
@@ -22,7 +15,7 @@ const RESOURCES_MODULE = pathToFileURL(
 
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -60,7 +53,7 @@ async function compileWithNode(
   return { exitCode: exitCode, stdout: stdout, stderr: stderr };
 }
 
-test("node compiles a resource file Node's own loader cannot strip", async () => {
+test("node compiles a resource file Node's own loader cannot strip", async (): Promise<void> => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
 
@@ -91,7 +84,7 @@ export const support = defineAgent({
   ]);
 });
 
-test("node keeps a resource file's own module URL", async () => {
+test("node keeps a resource file's own module URL", async (): Promise<void> => {
   const cwd = await fixtureProject(`
 import { defineAgent } from "${RESOURCES_MODULE}";
 
@@ -105,7 +98,58 @@ export const support = defineAgent({
   const result = await compileWithNode(cwd);
 
   expect(result.exitCode).toBe(0);
-  // Transpiling to a scratch file would report the scratch directory instead,
-  // which silently breaks a resource that reads a prompt next to itself.
   expect(result.stdout).toContain(join(cwd, "broods"));
+});
+
+test.each([
+  ["./prompts/support", "support.ts"],
+  ["./prompts/support.js", "support.ts"],
+  ["./prompts", "index.ts"],
+  ["./prompts/support.en", "support.en.ts"],
+])(
+  "node resolves %s to the .ts file Bun would",
+  async (specifier, file): Promise<void> => {
+    const cwd = await fixtureProject(`
+import { defineAgent } from "${RESOURCES_MODULE}";
+import { SYSTEM } from "${specifier}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  agent: { system: SYSTEM },
+});
+`);
+    await mkdir(join(cwd, "broods", "prompts"), { recursive: true });
+    await writeFile(
+      join(cwd, "broods", "prompts", file),
+      'export const SYSTEM: string = "be brief";\n',
+      "utf8",
+    );
+
+    const result = await compileWithNode(cwd);
+
+    expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("be brief");
+  },
+);
+
+test("node gives a project with no broods install the SDK the CLI ships", async (): Promise<void> => {
+  const cwd = await fixtureProject(`
+import { defineAgent, env } from "broods";
+import { BroodsApiError } from "broods/account";
+
+export const support = defineAgent({
+  name: "support",
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+  agent: { system: typeof BroodsApiError },
+});
+`);
+
+  const result = await compileWithNode(cwd);
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain('"system":"function"');
 });

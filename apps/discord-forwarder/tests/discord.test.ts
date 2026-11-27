@@ -14,7 +14,6 @@ describe("resume host", () => {
     expect(resumeGatewayUrl("wss://gateway-us-east1-b.discord.gg")).toBe(
       "wss://gateway-us-east1-b.discord.gg",
     );
-    // A path or query on the named host is dropped, not carried through.
     expect(resumeGatewayUrl("wss://gateway.discord.gg/?v=9")).toBe(
       "wss://gateway.discord.gg",
     );
@@ -22,24 +21,18 @@ describe("resume host", () => {
 
   it("refuses a host that would receive the bot token", () => {
     expect(resumeGatewayUrl("wss://evil.example.com")).toBeNull();
-    // The suffix must be a real label boundary, not a string ending.
     expect(resumeGatewayUrl("wss://notdiscord.gg")).toBeNull();
     expect(resumeGatewayUrl("wss://gateway.discord.gg.evil.com")).toBeNull();
-    // A deeper name would smuggle a second label past the label pattern.
     expect(resumeGatewayUrl("wss://a.b.discord.gg")).toBeNull();
   });
 
   it("strips credentials rather than dialling them", () => {
-    // `URL` reports the hostname without userinfo, so rebuilding from the label
-    // drops it. Pinned because the rebuild is the only thing that does: an
-    // allow-list on the raw string would have carried these straight through.
     expect(resumeGatewayUrl("wss://user:pass@gateway.discord.gg")).toBe(
       "wss://gateway.discord.gg",
     );
     expect(resumeGatewayUrl("wss://evil.example.com@gateway.discord.gg")).toBe(
       "wss://gateway.discord.gg",
     );
-    // Userinfo must not be a way to smuggle the real host past the suffix check.
     expect(resumeGatewayUrl("wss://gateway.discord.gg@evil.example.com")).toBe(
       null,
     );

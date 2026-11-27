@@ -26,6 +26,7 @@ function Label({
   ...props
 }: React.ComponentProps<"label"> & VariantProps<typeof labelVariants>) {
   return (
+    // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- callers pass htmlFor
     <label
       data-slot="label"
       className={cn(labelVariants({ variant: variant }), className)}

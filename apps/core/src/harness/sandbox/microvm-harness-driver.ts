@@ -1,9 +1,3 @@
-/**
- * Core-owned AWS Lambda MicroVM driver for the AI SDK Harness sandbox adapter.
- * Reservation ownership stays in MicrovmSandboxExecutor; bridge WebSockets pass
- * through a loopback proxy so AWS authentication never enters a URL or log.
- */
-
 import { Buffer } from "node:buffer";
 import { dirname } from "node:path/posix";
 import type {
@@ -18,33 +12,29 @@ import type {
 } from "@broods/ai-sdk-sandbox";
 import { createSandboxExecutor } from "./index.ts";
 import {
+  HARNESS_FILE_MAX_BYTES,
   HarnessShellProcess,
   type HarnessShellExecutor,
   readFileChunk,
-  readHarnessStream,
 } from "./harness-shell-process.ts";
 import { type SandboxUsage, reportSandboxUsage } from "./live-status.ts";
 import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
 import { MicrovmWebSocketProxy } from "./microvm-websocket-proxy.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
+import { SandboxFileTooLargeError } from "../../shared/errors.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { shellQuote, stringRecord } from "./utils.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
 
 export interface MicrovmHarnessDriverOptions {
-  /** Existing core reservation identity, already scoped to its account/agent. */
   reservationKey: string;
-  /** Optional exact bootstrap identity for callers that precompute one. */
   bootstrapIdentity?: string;
   config: SandboxExecutorConfig & { provider: "lambda"; persistent: true };
   defaultWorkingDirectory?: string;
-  /** The invoking run's identity, mirrored onto the reserved sandbox. */
   metadata?: SandboxRunMetadata;
-  /** Receives the guest's CPU, memory and disk once the machine is acquired. */
   onUsage?: (usage: SandboxUsage) => void;
   ports?: ReadonlyArray<number>;
-  /** Other conversations use this machine too, so a session ending leaves it running. */
   shared?: boolean;
 }
 
@@ -63,6 +53,7 @@ interface MicrovmHarnessExecutor {
   runHarnessCommand(request: {
     microvmId: string;
     endpoint: string;
+    reservationKey: string;
     code: string;
     env?: Record<string, string>;
     abortSignal?: AbortSignal;
@@ -238,6 +229,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
         this.#executor.runHarnessCommand({
           microvmId: this.#reservation.microvmId,
           endpoint: this.#reservation.endpoint,
+          reservationKey: this.#reservationKey,
           code: command,
           ...(shellOptions?.env ? { env: shellOptions.env } : {}),
           ...(shellOptions?.abortSignal
@@ -258,13 +250,8 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
   }> {
     options.abortSignal?.throwIfAborted();
     const process = await this.spawnCommand(options);
-    const [stdout, stderr, result] = await Promise.all([
-      readHarnessStream(process.stdout),
-      readHarnessStream(process.stderr),
-      process.wait(),
-    ]);
 
-    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
+    return process.collect();
   }
 
   async spawnCommand(
@@ -299,10 +286,17 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
       if (chunk === null || (first !== undefined && chunk.stamp !== first)) {
         throw new Error(`${options.path} changed while it was being read`);
       }
+      const size = Number(chunk.stamp.split(" ")[0]);
+      if (size > HARNESS_FILE_MAX_BYTES) {
+        throw new SandboxFileTooLargeError(
+          options.path,
+          size,
+          HARNESS_FILE_MAX_BYTES,
+        );
+      }
       first = chunk.stamp;
       chunks.push(chunk.bytes);
       offset += chunk.bytes.byteLength;
-      const size = Number(chunk.stamp.split(" ")[0]);
       if (chunk.bytes.byteLength === 0 || offset >= size) break;
     }
 
@@ -333,8 +327,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     return this.#proxy.getPortUrl(options.port);
   }
 
-  // A shared machine idles down on its own; suspending it here would pull it
-  // out from under the other conversations still running on it.
+  // A shared VM idles down on its own; other conversations may still be running on it.
   async stop(): Promise<void> {
     await this.#proxy.close();
     if (this.#shared) return;

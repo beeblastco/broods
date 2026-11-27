@@ -8,7 +8,13 @@ import schema from "../schema";
 const caller = vi.hoisted(() => ({ authId: "auth_victim" }));
 
 vi.mock("../auth", () => ({
-  authKit: { getAuthUser: async () => ({ id: caller.authId }) },
+  authKit: {
+    getAuthUser: async () => ({
+      id: caller.authId,
+      email: `${caller.authId.replace("auth_", "")}@example.com`,
+      emailVerified: true,
+    }),
+  },
 }));
 
 const modules = import.meta.glob("../**/*.ts");
@@ -31,7 +37,7 @@ describe("active org", () => {
     );
   });
 
-  test("an admin adding a user does not take over their active org", async () => {
+  test("an admin inviting a user does not take over their active org", async () => {
     const t = activeOrgTest();
     const victimId = await seedUser(t, "auth_victim", "victim@example.com");
     const ownOrg = await seedOrg(t, "victim", victimId, "auth_victim", 1);
@@ -45,14 +51,17 @@ describe("active org", () => {
     );
     caller.authId = "auth_attacker";
 
-    await t.mutation(api.org.members.add, {
+    const invitationId = await t.mutation(api.org.invitations.create, {
       orgId: attackerOrg,
       email: "victim@example.com",
       role: "admin",
     });
     caller.authId = "auth_victim";
+    await t.mutation(api.org.invitations.accept, {
+      invitationId: invitationId,
+    });
 
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(ownOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(ownOrg);
     expect((await t.mutation(api.org.orgs.getOrCreate, {})).orgId).toBe(ownOrg);
   });
 
@@ -64,13 +73,17 @@ describe("active org", () => {
     caller.authId = "auth_victim";
 
     await t.mutation(api.org.orgs.setActive, { orgId: otherOrg });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(otherOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(
+      otherOrg,
+    );
 
     await t.mutation(api.org.orgs.setActive, { orgId: ownOrg });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(ownOrg);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(ownOrg);
 
     const created = await t.mutation(api.org.orgs.create, { name: "fresh" });
-    expect((await t.query(api.org.orgs.getActive, {}))?._id).toBe(created);
+    expect((await t.query(api.dashboardReads.activeOrg, {}))?._id).toBe(
+      created,
+    );
   });
 });
 
@@ -112,8 +125,8 @@ describe("home bootstrap", () => {
       const projectId = await ctx.db.insert("projects", {
         authId: "auth_victim",
         orgId: orgId,
-        name: "Tracy",
-        slug: "tracy",
+        name: "Support",
+        slug: "support",
         updatedAt: 1,
       });
       const stage = async (
@@ -139,7 +152,7 @@ describe("home bootstrap", () => {
 
     expect(
       await t.mutation(api.project.openHome, {
-        project: "tracy",
+        project: "support",
         stage: "Production",
       }),
     ).toEqual({

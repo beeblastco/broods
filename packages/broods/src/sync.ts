@@ -1,33 +1,26 @@
-/**
- * HTTP client for the SaaS CLI API exposed by the dashboard/Convex backend.
- */
-
-import type { CliManifest, GeneratedIds } from "./contracts.ts";
+import type {
+  CliManifest,
+  CliPruneTarget,
+  DeploymentRegion,
+  GeneratedIds,
+  CliManifestResource,
+} from "./contracts.ts";
+import { errorEnvelope } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
-import { INLINE_MCP_BUNDLE_BYTES, sha256Hex } from "./manifest.ts";
+import {
+  INLINE_MCP_BUNDLE_BYTES,
+  sha256Hex,
+  type SkillManifestConfig,
+} from "./manifest.ts";
+import { snapshotResource } from "../../convex/model/manifestSnapshot.ts";
+import type { StageSource } from "../../convex/model/stageSource.ts";
+import { stableJson } from "../../convex/model/objects.ts";
+import { MAX_CLI_SKILL_SYNC_BYTES } from "../../convex/model/skillLimits.ts";
 import { StageSessionRefusedError } from "./observability-client.ts";
 
-/**
- * Keys the local and remote configs never agree on: artifact bytes, which the
- * server snapshot drops, and the upload handle a large MCP bundle is swapped
- * for after the diff, which only the remote has. Each artifact's sha256 stays,
- * so a content change still shows as an update.
- */
-const ARTIFACT_KEYS: ReadonlySet<string> = new Set([
-  "bundle",
-  "bundleStorageId",
-  "contentBase64",
-]);
-/** Resource kinds whose config carries artifact bytes the server keeps apart. */
-const ARTIFACT_KINDS: ReadonlySet<string> = new Set(["hook", "mcp", "skill"]);
-/** How long a CLI request waits for the server to answer. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface SyncClientOptions {
-  /**
-   * Base URL serving the /v1/account/* control-plane routes: the Convex
-   * deployment directly, or the gateway's unified domain in front of it.
-   */
   baseUrl: string;
   token: string;
   fetch?: typeof fetch;
@@ -36,29 +29,21 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /**
-   * The stage's manifest revision, which a later PUT sends back to be refused
-   * if another sync landed in between. Absent on backends that predate it.
-   */
   revision?: number;
-  /**
-   * Non-fatal deploy advisories: policy refs that resolve to nothing, and
-   * resources a prune kept because a reserved sandbox instance is still live.
-   */
+  /** sha256 of the stage's manifest as `broods diff` compares it. */
+  manifestHash?: string;
+  /** The stored source revision the stage now runs, when the sync carried source. */
+  sourceRevision?: number;
   warnings?: { missingPolicies?: string[]; reservedResources?: string[] };
-  /**
-   * The stage's runtime key context. Deployments include the plaintext
-   * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
-   */
   deployment?: {
     accountId: string;
     endpointId: string;
     projectSlug: string;
     stageSlug: string;
-    /** Decides the webhook URL shape; only production keeps the bare one. */
     stageKind?: "development" | "production" | "custom";
     keyHint: string;
     apiKey: string;
+    userTokenSecretHint?: string;
   } | null;
 }
 
@@ -67,7 +52,6 @@ export interface CliOnboardingOrg {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
-  /** Absent on backends that predate plan reporting. */
   plan?: "free" | "pro";
   accountStatus: "active" | "missing" | "disabled";
 }
@@ -94,12 +78,10 @@ export interface CliOnboardingContext {
   currentOrgId: string;
   orgs: CliOnboardingOrg[];
   projects: CliOnboardingProject[];
-  /** The API account backing the current org; absent on older backends. */
   account?: CliOnboardingAccount | null;
   user?: CliOnboardingUser;
 }
 
-/** A 15-minute stage ticket and the slugs the gateway paths use. */
 export interface CliStageSession {
   token: string;
   expiresAt: number;
@@ -107,24 +89,21 @@ export interface CliStageSession {
   stageSlug: string;
 }
 
-/** One stage of a project, as listed by `broods stage list`. */
 export interface CliStage {
   id: string;
   name: string;
   kind: "development" | "production" | "custom";
   isDefault: boolean;
-  deploymentRegion?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
+  deploymentRegion?: DeploymentRegion;
   agentCount: number;
   variableCount: number;
   updatedAt: number;
 }
 
-/** A project of the logged-in account's org, with the counts `broods project` prints. */
 export interface CliProject {
   id: string;
   name: string;
   slug: string;
-  /** No stage, agent, variable, deployment or workspace file left in it. */
   empty: boolean;
   stageCount: number;
   agentCount: number;
@@ -134,11 +113,73 @@ export interface CliProject {
   updatedAt: number;
 }
 
+/** A project's link to a GitHub repo; each stage with a branch deploys on push to it. */
+export interface CliGitHubLink {
+  fullName: string;
+  /** The folder holding `broods/`; "" is the repo root. */
+  rootDirectory: string;
+  productionBranch?: string;
+  developmentBranch?: string;
+  /** False on a plan without environments: the keys are repo secrets any branch can read. */
+  protectedSecrets: boolean;
+  /** The PR carrying the workflow, when a protected branch refused a direct commit. */
+  setupPullRequestUrl?: string;
+}
+
+/** What `broods github` shows: the org's GitHub accounts, the project's link and latest runs. */
+export interface CliGitHubStatus {
+  /** False when the server has no GitHub App. */
+  configured: boolean;
+  /** Whether the caller may connect accounts (an org admin). */
+  canConnect: boolean;
+  /** Whether the caller may link or unlink this project (`keys:write`). */
+  canLink: boolean;
+  webUrl?: string;
+  installations: Array<{
+    installationId: number;
+    login: string;
+    accountType: "User" | "Organization";
+  }>;
+  repo?: CliGitHubLink;
+  deploys: Array<{
+    branch: string;
+    runId: number;
+    sha: string;
+    status: string;
+    conclusion?: string;
+    url: string;
+    updatedAt: number;
+  }>;
+}
+
+/** A repo a connected GitHub account lets this org link. */
+export interface CliGitHubRepo {
+  installationId: number;
+  repoId: number;
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
+/**
+ * A link request. A branch left out takes its default (the repo's default
+ * branch for Production, `dev` for Development); `null` deploys no such stage.
+ */
+export interface CliGitHubLinkInput {
+  /** `owner/name`. */
+  repo: string;
+  /** The folder holding `broods/`, needed when the repo has several. */
+  folder?: string;
+  /** The Broods API the workflow deploys to. */
+  baseUrl: string;
+  productionBranch?: string | null;
+  developmentBranch?: string | null;
+}
+
 /** A stored environment variable as listed by the CLI (name only; value is write-only). */
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
-  /** SHA-256 hex of the stored value. */
   valueDigest: string;
 }
 
@@ -146,15 +187,13 @@ export type DiffOperation = "create" | "update" | "delete" | "rename";
 
 export interface DiffEntry {
   operation: DiffOperation;
-  kind: string;
+  kind: CliManifestResource["kind"];
   name: string;
   previousName?: string;
 }
 
-/** A sync is already running or the stage revision changed: read it again and retry. */
 export class ManifestConflictError extends Error {}
 
-/** The server predates a route the CLI calls. */
 export class RouteNotMountedError extends Error {}
 
 export class BroodsSyncClient {
@@ -181,67 +220,79 @@ export class BroodsSyncClient {
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * Syncs the manifest. With `revision`, the revision this client last read,
-   * the server refuses the write with a `ManifestConflictError` when another
-   * sync landed since. An overlapping sync is refused with the same error,
-   * including a write without a revision.
-   */
+  /** `prune` true removes every undeclared resource; a list removes only those. */
   async putManifest(
     manifest: CliManifest,
-    prune: boolean,
+    prune: boolean | CliPruneTarget[],
     rotateRuntimeKey = false,
     revision?: number,
+    source?: StageSource,
   ): Promise<RemoteManifestResponse> {
-    const uploaded = await this.externalizeLargeMcpBundles(manifest);
-    const response = await this.request(
-      manifest.project,
-      manifest.stage,
-      "/manifest",
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          manifest: uploaded,
-          prune: prune,
-          rotateRuntimeKey: rotateRuntimeKey,
-          ...(revision !== undefined ? { revision: revision } : {}),
+    const bundled = await this.externalizeLargeMcpBundles(manifest);
+    const put = async (uploaded: CliManifest): Promise<Response> =>
+      await this.request(
+        manifest.project,
+        manifest.stage,
+        "/manifest",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            manifest: uploaded,
+            prune: prune,
+            rotateRuntimeKey: rotateRuntimeKey,
+            ...(revision !== undefined ? { revision: revision } : {}),
+            ...(source ? { source: source } : {}),
+          }),
+        },
+        // A sync deploys MCP bundles and can hold the connection for minutes.
+        null,
+      );
+    const first = await this.externalizeLargeSkills(bundled);
+    let response = await put(first);
+    const refusal =
+      response.status === 409 ? await response.clone().text() : "";
+    if (errorEnvelope(refusal).code === "skill_upload_required") {
+      const { skills } = JSON.parse(refusal) as { skills: string[] };
+      response = await put(
+        await this.externalizeLargeSkills(bundled, {
+          sent: first,
+          stale: new Set(skills),
         }),
-      },
-      // A sync deploys MCP bundles and can hold the connection for minutes.
-      null,
-    );
+      );
+    }
     await assertOk(response, "Sync manifest failed");
 
     return (await response.json()) as RemoteManifestResponse;
   }
 
-  /**
-   * An MCP bundle past the inline threshold cannot ride the manifest JSON
-   * (the config plane caps bodies ~20 MB): upload it to a minted URL and swap
-   * `bundle` for the storage id plus sha256 (#190). Small bundles stay inline.
-   */
+  // The config plane caps request bodies near 20 MB.
   private async externalizeLargeMcpBundles(
     manifest: CliManifest,
   ): Promise<CliManifest> {
     if (
-      manifest.resources.every((resource) => largeBundleOf(resource) === null)
+      manifest.resources.every(
+        (resource): boolean => largeBundleOf(resource) === null,
+      )
     ) {
       return manifest;
     }
 
     const resources = await Promise.all(
-      manifest.resources.map(async (resource) => {
+      manifest.resources.map(async (resource): Promise<CliManifestResource> => {
         const bundle = largeBundleOf(resource);
         if (bundle === null) return resource;
         const { bundle: _bundle, ...rest } = resource.config as Record<
           string,
           unknown
         >;
-        const storageId = await this.uploadMcpBundle(
+        const storageId = await this.upload(
           manifest.project,
           manifest.stage,
+          "/mcp-bundle-uploads",
           bundle,
+          "application/javascript",
+          `MCP server ${resource.name}`,
         );
 
         return {
@@ -258,44 +309,100 @@ export class BroodsSyncClient {
     return { ...manifest, resources: resources };
   }
 
-  /** POST one bundle's module source to a minted upload URL; returns the storage id. */
-  private async uploadMcpBundle(
+  // One upload per skill that does not fit inline, but for one this stage last synced unchanged.
+  // After a refusal: upload the `stale` skills, send the rest as `sent` did.
+  private async externalizeLargeSkills(
+    manifest: CliManifest,
+    retry?: { sent: CliManifest; stale: ReadonlySet<string> },
+  ): Promise<CliManifest> {
+    const large = skillsToUpload(manifest.resources);
+    if (large.size === 0) return manifest;
+    const remote = retry
+      ? null
+      : await this.getManifest(manifest.project, manifest.stage);
+
+    const resources = await Promise.all(
+      manifest.resources.map(
+        async (resource, index): Promise<CliManifestResource> => {
+          if (resource.kind !== "skill" || !large.has(resource.name)) {
+            return resource;
+          }
+          if (retry && !retry.stale.has(resource.name)) {
+            return retry.sent.resources[index] ?? resource;
+          }
+          const held = remote?.manifest.resources.find(
+            (entry): boolean =>
+              entry.kind === "skill" && entry.name === resource.name,
+          );
+
+          return held &&
+            stableJson(snapshotResource(held)) ===
+              stableJson(snapshotResource(resource))
+            ? withoutSkillContent(resource)
+            : await this.uploadSkill(manifest, resource);
+        },
+      ),
+    );
+
+    return { ...manifest, resources: resources };
+  }
+
+  private async upload(
     project: string,
     stage: string,
-    bundle: string,
+    route: "/mcp-bundle-uploads" | "/skill-uploads",
+    body: string | Buffer<ArrayBuffer>,
+    contentType: string,
+    label: string,
   ): Promise<string> {
-    const minted = await this.request(project, stage, "/mcp-bundle-uploads", {
+    const minted = await this.request(project, stage, route, {
       method: "POST",
     });
-    await assertOk(minted, "Mint bundle upload URL failed");
+    await assertOk(minted, `Mint upload URL for ${label} failed`);
     const { uploadUrl } = (await minted.json()) as { uploadUrl?: string };
     if (!uploadUrl)
       throw new Error(
-        "Mint bundle upload URL failed: response omitted uploadUrl",
+        `Mint upload URL for ${label} failed: response omitted uploadUrl`,
       );
-    // Bundles run to tens of MB, so no fixed timeout fits a slow uplink.
+    // Uploads run to tens of MB, so no fixed timeout fits a slow uplink.
     const stored = await this.send(
       uploadUrl,
       {
         method: "POST",
-        headers: { "Content-Type": "application/javascript" },
-        body: bundle,
+        headers: { "Content-Type": contentType },
+        body: body,
       },
       null,
     );
-    await assertOk(stored, "Bundle upload failed");
+    await assertOk(stored, `Upload of ${label} failed`);
     const { storageId } = (await stored.json()) as { storageId?: string };
     if (!storageId)
-      throw new Error("Bundle upload failed: response omitted storageId");
+      throw new Error(`Upload of ${label} failed: response omitted storageId`);
 
     return storageId;
   }
 
-  /**
-   * Recovers the stage's runtime key so the CLI can reconnect to a
-   * dashboard-created project without redeploying. Returns null when the project/
-   * stage is unknown.
-   */
+  private async uploadSkill(
+    manifest: CliManifest,
+    resource: CliManifestResource,
+  ): Promise<CliManifestResource> {
+    const config = resource.config as SkillManifestConfig;
+    const storageId = await this.upload(
+      manifest.project,
+      manifest.stage,
+      "/skill-uploads",
+      Buffer.concat(
+        config.files.map((file): Buffer =>
+          Buffer.from(file.contentBase64, "base64"),
+        ),
+      ),
+      "application/octet-stream",
+      `skill ${resource.name}`,
+    );
+
+    return withoutSkillContent(resource, storageId);
+  }
+
   async getRuntimeKey(
     project: string,
     stage: string,
@@ -331,6 +438,28 @@ export class BroodsSyncClient {
     };
   }
 
+  async rotateUserTokenSecret(
+    project: string,
+    stage: string,
+  ): Promise<{ secret: string; hint: string } | null> {
+    const response = await this.request(project, stage, "/user-token-secret", {
+      method: "POST",
+    });
+    if (response.status === 404) return null;
+    await assertOk(response, "Rotate user token signing secret failed");
+    const payload = (await response.json()) as {
+      secret?: string;
+      hint?: string;
+    };
+    if (!payload.secret || !payload.hint) {
+      throw new Error(
+        "Rotate user token signing secret failed: response omitted the secret",
+      );
+    }
+
+    return { secret: payload.secret, hint: payload.hint };
+  }
+
   async setEnv(
     project: string,
     stage: string,
@@ -350,10 +479,6 @@ export class BroodsSyncClient {
     await assertOk(response, "Set environment variable failed");
   }
 
-  /**
-   * Lists the names of the stage's stored variables (values stay
-   * server-side and encrypted, so only names and last-updated times return).
-   */
   async listEnv(project: string, stage: string): Promise<CliEnvVar[]> {
     const response = await this.request(project, stage, "/env", {
       method: "GET",
@@ -364,7 +489,6 @@ export class BroodsSyncClient {
     return payload.variables ?? [];
   }
 
-  /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
   async getEnv(
     project: string,
     stage: string,
@@ -465,7 +589,6 @@ export class BroodsSyncClient {
     };
   }
 
-  /** Trade the login token for a stage ticket (logs, stream, machine). */
   async mintStageSession(
     project: string,
     stage: string,
@@ -497,7 +620,6 @@ export class BroodsSyncClient {
     return (await response.json()) as CliStageSession;
   }
 
-  /** Every project in the logged-in account's org, empty ones sorted last. */
   async listProjects(): Promise<CliProject[]> {
     const response = await this.send(`${this.baseUrl}/v1/account/projects`, {
       method: "GET",
@@ -512,12 +634,6 @@ export class BroodsSyncClient {
     return payload.projects ?? [];
   }
 
-  /**
-   * Deletes a project and everything under it: stages, agents, canvas, env
-   * vars, crons and workspace files. Takes the project id from `listProjects`
-   * (names are not unique). Returns what the project held, or null when the id
-   * matches nothing.
-   */
   async deleteProject(projectId: string): Promise<CliProject | null> {
     const response = await this.send(
       `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
@@ -536,6 +652,47 @@ export class BroodsSyncClient {
     return payload.deleted ?? null;
   }
 
+  /** The project's GitHub link and the org's connected accounts. */
+  async githubStatus(project: string): Promise<CliGitHubStatus> {
+    return await this.github<CliGitHubStatus>("GET", "", project);
+  }
+
+  /** The repos the project may link, across the org's connected accounts. */
+  async githubRepos(project: string): Promise<CliGitHubRepo[]> {
+    const payload = await this.github<{ repos: CliGitHubRepo[] }>(
+      "GET",
+      "/repos",
+      project,
+    );
+
+    return payload.repos;
+  }
+
+  /** Links a repo: seals a key per mapped stage into it and commits the deploy workflow. */
+  async githubLink(
+    project: string,
+    input: CliGitHubLinkInput,
+  ): Promise<CliGitHubLink> {
+    const payload = await this.github<{ repo: CliGitHubLink }>(
+      "POST",
+      "/link",
+      project,
+      input,
+    );
+
+    return payload.repo;
+  }
+
+  /** Unlinks the project's repo and revokes its keys; the repo keeps its workflow. */
+  async githubUnlink(project: string): Promise<void> {
+    await this.github("DELETE", "/link", project);
+  }
+
+  /** Page that installs the Broods GitHub App on another account; it returns to the dashboard. */
+  async githubConnect(): Promise<{ url: string }> {
+    return await this.github<{ url: string }>("POST", "/connect");
+  }
+
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
     const response = await this.send(`${this.baseUrl}/v1/account/onboarding`, {
       method: "POST",
@@ -548,6 +705,33 @@ export class BroodsSyncClient {
     await assertOk(response, "Create CLI org failed");
 
     return (await response.json()) as CliOnboardingContext;
+  }
+
+  // A `broods github` call: `/v1/account/github{suffix}?project=`, with a `broods login` token.
+  private async github<T = unknown>(
+    method: string,
+    suffix: string,
+    project?: string,
+    body?: unknown,
+  ): Promise<T> {
+    const query = project ? `?project=${encodeURIComponent(project)}` : "";
+    const response = await this.send(
+      `${this.baseUrl}/v1/account/github${suffix}${query}`,
+      {
+        method: method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      },
+      // Linking writes the repo's secrets, branch and workflow on GitHub.
+      method === "POST" ? 120_000 : undefined,
+    );
+    assertRouteMounted(response, "/v1/account/github", "broods github");
+    await assertOk(response, `GitHub ${method} ${suffix || "status"} failed`);
+
+    return (await response.json()) as T;
   }
 
   private async request(
@@ -574,7 +758,6 @@ export class BroodsSyncClient {
     );
   }
 
-  /** Every request goes through `cliFetch` with the injected fetch. */
   private async send(
     url: string,
     init: RequestInit,
@@ -587,11 +770,6 @@ export class BroodsSyncClient {
   }
 }
 
-/**
- * `fetch` for every CLI call to a broods server. Gives up after 30 s, or never
- * with `timeoutMs: null`, and turns a network failure into "Cannot reach
- * <origin>: <cause>" instead of a bare "fetch failed".
- */
 export async function cliFetch(
   url: string,
   init: RequestInit,
@@ -620,13 +798,16 @@ export function diffManifests(
   remote: CliManifest | null,
 ): DiffEntry[] {
   const remoteResources = new Map(
-    (remote?.resources ?? []).map((entry) => [
+    (remote?.resources ?? []).map((entry): [string, CliManifestResource] => [
       `${entry.kind}:${entry.name}`,
       entry,
     ]),
   );
   const localResources = new Map(
-    local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]),
+    local.resources.map((entry): [string, CliManifestResource] => [
+      `${entry.kind}:${entry.name}`,
+      entry,
+    ]),
   );
   const entries: DiffEntry[] = [];
   const unmatchedLocal: Array<{
@@ -664,7 +845,7 @@ export function diffManifests(
   const renamedLocalKeys = new Set<string>();
   for (const localEntry of unmatchedLocal) {
     const match = unmatchedRemote.find(
-      (remoteEntry) =>
+      (remoteEntry): boolean =>
         !renamedRemoteKeys.has(remoteEntry.key) &&
         isRenamableKind(localEntry.resource.kind) &&
         localEntry.resource.kind === remoteEntry.resource.kind &&
@@ -702,7 +883,9 @@ export function diffManifests(
     }
   }
 
-  return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
+  return entries.sort((a, b): number =>
+    diffSortKey(a).localeCompare(diffSortKey(b)),
+  );
 }
 
 function diffSortKey(entry: DiffEntry): string {
@@ -725,25 +908,6 @@ function isRenamableKind(kind: string): boolean {
   );
 }
 
-function normalizeEnvRefs(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeEnvRefs);
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (record.__beeblastEnv === true && typeof record.name === "string") {
-      return `\${${record.name}}`;
-    }
-
-    return Object.fromEntries(
-      Object.entries(record).map(([key, entry]) => [
-        key,
-        normalizeEnvRefs(entry),
-      ]),
-    );
-  }
-
-  return value;
-}
-
 function renameSnapshot(
   resource: { kind: string; config: unknown } & Record<string, unknown>,
 ): unknown {
@@ -753,94 +917,18 @@ function renameSnapshot(
   return rest;
 }
 
-function snapshotResource(
-  resource: { kind: string; config: unknown } & Record<string, unknown>,
-): unknown {
-  const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (!ARTIFACT_KINDS.has(resource.kind)) return normalized;
-
-  return { ...normalized, config: stripArtifactContent(normalized.config) };
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => [key, sortValue(entry)]),
-    );
-  }
-
-  return value;
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
-function stripArtifactContent(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripArtifactContent);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
-        if (ARTIFACT_KEYS.has(key)) return [];
-
-        return [[key, stripArtifactContent(entry)]];
-      }),
-    );
-  }
-
-  return value;
-}
-
-/**
- * Turns a failed response into an error carrying the server's own reason. The
- * config plane answers with the error envelope, whose `message` is where
- * manifest validation failures (an unset `env()` ref, an unsupported mount)
- * explain themselves. Printing the raw JSON instead buries them.
- */
 async function assertOk(response: Response, message: string): Promise<void> {
   if (response.ok) return;
   const body = await response.text();
-  // Without an envelope, the raw body is the best reason available.
   const { message: reason = body, code } = errorEnvelope(body);
   if (code === "manifest_conflict") throw new ManifestConflictError(reason);
-  // CLI tokens expire, and a 401 is how the control plane says so.
   const hint =
     response.status === 401 ? "\nRun `broods login` to sign in again." : "";
 
   throw new Error(`${message}: ${response.status} ${reason}${hint}`);
 }
 
-/** The `message` and `code` of an error envelope body, or neither. */
-function errorEnvelope(body: string): { message?: string; code?: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return {};
-  }
-  const error =
-    typeof parsed === "object" && parsed !== null && "error" in parsed
-      ? parsed.error
-      : undefined;
-  if (typeof error !== "object" || error === null) return {};
-
-  return {
-    ...("message" in error && typeof error.message === "string"
-      ? { message: error.message }
-      : {}),
-    ...("code" in error && typeof error.code === "string"
-      ? { code: error.code }
-      : {}),
-  };
-}
-
-/**
- * A 404 that is not JSON came from the router, not the handler: the server
- * predates the route. Says so, rather than letting it read as "not found".
- */
+// A 404 that is not JSON came from the router, not a handler: the server predates the route.
 function assertRouteMounted(
   response: Response,
   route: string,
@@ -855,7 +943,6 @@ function assertRouteMounted(
   );
 }
 
-/** Why a request got no answer, in the runtime's own words. */
 function networkFailureReason(
   error: unknown,
   timeoutMs: number | null,
@@ -874,7 +961,29 @@ function networkFailureReason(
     : error.message;
 }
 
-/** The bundle source when the MCP resource must be externalized, else null. */
+// Largest skills first, until the rest fit in one sync's inline budget.
+function skillsToUpload(resources: CliManifestResource[]): Set<string> {
+  const skills = resources
+    .filter((resource): boolean => resource.kind === "skill")
+    .map((resource): { name: string; bytes: number } => ({
+      name: resource.name,
+      bytes: (resource.config as SkillManifestConfig).files.reduce(
+        (sum, file): number => sum + file.size,
+        0,
+      ),
+    }))
+    .sort((a, b): number => b.bytes - a.bytes);
+  let inline = skills.reduce((sum, skill): number => sum + skill.bytes, 0);
+  const upload = new Set<string>();
+  for (const skill of skills) {
+    if (inline <= MAX_CLI_SKILL_SYNC_BYTES) break;
+    upload.add(skill.name);
+    inline -= skill.bytes;
+  }
+
+  return upload;
+}
+
 function largeBundleOf(
   resource: CliManifest["resources"][number],
 ): string | null {
@@ -883,4 +992,28 @@ function largeBundleOf(
   if (typeof bundle !== "string") return null;
 
   return Buffer.byteLength(bundle) > INLINE_MCP_BUNDLE_BYTES ? bundle : null;
+}
+
+// Declares a skill's files without their bytes: the account holds them, or `filesStorageId` does.
+function withoutSkillContent(
+  resource: CliManifestResource,
+  filesStorageId?: string,
+): CliManifestResource {
+  const config = resource.config as SkillManifestConfig;
+
+  return {
+    ...resource,
+    config: {
+      ...config,
+      files: config.files.map(
+        ({
+          contentBase64: _content,
+          ...file
+        }): Omit<SkillManifestConfig["files"][number], "contentBase64"> => file,
+      ),
+      ...(filesStorageId !== undefined
+        ? { filesStorageId: filesStorageId }
+        : {}),
+    },
+  };
 }

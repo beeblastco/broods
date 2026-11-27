@@ -1,12 +1,10 @@
-/**
- * Example: a user code hook that runs in the V8 isolate at `agent.started` and
- * injects a system instruction before the model is called.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.hookedAgent, {
   input: "In two sentence, what is a beehive?",

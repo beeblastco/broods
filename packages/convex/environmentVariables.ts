@@ -1,29 +1,19 @@
-/**
- * Public CRUD for per-stage runtime variables, mirrored into the CLI
- * sync model. Scoped to the authenticated project owner.
- */
-
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedStage } from "./model/ownership/stage";
+import { getOwnedStage, getStageForWrite } from "./model/ownership/stage";
 import { accountCipher, requireAccountIdForProject } from "./model/accountKeys";
+import { ClientError } from "./model/clientError";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
+import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
 import {
-  assertEnvironmentVariableUnreferenced,
+  recordEnvironmentVariableAudit,
   upsertEnvironmentVariable,
-} from "./model/environmentValues";
+} from "./model/environmentWrites";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
-import {
-  accountIdForProject,
-  auditDetailsJson,
-  dashboardAuditActor,
-  appendAuditEvent,
-  type AuditActor,
-} from "./model/auditEvents";
+import { dashboardAuditActor } from "./model/auditEvents";
 
-// Plaintext reveal and every write are org admin operations; members read names only.
 const ADMIN_REQUIRED =
   "Environment variables can only be revealed or changed by an org admin.";
 
@@ -44,14 +34,12 @@ export const list = query({
     ctx,
     { projectId, stageId },
   ): Promise<ReturnType<typeof maskEnvironmentVariable>[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted stage doesn't
-    // crash reactive subscribers before they unmount.
+    // Empty, not a throw: a subscriber may briefly hold a just-deleted stage.
     const stage = await getOwnedStage(ctx, user.id, stageId);
     if (!stage || stage.projectId !== projectId) {
       return [];
@@ -72,7 +60,6 @@ export const remove = mutation({
   args: { variableId: v.id("environmentVariables") },
   returns: v.id("environmentVariables"),
   handler: async (ctx, { variableId }): Promise<Id<"environmentVariables">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -81,8 +68,13 @@ export const remove = mutation({
     const variable = await ctx.db.get(variableId);
     if (!variable) throw new Error("Variable not found.");
 
-    const stage = await getOwnedStage(ctx, user.id, variable.stageId, "admin");
-    if (!stage) throw new Error(ADMIN_REQUIRED);
+    const stage = await getStageForWrite(
+      ctx,
+      user.id,
+      variable.stageId,
+      "admin",
+    );
+    if (!stage) throw new ClientError(ADMIN_REQUIRED, "forbidden");
     await assertEnvironmentVariableUnreferenced(
       ctx,
       variable.projectId,
@@ -118,12 +110,7 @@ export const remove = mutation({
   },
 });
 
-/**
- * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
- * reveal, writing an audit record of the reveal. A mutation (not a query) so the
- * audit insert and decryption happen atomically for the owning user.
- * @throws when the caller does not own the stage or the variable is gone
- */
+/** A mutation, not a query, so the decrypt and its reveal record commit together. */
 export const reveal = mutation({
   args: {
     projectId: v.id("projects"),
@@ -135,15 +122,14 @@ export const reveal = mutation({
     ctx,
     { projectId, stageId, variableId },
   ): Promise<{ value: string }> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
+    const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error(ADMIN_REQUIRED);
+      throw new ClientError(ADMIN_REQUIRED, "forbidden");
     }
 
     const variable = await ctx.db.get(variableId);
@@ -187,15 +173,14 @@ export const set = mutation({
     ctx,
     { projectId, stageId, name, value },
   ): Promise<Id<"environmentVariables">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const stage = await getOwnedStage(ctx, user.id, stageId, "admin");
+    const stage = await getStageForWrite(ctx, user.id, stageId, "admin");
     if (!stage || stage.projectId !== projectId) {
-      throw new Error(ADMIN_REQUIRED);
+      throw new ClientError(ADMIN_REQUIRED, "forbidden");
     }
 
     const trimmedName = name.trim();
@@ -247,36 +232,4 @@ function maskEnvironmentVariable(variable: {
     value: "********",
     updatedAt: variable.updatedAt,
   };
-}
-
-/** Record an environment-variable mutation without storing plaintext values. */
-async function recordEnvironmentVariableAudit(
-  ctx: MutationCtx,
-  actor: AuditActor,
-  input: {
-    projectId: Id<"projects">;
-    stageId: Id<"stages">;
-    variableId?: Id<"environmentVariables">;
-    action: string;
-    name: string;
-    summary: string;
-  },
-): Promise<void> {
-  const accountId = await accountIdForProject(ctx, input.projectId);
-  if (!accountId) return;
-
-  await appendAuditEvent(ctx.db, {
-    accountId: accountId,
-    projectId: input.projectId,
-    stageId: input.stageId,
-    actor: actor,
-    action: input.action,
-    resource: {
-      kind: "environmentVariable",
-      id: input.variableId,
-      name: input.name,
-    },
-    summary: input.summary,
-    detailsJson: auditDetailsJson({ name: input.name }),
-  });
 }

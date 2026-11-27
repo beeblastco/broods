@@ -1,12 +1,6 @@
-/**
- * Account guards for runtime writes, which core makes on behalf of one
- * account. Runtime keys embed it as `acct:<accountId>:...`.
- */
-
 import type { Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
-/** @throws when the key has no `acct:<id>:` prefix. */
 export function accountIdFromKey(value: string): string {
   const match = /^acct:([^:]+):/.exec(value);
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
@@ -14,9 +8,8 @@ export function accountIdFromKey(value: string): string {
   return match[1];
 }
 
-/** @throws when the account is missing or disabled. */
 export async function requireActiveAccount(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   accountId: Id<"accounts">,
 ): Promise<void> {
   const account = await ctx.db.get(accountId);
@@ -25,10 +18,18 @@ export async function requireActiveAccount(
   }
 }
 
-/**
- * The active account a runtime key belongs to.
- * @throws when the key is unscoped or its account is missing or disabled.
- */
+// An org with no account yet has nothing to suspend.
+export async function requireActiveOrgAccount(
+  ctx: QueryCtx,
+  orgId: Id<"orgs">,
+): Promise<void> {
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .unique();
+  if (account) await requireActiveAccount(ctx, account._id);
+}
+
 export async function requireActiveKeyAccount(
   ctx: MutationCtx,
   key: string,

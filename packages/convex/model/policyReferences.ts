@@ -1,29 +1,17 @@
-/**
- * The rule for removing an agent policy. A policy only ever refuses, so a
- * reference to a deleted one must not vanish quietly: core refuses everything
- * for it, and the config plane refuses the delete while it is still attached.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { ClientError } from "./clientError";
 import { orgRoles } from "./access";
 
-/** Opens the guard's refusal, so the HTTP layer can answer 409 on it. */
 export const POLICY_STILL_REFERENCED = "Policy still referenced:";
 
-/** Every row that can list a policy of one account. */
 export interface PolicyReferenceRows {
   agents: Doc<"agentConfigs">[];
   records: Doc<"channelRecords">[];
   roles: Doc<"orgRoles">[];
 }
 
-/**
- * Refuses to remove a policy an agent or a channel record still lists in
- * `policies`, or an org role holds: dropping a role's deny would widen it. Pass `rows` when checking several policies of one account.
- * @throws naming the resources that still reference it.
- */
+// A deleted policy still listed makes core refuse everything; a dropped role deny widens it.
 export async function assertPolicyUnreferenced(
   ctx: QueryCtx | MutationCtx,
   policy: Doc<"agentPolicies">,
@@ -51,11 +39,7 @@ export async function assertPolicyUnreferenced(
   );
 }
 
-/**
- * An agent may list any active policy of its account, whatever stage either
- * sits in, so the scan covers every project of the account's org.
- * `agentConfigs` has no account index; projects are the way in.
- */
+// A policy may be listed from any stage, and agentConfigs has no account index: scan projects.
 export async function loadPolicyReferenceRows(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
@@ -91,7 +75,6 @@ export async function loadPolicyReferenceRows(
   return { agents: agents.flat(), records: records, roles: roles };
 }
 
-// Both blobs are `v.any()` columns, so only the one key read here is named.
 function listsPolicy(
   config: { policies?: unknown } | undefined,
   policyId: Id<"agentPolicies">,

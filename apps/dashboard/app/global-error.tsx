@@ -5,8 +5,7 @@ import { Button } from "@/app/components/ui/button";
 import type { ErrorInfo } from "next/error";
 import "./globals.css";
 
-// Replaces the root layout, so no providers and no theme provider: pin the
-// app's default dark theme on the document it renders itself.
+// Replaces the root layout and its theme provider, so it pins the default dark theme.
 export default function GlobalError({ error }: ErrorInfo): React.JSX.Element {
   return (
     <html lang="en" className="dark">

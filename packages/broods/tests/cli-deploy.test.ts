@@ -1,0 +1,398 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
+const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
+const SECRET = "bsig_minted-for-this-test-wxyz";
+
+const servers: Array<{ stop: () => void }> = [];
+const workdirs: string[] = [];
+
+afterEach(async (): Promise<void> => {
+  for (const server of servers.splice(0)) server.stop();
+  for (const dir of workdirs.splice(0))
+    await rm(dir, { recursive: true, force: true });
+});
+
+type Stage = {
+  stageKind: "development" | "production";
+  userTokenSecretHint?: string;
+};
+
+function serveBackend(stage: Stage): {
+  baseUrl: string;
+  rotations: string[];
+  regions: unknown[];
+} {
+  const rotations: string[] = [];
+  const regions: unknown[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (request): Promise<Response> => {
+      const url = new URL(request.url);
+      if (url.pathname.endsWith("/manifest") && request.method === "PUT") {
+        const body = (await request.json()) as {
+          manifest: { region?: string };
+        };
+        regions.push(body.manifest.region);
+
+        return Response.json({
+          manifest: {
+            version: 1,
+            project: "demo-app",
+            stage: "x",
+            resources: [],
+          },
+          ids: {
+            agents: { support: "agent_1" },
+            workspaces: {},
+            sandboxes: {},
+            crons: {},
+            skills: {},
+            hooks: {},
+            mcp: {},
+          },
+          deployment: {
+            accountId: "acct_1",
+            endpointId: "stage-1",
+            projectSlug: "demo-app",
+            stageSlug: "production",
+            keyHint: "bsk_…test",
+            apiKey: "bsk_runtime-key-test",
+            ...stage,
+          },
+        });
+      }
+      if (url.pathname.endsWith("/user-token-secret")) {
+        rotations.push(request.method);
+
+        return Response.json({ secret: SECRET, hint: "bsig_…wxyz" });
+      }
+
+      return new Response("not found", { status: 404 });
+    },
+  });
+  servers.push(server);
+
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}`,
+    rotations: rotations,
+    regions: regions,
+  };
+}
+
+async function projectDir(envLocal: string[] = []): Promise<string> {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-deploy-secret-"));
+  workdirs.push(cwd);
+  await mkdir(join(cwd, "broods"), { recursive: true });
+  await writeFile(
+    join(cwd, "broods", "agents.ts"),
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const support = defineAgent({
+  name: "support",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`,
+  );
+  await writeFile(
+    join(cwd, ".env.local"),
+    ['BROODS_PROJECT="demo-app"', ...envLocal, ""].join("\n"),
+  );
+
+  return cwd;
+}
+
+async function runDeploy(
+  cwd: string,
+  baseUrl: string,
+  shell: Record<string, string> = {},
+  args: string[] = [],
+  command: string[] = ["deploy"],
+): Promise<{ exitCode: number; output: string; envLocal: string }> {
+  const proc = Bun.spawn({
+    cmd: [process.execPath, CLI, ...command, ...args],
+    cwd: cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Minimal env, so the runner's own BROODS_* vars cannot shadow .env.local.
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
+      BROODS_TOKEN: "tok",
+      BROODS_BASE_URL: baseUrl,
+      ...shell,
+    },
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+
+  return {
+    exitCode: exitCode,
+    output: stdout + stderr,
+    envLocal: await readFile(join(cwd, ".env.local"), "utf8"),
+  };
+}
+
+test("deploy mints the first signing secret into .env.local without printing it", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl);
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual(["POST"]);
+  expect(result.envLocal).toContain(`BROODS_USER_TOKEN_SECRET="${SECRET}"`);
+  expect(result.output).toContain("Wrote a new user token signing secret");
+  expect(result.output).not.toContain(SECRET);
+});
+
+test("deploy in CI writes neither the runtime key nor a signing secret", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl, { CI: "true" });
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).toBe('BROODS_PROJECT="demo-app"\n');
+});
+
+test("deploy keeps a production stage's existing secret when this checkout lacks it", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const backend = serveBackend({
+    stageKind: "production",
+    userTokenSecretHint: "bsig_…abcd",
+  });
+
+  const result = await runDeploy(cwd, backend.baseUrl);
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).not.toContain("BROODS_USER_TOKEN_SECRET");
+  expect(result.output).toContain("already has a user token signing secret");
+});
+
+test("deploy keeps a development stage's secret this checkout does not hold", async (): Promise<void> => {
+  const cwd = await projectDir([
+    'BROODS_STAGE="development"',
+    'BROODS_USER_TOKEN_SECRET="bsig_someone-elses-1234"',
+  ]);
+  const backend = serveBackend({
+    stageKind: "development",
+    userTokenSecretHint: "bsig_…abcd",
+  });
+
+  const result = await runDeploy(cwd, backend.baseUrl);
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.envLocal).toContain("someone-elses");
+  expect(result.output).toContain("already has a user token signing secret");
+});
+
+test("deploy leaves a secret that matches the stage alone", async (): Promise<void> => {
+  const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
+  const backend = serveBackend({
+    stageKind: "development",
+    userTokenSecretHint: "bsig_…wxyz",
+  });
+
+  const result = await runDeploy(cwd, backend.baseUrl);
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.output).not.toContain("user token signing secret");
+});
+
+test("deploy warns when a stale shell export shadows the current secret", async (): Promise<void> => {
+  const cwd = await projectDir([`BROODS_USER_TOKEN_SECRET="${SECRET}"`]);
+  const backend = serveBackend({
+    stageKind: "development",
+    userTokenSecretHint: "bsig_…wxyz",
+  });
+
+  const result = await runDeploy(cwd, backend.baseUrl, {
+    BROODS_USER_TOKEN_SECRET: "bsig_stale-shell-1234",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(backend.rotations).toEqual([]);
+  expect(result.output).toContain(
+    "BROODS_USER_TOKEN_SECRET is exported in your shell",
+  );
+  expect(result.output).not.toContain("stale-shell");
+});
+
+test("deploy still succeeds when the rotation is refused", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request): Response =>
+      new URL(request.url).pathname.endsWith("/user-token-secret")
+        ? Response.json(
+            { error: { message: "needs keys:write", code: "forbidden" } },
+            { status: 403 },
+          )
+        : Response.json({
+            manifest: {
+              version: 1,
+              project: "demo-app",
+              stage: "x",
+              resources: [],
+            },
+            ids: {
+              agents: {},
+              workspaces: {},
+              sandboxes: {},
+              crons: {},
+              skills: {},
+              hooks: {},
+              mcp: {},
+            },
+            deployment: {
+              accountId: "acct_1",
+              endpointId: "stage-1",
+              projectSlug: "demo-app",
+              stageSlug: "production",
+              stageKind: "production",
+              keyHint: "bsk_…test",
+              apiKey: "bsk_runtime-key-test",
+            },
+          }),
+  });
+  servers.push(server);
+
+  const result = await runDeploy(cwd, `http://127.0.0.1:${server.port}`);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.output).toContain("needs keys:write");
+  expect(result.envLocal).not.toContain("BROODS_USER_TOKEN_SECRET");
+});
+
+test("--region rides the manifest; BROODS_REGION, which init writes, does not", async (): Promise<void> => {
+  const cwd = await projectDir(['BROODS_REGION="us-east-1"']);
+  const backend = serveBackend({ stageKind: "production" });
+
+  const defaulted = await runDeploy(cwd, backend.baseUrl);
+  const named = await runDeploy(cwd, backend.baseUrl, {}, [
+    "--region",
+    "eu-west-1",
+  ]);
+
+  expect(defaulted.exitCode).toBe(0);
+  expect(named.exitCode).toBe(0);
+  expect(backend.regions).toEqual([undefined, "eu-west-1"]);
+});
+
+test("an unknown --region fails before any request", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  const result = await runDeploy(cwd, backend.baseUrl, {}, [
+    "--region",
+    "mars-1",
+  ]);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain("Unknown region mars-1");
+  expect(backend.regions).toEqual([]);
+});
+
+test("a --region with no value fails rather than falling back", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const backend = serveBackend({ stageKind: "production" });
+
+  // `--region "$REGION"` with REGION unset.
+  const result = await runDeploy(cwd, backend.baseUrl, {}, ["--region="]);
+
+  expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain("Unknown region (empty)");
+  expect(backend.regions).toEqual([]);
+});
+
+test("dev asks only about resources not declined before, and prunes none without a yes", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const stale = ["old-a", "old-b"].map(
+    (name): { kind: string; name: string; config: object } => ({
+      kind: "agent",
+      name: name,
+      config: {},
+    }),
+  );
+  const prunes: unknown[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (request): Promise<Response> => {
+      const body =
+        request.method === "PUT"
+          ? ((await request.json()) as { manifest: unknown; prune: unknown })
+          : null;
+      if (body) prunes.push(body.prune);
+
+      return Response.json({
+        manifest: body
+          ? body.manifest
+          : { version: 1, project: "demo-app", stage: "x", resources: stale },
+        revision: 1,
+        ids: { agents: { support: "agent_1" } },
+        deployment: null,
+      });
+    },
+  });
+  servers.push(server);
+  const declinedFile = join(cwd, "declined.txt");
+  await writeFile(declinedFile, "agent:old-a\n");
+
+  const result = await runDeploy(
+    cwd,
+    `http://127.0.0.1:${server.port}`,
+    { BROODS_DECLINED_FILE: declinedFile },
+    [],
+    ["dev", "--once"],
+  );
+  const listed = result.output
+    .split("no longer declared locally:")[1]
+    ?.split("kept remotely")[0];
+
+  expect(result.exitCode).toBe(0);
+  expect(listed).toContain("old-b");
+  expect(listed).not.toContain("old-a");
+  expect(result.output).toContain("agent:old-a, agent:old-b");
+  expect(prunes).toEqual([false]);
+});
+
+test("dev --once compiles the project once", async (): Promise<void> => {
+  const cwd = await projectDir();
+  const imports = join(cwd, "imports.txt");
+  // One x from loading the project (Bun caches it), one per compile from its fresh MCP bundle.
+  await writeFile(
+    join(cwd, "broods", "mcp.ts"),
+    `import { appendFileSync } from "node:fs";
+import { defineMcp } from "${RESOURCES_MODULE}";
+appendFileSync(${JSON.stringify(imports)}, "x");
+export const search = defineMcp({
+  name: "search",
+  handler: (request) => new Response("{}", { status: 200 }),
+});
+`,
+  );
+  const backend = serveBackend({ stageKind: "development" });
+
+  const result = await runDeploy(
+    cwd,
+    backend.baseUrl,
+    {},
+    [],
+    ["dev", "--once"],
+  );
+
+  expect(result.exitCode).toBe(0);
+  expect(await readFile(imports, "utf8")).toBe("xx");
+});

@@ -1,11 +1,7 @@
-/**
- * GitHub channel adapter. Event filtering and source mapping live here; auth and
- * API calls go through the Chat SDK.
- */
-
 import { GitHubAdapter, type GitHubThreadId } from "@chat-adapter/github";
 import { ConsoleLogger, fromFullStream } from "chat";
 import { createSign } from "node:crypto";
+import { FETCH_TIMEOUT_MS } from "../harness/isolate/runner/pinned-fetch.mjs";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -310,7 +306,6 @@ async function buildCommentMessage(options: {
         options.issueNumber,
         options.payload.sender,
       ),
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
@@ -403,6 +398,7 @@ async function createGitHubRestClient(options: {
         Authorization: `Bearer ${appJwt}`,
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
       },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     },
   );
   if (!tokenResponse.ok) {
@@ -425,6 +421,7 @@ async function createGitHubRestClient(options: {
           Authorization: `Bearer ${token}`,
           "X-GitHub-Api-Version": GITHUB_API_VERSION,
         },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (!response.ok) {
         throw new Error(`GitHub GET ${path} failed (${response.status})`);
@@ -450,22 +447,31 @@ async function hydrateGitHubThreadContext(options: {
 }): Promise<ChannelIngressEvent | null> {
   try {
     const client = await createGitHubRestClient(options);
-    const thread =
+    const threadRequest =
       options.resource === "issue"
-        ? await client.get<GitHubIssueRef>(
+        ? client.get<GitHubIssueRef>(
             `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`,
           )
-        : await client.get<GitHubPullRequestRef>(
+        : client.get<GitHubPullRequestRef>(
             `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`,
           );
-    const issueComments = await client.get<GitHubCommentRef[]>(
+    const issueCommentsRequest = client.get<GitHubCommentRef[]>(
       `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}/comments?per_page=100`,
     );
-    const reviewComments = options.includeReviewComments
-      ? await client.get<GitHubCommentRef[]>(
+    const reviewCommentsRequest = options.includeReviewComments
+      ? client.get<GitHubCommentRef[]>(
           `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
         )
-      : [];
+      : Promise.resolve([]);
+    // Settled first so no rejection goes unhandled; awaited in order so the thread's error wins.
+    await Promise.allSettled([
+      threadRequest,
+      issueCommentsRequest,
+      reviewCommentsRequest,
+    ]);
+    const thread = await threadRequest;
+    const issueComments = await issueCommentsRequest;
+    const reviewComments = await reviewCommentsRequest;
 
     const content = formatGitHubThreadContext({
       owner: options.owner,
@@ -674,10 +680,6 @@ function formatTitleAndBody(
   return lines.join("\n");
 }
 
-/**
- * The repository is the channel and an issue or PR is a thread in it, so a
- * policy can scope the agent per repo the same way it scopes per chat channel.
- */
 function githubIdentity(
   repoFullName: string,
   resourceNumber: number,
@@ -734,12 +736,7 @@ function isPriorGitHubComment(
 }
 
 function isRelevantAction(action: string | undefined): boolean {
-  return (
-    action === "opened" ||
-    action === "edited" ||
-    action === "reopened" ||
-    action === "created"
-  );
+  return action === "opened" || action === "reopened" || action === "created";
 }
 
 function normalizePrivateKey(value: string): string {
@@ -880,7 +877,7 @@ function parseIssuesEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnIssueOpen === false) {
@@ -991,7 +988,7 @@ function parsePullRequestEvent(
       },
     };
   }
-  if (!isRelevantAction(payload.action)) {
+  if (!isRelevantAction(payload.action) || isBotActor(payload.sender?.type)) {
     return { kind: "ignore" };
   }
   if (options?.triggerOnPROpen === false) {
@@ -1100,9 +1097,8 @@ function parseReviewCommentEvent(
   });
 }
 
-// Thread text is written by anyone on the repo and must not be able to close
-// the context block it is quoted in. Only this tag's `<` is escaped, so code
-// in a comment reads as written.
+// Anyone on the repo writes thread text: it must not close the block it is quoted in. Only
+// this tag's `<` is escaped, so code in a comment reads as written.
 function safeText(value: string | null | undefined): string {
   return (
     value

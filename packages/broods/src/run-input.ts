@@ -21,22 +21,16 @@ export type AgentRunOverrides = {
 
 export type AgentRunEventInput =
   | {
-      /** Shorthand for a single user text message. */
       input: string;
       events?: never;
       answers?: never;
     }
   | {
-      /** Full-fidelity event list for multimodal content or tool responses. */
       events: [ModelMessage, ...ModelMessage[]];
       input?: never;
       answers?: never;
     };
 
-/**
- * Resolves a run's events from either the explicit `events` list or the `input`
- * string shorthand, matching the core direct API's event contract.
- */
 export function resolveRunEvents(input: AgentRunEventInput): ModelMessage[] {
   if (input.events && input.input !== undefined) {
     throw new Error("Run input accepts either `input` or `events`, not both");

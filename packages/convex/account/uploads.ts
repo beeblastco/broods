@@ -1,20 +1,30 @@
-/**
- * Upload URL minting for the HTTP routes and orphan cleanup for `crons.ts`.
- * The dashboard mutation in `workspace/files.ts` calls the model helper.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
-import { grantUpload, type UploadGrant } from "../model/uploads";
+import {
+  claimUploadedBlob,
+  grantUpload,
+  isStorageOwned,
+  type UploadGrant,
+} from "../model/uploads";
 
 const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_SCAN_PAGE = 100;
 
+export const claim = internalMutation({
+  args: { storageId: v.id("_storage"), maxBytes: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await claimUploadedBlob(ctx, args.storageId, args.maxBytes);
+
+    return null;
+  },
+});
+
 export const grant = internalMutation({
   args: {
     accountId: v.id("accounts"),
-    kind: v.union(v.literal("mcp"), v.literal("workspace")),
+    kind: v.union(v.literal("mcp"), v.literal("skill"), v.literal("workspace")),
   },
   returns: v.union(
     v.object({ uploadUrl: v.string() }),
@@ -24,10 +34,6 @@ export const grant = internalMutation({
     await grantUpload(ctx, args.accountId, args.kind),
 });
 
-/**
- * Delete blobs older than a day that no workspace file references, one page
- * per invocation, oldest first, rescheduling itself up to the age cutoff.
- */
 export const pruneOrphans = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), isDone: v.boolean() }),
@@ -45,11 +51,7 @@ export const pruneOrphans = internalMutation({
         reachedCutoff = true;
         break;
       }
-      const referenced = await ctx.db
-        .query("workspaceFiles")
-        .withIndex("by_storageId", (q) => q.eq("storageId", blob._id))
-        .first();
-      if (referenced) continue;
+      if (await isStorageOwned(ctx, blob._id)) continue;
       await ctx.storage.delete(blob._id);
       deleted += 1;
     }

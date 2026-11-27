@@ -1,0 +1,16 @@
+kind	name	reason
+external	^setTimeout$	The platform timer accepts the callback and delay; the twin checks the delay and when the timer is set.
+external	^resolve$	The Promise resolver takes no value here; the twin decides when the sleep ends.
+external	^setInterval$	The platform timer accepts the reaper and period; the twin checks both and that only the first worker starts it.
+external	^reaper\.unref$	Node marks the timer as not keeping the process alive; the twin decides it runs once with the timer.
+external	^next$	A queued waiter's resolver takes no value; the twin decides from the recorded queue whether one exists.
+external	^crypto\.subtle\.importKey$	WebCrypto imports the checked raw bytes; the twin selects the algorithm and usages and never reads the key.
+external	^cache\.(get|set)$	A WeakMap keyed by the key bytes; the twin decides from the answer whether to import and what to store.
+opaque	CryptoKey	A WebCrypto handle the twin only passes along, never reads.
+opaque	WeakMap	The key cache; lookups are answered through checked cache.get effects.
+opaque	IsolateWorker	A worker handle the twin returns unread; its own methods have their own twins.
+opaque	Timeout	A timer handle the twin only tests for presence.
+opaque	Promise	The not-yet-settled key the cache stores; the twin checks it is stored and reads the settled value from the import effect.
+opaque	Readable	A stream nested in a ChildProcess held by a worker handle; twins only pass the handle along and never read the stream.
+opaque	WriteStream	A stream nested in a ChildProcess held by a worker handle; twins only pass the handle along and never read the stream.
+opaque	Object	Node's internal stream state nested in a worker's ChildProcess; twins never read inside the handle.

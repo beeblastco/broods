@@ -7,12 +7,13 @@ useDefault = true
 # Every Broods credential starts with `b` so it can be told apart from other
 # vendors' keys. Runtime (bsk_), account (bask_), project (bpdk_) and CLI
 # login (bcli_) keys, login codes (bcode_) and role sessions (bsts_) are 32
-# random bytes as 43 base64url chars. Stage tickets (bdts_) and run tokens
-# (brt_) are a base64url JSON payload, a dot and a 43-char HMAC signature.
+# random bytes as 43 base64url chars. Stage, Apply and logs tickets (bdts_, bdap_,
+# bdob_) and run tokens (brt_) are a base64url JSON payload, a dot and a 43-char
+# HMAC signature.
 [[rules]]
 id = "broods-credential"
-description = "Broods key, login code, role session, stage ticket or run token"
-regex = '''\bb(?:(?:sk|ask|pdk|cli|code|sts)_[A-Za-z0-9_-]{43}|(?:dts|rt)_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{43})'''
+description = "Broods key, login code, role session, signed ticket or run token"
+regex = '''\bb(?:(?:sk|ask|pdk|cli|code|sts)_[A-Za-z0-9_-]{43}|(?:dts|dap|dob|rt)_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{43})'''
 keywords = [
   "bsk_",
   "bask_",
@@ -21,6 +22,8 @@ keywords = [
   "bcode_",
   "bsts_",
   "bdts_",
+  "bdap_",
+  "bdob_",
   "brt_",
 ]
 
@@ -47,6 +50,15 @@ paths = [
   '''(^|/)apps/docs/docs/internals/queue-and-steer\.md$''',
 ]
 regexes = ['''(?i)(conversation_?key|reservationKey)\b''']
+
+[[allowlists]]
+description = "Made-up filesystem reservation id in a formal spec test"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''(^|/)formal/replay/extra/core/sandbox(8b|11)-vercel-[a-z-]+\.test\.ts$''',
+]
+regexes = ['''fs-0123456789abcdef''']
 
 [[allowlists]]
 description = "Truncated example value in the OpenAPI spec"

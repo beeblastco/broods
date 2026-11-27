@@ -1,16 +1,11 @@
-/**
- * Scheduled jobs. Distinct from `agent/crons.ts` (per-account agent cron CRUD):
- * this is the Convex platform cron registry. Keep it small, only background
- * maintenance.
- */
+// Platform maintenance only; per-account agent crons live in `agent/crons.ts`.
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Expiry is advisory cleanup: admission and drain already check expiresAt
-// inline, so a lower cadence only delays how fast abandoned rows are pruned.
+// Advisory: admission and drain check expiresAt inline, so cadence only delays pruning.
 crons.interval(
   "maintain runtime ingress",
   { minutes: 5 },
@@ -23,9 +18,7 @@ crons.interval(
   internal.config.authFailures.pruneExpired,
   {},
 );
-// Rows past an account's retention go oldest first, never one its sink has
-// not exported, so the chain stays verifiable from the oldest kept row to the
-// head.
+// Oldest first, never a row its sink has not exported, so the chain stays verifiable.
 crons.interval(
   "prune expired audit events",
   { hours: 24 },
@@ -36,6 +29,12 @@ crons.interval(
   "export audit events",
   { minutes: 10 },
   internal.audit.sinks.exportDue,
+  {},
+);
+crons.interval(
+  "sweep dead cron runs",
+  { minutes: 5 },
+  internal.agent.crons.sweepDeadRuns,
   {},
 );
 crons.interval(
@@ -50,6 +49,13 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+// The dashboard promises deletion 7 days after the request; an hour late is within that.
+crons.interval(
+  "sweep due account deletions",
+  { hours: 1 },
+  internal.org.workosUserDeletion.sweep,
+  {},
+);
 // Expiry is checked inline on every session resolve; this only bounds growth.
 crons.interval(
   "prune role sessions",
@@ -57,7 +63,14 @@ crons.interval(
   internal.account.roles.pruneExpiredSessions,
   {},
 );
-// Blobs minted through an upload URL but never registered by a workspace file.
+// The dashboard agent mints a CLI login per user each hour; expired ones are dead rows.
+crons.interval(
+  "prune cli tokens",
+  { hours: 24 },
+  internal.cli.auth.pruneExpiredTokens,
+  {},
+);
+// Blobs older than a day that no workspace file or stage source points to.
 crons.interval(
   "prune orphan uploads",
   { hours: 24 },
@@ -70,8 +83,7 @@ crons.interval(
   internal.usage.pruneExpiredTaskUsage,
   {},
 );
-// Sandbox writes bill their own running time; this catches the ones nothing
-// wrote to within the hour.
+// Sandbox writes bill their own running time; this catches those idle for the hour.
 crons.interval(
   "accrue sandbox usage",
   { hours: 1 },
@@ -90,12 +102,18 @@ crons.interval(
   internal.aws.storageMeter.snapshotAll,
   {},
 );
-// The write seams keep this projection live; the sweep self-heals any seam a
-// future writer forgets.
+// The write seams keep this live; the sweep heals any seam a future writer forgets.
 crons.interval(
   "reconcile channel endpoints",
   { hours: 1 },
   internal.channel.endpointReconcile.reconcile,
+  {},
+);
+// models.dev changes rates a few times a week; hourly keeps dashboard costs current.
+crons.interval(
+  "crawl model prices",
+  { hours: 1 },
+  internal.modelPrices.crawl.run,
   {},
 );
 

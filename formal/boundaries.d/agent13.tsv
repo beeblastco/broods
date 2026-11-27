@@ -1,0 +1,28 @@
+kind	name	reason
+external	^createProvider$	AI SDK provider factory picked by name from modelProviderFactories; the twin checks the settings it is handed and passes the provider on.
+opaque	AlibabaChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	AmazonBedrockChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	AnthropicLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	CerebrasChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	CohereChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	DeepInfraChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	DeepSeekChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	GatewayLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	GoogleLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	GroqChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	HuggingFaceResponsesLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	LLMGatewayChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	MiniMaxChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	MistralChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	MoonshotAIChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	OllamaChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	OpenRouterChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	PerplexityLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	XaiResponsesLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	ZaiChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+opaque	_OpenAICompatibleChatLanguageModel	AI SDK language model built by the provider factory; the twin hands it to wrapLanguageModel and never reads it.
+external	^source\.factory$	AI SDK transcription provider factory chosen from a fixed table by provider name; the twin checks the settings it is handed.
+external	^provider\.transcription$	The AI SDK provider builds its transcription model for the checked model id.
+opaque	OpenAITranscriptionModel	AI SDK transcription model returned by the provider and passed on unread.
+opaque	GroqTranscriptionModel	AI SDK transcription model returned by the provider and passed on unread.
+opaque	MistralTranscriptionModel	AI SDK transcription model returned by the provider and passed on unread.

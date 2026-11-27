@@ -1,0 +1,3 @@
+kind	name	reason
+external	^reply\.(onQuestionsPending|streamMessage)\.bind$	Function.prototype.bind binds the checked caller-provided method to its reply receiver; the bound function's later invocation remains a separate checked effect.
+external	^reply\.(onFinalText|onErrorText|onApprovalRequired)$	The reply methods are supplied by the caller of runAgentLoopUntilSubagentsIdle; the twin checks their arguments and reads no answer from them.

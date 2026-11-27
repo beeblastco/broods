@@ -1,12 +1,3 @@
-/**
- * Hosted-MCP child runner (child-runner.mjs) tests.
- * Spawn the runner under real Node, with no AWS and no native addons, and assert the
- * NDJSON frames for the mcp-mode contract: fetch-handler exports (plain
- * function and { fetch } object), the serialized request/response mapping,
- * the batch protocol (#397: tagged frames per request, `end` per batch), and
- * the payload/hash integrity guards.
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import type { Writable } from "node:stream";
@@ -47,8 +38,7 @@ describe("mcp child-runner", () => {
   });
 
   it("answers every request of a batch as it settles, tagged with its id", async () => {
-    // Handlers that finish out of order: the frames arrive in completion
-    // order, each carrying the id core needs to route it.
+    // Handlers finish out of order; frames come in completion order, each tagged with its id.
     const result = await runChild(
       `export default async (request) => {
          const { id, delay, fail } = JSON.parse(await request.text());
@@ -140,8 +130,7 @@ describe("mcp child-runner", () => {
   });
 
   it("surfaces a thrown handler error on the request's own frame and keeps the batch", async () => {
-    // A throw is that request's failure, like a 500 would be; the process is
-    // not suspect, so the batch still closes on `end` and the child stays.
+    // A throw fails only that request; the batch still closes on `end` and the child stays.
     const result = await runChild(
       `export default () => { throw new Error("boom"); };`,
       {},
@@ -169,8 +158,7 @@ describe("mcp child-runner", () => {
   }, 10_000);
 
   it("gives a bundler's createRequire(import.meta.url) a usable file URL", async () => {
-    // Bundlers emit this line whenever they inline a CommonJS dependency, and it
-    // runs at module scope: a data: URL throws there, before the server exists.
+    // Bundlers emit this at module scope when inlining CommonJS; a data: URL would throw there.
     const result = await runChild(
       `import { createRequire } from 'node:module';
        const __require = createRequire(import.meta.url);
@@ -188,8 +176,6 @@ describe("mcp child-runner", () => {
     });
   });
 
-  // CPU rides the batch's terminal frame so core can meter the invocation as
-  // mcp-sandbox compute; a child that did real work always burns some.
   it("reports the batch's CPU on the terminal frame", async () => {
     const result = await runChild(
       `export default () => new Response("ok");`,
@@ -205,7 +191,6 @@ interface ChildRequest {
   headers?: Record<string, string>;
 }
 
-/** The one tagged final frame of a single-request batch. */
 function finalFrame(frames: unknown[]): {
   t: "final";
   id: string;
@@ -219,8 +204,6 @@ function finalFrame(frames: unknown[]): {
   return finals[0] as { t: "final"; id: string; result: HostedResponse };
 }
 
-// One batch on stdin: `requests` sends several, otherwise the single request
-// described by body/headers.
 async function runChild(
   source: string,
   options: ChildRequest & {
@@ -237,8 +220,7 @@ async function runChild(
   const expectedSha256 =
     options.expectedSha256 ??
     new Bun.CryptoHasher("sha256").update(source).digest("hex");
-  // The fourth pipe is the bundle channel the handler writes; the batch on
-  // stdin only addresses it.
+  // fd 3 is the bundle channel the handler writes; the batch on stdin only addresses it.
   const child = spawn("node", [childRunnerPath], {
     stdio: ["pipe", "pipe", "pipe", "pipe"],
     env: { ...process.env, ...options.env },
@@ -273,8 +255,7 @@ async function runChild(
     child.once("exit", (code) => resolve(code));
   });
 
-  // cpuUsec rides the terminal frame for usage metering and is inherently
-  // variable, so it is lifted out and the frame bodies stay exactly assertable.
+  // cpuUsec varies run to run, so it is lifted out to keep frame bodies exactly assertable.
   const frames = stdout
     .split(/\r?\n/)
     .filter(Boolean)

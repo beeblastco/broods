@@ -1,11 +1,8 @@
-/**
- * WebSocket client for deployed-agent endpoints.
- * Uses the gateway URL when configured, or derives one from the core service URL.
- */
-
 import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
+import { USER_TOKEN_SUBPROTOCOL_PREFIX } from "../../convex/model/userToken.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
   resolveRunEvents,
@@ -14,14 +11,10 @@ import {
 } from "./run-input.ts";
 import type {
   AgentRunAnswerInput,
-  WebSocketClientCancelMessage,
   WebSocketClientAttachMessage,
   WebSocketClientControlMessage,
-  WebSocketClientExecuteMessage,
-  WebSocketClientMessage,
   WebSocketOutputMessage,
   WebSocketServerMessage,
-  WebSocketStreamMessage,
 } from "./websocket-contracts.ts";
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 2000;
@@ -40,6 +33,8 @@ export type WebSocketRunInput = {
   /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: "reject" | "followup" | "collect" | "steer";
   idempotencyKey?: string;
+  /** This socket's user token, over the client's `userToken`. */
+  userToken?: string;
 } & (AgentRunEventInput | AgentRunAnswerInput) &
   AgentRunOverrides;
 
@@ -52,16 +47,16 @@ export type WebSocketAttachInput = Omit<
   projectSlug?: string;
   stageSlug?: string;
   signal?: AbortSignal;
+  /** This socket's user token, over the client's `userToken`. */
+  userToken?: string;
 };
 
 export interface WebSocketHandlers {
   /**
-   * Receives every server message with durable output envelopes unwrapped:
-   * stream parts arrive as themselves (`message.type === "text-delta"`), never
-   * nested under `data`. Use `onOutput` when the envelope cursor is needed.
+   * Every server message with output envelopes unwrapped: a stream part arrives as itself
+   * (`message.type === "text-delta"`), never under `data`. `onOutput` gets the cursor.
    */
   onMessage?(message: WebSocketServerMessage): void;
-  /** Receives the raw durable output envelope (cursor, replay flag, part). */
   onOutput?(output: WebSocketOutputMessage): void;
   onMeta?(meta: Extract<WebSocketServerMessage, { type: "meta" }>): void;
   onDone?(): void;
@@ -77,10 +72,16 @@ export interface WebSocketSubscription {
 export interface BroodsWebSocketClientOptions {
   /** Base URL of the core service. Use `https://...`; the client converts it to `wss://...`. */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
+  /** Hostname or URL of the core service, e.g. `gateway.broods.app`; `https://` is added. */
   host?: string;
-  /** Runtime key used as the WebSocket token. Defaults to BROODS_API_KEY from the environment or local .env files. */
+  /** Runtime key sent as the WebSocket token. Defaults to BROODS_API_KEY (env or .env files). */
   apiKey?: string;
+  /**
+   * The signed-in user's token from `signUserToken`; an agent that requires one refuses the
+   * runtime key without it. Tokens are short-lived: a long-lived client passes a fresh one
+   * per run as the input's `userToken` instead.
+   */
+  userToken?: string;
   WebSocket?: WebSocketConstructorLike;
   connectTimeoutMs?: number;
 }
@@ -102,6 +103,7 @@ export interface WebSocketLike {
 export class BroodsWebSocketClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly userToken?: string;
   private readonly WebSocketImpl?: WebSocketConstructorLike;
   private readonly connectTimeoutMs: number;
 
@@ -119,6 +121,7 @@ export class BroodsWebSocketClient {
       throw new Error(
         "BroodsWebSocketClient requires apiKey or BROODS_API_KEY.",
       );
+    this.userToken = options.userToken;
     this.WebSocketImpl = options.WebSocket;
     this.connectTimeoutMs =
       options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
@@ -132,14 +135,17 @@ export class BroodsWebSocketClient {
     const url = this.buildUrl(input);
     const agentId = resolveAgentId(input);
     const accessError = webSocketAccessError(this.baseUrl);
-    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
+    const socket = new WebSocketImpl(
+      url,
+      webSocketSubprotocols(this.apiKey, input.userToken ?? this.userToken),
+    );
     let opened = false;
     let closed = false;
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout((): void => {
       if (!opened) fail(accessError);
     }, this.connectTimeoutMs);
 
-    const close = (code = 1000, reason = "client closed") => {
+    const close = (code = 1000, reason = "client closed"): void => {
       if (closed) return;
       closed = true;
       clearTimeout(timeout);
@@ -152,17 +158,19 @@ export class BroodsWebSocketClient {
       }
     };
 
-    const fail = (error: Error) => {
+    const fail = (error: Error): void => {
+      if (closed) return;
       handlers.onError?.(error);
-      close(1011, "websocket error");
+      close(1000, "websocket error");
     };
 
-    const finish = () => {
+    const finish = (): void => {
+      if (closed) return;
       handlers.onDone?.();
       close(1000, "done");
     };
 
-    const onAbort = () => {
+    const onAbort = (): void => {
       if (socket.readyState === WS_OPEN) {
         socket.send(JSON.stringify({ type: "cancel" }));
       }
@@ -171,7 +179,7 @@ export class BroodsWebSocketClient {
 
     input.signal?.addEventListener("abort", onAbort, { once: true });
 
-    socket.onopen = () => {
+    socket.onopen = (): void => {
       opened = true;
       clearTimeout(timeout);
       if (input.signal?.aborted) {
@@ -199,13 +207,16 @@ export class BroodsWebSocketClient {
       );
     };
 
-    socket.onmessage = (event) => {
-      if (typeof event.data !== "string") return;
+    socket.onmessage = (event): void => {
+      if (closed || typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
 
       const effective = unwrapServerMessage(payload, handlers);
+      // A handler may close this subscription; nothing is delivered after.
+      if (closed) return;
       handlers.onMessage?.(effective);
+      if (closed) return;
 
       switch (effective.type) {
         case "meta":
@@ -217,16 +228,16 @@ export class BroodsWebSocketClient {
           finish();
           break;
         case "error":
-          fail(new Error(formatWireError(effective.error)));
+          fail(wireError(effective));
           break;
       }
     };
 
-    socket.onerror = () => {
+    socket.onerror = (): void => {
       fail(accessError);
     };
 
-    socket.onclose = (event) => {
+    socket.onclose = (event): void => {
       clearTimeout(timeout);
       input.signal?.removeEventListener("abort", onAbort);
       if (closed || event.code === 1000) return;
@@ -251,36 +262,78 @@ export class BroodsWebSocketClient {
   ): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
-    const socket = new WebSocketImpl(url, webSocketSubprotocols(this.apiKey));
+    const socket = new WebSocketImpl(
+      url,
+      webSocketSubprotocols(this.apiKey, input.userToken ?? this.userToken),
+    );
     let closed = false;
-    const close = (code = 1000, reason = "client closed") => {
+    const close = (code = 1000, reason = "client closed"): void => {
       if (closed) return;
       closed = true;
+      input.signal?.removeEventListener("abort", onAbort);
       if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
         socket.close(code, reason);
     };
-    socket.onopen = () =>
+    // Aborting detaches this view only; the durable run keeps going.
+    const onAbort = (): void => {
+      close(1000, "aborted");
+      handlers.onError?.(new Error("WebSocket attach aborted."));
+    };
+    if (input.signal?.aborted) onAbort();
+    else input.signal?.addEventListener("abort", onAbort, { once: true });
+    socket.onopen = (): void => {
+      if (closed) return;
       socket.send(
         JSON.stringify({
           type: "attach",
           ...input,
           signal: undefined,
           agent: undefined,
+          userToken: undefined,
         }),
       );
-    socket.onmessage = (event) => {
-      if (typeof event.data !== "string") return;
+    };
+    socket.onmessage = (event): void => {
+      if (closed || typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
       const effective = unwrapServerMessage(payload, handlers);
+      // A handler may abort or close this view; nothing is delivered after.
+      if (closed) return;
       handlers.onMessage?.(effective);
-      if (effective.type === "done") handlers.onDone?.();
-      if (effective.type === "error")
-        handlers.onError?.(new Error(formatWireError(effective.error)));
+      if (closed) return;
+      if (effective.type === "done") {
+        close(1000, "done");
+        handlers.onDone?.();
+      }
+      if (effective.type === "replay_unavailable") {
+        const unavailable = effective as Extract<
+          WebSocketServerMessage,
+          { type: "replay_unavailable" }
+        >;
+        close(1000, "replay unavailable");
+        handlers.onError?.(
+          new Error(
+            `Cannot replay ${unavailable.eventId}: the run is ${unavailable.status}.` +
+              (unavailable.statusUrl
+                ? ` Read it from ${unavailable.statusUrl}.`
+                : ""),
+          ),
+        );
+      }
+      if (effective.type === "error") {
+        close(1000, "websocket error");
+        handlers.onError?.(wireError(effective));
+      }
     };
-    socket.onerror = () =>
+    // The abnormal close that follows a socket error is reported once, here.
+    socket.onerror = (): void => {
+      if (closed) return;
+      close(1000, "websocket error");
       handlers.onError?.(webSocketAccessError(this.baseUrl));
-    socket.onclose = (event) => {
+    };
+    socket.onclose = (event): void => {
+      input.signal?.removeEventListener("abort", onAbort);
       if (!closed && event.code !== 1000)
         handlers.onError?.(
           new Error(event.reason || "WebSocket connection closed."),
@@ -306,7 +359,7 @@ export class BroodsWebSocketClient {
     let error: Error | null = null;
     let wake: (() => void) | null = null;
 
-    const wakeReader = () => {
+    const wakeReader = (): void => {
       wake?.();
       wake = null;
     };
@@ -334,7 +387,7 @@ export class BroodsWebSocketClient {
         }
         if (error) throw error;
         if (done) return;
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve): void => {
           wake = resolve;
         });
       }
@@ -384,28 +437,21 @@ export function toWebSocketBaseUrl(url: string): string {
   return stripTrailingSlash(parsed.toString());
 }
 
-/**
- * The credential travels as a `Sec-WebSocket-Protocol` entry rather than in
- * the URL, so it never lands in proxy or access logs. The gateway answers
- * with `broods.v1`, which is what completes a handshake that offered
- * subprotocols.
- */
-export function webSocketSubprotocols(apiKey: string): string[] {
-  return ["broods.v1", `broods.token.${apiKey}`];
+// Credentials ride in `Sec-WebSocket-Protocol`, never the URL, so they stay out of proxy and
+// access logs. The gateway answers `broods.v1`, which completes the subprotocol handshake.
+export function webSocketSubprotocols(
+  apiKey: string,
+  userToken?: string,
+): string[] {
+  return [
+    "broods.v1",
+    `broods.token.${apiKey}`,
+    ...(userToken ? [`${USER_TOKEN_SUBPROTOCOL_PREFIX}${userToken}`] : []),
+  ];
 }
 
 export { BroodsWebSocketClient as WebSocketClient };
 export { BroodsWebSocketClient as WebsocketClient };
-export type {
-  WebSocketClientCancelMessage,
-  WebSocketClientAttachMessage,
-  WebSocketClientControlMessage,
-  WebSocketClientExecuteMessage,
-  WebSocketClientMessage,
-  WebSocketOutputMessage,
-  WebSocketServerMessage,
-  WebSocketStreamMessage,
-};
 
 function formatWireError(error: unknown): string {
   if (typeof error === "string") return error;
@@ -420,6 +466,21 @@ function formatWireError(error: unknown): string {
   return error === undefined
     ? "WebSocket stream error."
     : JSON.stringify(error);
+}
+
+// The gateway adds core's HTTP status, and its code, when core refused the run before it started.
+function wireError(frame: {
+  type: string;
+  error?: unknown;
+  status?: unknown;
+}): Error {
+  return typeof frame.status === "number"
+    ? new BroodsApiError(
+        `Run failed: ${frame.status}`,
+        frame.status,
+        JSON.stringify(frame),
+      )
+    : new Error(formatWireError(frame.error));
 }
 
 function normalizeWebSocketServiceUrl(value: string): string {
@@ -466,7 +527,6 @@ function resolveEndpointId(
   return endpointId;
 }
 
-/** Unwraps durable output envelopes and forwards them to onOutput. */
 function unwrapServerMessage(
   payload: WebSocketServerMessage,
   handlers: WebSocketHandlers,

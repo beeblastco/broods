@@ -5,7 +5,7 @@ import type { Id } from "../_generated/dataModel";
 import type { OrgRole } from "../model/ownership/org";
 import { getProjectForRole } from "../model/ownership/project";
 import schema from "../schema";
-import { listStagesForProject } from "../stage";
+import { listStagesForProject } from "../dashboardReads";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -18,8 +18,7 @@ const accessTest = (): TestConvex<typeof schema> => convexTest(schema, modules);
 
 type T = ReturnType<typeof accessTest>;
 
-// `stage.list` feeds every stage-keyed screen (canvas, dashboard, sandbox). An
-// "admin" floor there left members with no stage id and a blank canvas.
+// `dashboardReads.stages` feeds every stage-keyed screen, so a member must get it, not only admins.
 
 async function seedOrgProject(t: T): Promise<Id<"projects">> {
   return await t.run(async (ctx) => {

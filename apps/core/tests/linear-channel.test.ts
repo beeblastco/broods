@@ -1,5 +1,3 @@
-/** Linear adapter: the signed and timed webhook, parsing an issue comment mention, and the reply comment. */
-
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createHmac } from "node:crypto";
 import { z } from "zod";
@@ -157,7 +155,6 @@ function channel(): ReturnType<typeof createLinearChannel> {
   return createLinearChannel(options());
 }
 
-// A `Comment` `create` event as Linear delivers it.
 function commentWebhook(text: string): {
   action: string;
   type: string;
@@ -242,7 +239,6 @@ function delivery(
   };
 }
 
-// A fetch that answers as Linear's GraphQL API and records every call.
 function linearApi(calls: GraphqlCall[]): typeof fetch {
   return Object.assign(
     async (
@@ -264,7 +260,6 @@ function linearApi(calls: GraphqlCall[]): typeof fetch {
   );
 }
 
-// What Linear's GraphQL API answers to each query the adapter sends.
 function graphqlAnswer(query: string): object {
   const comment = {
     id: "reply-1",

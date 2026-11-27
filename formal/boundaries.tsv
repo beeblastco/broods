@@ -1,0 +1,49 @@
+kind	name	reason
+opaque	Promise	A promise is not data; the call that created it is recorded as its own effect.
+opaque	Timeout	A timer handle only identifies a timer; setTimeout and clearTimeout are effects.
+opaque	AbortController	Identity only; aborting is observed through the signal value.
+opaque	ReadableStream	Stream bodies are consumed through recorded effects, not by value.
+opaque	ReadableStreamDefaultReader	As for ReadableStream.
+opaque	ZodMiniPipe	A schema object: validation happens in a recorded parse effect.
+opaque	ZodMiniRecord	A schema object.
+opaque	ZodMiniCatch	A schema object.
+opaque	ZodMiniTransform	A schema object.
+opaque	ZodMiniNumber	A schema object.
+opaque	ZodMiniObject	A schema object.
+opaque	ZodMiniCustom	A schema object.
+opaque	ZodMiniArray	A schema object.
+opaque	ZodMiniUnknown	A schema object.
+opaque	ZodMiniUnion	A schema object.
+opaque	ZodObject	A schema object.
+opaque	ZodDiscriminatedUnion	A schema object.
+opaque	$ZodCheck	A schema check object.
+opaque	Hash	Node hash state; digests are the recorded effect outcome.
+opaque	Hmac	As for Hash.
+opaque	Cipheriv	Encryption is a named boundary: A1 in Spec/Assumptions.lean.
+opaque	Decipheriv	As for Cipheriv.
+opaque	CryptoKey	Key handle, contents deliberately not observable.
+opaque	NonRecordingSpan	Telemetry only.
+opaque	BaseContext	Telemetry context only.
+opaque	ProxyTracer	Telemetry only.
+opaque	_ConsoleLogger	Logging only.
+opaque	Session	The run session object: state is reached through recorded method effects, and scalars are readable.
+opaque	SubagentCoordinator	Identity only: every interaction is a recorded method effect.
+internal	packages/convex/model/inputSchema.ts#parseInput	Input validation by a zod schema: the validation library is the boundary, and callers are compared on what it answered.
+internal	packages/convex/model/storedJson.ts#parseOr	As for parseInput: a zod parse of stored JSON with a fallback.
+internal	apps/core/src/shared/storage.ts#getStorage	Returns the storage client, an external service in Spec/Assumptions.lean (A2).
+external	^this\.(completeTask|runTask)$	Arrow-function fields of SubagentCoordinator, which the recorder cannot wrap by prototype; their bodies are twinned through the methods that call them.
+external	^this\.lifecycle\.emit$	Lifecycle event emission: not behaviour the function depends on.
+external	^publisher\?\.publish$	Publishing to NATS: an external transport (A2).
+external	^generateText$	The model call: an external service.
+external	^createDeepAgents$	Vendor adapter construction.
+external	^createOpenCode$	Vendor adapter construction.
+external	^ensureResponseStream$	Creates a NATS stream: external transport.
+external	^requestSummary$	Reads the model for a summary: an external service.
+external	^new CompactionError$	Constructs an error value compared by its fields.
+opaque	jsonSchema	A tool schema built lazily by the AI SDK from a zod schema: compared by being a schema, and the zod boundary covers its content.
+opaque	AsyncGenerator	An iterator handle: its contents are not recorded, so twins depending on them earn nothing.
+opaque	Generator	As for AsyncGenerator.
+opaque	accessor:error	A getter on a zod safeParse result: the success flag and data are data fields and are compared.
+opaque	accessor:message	As for accessor:error.
+external	^stream\.consumeStream$	A closure on the object runAgentLoop returns; its statements belong to runAgentLoop's own twin.
+external	^createIncomingEventRouter\(options\)$	A closure createIncomingEventRouter returns; its statements belong to that function's twin.

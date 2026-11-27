@@ -1,0 +1,33 @@
+diff --git a/dist/index.js b/dist/index.js
+index 2c8e7455a492d21efe2671474723bb125fdcf6fd..59896ec8b9740ae79e471d011e6b226da373488c 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,3 +1,9 @@
++import bridgeAsset0 from "./bridge/package.json" with { type: "file" };
++import bridgeAsset1 from "./bridge/pnpm-lockfile.yaml" with { type: "file" };
++import bridgeAsset2 from "./bridge/pnpm-workspace.yaml" with { type: "file" };
++import bridgeAsset3 from "./bridge/opencode-read-plugin.mjs" with { type: "file" };
++import bridgeAsset4 from "./bridge/index.mjs" with { type: "file" };
++import bridgeAsset5 from "./bridge/host-tool-mcp.mjs" with { type: "file" };
+ import path, { dirname, join } from "node:path";
+ import { HARNESS_V1_BUILTIN_TOOLS, HarnessCapabilityUnsupportedError, commonTool, harnessSessionDataDirectoryPath, harnessStateDirectoryPath, harnessV1BridgeInboundCommandSchemas, harnessV1BridgeOutboundMessageSchema, harnessV1BridgeStartBaseSchema, harnessV1DiagnosticFromBridgeFrame, isHarnessV1BuiltinToolIncluded } from "@ai-sdk/harness";
+ import { BRIDGE_AUTH_PUBLIC_KEY_ENV, SandboxChannel, applyCredentialForwarding, classifyDiskLog, createBridgeAuthKeyPair, createBridgeErrorHandler, createBridgeStartupError, createBridgeWebSocketConnect, createCredentialRequestTransformation, createReadBridgeAsset, drainBridgeProcessStream, experimental_createBridgeUserMessageSubmitter, extractHarnessPromptContent, forwardBridgeProcessStream, getAiGatewayAuthFromEnv, getRestrictedSandboxSession, harnessPromptContentSchema, isAccessTokenExpiringSoon, isHarnessAuthenticationEnvironment, isWindows, markBridgeStarting, parseJwtPayload, refreshOAuthAccessToken, resolveBridgeEndpoint, resolveBridgePort, resolveSandboxCredentialEnvironment, resolveSandboxHomeDir, shellQuote, validateBridgeSandboxSettings, waitForBridgeReady, warnCredentialBrokeringUnavailable, warnMintBridgeTokenIgnored, writeSkills } from "@ai-sdk/harness/utils";
+@@ -8,12 +14,12 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+ import { homedir } from "node:os";
+ //#region src/opencode-bootstrap.ts
+ const readBridgeAsset = createReadBridgeAsset({
+-	"package.json": new URL("./bridge/package.json", import.meta.url),
+-	"pnpm-lock.yaml": new URL("./bridge/pnpm-lockfile.yaml", import.meta.url),
+-	"pnpm-workspace.yaml": new URL("./bridge/pnpm-workspace.yaml", import.meta.url),
+-	"opencode-read-plugin.mjs": new URL("./bridge/opencode-read-plugin.mjs", import.meta.url),
+-	"index.mjs": new URL("./bridge/index.mjs", import.meta.url),
+-	"host-tool-mcp.mjs": new URL("./bridge/host-tool-mcp.mjs", import.meta.url)
++	"package.json": bridgeAsset0,
++	"pnpm-lock.yaml": bridgeAsset1,
++	"pnpm-workspace.yaml": bridgeAsset2,
++	"opencode-read-plugin.mjs": bridgeAsset3,
++	"index.mjs": bridgeAsset4,
++	"host-tool-mcp.mjs": bridgeAsset5
+ });
+ const OPENCODE_BOOTSTRAP_DIR = ".harness-bootstrap/opencode";
+ let cachedBootstrap;

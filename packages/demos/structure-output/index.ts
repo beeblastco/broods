@@ -1,11 +1,10 @@
-/**
- * Example: streaming SSE with structured output parsing via declarative broods resources.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.structuredAssistant, {
   input:
@@ -33,6 +32,11 @@ for await (const chunk of client.stream(api.agents.structuredAssistant, {
     case "tool-result":
       process.stdout.write(
         `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
+      break;
+    case "structured-output":
+      process.stdout.write(
+        `\n\x1b[33m[Output: ${JSON.stringify(chunk.output, null, 2)}]\x1b[0m\n`,
       );
       break;
     case "finish":

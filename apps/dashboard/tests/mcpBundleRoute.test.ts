@@ -1,4 +1,3 @@
-/** Runs from apps/dashboard, so its package.json is reachable by relative path. */
 import { describe, expect, test } from "bun:test";
 import { POST } from "../app/api/mcp/bundle/route";
 
@@ -14,6 +13,7 @@ describe("mcp bundle route", () => {
   });
 
   test("refuses a computed import path and returns no file contents", async () => {
+    // Run from apps/dashboard, so ./package.json is real and a leak would show its name.
     const response = await post(
       'const name = "package"; console.log(await import("./" + name + ".json"));',
     );

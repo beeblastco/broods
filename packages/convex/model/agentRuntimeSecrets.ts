@@ -1,7 +1,3 @@
-/**
- * Encrypted runtime-variable storage for agent configs.
- */
-
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -15,11 +11,7 @@ const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
 export type RuntimeVariable = { key: string; value: string };
 
-/**
- * Deletes an agent config with its runtime secrets. The secrets are keyed to
- * the config, so every path that removes an `agentConfigs` row goes through
- * here or they orphan, undecryptable, behind it.
- */
+// Every agentConfigs delete goes through here, or its secrets orphan behind it.
 export async function deleteAgentConfig(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
@@ -130,7 +122,6 @@ function publicRuntimeVariables(entries: RuntimeVariable[]): RuntimeVariable[] {
   }));
 }
 
-/** Runtime secrets hang off a config row, which reaches its account through the project. */
 async function accountIdForConfig(
   ctx: QueryCtx | MutationCtx,
   configId: Id<"agentConfigs">,

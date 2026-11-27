@@ -9,18 +9,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarTrigger,
 } from "@/app/components/ui/sidebar";
 import { NAV_ITEMS } from "@/app/lib/navigation";
 import { MonitoringPanel } from "../(main)/[projectId]/dashboard/components/MonitoringPanel";
 import { TracingPanel } from "../(main)/[projectId]/dashboard/components/TracingPanel";
 
-/**
- * The dashboard page around the real Monitoring and Tracing panels: the app
- * shell's header, its collapsed sidebar rail, and the full-bleed content
- * column, with the classes those layouts use. A spec answers the panels'
- * observability socket, so View trace runs the real navigation and focus
- * scroll with no backend behind it.
- */
 export function ObservabilityPageStandIn({
   tab,
 }: {
@@ -28,7 +22,9 @@ export function ObservabilityPageStandIn({
 }): React.JSX.Element {
   return (
     <SidebarProvider defaultOpen={false} className="h-screen flex-col">
-      <div className="h-(--header-height) shrink-0 border-b border-border" />
+      <div className="flex h-(--header-height) shrink-0 items-center border-b border-border px-2">
+        <SidebarTrigger />
+      </div>
       <div className="flex min-h-0 flex-1">
         <Sidebar collapsible="icon" className="top-(--header-height) h-auto">
           <SidebarContent>

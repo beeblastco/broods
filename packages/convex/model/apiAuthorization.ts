@@ -1,17 +1,9 @@
-/**
- * The API authorization decision contract. Every enforcement point (the
- * config-plane HTTP funnel and core's directly-served routes) calls
- * `authorize(principal, action, resource)` and never reads the roles table
- * itself. The input shape matches an OPA query.
- */
-
 import type {
   ApiPolicyAction,
   PolicyDocument,
   PolicyRule,
 } from "./policyRules";
 
-/** Resource-family segment of an `ApiPolicyAction`, e.g. "agents". */
 export type ApiResourceType = ApiPolicyAction extends `${infer T}:${string}`
   ? T
   : never;
@@ -22,7 +14,6 @@ export interface ApiAuthorizationDecision {
   reason: string;
 }
 
-/** The acting identity, as an OPA-style input document. */
 export interface ApiPrincipal extends RolePrincipal {
   kind: "role";
 }
@@ -30,16 +21,11 @@ export interface ApiPrincipal extends RolePrincipal {
 export interface ApiResource {
   type: ApiResourceType;
   id?: string;
-  /**
-   * The stage the addressed resource lives in. Absent for a collection, an
-   * account-scoped resource, or one whose stage the caller did not resolve,
-   * all of which a stage-pinned role is refused.
-   */
+  // Unset for a collection, account scope or unresolved stage: a pinned role is refused.
   projectId?: string;
   stageId?: string;
 }
 
-/** The role identity a bsts_ session acts as, as stored and resolved. */
 export interface RolePrincipal {
   accountId: string;
   roleId: string;
@@ -48,7 +34,6 @@ export interface RolePrincipal {
   stageId?: string;
 }
 
-/** Map an HTTP method onto the read/write half of a resource's action pair. */
 export function apiActionForRequest(
   method: string,
   resourceType: ApiResourceType,
@@ -59,12 +44,6 @@ export function apiActionForRequest(
   return `${resourceType}:${verb}`;
 }
 
-/**
- * Decide whether a principal may perform an action on a resource, over the
- * role's PolicyRule list: a matching deny wins, otherwise a matching allow
- * grants, otherwise default deny. A role pinned to a project or stage is
- * refused anything outside it before any rule is read.
- */
 export function authorize(
   principal: ApiPrincipal,
   action: ApiPolicyAction,
@@ -104,10 +83,6 @@ export function authorize(
   };
 }
 
-/**
- * The role gate every enforcement point shares: the 403 message when the
- * request's action is denied, or null when it may proceed.
- */
 export function roleDenial(
   principal: ApiPrincipal,
   method: string,
@@ -134,11 +109,6 @@ export function rolePrincipal(role: RolePrincipal): ApiPrincipal {
   };
 }
 
-/**
- * Whether the resource sits inside the role's project/stage pin. An unpinned
- * role passes; a pinned one needs the resource's own scope to match, so a
- * collection or account-scoped resource falls outside it.
- */
 function withinPin(principal: ApiPrincipal, resource: ApiResource): boolean {
   if (
     principal.projectId !== undefined &&
@@ -152,10 +122,7 @@ function withinPin(principal: ApiPrincipal, resource: ApiResource): boolean {
   );
 }
 
-/**
- * Whether one rule applies to an action/resource pair. Only the `resourceIds`
- * selector constrains API resources; a rule without one covers every id.
- */
+// Only resourceIds applies to an API resource; the other selectors scope agent actions.
 function ruleMatches(
   rule: PolicyRule,
   action: ApiPolicyAction,

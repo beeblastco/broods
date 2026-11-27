@@ -1,13 +1,12 @@
-/**
- * Example: Cloudflare Containers sandbox provider (persistent bash) via declarative
- * broods resources. No workspace mount, so only `bash` is exposed. The container
- * keeps its files while warm and loses them when it sleeps.
- */
+// No workspace mount, so only `bash`. The container keeps its files while warm, not asleep.
 
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.cloudflareAgent, {
   input: [

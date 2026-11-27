@@ -12,14 +12,25 @@ The base URL is `https://gateway.broods.app`, or your own gateway when self-host
 
 Every request sends `Authorization: Bearer <credential>`.
 
-| Endpoint                                           | Accepts                                               |
-| -------------------------------------------------- | ----------------------------------------------------- |
-| `POST /v1/runs`, `GET /v1/runs/{runId}`, WebSocket | Runtime key, account key, or a stage session ticket   |
-| `GET /v1/runs/{runId}`                             | Also a run token, from inside a sandbox               |
-| `/v1/*` config routes                              | Account key, or a role session within its policy      |
-| Logs and traces socket                             | Stage session ticket only. The runtime key is refused |
+| Endpoint                                | Accepts                                               |
+| --------------------------------------- | ----------------------------------------------------- |
+| `POST /v1/runs`, `GET /v1/runs/{runId}` | Runtime key, account key, or a stage session ticket   |
+| `GET /v1/runs/{runId}`                  | Also a run token, from inside a sandbox               |
+| Agent WebSocket                         | Runtime key or a stage session ticket                 |
+| `/v1/*` config routes                   | Account key, or a role session within its policy      |
+| Logs and traces socket                  | Stage session ticket only. The runtime key is refused |
 
-The runtime key only reaches agents with `publicAccess: true` in its own stage. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
+The runtime key only reaches agents with `publicAccess: true` in its own stage, over HTTP and on the agent WebSocket alike. A run token (`brt_`, read from `BROODS_RUN_TOKEN` inside a sandbox) only reads its own agent's runs. Starting a run with it is not enabled yet, so `POST /v1/runs` and every other route answer `403 run_token_scope`, and config routes answer `401`. Prefixes, lifetimes and the other limits of each credential are in [Security](../guides/security.md). Every credential starts with `b` (`bsk_`, `bask_`, ...).
+
+With the runtime key, also send the signed-in user's token, which your server signs with the stage's signing secret:
+
+```text
+X-Broods-User-Token: buat_...
+```
+
+Every `conversationKey` and `eventId` of that request then lives under that user, and the response names them as `bsu:<userId>:<key>`. Send either form back. An agent that requires a user token, which every new agent does, answers the runtime key without one with `403 user_token_required`. A forged or expired token is a `401`. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
+
+The signing secret comes from `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret`, authenticated with the account key, a project key or a `broods login` token holding `keys:write` on the stage. It rotates the secret and returns it once as `{ "secret": "bsig_...", "hint": "bsig_…abcd" }`; tokens the previous secret signed stop working. `broods dev` and `broods deploy` call it for you when the stage has no secret yet.
 
 ### Calling the API from a sandbox
 
@@ -71,7 +82,7 @@ curl -N -X POST "https://gateway.broods.app/v1/runs" \
 | `answers`         | no                                  | Answers to open `ask_questions` prompts. Cannot be combined with `events`                                                                                 |
 | `continue`        | no                                  | Re-enter a run that stopped on the step cap or a provider fault                                                                                           |
 
-The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
+The stream carries AI SDK stream parts such as `step-start`, `text-delta`, `tool-call`, `tool-result`, `finish` and `error`. One run can carry several model passes, each ending in its own `finish` part: after subagent or async tool results, or after the run hands its worker slot on near the slot deadline. The run is over when the stream closes, not at a `finish` part. A run that writes nothing for 30 seconds, such as during a long tool call, sends an SSE comment line such as `: keepalive` or `: waiting for async work pending=2`. SSE parsers ignore them, and they keep the connection open. A streamed run waits for a free worker slot like a background run, so on a busy deployment the stream may send only keepalives before its first part. If the run queue itself is full, the request answers `503` with `Retry-After` and one SSE `error` frame. Nothing runs, nothing is recorded or counted against your plan, and retrying with the same `eventId` starts the run. An account out of budget or past its runs per minute gets its `402` or `429` instead, even while the queue is full. A run that passed the check and owns its conversation is never failed for capacity later. One queued behind another turn of its conversation starts when that turn ends, and can still fail with `In-process worker queue is full` if the queue is full then. Closing the connection before the run finishes aborts the run and marks it failed. Use `background: true` when the caller may disconnect.
 
 The dashboard advertises a scoped form of the same endpoint, `POST /v1/projects/{project}/stages/{stage}/agents/{endpointId}`. It takes the same body and refuses a key from another project or stage with `401`.
 
@@ -96,7 +107,7 @@ curl -X POST "https://gateway.broods.app/v1/runs" \
 }
 ```
 
-Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days.
+Poll `GET /v1/runs/{runId}` until the status settles. Status records stay readable for 7 days. If the run queue is full, the background `POST` answers `503 service_unavailable` with `Retry-After` instead of `202`. Nothing is recorded or counted, and a retry with the same `eventId` starts the run. A plan refusal (`402`, `429`) comes first. A `202` with status `processing` is never failed for capacity. One with status `queued` waits behind another turn of its conversation and can still fail for capacity when that turn ends on a full queue.
 
 | `status`                                      | Meaning                                                            |
 | --------------------------------------------- | ------------------------------------------------------------------ |
@@ -147,6 +158,21 @@ A second request on a conversation that is already running follows `mode`:
 
 A queued request answers `202` with a `statusUrl` instead of a second SSE stream. Steered output appears on the live run's stream. Each conversation queues up to 100 requests or 1 MiB; beyond that you get `429 ingress_capacity` with `Retry-After`. Queued requests expire after 15 minutes. See [Conversations](../guides/conversations.md).
 
+## A user's conversation files
+
+An agent with a workspace on a sandbox gives each user-token conversation its own folder. Your backend can seed it before the first message and read what the agent left there, with the runtime key and the user's token, on the agent's URL plus `/files`:
+
+```bash
+curl -X PUT "$AGENT_URL/files?agentId=$AGENT_ID&conversationKey=chat-1" \
+  -H "Authorization: Bearer $BROODS_API_KEY" -H "X-Broods-User-Token: $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"files":[{"path":"notes/todo.md","contentBase64":"LSBzaGlwCg=="}]}'
+curl "$AGENT_URL/files?agentId=$AGENT_ID&conversationKey=chat-1" \
+  -H "Authorization: Bearer $BROODS_API_KEY" -H "X-Broods-User-Token: $USER_TOKEN"
+```
+
+`PUT` replaces the whole folder; `GET` answers `{ files: [{ path, contentBase64 }] }`. `?workspace=<name>` picks a workspace other than the first. Without a user token it answers 403 `user_token_required`: the root folder is yours, not a visitor's.
+
 ## Errors
 
 ```json
@@ -162,19 +188,26 @@ A queued request answers `202` with a `statusUrl` instead of a second SSE stream
 
 Branch on `code`, never on `message`. Each response also carries an `X-Request-Id` header. Quote it when reporting a problem.
 
-| Status | `code`                   | Cause                                                                                                          |
-| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| 401    | `unauthorized`           | Missing or wrong credential, or a key for another scope                                                        |
-| 403    | `public_access_disabled` | The agent does not set `publicAccess: true`                                                                    |
-| 403    | `run_overrides_disabled` | `system` or `model` sent without `allowRunOverrides: true`                                                     |
-| 403    | `run_token_scope`        | A run token did anything but read its own agent's runs                                                         |
-| 403    | `status_access_denied`   | The run's status is not readable from this deployment, such as a subagent run started under another deployment |
-| 404    | `run_not_found`          | Unknown run id                                                                                                 |
-| 409    | `conversation_busy`      | Busy conversation in `reject` mode                                                                             |
-| 409    | `idempotency_conflict`   | Same idempotency key, different payload                                                                        |
-| 429    | `ingress_capacity`       | Conversation queue is full                                                                                     |
+| Status | `code`                    | Cause                                                                                                                                   |
+| ------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | `unauthorized`            | Missing or wrong credential, or a key for another scope                                                                                 |
+| 403    | `public_access_disabled`  | The agent does not set `publicAccess: true`                                                                                             |
+| 403    | `run_overrides_disabled`  | `system` or `model` sent without `allowRunOverrides: true`                                                                              |
+| 403    | `run_token_scope`         | A run token did anything but read its own agent's runs                                                                                  |
+| 403    | `status_access_denied`    | The run's status is not readable from this deployment, such as a subagent run started under another deployment, or another user's run   |
+| 403    | `user_token_required`     | The agent requires a user token with the runtime key and none was sent                                                                  |
+| 403    | `user_token_conversation` | The user token lists its conversations and this `conversationKey` is not one                                                            |
+| 404    | `run_not_found`           | Unknown run id                                                                                                                          |
+| 409    | `conversation_busy`       | Busy conversation in `reject` mode                                                                                                      |
+| 409    | `idempotency_conflict`    | Same idempotency key, different payload                                                                                                 |
+| 429    | `ingress_capacity`        | Conversation queue is full                                                                                                              |
+| 503    | `service_unavailable`     | `POST /v1/runs` when the deployment's run queue is full. Nothing is recorded or counted; retry after `Retry-After`. A plan refusal wins |
 
-On a streamed run, these arrive as the first SSE `error` frame instead of a JSON body.
+On a streamed run, `conversation_busy`, `idempotency_conflict`, `ingress_capacity` and `service_unavailable` arrive as the only SSE `error` frame instead of a JSON body, with the same HTTP status, `code` and `Retry-After`. The frame names the error class `errorType`, since its `type` is `error`:
+
+```text
+data: {"type":"error","error":"Conversation is already processing another turn. Try again when the current turn finishes.","code":"conversation_busy","errorType":"conflict_error"}
+```
 
 ## Python example
 
@@ -209,7 +242,9 @@ Connect to `wss://gateway.broods.app/v1/agents/{endpointId}/ws`, or the scoped f
 Sec-WebSocket-Protocol: broods.v1, broods.token.<runtime key>
 ```
 
-The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored.
+The server answers `broods.v1`. A proxy in front of the gateway must not log request headers. A `?token=` query parameter is ignored. A user token rides as one more entry, `broods.user.<token>`, and holds for every frame on the socket: `meta` then names the conversation as `bsu:<userId>:<key>`.
+
+The key opens a socket for its own stage only; another stage's path answers `403` before the upgrade. Each frame on the socket is checked like the matching HTTP call: an `execute` on an agent without `publicAccess: true` gets an `error` frame with `status: 403`, and an `attach` to its run gets `replay_unavailable`.
 
 ### Client frames
 
@@ -232,16 +267,17 @@ The server answers `broods.v1`. A proxy in front of the gateway must not log req
 
 ### Server frames
 
-| Frame                | Meaning                                                                           |
-| -------------------- | --------------------------------------------------------------------------------- |
-| `meta`               | `{ sessionId, taskId }`. The socket is ready                                      |
-| `output`             | `{ eventId, cursor, replay, data }`. `data` is one stream part                    |
-| `ack`                | A `control` input was durably accepted                                            |
-| `status`             | Later state of that input, with `appliedMode` and `appliedToEventId`              |
-| `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`                |
-| `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl`              |
-| `question-request`   | The agent asked with `ask_questions`. Answer with an `execute` carrying `answers` |
-| `done`, `error`      | The run ended                                                                     |
+| Frame                | Meaning                                                              |
+| -------------------- | -------------------------------------------------------------------- |
+| `meta`               | `{ sessionId, taskId }`. The socket is ready                         |
+| `output`             | `{ eventId, cursor, replay, data }`. `data` is one stream part       |
+| `ack`                | A `control` input, or an `execute` that queued, was durably accepted |
+| `status`             | Later state of that input, with `appliedMode` and `appliedToEventId` |
+| `attached`           | Attach accepted, with `replayFromCursor` and `replayThroughCursor`   |
+| `replay_unavailable` | The cursor cannot be resumed. Read the final result from `statusUrl` |
+| `done`, `error`      | The run ended. An `error` core refused carries `status` and `code`   |
+
+Besides AI SDK parts, `output.data` can be `question-request` (`questions`, answer with an `execute` carrying `answers`), `tool-approval-request` (`approvals`) and `waiting` (a heartbeat while async work is pending).
 
 ```json
 { "type": "ack", "requestId": "r2", "eventId": "event-2", "status": "queued" }
@@ -252,7 +288,7 @@ A socket holds up to 8 `control` inputs that have not yet reached `applied` or a
 
 ### Resume after a disconnect
 
-Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, or the attach names an `agentId` or `conversationKey` that is not the run's own, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
+Output is kept for about 3 minutes, up to 2,000 frames per conversation. Store the `cursor` of the last `output` frame you fully processed, then reconnect and send `attach` with `afterCursor`. Frames up to `replayThroughCursor` carry `replay: true`. Later frames are live. When the cursor is too old or belongs to another event, or the attach names an `agentId`, `conversationKey` or `eventId` that is not the run's own, the server sends `replay_unavailable` and you read the final result from `GET /v1/runs/{runId}`. A busy `execute` that gets queued receives its `ack`, stays open, and streams once its turn starts.
 
 ## Channel webhooks
 

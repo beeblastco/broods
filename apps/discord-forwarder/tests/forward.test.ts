@@ -1,10 +1,7 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { afterEach, describe, expect, it, jest, spyOn } from "bun:test";
+import { discordForwarderToken } from "../../core/src/shared/discord-wire.ts";
 import type { MessageCreate } from "../src/discord.ts";
-import {
-  fanOut,
-  forwardMessageCreate,
-  type ForwardTarget,
-} from "../src/forward.ts";
+import { forwardMessageCreate, type ForwardTarget } from "../src/forward.ts";
 
 const MESSAGE: MessageCreate = {
   id: "message-1",
@@ -67,19 +64,29 @@ describe("forwarding a gateway message", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(TARGETS[0]!.webhookUrl);
-    expect(calls[0]!.headers["x-discord-gateway-token"]).toBe("token-a");
     expect(calls[0]!.body).toEqual({
       type: "GATEWAY_MESSAGE_CREATE",
       data: MESSAGE,
     });
   });
 
-  it("leaves a missing author.bot flag alone", async () => {
+  it("authenticates with the derived credential, never the bot token", async () => {
     const calls = captureFetch();
     await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
-    const data = (calls[0]!.body as { data: { author: unknown } }).data;
-    expect(data.author).toEqual({ id: "user-1", username: "ada" });
+    expect(calls[0]!.headers["x-discord-gateway-token"]).toBe(
+      discordForwarderToken("token-a"),
+    );
+    expect(Object.values(calls[0]!.headers)).not.toContain("token-a");
+  });
+
+  it("settles a 401 without retrying it on the raw bot token", async () => {
+    const calls = captureFetch(401);
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+
+    expect(
+      calls.map((call) => call.headers["x-discord-gateway-token"]),
+    ).toEqual([discordForwarderToken("token-a")]);
   });
 
   it("adds the thread object Discord leaves out", async () => {
@@ -108,14 +115,6 @@ describe("forwarding a gateway message", () => {
     );
   });
 
-  it("survives a webhook rejecting the delivery", async (): Promise<void> => {
-    captureFetch(500);
-
-    expect(
-      withoutWaiting(forwardMessageCreate(MESSAGE, null, "token-a", TARGETS)),
-    ).resolves.toBeUndefined();
-  });
-
   it("retries a 5xx and a network error until core answers", async (): Promise<void> => {
     const seen = scriptFetch([503, "reset", 200]);
     await withoutWaiting(
@@ -134,28 +133,45 @@ describe("forwarding a gateway message", () => {
     expect(seen.calls).toBe(3);
   });
 
-  it("does not retry a 4xx", async (): Promise<void> => {
-    const seen = scriptFetch([401]);
-    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+  it("retries a 408 and a 429 like a 5xx", async (): Promise<void> => {
+    const seen = scriptFetch([408, 429, 200]);
+    await withoutWaiting(
+      forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]),
+    );
 
-    expect(seen.calls).toBe(1);
+    expect(seen.calls).toBe(3);
   });
 
-  // Matrix awaits each delivery in its sync loop, so it does not opt in.
-  it("tries once for a caller that does not ask for more", async (): Promise<void> => {
-    const seen = scriptFetch([503]);
-    await fanOut([TARGETS[0]!], "{}", {
-      header: "x-token",
-      timeoutMs: 1_000,
-      token: "token-a",
-    });
+  it("waits as long as Retry-After asks instead of the backoff", async (): Promise<void> => {
+    const delays: number[] = [];
+    const sleep = spyOn(Bun, "sleep").mockImplementation(
+      async (ms: number | Date): Promise<void> => {
+        delays.push(Number(ms));
+      },
+    );
+    const seen = scriptFetch([
+      new Response("", { headers: { "retry-after": "2" }, status: 429 }),
+      200,
+    ]);
+    try {
+      await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
+    } finally {
+      sleep.mockRestore();
+    }
+
+    expect(seen.calls).toBe(2);
+    expect(delays).toEqual([2_000]);
+  });
+
+  it("does not retry a 4xx", async (): Promise<void> => {
+    const seen = scriptFetch([403]);
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
     expect(seen.calls).toBe(1);
   });
 });
 
-/** Answers each POST with the next status, or throws for "reset". */
-function scriptFetch(statuses: readonly (number | "reset")[]): {
+function scriptFetch(statuses: readonly (number | "reset" | Response)[]): {
   calls: number;
 } {
   const seen = { calls: 0 };
@@ -163,6 +179,7 @@ function scriptFetch(statuses: readonly (number | "reset")[]): {
     const status = statuses[seen.calls] ?? 200;
     seen.calls += 1;
     if (status === "reset") throw new Error("connection reset");
+    if (status instanceof Response) return status;
 
     return new Response("", { status: status });
   }) as unknown as typeof fetch;
@@ -170,7 +187,6 @@ function scriptFetch(statuses: readonly (number | "reset")[]): {
   return seen;
 }
 
-/** Runs `work` to completion with the retry backoff fast-forwarded. */
 async function withoutWaiting(work: Promise<void>): Promise<void> {
   jest.useFakeTimers();
   let done = false;

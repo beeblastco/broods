@@ -1,9 +1,10 @@
-/** Bucket helpers. The only module that imports the AWS S3 SDK. */
+// The only module that imports the AWS S3 SDK.
 
 import {
   S3Client as AwsS3Client,
   CopyObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
@@ -11,23 +12,23 @@ import {
   type GetObjectCommandOutput,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { toErrorMessage } from "./errors.ts";
+import { S3ObjectTooLargeError, toErrorMessage } from "./errors.ts";
 import { logDebug, logError } from "./log.ts";
 
 const SANDBOX_UID = "993";
 const SANDBOX_GID = "990";
+// Per-key DeleteObjects codes only: whole-request failures are the SDK's to retry.
+const RETRYABLE_DELETE_CODES = new Set([
+  "InternalError",
+  "ServiceUnavailable",
+  "SlowDown",
+]);
+const DELETE_ATTEMPTS = 3;
 
 let defaultClient: AwsS3Client | undefined;
-// One client per access object, so a cached read target keeps its connection
-// pool instead of paying a TLS handshake per read. Weak, so a dropped target
-// frees its client.
 const accessClients = new WeakMap<S3Access, AwsS3Client>();
 
-// Per-call S3 access for reads against a bring-your-own bucket: short-lived
-// assume-role credentials plus the bucket's region/endpoint. Omitted (the common
-// case) => the default client on the harness's own role against the managed bucket.
-// Pass the object a read target hands out as is: the client is cached by its
-// identity, so a copy pays for a new client.
+// Clients are cached by this object's identity: pass it as is, since a copy builds a new client.
 export interface S3Access {
   credentials?: {
     accessKeyId: string;
@@ -119,17 +120,56 @@ export async function deleteS3Prefix(
   prefix: string,
   access?: S3Access,
 ): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix, access);
-  await Promise.all(
-    objects.map((object) => deleteS3Object(bucket, object.key, access)),
-  );
+  const client = awsClient(access);
+  let deleted = 0;
+  let continuationToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }),
+    );
+    let keys = (page.Contents ?? []).flatMap((item) =>
+      item.Key ? [item.Key] : [],
+    );
+    const pageSize = keys.length;
+    for (let attempt = 1; keys.length > 0; attempt += 1) {
+      if (attempt > 1) await Bun.sleep(100 * 2 ** attempt);
+      const { Errors: errors = [] } = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: keys.map((key) => ({ Key: key })), Quiet: true },
+        }),
+      );
+      const [first] = errors;
+      if (
+        first &&
+        (attempt === DELETE_ATTEMPTS ||
+          errors.some(
+            (error) =>
+              !error.Key || !RETRYABLE_DELETE_CODES.has(error.Code ?? ""),
+          ))
+      ) {
+        throw new Error(
+          `S3 could not delete ${errors.length} of ${pageSize} objects under ${prefix} in ${bucket}, first ${first.Key}: ${first.Code} ${first.Message ?? ""}`.trim(),
+        );
+      }
+      keys = errors.flatMap((error) => (error.Key ? [error.Key] : []));
+    }
+    deleted += pageSize;
+    continuationToken = page.NextContinuationToken;
+  } while (continuationToken);
 
-  return objects.length;
+  return deleted;
 }
 
 export async function ensureS3DirectoryMarkers(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<void> {
   const parts = key.split("/").filter(Boolean);
   parts.pop();
@@ -140,6 +180,7 @@ export async function ensureS3DirectoryMarkers(
     await putS3Object(bucket, `${prefix}/`, "", {
       contentType: "application/x-directory",
       metadata: posixMetadata("directory"),
+      access: access,
     });
   }
 }
@@ -156,8 +197,6 @@ export async function getS3ObjectUrl(
   );
 }
 
-// Object metadata without the body, or null when the key does not exist. The
-// media route needs the size and content type before it decides to stream.
 export async function headS3Object(
   bucket: string,
   key: string,
@@ -272,8 +311,6 @@ export async function listS3Prefix(
   return objects;
 }
 
-// A presigned PUT for one object, so a machine with no AWS credentials, such as a
-// sandbox VM, can upload it.
 export async function putS3ObjectUrl(
   bucket: string,
   key: string,
@@ -286,26 +323,13 @@ export async function putS3ObjectUrl(
   );
 }
 
-/**
- * An object's bytes. With `maxBytes`, a larger object, or one whose size the
- * store does not say, is refused before any is read.
- */
 export async function readS3Bytes(
   bucket: string,
   key: string,
   access?: S3Access,
   maxBytes?: number,
 ): Promise<Uint8Array> {
-  const { body, contentLength } = await readS3Body(bucket, key, access);
-  if (
-    maxBytes !== undefined &&
-    (contentLength === undefined || contentLength > maxBytes)
-  ) {
-    await body.transformToWebStream().cancel();
-    throw new Error(
-      `S3 object ${key} is ${contentLength ?? "an unknown number of"} bytes, over the ${maxBytes} byte limit`,
-    );
-  }
+  const body = await readS3Body(bucket, key, access, maxBytes);
 
   return body.transformToByteArray();
 }
@@ -314,8 +338,27 @@ export async function readS3Text(
   bucket: string,
   key: string,
   access?: S3Access,
+  maxBytes?: number,
 ): Promise<string> {
-  const { body } = await readS3Body(bucket, key, access);
+  const body = await readS3Body(bucket, key, access, maxBytes);
+
+  return body.transformToString();
+}
+
+// A store that ignores the range is refused by the maxBytes check.
+export async function readS3TextHead(
+  bucket: string,
+  key: string,
+  maxBytes: number,
+  access?: S3Access,
+): Promise<string> {
+  const body = await readS3Body(
+    bucket,
+    key,
+    access,
+    maxBytes,
+    `bytes=0-${maxBytes - 1}`,
+  );
 
   return body.transformToString();
 }
@@ -405,9 +448,6 @@ export async function writeS3Object(
   }
 }
 
-// The default (env-configured) client is shared so the credential chain
-// resolves once per process, not per call; access-scoped clients carry their
-// own credentials and stay per-call.
 function awsClient(access?: S3Access): AwsS3Client {
   if (access) {
     const existing = accessClients.get(access);
@@ -469,20 +509,28 @@ async function readS3Body(
   bucket: string,
   key: string,
   access?: S3Access,
-): Promise<{
-  body: NonNullable<GetObjectCommandOutput["Body"]>;
-  contentLength: number | undefined;
-}> {
+  maxBytes?: number,
+  range?: string,
+): Promise<NonNullable<GetObjectCommandOutput["Body"]>> {
   const result = await awsClient(access).send(
     new GetObjectCommand({
       Bucket: bucket,
       Key: key,
+      Range: range,
     }),
   );
 
   if (!result.Body) {
     throw new Error(`S3 object has no body: ${key}`);
   }
+  const contentLength = result.ContentLength;
+  if (
+    maxBytes !== undefined &&
+    (contentLength === undefined || contentLength > maxBytes)
+  ) {
+    await result.Body.transformToWebStream().cancel();
+    throw new S3ObjectTooLargeError(key, contentLength, maxBytes);
+  }
 
-  return { body: result.Body, contentLength: result.ContentLength };
+  return result.Body;
 }

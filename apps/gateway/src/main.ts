@@ -1,5 +1,6 @@
 import {
   connectNats,
+  natsNames,
   type NatsConnection,
 } from "../../core/src/shared/nats.ts";
 import {
@@ -14,13 +15,15 @@ import {
 } from "../../core/src/shared/terminal-ticket.ts";
 import {
   handleAgentMessage,
-  stopActiveRun,
+  cleanupAgentSocket,
+  watchUserTokenLifetime,
   type AgentTestGatewayData,
 } from "./agent.ts";
 import {
   cleanupObservabilitySocket,
   handleObservabilityMessage,
   openObservabilitySocket,
+  watchObservabilityLifetime,
   type ObservabilityGatewayData,
 } from "./observability.ts";
 import {
@@ -38,6 +41,7 @@ import {
   matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
+import { cursorKey } from "./observability-cursor.ts";
 import { RateLimiter } from "./rate-limiter.ts";
 import { resolveSocketScope } from "./upstream.ts";
 import {
@@ -52,6 +56,7 @@ import {
   resolveRequestId,
   websocketToken,
   websocketUpgradeHeaders,
+  websocketUserToken,
   withRequestId,
   type GatewayLimits,
 } from "./utils.ts";
@@ -64,19 +69,17 @@ export type GatewayData =
 
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
 
-/** Everything the router reads that the process environment decides. */
 export interface GatewayConfig {
   allowedOrigins: string[];
   authFailureLimiter: RateLimiter;
   coreBaseUrl: string;
   limits: GatewayLimits;
+  natsConnection: () => Promise<NatsConnection>;
   spentTickets: SpentTickets;
   terminalTicketSecrets: string[];
 }
 
-/** The two halves `Bun.serve` needs, built over one resolved config. */
 export interface GatewayRuntime {
-  /** Closes every open socket, for a shutdown. */
   closeSockets: (code: number, reason: string) => void;
   fetch: (
     request: Request,
@@ -85,17 +88,7 @@ export interface GatewayRuntime {
   websocket: Bun.WebSocketHandler<GatewayData>;
 }
 
-/**
- * Build the router and socket handlers over one config.
- *
- * Traefik routes, rate-limits and sets CORS in front of this (`apps/edge`) and
- * sends it only health checks and WebSocket upgrades. The security ordering of
- * an upgrade lives here rather than inside the `import.meta.main` block so tests
- * can drive it without binding a port: origin allowlist, auth-failure rate
- * limit, capacity, then the per-path token and scope checks. The open sockets
- * are per gateway, so two of them in one test process do not share a capacity
- * ceiling.
- */
+// Upgrade security order: origin allowlist, auth-failure limit, capacity, then token and scope.
 export function createGateway(config: GatewayConfig): GatewayRuntime {
   const sockets = new Set<Bun.ServerWebSocket<GatewayData>>();
   let pendingUpgrades = 0;
@@ -111,11 +104,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
       (pathname === "/" || pathname === "/healthz") &&
       request.method === "GET"
     ) {
-      return json({
-        status: "ok",
-        activeWebSockets: sockets.size,
-        maxWebSockets: config.limits.maxConnections,
-      });
+      return json({ status: "ok" });
     }
 
     if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
@@ -136,8 +125,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           ),
         );
       }
-      // Upgrades still resolving a token count too, or a burst would all pass
-      // the check before any of them opened.
+      // Pending upgrades count too, or a burst would all pass before any of them opened.
       if (sockets.size + pendingUpgrades >= config.limits.maxConnections) {
         return jsonError(503, "Gateway is at capacity");
       }
@@ -163,8 +151,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               return jsonError(502, "Could not verify the terminal ticket");
             }
           }
-          // A bad ticket still upgrades: the open handler closes it with a code
-          // and reason the browser can show, where a 401 here would be a mute 1006.
+          // A bad ticket still upgrades so open can close it with a reason; a 401 is a mute 1006.
           if (!ticket) config.authFailureLimiter.allow(ip);
           data = { kind: "terminal", ticket: ticket };
         } else if (pathname === MACHINE_WEBSOCKET_PATH) {
@@ -182,8 +169,18 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         } else if (observabilityPath || agentWebSocketPath) {
           const token = websocketToken(request);
           if (!token) return jsonError(401, "Missing WebSocket token");
+          const userToken = agentWebSocketPath
+            ? websocketUserToken(request)
+            : undefined;
 
-          const resolved = await resolveSocketScope(token, config.coreBaseUrl);
+          // Per-socket scope: a runtime key opens the agent socket, never the observability one.
+          const resolved = await resolveSocketScope(
+            observabilityPath ? "observability" : "agent",
+            token,
+            config.coreBaseUrl,
+            fetch,
+            userToken,
+          );
           if (resolved.kind === "unavailable")
             return jsonError(502, "Could not verify the WebSocket token");
           if (resolved.kind === "invalid") {
@@ -193,6 +190,10 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           }
           const { scope } = resolved;
           if (observabilityPath) {
+            // The socket closes at expiresAt; a core that names none gets no open-ended socket.
+            const { expiresAt } = scope;
+            if (expiresAt === undefined || !Number.isFinite(expiresAt))
+              return jsonError(502, "Could not verify the WebSocket token");
             if (
               scope.projectSlug !== decodeURIComponent(observabilityPath[1]) ||
               scope.stageSlug !== decodeURIComponent(observabilityPath[2])
@@ -203,10 +204,21 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
                 { code: "scope_mismatch" },
               );
             }
-            data = { kind: "observability", scope: scope };
+            data = {
+              kind: "observability",
+              scope: { ...scope, expiresAt: expiresAt },
+              token: token,
+              ...(config.terminalTicketSecrets[0]
+                ? {
+                    cursorKey: cursorKey(
+                      config.terminalTicketSecrets[0],
+                      scope,
+                    ),
+                  }
+                : {}),
+            };
           } else if (agentWebSocketPath) {
-            // Bind the socket to the key's own endpoint scope: attach never posts
-            // through the core run path, so the door check must happen here.
+            // Attach never posts through core's run path, so the endpoint check must happen here.
             if (
               !scope.endpointIds.includes(agentWebSocketPath.endpointId) ||
               (agentWebSocketPath.projectSlug !== undefined &&
@@ -226,6 +238,13 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
               token: token,
               coreBaseUrl: config.coreBaseUrl,
               accountId: scope.accountId,
+              ...(userToken ? { userToken: userToken } : {}),
+              ...(scope.userTokenExpiresAt !== undefined
+                ? { userTokenExpiresAt: scope.userTokenExpiresAt }
+                : {}),
+              ...(scope.conversationPrefix
+                ? { conversationPrefix: scope.conversationPrefix }
+                : {}),
             };
           }
         }
@@ -236,8 +255,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
           });
 
           if (upgraded) return undefined;
-          // The ticket never opened a socket, so the client may retry with it.
-          // A failed release leaves it spent, which is the safe side.
+          // Unopened, so the client may retry it; a failed release leaves it spent, the safe side.
           if (data.kind === "terminal" && data.ticket) {
             await config.spentTickets
               .release(websocketToken(request))
@@ -264,10 +282,8 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
     try {
       const response = await route(request, server);
 
-      // A WebSocket upgrade returns undefined; there is no response to stamp.
       return response && withRequestId(response, requestId);
     } catch (error) {
-      // A malformed %-escape in a path segment is the caller's mistake.
       if (error instanceof URIError)
         return withRequestId(jsonError(400, "Malformed URL path"), requestId);
       console.error("gateway request failed:", {
@@ -280,23 +296,31 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   }
 
   const websocket: Bun.WebSocketHandler<GatewayData> = {
-    // Bun takes one frame cap per server, so it is sized for the machine
-    // socket and every other socket enforces the configured one in `message`.
+    // Bun has one frame cap per server: sized for the machine socket, others checked in message.
     maxPayloadLength: Math.max(
       config.limits.maxPayloadBytes,
       MACHINE_MAX_FRAME_BYTES,
     ),
+    // One shared compressor, reset per message: no memory per socket. A send opts in, so the
+    // terminal and machine relays stay raw.
+    perMessageDeflate: true,
     backpressureLimit: config.limits.backpressureBytes,
     closeOnBackpressureLimit: true,
     idleTimeout: config.limits.idleTimeoutSeconds,
     open: function (socket): void {
       sockets.add(socket);
-      if (socket.data.kind === "observability")
-        openObservabilitySocket(
-          socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
-        );
+      if (socket.data.kind === "observability") {
+        const observability =
+          socket as Bun.ServerWebSocket<ObservabilityGatewayData>;
+        openObservabilitySocket(observability);
+        watchObservabilityLifetime(observability, config.coreBaseUrl);
+      }
       if (socket.data.kind === "terminal" || socket.data.kind === "machine")
         openTerminalUpstream(socket as Bun.ServerWebSocket<RelayGatewayData>);
+      if (socket.data.kind === "agent-test")
+        watchUserTokenLifetime(
+          socket as Bun.ServerWebSocket<AgentTestGatewayData>,
+        );
     },
     message: async function (socket, rawMessage): Promise<void> {
       if (
@@ -320,7 +344,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         await handleObservabilityMessage(
           socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
           rawMessage,
-          getNatsConnection,
+          config.natsConnection,
         );
 
         return;
@@ -330,7 +354,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         socket as Bun.ServerWebSocket<AgentTestGatewayData>,
         rawMessage,
         config.limits,
-        getNatsConnection,
+        config.natsConnection,
       );
     },
     close: function (socket): void {
@@ -348,7 +372,7 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
         return;
       }
 
-      stopActiveRun(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
+      cleanupAgentSocket(socket as Bun.ServerWebSocket<AgentTestGatewayData>);
     },
   };
 
@@ -361,7 +385,6 @@ export function createGateway(config: GatewayConfig): GatewayRuntime {
   };
 }
 
-/** Resolve the router's config from the process environment. */
 export function gatewayConfigFromEnv(): GatewayConfig {
   return {
     allowedOrigins: allowedOriginPatternsFromEnv(),
@@ -371,12 +394,15 @@ export function gatewayConfigFromEnv(): GatewayConfig {
     ),
     coreBaseUrl: normalizeBaseUrl(process.env.BROODS_CORE_URL ?? ""),
     limits: gatewayLimitsFromEnv(),
+    natsConnection: getNatsConnection,
     spentTickets: natsSpentTickets(getNatsConnection),
     terminalTicketSecrets: requireSecretsEnv("TERMINAL_TICKET_SECRET"),
   };
 }
 
 if (import.meta.main) {
+  // A pod missing its environment fails the rollout instead of the first attach.
+  if (process.env.NATS_URL?.trim()) natsNames();
   const config = gatewayConfigFromEnv();
   const gateway = createGateway(config);
   const server = Bun.serve<GatewayData>({
@@ -387,10 +413,7 @@ if (import.meta.main) {
     websocket: gateway.websocket,
   });
 
-  // A rollout sends SIGTERM: stop listening, then close every socket with
-  // 1012 (service restart) so clients reconnect to another pod. A stray
-  // rejection or throw does the same and exits non-zero, rather than dropping
-  // every socket without a close frame.
+  // SIGTERM or a stray throw closes sockets with 1012 so clients reconnect to another pod.
   let stopping = false;
   const shutdown = (exitCode: number): void => {
     if (stopping) return;

@@ -1,12 +1,10 @@
-/**
- * Example: ask the agent a question that routes through its connected MCP
- * server. Run `broods deploy` first so the server registration and agent sync.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 const run = await client.runAsync(api.agents.assistant, {
   input: "What does the search server say? Use your tools.",

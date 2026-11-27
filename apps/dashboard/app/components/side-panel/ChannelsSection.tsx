@@ -1,11 +1,7 @@
 "use client";
 
-/**
- * Agent Details-tab channels editor. Channels are inbound webhook triggers the agent replies
- * to; this renders a schema-driven form for the broods channel kinds so adding a
- * field/kind is a data change, not new UI. Secrets accept `${ENV}` placeholders.
- */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
+import { SecretInput } from "@/app/components/SecretInput";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -14,10 +10,9 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-/** How a single channel field is entered and serialized. */
 type FieldType = "text" | "secret" | "stringList";
 
 type ChannelField = {
@@ -34,7 +29,7 @@ type ChannelKind = { kind: string; label: string; fields: ChannelField[] };
 
 type ChannelConfig = Record<string, unknown>;
 
-/** The broods channel kinds and their config fields (source of truth: agent-config.ts). */
+// Mirrors the channel schemas in agent-config.ts, which are the source of truth.
 const CHANNELS: ChannelKind[] = [
   {
     kind: "telegram",
@@ -232,49 +227,6 @@ const CHANNELS: ChannelKind[] = [
         label: "API URL",
         type: "text",
         placeholder: "https://discord.com/api/v10",
-      },
-    ],
-  },
-  {
-    kind: "matrix",
-    label: "Matrix",
-    fields: [
-      {
-        key: "apiUrl",
-        label: "Homeserver URL",
-        type: "text",
-        required: true,
-        placeholder: "https://matrix.org",
-      },
-      {
-        key: "botToken",
-        label: "Access token",
-        type: "secret",
-        required: true,
-      },
-      {
-        key: "botName",
-        label: "Reply name",
-        type: "text",
-        placeholder: "Shown on the agent's replies",
-      },
-      {
-        key: "mentionText",
-        label: "Mention text (answer only when addressed)",
-        type: "text",
-        placeholder: "@my-agent",
-      },
-      {
-        key: "allowedChannelIds",
-        label: "Allowed room IDs",
-        type: "stringList",
-        placeholder: "!abc:matrix.org, *",
-      },
-      {
-        key: "allowedUserIds",
-        label: "Allowed user IDs",
-        type: "stringList",
-        placeholder: "@alice:matrix.org, …",
       },
     ],
   },
@@ -608,13 +560,30 @@ export function ChannelsSection({
                     )}
                   </span>
                   {field.type === "secret" ? (
-                    <SecretField
+                    <SecretInput
+                      noun={field.label.toLowerCase()}
+                      aria-label={field.label}
                       defaultValue={stored}
-                      placeholder={field.placeholder}
-                      onCommit={(v) => commitField(channel.kind, field, v)}
+                      key={stored}
+                      placeholder={
+                        field.placeholder ?? "${ENV_NAME} or literal"
+                      }
+                      className="h-7 flex-1 font-mono text-2xs"
+                      onBlur={(e) =>
+                        commitField(channel.kind, field, e.target.value)
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing)
+                          commitField(
+                            channel.kind,
+                            field,
+                            e.currentTarget.value,
+                          );
+                      }}
                     />
                   ) : (
                     <Input
+                      aria-label={field.label}
                       defaultValue={stored}
                       key={stored}
                       placeholder={field.placeholder}
@@ -623,7 +592,7 @@ export function ChannelsSection({
                         commitField(channel.kind, field, e.target.value)
                       }
                       onKeyDown={(e) => {
-                        if (e.key === "Enter")
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing)
                           commitField(
                             channel.kind,
                             field,
@@ -673,7 +642,6 @@ export function ChannelsSection({
   );
 }
 
-/** Render a stored value as the field's input text; values of another type render empty. */
 function formatFieldValue(type: FieldType, value: unknown): string {
   if (type === "stringList" && Array.isArray(value)) {
     return value
@@ -686,7 +654,6 @@ function formatFieldValue(type: FieldType, value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-/** Serialize a raw input string to the field's stored type, or `undefined` when empty. */
 function parseFieldValue(type: FieldType, raw: string): unknown {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -707,7 +674,7 @@ function readAt(config: ChannelConfig, path: string[]): unknown {
   );
 }
 
-/** Immutably set or delete a (possibly nested) value, pruning empty branches on delete. */
+/** `undefined` deletes the value and prunes the branches it leaves empty. */
 function writeAt(
   config: ChannelConfig,
   path: string[],
@@ -726,42 +693,4 @@ function writeAt(
   else next[head] = child;
 
   return next;
-}
-
-function SecretField({
-  defaultValue,
-  placeholder,
-  onCommit,
-}: {
-  defaultValue: string;
-  placeholder?: string;
-  onCommit: (v: string) => void;
-}): React.JSX.Element {
-  const [show, setShow] = useState(false);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type={show ? "text" : "password"}
-        defaultValue={defaultValue}
-        key={defaultValue}
-        placeholder={placeholder ?? "${ENV_NAME} or literal"}
-        className="h-7 flex-1 font-mono text-2xs"
-        onBlur={(e) => onCommit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onCommit((e.target as HTMLInputElement).value);
-        }}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        type="button"
-        className="cursor-pointer"
-        onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide" : "Show"}
-      >
-        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </Button>
-    </div>
-  );
 }

@@ -4,8 +4,7 @@ export const discord = defineDiscordConnection({
   allowedChannelIds: ["*"],
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
-  // Set this and the agent answers only when it is tagged; everything else in
-  // the channel is stored as context. Leave it out and it answers everything.
+  // With this set the agent answers only when tagged; other messages are kept as context.
   botUserId: env("DISCORD_BOT_USER_ID"),
 });
 

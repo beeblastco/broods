@@ -83,7 +83,7 @@ What does not:
 
 - No typing indicator and no reactions. Google Chat has no typing API, and an app reacts only with a user's credentials.
 - No outbound files. `send-files` posts links as text.
-- No cards, buttons or streaming. The reply goes out once the turn ends.
+- No cards, buttons or streaming. The reply goes out once the turn ends, in pieces of at most 8000 characters to stay under the 32,000-byte message limit.
 - No Pub/Sub delivery, so the app cannot read every message in a space.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

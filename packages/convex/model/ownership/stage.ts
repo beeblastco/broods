@@ -2,7 +2,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { defaultStage } from "../defaultStage";
 import type { OrgRole } from "./org";
-import { getProjectForRole } from "./project";
+import { getProjectForRole, getProjectForWrite } from "./project";
 
 export async function getOwnedStage(
   ctx: QueryCtx | MutationCtx,
@@ -24,11 +24,21 @@ export async function getOwnedStage(
   return stage;
 }
 
-/**
- * A stage of `projectId` the caller can read: `stageId` when given, else the
- * project's default stage. Null on any miss, so a reactive subscriber holding
- * a just-deleted project or stage gets an empty answer instead of a throw.
- */
+export async function getStageForWrite(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  stageId: Id<"stages">,
+  requiredRole?: OrgRole,
+): Promise<Doc<"stages"> | null> {
+  const stage = await ctx.db.get(stageId);
+  if (!stage) return null;
+
+  return (await getProjectForWrite(ctx, authId, stage.projectId, requiredRole))
+    ? stage
+    : null;
+}
+
+// Null on any miss: a subscriber holding a just-deleted project or stage must not throw.
 export async function getProjectStage(
   ctx: QueryCtx | MutationCtx,
   authId: string,

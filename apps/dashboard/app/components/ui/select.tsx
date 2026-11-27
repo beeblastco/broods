@@ -48,8 +48,7 @@ interface SelectScrollButtonProps {
   className?: string;
 }
 
-// Root.Props is generic over <Value, Multiple>, which a wrapper function cannot
-// forward without losing inference — re-export the primitive directly.
+// Root is generic over <Value, Multiple>: a wrapper function would lose the inference.
 const Select = SelectPrimitive.Root;
 
 function SelectGroup({ ...props }: SelectPrimitive.Group.Props) {
@@ -71,7 +70,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "border-input data-placeholder:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 dark:hover:bg-input/50 flex w-fit cursor-pointer items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-disabled:cursor-not-allowed data-disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "border-input data-placeholder:text-muted-foreground [&_svg:not([class*='text-'])]:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:bg-input/30 dark:hover:bg-input/50 flex w-fit cursor-pointer items-center justify-between gap-2 rounded-md border bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] focus-visible:outline-hidden focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-disabled:cursor-not-allowed data-disabled:opacity-50 data-[size=default]:h-9 data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}
@@ -91,8 +90,7 @@ function SelectContent({
   alignOffset,
   side,
   sideOffset = 4,
-  // Overlay mode (true) clips the popup mid-list when the selected item can't
-  // line up with the trigger; drop below the trigger like the other menus.
+  // Overlay mode clips the popup mid-list when the selected item can't line up.
   alignItemWithTrigger = false,
   ...props
 }: SelectContentProps) {
@@ -104,16 +102,13 @@ function SelectContent({
         side={side}
         sideOffset={sideOffset}
         alignItemWithTrigger={alignItemWithTrigger}
-        // Base UI transforms the positioner, so it is the stacking context the
-        // page sees; a z-index on the popup inside it cannot lift the popup
-        // over page chrome. The Monitoring table's sticky z-10 head covered
-        // and swallowed clicks on whichever option it overlapped.
+        // Base UI transforms the positioner, making it the stacking context: z-index goes here.
         className="isolate z-50"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"
           className={cn(
-            "bg-popover text-popover-foreground relative isolate min-w-[max(8rem,var(--anchor-width))] origin-(--transform-origin) rounded-md border shadow-md transition-[transform,opacity] duration-150 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0",
+            "bg-popover text-popover-foreground relative isolate min-w-[max(8rem,var(--anchor-width))] origin-(--transform-origin) rounded-md border shadow-md motion-pop",
             className,
           )}
           {...props}
@@ -180,8 +175,7 @@ function SelectScrollUpButton({ className }: SelectScrollButtonProps) {
   return (
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
-      // Base UI lays the arrow over the list, so a solid background would hide
-      // the first row behind it; fade it instead.
+      // Base UI lays the arrow over the list: a solid background would hide the first row.
       className={cn(
         "top-0 flex w-full cursor-pointer items-center justify-center bg-linear-to-b from-popover to-popover/0 py-1",
         className,

@@ -2,8 +2,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { BroodsSyncClient } from "../../../packages/broods/src/sync.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import {
+  OK_AGENT,
   MODEL_KEY_HINT,
   assertStep,
   connectMachine,
@@ -11,13 +13,6 @@ import {
   type VerifyContext,
 } from "../harness.ts";
 
-/**
- * An agent with `browser` on a sandbox without Obscura fails the run at tool
- * assembly with the change to make, before any model or AWS call. With a
- * model key, browse on this computer as a machine sandbox runs Obscura with
- * the sandbox's OBSCURA_ALLOW_PRIVATE_NETWORK unset; a stand-in `obscura`
- * reports what it saw, so no browser is needed.
- */
 export async function browserSandbox(context: VerifyContext): Promise<void> {
   const key = `browser-${context.runId}`;
   const sandbox = await context.account.createSandbox({
@@ -28,7 +23,7 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
     name: key,
     config: {
       ...context.model,
-      instructions: "Reply with the single word OK.",
+      agent: OK_AGENT,
       sandboxes: [sandbox.sandboxId],
       browser: { enabled: true },
     },
@@ -49,6 +44,44 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
       (status.error ?? "").includes('image: "obscura"'),
     JSON.stringify(status),
   );
+  const synced = await new BroodsSyncClient({
+    baseUrl: context.edgeUrl,
+    token: context.accountSecret,
+  })
+    .putManifest(
+      {
+        version: 1,
+        project: key,
+        stage: "development",
+        resources: [
+          {
+            kind: "sandbox",
+            name: "web",
+            config: { provider: "lambda", network: { mode: "allow-all" } },
+          },
+          {
+            kind: "agent",
+            name: "web",
+            config: {
+              model: context.model.model,
+              agent: OK_AGENT,
+              sandboxes: ["web"],
+              browser: { enabled: true },
+            },
+          },
+        ],
+      },
+      true,
+    )
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "a manifest pairing browser with a sandbox without obscura is refused at sync",
+    synced.includes('image: "obscura"'),
+    synced,
+  );
 
   if (!context.hasModelKey) {
     console.log(`  skip browse on this machine (${MODEL_KEY_HINT})`);
@@ -57,8 +90,7 @@ export async function browserSandbox(context: VerifyContext): Promise<void> {
   await browseKeepsPrivateNetworkGuard(context, `${key}-machine`);
 }
 
-// browse on a machine sandbox whose env vars turn Obscura's private-network
-// guard off: the stand-in obscura must not see that variable.
+// A stand-in obscura echoes the guard variable it sees, so no browser is needed.
 async function browseKeepsPrivateNetworkGuard(
   context: VerifyContext,
   name: string,
@@ -85,8 +117,10 @@ async function browseKeepsPrivateNetworkGuard(
       name: name,
       config: {
         ...context.model,
-        instructions:
-          "Call the browse tool once with url http://10.0.0.1/ and mode text, then reply with exactly the text it returned and nothing else.",
+        agent: {
+          system:
+            "Call the browse tool once with url http://10.0.0.1/ and mode text, then reply with exactly the text it returned and nothing else.",
+        },
         sandboxes: [machine.sandboxId],
         browser: { enabled: true },
       },

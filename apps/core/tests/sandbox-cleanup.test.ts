@@ -1,12 +1,4 @@
-/**
- * The sweeper's release path. The reservation row is taken first, conditional on
- * the id and deadline the sweeper read, so a run that reconnected in between keeps
- * its machine; only then is the provider teardown attempted, and the mirror row
- * dropped for that same id. Module mocks mirror the executor suite's shapes,
- * because bun's mock.module is process-wide; storage goes through its own test
- * seam instead.
- */
-
+import * as realMicrovms from "@aws-sdk/client-lambda-microvms";
 import { afterAll, beforeEach, expect, it, mock } from "bun:test";
 import type { SandboxReleaseTarget } from "../src/harness/sandbox/types.ts";
 import type { SandboxConfigRecord } from "../src/shared/domain/sandbox-config.ts";
@@ -18,6 +10,8 @@ const PLATFORM_ROW: SandboxReleaseTarget["instance"] = {
 let accountConfigs: SandboxConfigRecord[] = [];
 let instanceRow: SandboxReleaseTarget["instance"] = PLATFORM_ROW;
 let reservedProvider = "e2b";
+// A second provider's reservation on the same key, as after a provider switch.
+let alsoReserved: { provider: string; externalId: string } | undefined;
 let lookupError: Error | undefined;
 
 const e2bKillMock = mock(
@@ -29,6 +23,7 @@ const claimSandboxInstanceMock = mock(
     _key: string,
     _externalId: string,
     _accountId: string | undefined,
+    _ttlSeconds?: number,
   ): Promise<boolean> => true,
 );
 const deleteSandboxInstanceMock = mock(
@@ -54,7 +49,6 @@ const removeSandboxInstanceMock = mock(
 const microvmSendMock = mock(
   async (_command: { input: { microvmIdentifier?: string } }) => ({}),
 );
-// The executor builds one command per call; only the terminate is sent here.
 class TerminateMicrovmCommand {
   input: { microvmIdentifier?: string };
   constructor(input: { microvmIdentifier?: string }) {
@@ -62,7 +56,10 @@ class TerminateMicrovmCommand {
   }
 }
 
+// bun's mock.module is process-wide, so these mocks keep the executor suite's shapes.
+// Spread the real module: a missing export the executor imports fails the import.
 await mock.module("@aws-sdk/client-lambda-microvms", () => ({
+  ...realMicrovms,
   LambdaMicrovms: class {
     send = microvmSendMock;
   },
@@ -81,8 +78,6 @@ await mock.module("e2b", () => ({
     kill: e2bKillMock,
   },
 }));
-// The reserved id is the one passed, or "sbx-live" for the one provider that
-// holds a machine.
 const getSandboxReleaseTargetMock = mock(
   async (
     _accountId: string,
@@ -91,6 +86,9 @@ const getSandboxReleaseTargetMock = mock(
     externalId?: string,
   ): Promise<SandboxReleaseTarget> => {
     if (lookupError) throw lookupError;
+    if (provider === alsoReserved?.provider) {
+      return { externalId: alsoReserved.externalId, instance: instanceRow };
+    }
     if (provider !== reservedProvider) {
       return { externalId: null, instance: null };
     }
@@ -132,6 +130,7 @@ beforeEach(() => {
   instanceRow = PLATFORM_ROW;
   reservedProvider = "e2b";
   lookupError = undefined;
+  alsoReserved = undefined;
   e2bKillMock.mockReset();
   claimSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
@@ -139,7 +138,7 @@ beforeEach(() => {
 });
 
 it("takes the row for the id it read before the teardown, and drops the mirror only once the provider confirmed", async () => {
-  // Fails through the config and the platform's credentials alike.
+  // sbx-a fails through the config's and the platform's credentials alike.
   e2bKillMock.mockImplementation(async (sandboxId: string) => {
     if (sandboxId === "sbx-a") throw new Error("connection reset");
   });
@@ -149,8 +148,7 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
   ]);
 
   expect(released.map((r) => r.reservationKey)).toEqual(["key-b"]);
-  // The executor's own row delete inside release carries no account and is a
-  // no-op; the sweeper's take is the one with the expiry condition.
+  // Only the sweeper's take carries the expiry condition; release's own delete is a no-op.
   expect(
     deleteSandboxInstanceMock.mock.calls.filter((c) => c[4] === true),
   ).toEqual([
@@ -162,14 +160,82 @@ it("takes the row for the id it read before the teardown, and drops the mirror o
     "sbx-a",
     "sbx-b",
   ]);
-  // The mirror row is what keeps a failed teardown reachable for the next sweep,
-  // so only the confirmed one goes, and only while it still names that machine.
+  // The mirror row keeps a failed teardown reachable for the next sweep.
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
     ["acct-1", "key-b", "sbx-b"],
   ]);
-  // The failed one gets its row back, so the sweeper can defer the retry.
   expect(claimSandboxInstanceMock.mock.calls).toEqual([
     ["e2b", "key-a", "sbx-a", "acct-1"],
+  ]);
+});
+
+it("keeps a machine reserved for the sweeper when a run took its key during a failed teardown", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => false);
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-new");
+  const released = await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "key-a",
+      externalId: "sbx-a",
+      ttlSeconds: 3600,
+    },
+  ]);
+
+  expect(released).toEqual([]);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "key-a", "sbx-a", "acct-1", 3600],
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
+  ]);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("adds no second reservation when a hand-back that threw had landed", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  getSandboxExternalIdMock.mockImplementationOnce(async () => "sbx-a");
+  await releaseExpiredSandboxes("acct-1", [
+    { provider: "e2b", reservationKey: "key-a", externalId: "sbx-a" },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls.map((c) => c[1])).toEqual([
+    "key-a",
+  ]);
+});
+
+it("keeps a machine reserved for the sweeper when a released key's teardown fails", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-live", "sbx-live", "acct-1", 60],
+  ]);
+});
+
+it("re-reserves a kept machine whose retried teardown fails again with the same short lifetime", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  await releaseExpiredSandboxes("acct-1", [
+    {
+      provider: "e2b",
+      reservationKey: "teardown:sbx-a",
+      externalId: "sbx-a",
+      ttlSeconds: 60,
+    },
+  ]);
+
+  expect(claimSandboxInstanceMock.mock.calls).toEqual([
+    ["e2b", "teardown:sbx-a", "sbx-a", "acct-1", 60],
   ]);
 });
 
@@ -184,8 +250,7 @@ it("leaves a machine alone when a run refreshed its reservation since the listin
   expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 });
 
-// Turning `persistent` off or switching provider leaves the machine where it
-// was, so the release follows the provider the reservation names.
+// The release follows the provider the reservation names, not the current config.
 it("releases through a config that is no longer persistent", async () => {
   accountConfigs = [record("cfg-e2b", { provider: "e2b", persistent: false })];
   const released = await releaseExpiredSandboxes("acct-1", [
@@ -208,8 +273,7 @@ it("falls back to the platform's credentials after a provider switch", async () 
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-a"]);
 });
 
-// A release reads a 404 as "already gone", so another account's credentials
-// would drop a live machine's rows.
+// A release reads a 404 as gone, so another account's credentials would drop live rows.
 it("releases a tenant's machine only through the config that reserved it", async () => {
   instanceRow = { ownCredentials: true, sandboxConfigId: "cfg-mine" };
   accountConfigs = [
@@ -253,7 +317,6 @@ it("keeps to the account's configs when no instance row says whose machine it is
   expect(e2bKillMock).not.toHaveBeenCalled();
 });
 
-// A MicroVM only ever runs on the platform's AWS role, so it needs no row to say so.
 it("releases a MicroVM through the platform's credentials with no instance row", async () => {
   instanceRow = null;
   reservedProvider = "lambda";
@@ -269,9 +332,7 @@ it("releases a MicroVM through the platform's credentials with no instance row",
   ).toEqual(["mvm-a"]);
 });
 
-// Account delete disables the account before it releases, and Convex refuses a
-// row take on a disabled account. The machine goes down anyway, by the id the
-// stored row names; the cascade drops the row.
+// Account delete disables the account first, so Convex refuses the row take: tear down anyway.
 it("tears down a live reservation when the row take is refused", async () => {
   deleteSandboxInstanceMock.mockImplementation(async (): Promise<boolean> => {
     throw new Error("Account is not active: acct-1");
@@ -285,7 +346,20 @@ it("tears down a live reservation when the row take is refused", async () => {
   expect(released).toBe(1);
   expect(e2bKillMock.mock.calls.map((c) => c[0])).toEqual(["sbx-live"]);
   expect(removeSandboxInstanceMock.mock.calls).toEqual([
-    ["acct-1", "key-live", undefined],
+    ["acct-1", "key-live", "sbx-live"],
+  ]);
+});
+
+// One row per key: either provider's machine may be the one it names.
+it("removes the row for each machine it released under one key", async () => {
+  alsoReserved = { provider: "lambda", externalId: "microvm-old" };
+
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(2);
+  expect(removeSandboxInstanceMock.mock.calls).toEqual([
+    ["acct-1", "key-live", "microvm-old"],
+    ["acct-1", "key-live", "sbx-live"],
   ]);
 });
 
@@ -306,15 +380,29 @@ it("hands the reservation back when the executor cannot be built", async () => {
   ]);
 });
 
-it("still drops the rows when the reservation lookup fails", async () => {
+it("keeps the reservation and the row when the reservation lookup fails", async () => {
   lookupError = new Error("convex unavailable");
   const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
 
   expect(released).toBe(0);
   expect(e2bKillMock).not.toHaveBeenCalled();
-  expect(removeSandboxInstanceMock.mock.calls).toEqual([
-    ["acct-1", "key-live", undefined],
-  ]);
+  expect(deleteSandboxInstanceMock.mock.calls.map((c) => c[0])).not.toContain(
+    "e2b",
+  );
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+});
+
+it("keeps the row of a released key whose teardown failed and could not be re-reserved", async () => {
+  e2bKillMock.mockImplementation(async () => {
+    throw new Error("connection reset");
+  });
+  claimSandboxInstanceMock.mockImplementationOnce(async () => {
+    throw new Error("socket hang up");
+  });
+  const released = await releaseReservedSandboxes("acct-1", ["key-live"]);
+
+  expect(released).toBe(0);
+  expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
 });
 
 function record(

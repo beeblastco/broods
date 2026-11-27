@@ -1,11 +1,10 @@
-/**
- * Example: streaming direct API skill usage via declarative broods resources.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.skillAgent, {
   input: "Hello",

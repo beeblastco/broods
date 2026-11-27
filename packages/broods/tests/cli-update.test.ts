@@ -2,19 +2,18 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { isNewerVersion, updateTarget } from "../src/cli/update.ts";
+import {
+  isInstalledPackage,
+  isNewerVersion,
+  updateTarget,
+} from "../src/cli/update.ts";
 
 const tempDirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of tempDirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
-
-/**
- * `broods update` and the notice on `broods dev` both hang off this comparison,
- * so an off-by-one here either nags on every sync or never offers the upgrade.
- */
 
 test.each([
   ["0.15.2", "0.15.1", true],
@@ -23,21 +22,18 @@ test.each([
   ["0.15.1", "0.15.1", false],
   ["0.15.0", "0.15.1", false],
   ["0.9.0", "0.10.0", false],
-])("isNewerVersion(%s, %s) is %s", (candidate, current, expected) => {
+])("isNewerVersion(%s, %s) is %s", (candidate, current, expected): void => {
   expect(isNewerVersion(candidate, current)).toBe(expected);
 });
 
-// `broods@latest` upgrades you off an rc but never onto one, so the rc is only
-// ever the side that loses.
-test("a stable release beats the prerelease of the same version", () => {
+test("a stable release beats the prerelease of the same version", (): void => {
   expect(isNewerVersion("0.15.1", "0.15.1-rc.1")).toBe(true);
   expect(isNewerVersion("0.15.1-rc.1", "0.15.1")).toBe(false);
   expect(isNewerVersion("v0.16.0-rc.1", "0.15.1")).toBe(true);
 });
 
-// The suite runs from a checkout, so this copy reads as a project dependency,
-// the case where `-g` would install a second copy somewhere else entirely.
-test("a copy inside the project upgrades the dependency, not a global", () => {
+// Run from a checkout, this copy is a project dependency.
+test("a copy inside the project upgrades the dependency, not a global", (): void => {
   const target = updateTarget();
 
   expect(target.global).toBe(false);
@@ -45,11 +41,7 @@ test("a copy inside the project upgrades the dependency, not a global", () => {
   expect(target.args.at(-1)).toMatch(/^broods@\d+$/);
 });
 
-// A workspace runs the root-installed CLI from its own directory, which is not
-// the directory the install lives in. Reading the project root off the caller
-// instead of off `node_modules` would call that a global and install a second
-// copy on the PATH.
-test("a workspace still upgrades the root dependency", () => {
+test("a workspace still upgrades the root dependency", (): void => {
   const target = updateTarget(
     join(sep, "repo", "apps", "foo"),
     join(sep, "repo", "node_modules", "broods", "dist", "cli", "index.js"),
@@ -90,7 +82,7 @@ test.each([
     ),
     "npm",
   ],
-])("%s replaces itself in place", (_label, self, manager) => {
+])("%s replaces itself in place", (_label, self, manager): void => {
   const target = updateTarget(join(sep, "somewhere", "else"), self);
 
   expect(target.global).toBe(true);
@@ -98,8 +90,7 @@ test.each([
   expect(target.args).toContain("-g");
 });
 
-// `broods@latest` crossed majors, so a 1.0 would have landed on a 0.x project.
-test("the install stays on the running major", () => {
+test("the install stays on the running major", (): void => {
   const target = updateTarget(
     join(sep, "somewhere", "else"),
     join(
@@ -123,21 +114,30 @@ test.each([
   ["yarn.lock", "yarn", ["add", "broods@1"]],
   ["bun.lock", "bun", ["add", "broods@1"]],
   ["package-lock.json", "npm", ["install", "broods@1"]],
-])("a project with %s upgrades through %s", async (lockfile, manager, args) => {
-  const root = await mkdtemp(join(tmpdir(), "broods-update-"));
-  tempDirs.push(root);
-  await writeFile(join(root, lockfile), "", "utf8");
-  const self = join(root, "node_modules", "broods", "dist", "cli", "index.js");
+])(
+  "a project with %s upgrades through %s",
+  async (lockfile, manager, args): Promise<void> => {
+    const root = await mkdtemp(join(tmpdir(), "broods-update-"));
+    tempDirs.push(root);
+    await writeFile(join(root, lockfile), "", "utf8");
+    const self = join(
+      root,
+      "node_modules",
+      "broods",
+      "dist",
+      "cli",
+      "index.js",
+    );
 
-  const target = updateTarget(root, self, "1.4.0");
+    const target = updateTarget(root, self, "1.4.0");
 
-  expect(target.manager).toBe(manager);
-  expect(target.args).toEqual(args);
-});
+    expect(target.manager).toBe(manager);
+    expect(target.args).toEqual(args);
+  },
+);
 
-// pnpm and bun's isolated linker run the CLI from their store, which holds a
-// second `node_modules`. Reading the root off that one called it a global.
-test("a copy in pnpm's store upgrades the project through pnpm", async () => {
+// pnpm and bun's isolated linker run the CLI from a store with its own `node_modules`.
+test("a copy in pnpm's store upgrades the project through pnpm", async (): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "broods-update-"));
   tempDirs.push(root);
   await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
@@ -159,9 +159,8 @@ test("a copy in pnpm's store upgrades the project through pnpm", async () => {
   expect(target.args).toEqual(["add", "broods@1"]);
 });
 
-// A workspace child running the root CLI must not add broods to its own
-// manifest, and pnpm refuses a workspace-root add without `-w`.
-test("a pnpm workspace updates the root dependency from the root", async () => {
+// pnpm refuses a workspace-root add without `-w`.
+test("a pnpm workspace updates the root dependency from the root", async (): Promise<void> => {
   const root = await mkdtemp(join(tmpdir(), "broods-update-"));
   tempDirs.push(root);
   await writeFile(join(root, "pnpm-lock.yaml"), "", "utf8");
@@ -172,4 +171,17 @@ test("a pnpm workspace updates the root dependency from the root", async () => {
 
   expect(target.cwd).toBe(root);
   expect(target.args).toEqual(["add", "-w", "broods@1"]);
+});
+
+test("only an installed copy, not a monorepo build, counts as a release", (): void => {
+  expect(
+    isInstalledPackage(
+      join(sep, "app", "node_modules", "broods", "dist", "cli", "index.js"),
+    ),
+  ).toBe(true);
+  expect(
+    isInstalledPackage(
+      join(sep, "repo", "packages", "broods", "dist", "cli", "index.js"),
+    ),
+  ).toBe(false);
 });

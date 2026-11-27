@@ -22,6 +22,7 @@ import {
   ResizablePanelGroup,
 } from "@/app/components/ui/resizable";
 import { Switch } from "@/app/components/ui/switch";
+import { SUSPEND_SANDBOX_PROVIDERS } from "@broods/convex/model/sandboxProviders";
 import { Who } from "@/app/components/Who";
 import { useListState } from "@/app/hooks/useListState";
 import { useNow } from "@/app/hooks/useNow";
@@ -43,7 +44,14 @@ import { useQueryState } from "nuqs";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MachinePanel } from "./MachinePanel";
-import { type DockTab, SandboxDock } from "./SandboxDock";
+import {
+  closeDockSession,
+  type DockState,
+  openDockSession,
+  openDockShell,
+  pruneDock,
+} from "./dockSessions";
+import { SandboxDock } from "./SandboxDock";
 import { SandboxInstancePanel } from "./SandboxInstancePanel";
 import {
   controllable,
@@ -56,23 +64,18 @@ import {
 } from "./sandboxFormat";
 import type { SandboxObservabilityScope } from "./SandboxLogTail";
 
-// The `field:value` tokens the search box understands.
 const QUERY_FIELDS = ["provider", "status", "agent"] as const;
 
-// Rows shown before the footer offers more; the live query holds them all.
 const PAGE_SIZE = 50;
 
-// Eight columns of short text; below this the detail panel would wrap them.
-const TABLE_MIN_WIDTH = 760;
+// Below this the detail panel would wrap the nine columns.
+const TABLE_MIN_WIDTH = 840;
 
-// How often the visible rows re-sync their status from the provider.
 const REFRESH_EVERY_MS = 60_000;
 
-// The dock's height when it opens, and the least it can be dragged to.
 const DOCK_DEFAULT_HEIGHT = 300;
 const DOCK_MIN_HEIGHT = 160;
 
-// The open row's id, in `?sel=` so a link opens it; it only picks among rows already loaded.
 const ROW_ID = parseAsId<"machineConnections" | "sandboxInstances">();
 
 type Instance = Doc<"sandboxInstances">;
@@ -88,7 +91,6 @@ type Column =
   | "created"
   | "running";
 
-/** One row of the table: a connected computer, or a cloud instance, with the facts the list sorts and filters by derived once. */
 type TableRow =
   | {
       kind: "machine";
@@ -103,15 +105,8 @@ type TableRow =
       id: Id<"sandboxInstances">;
       instance: Instance;
       status: string;
-      /** The agent it ran, when that agent still exists in the project. */
       agent: Agent | null;
     };
-
-/** The dock under the table: which instance it shows and on which tab. */
-interface Dock {
-  id: Id<"sandboxInstances">;
-  tab: DockTab;
-}
 
 const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
   name: (row) =>
@@ -133,25 +128,13 @@ const SORT_KEY: Record<Column, (row: TableRow) => SortKey> = {
 
 interface Props {
   instances: Instance[];
-  /** The stage's computers that connected through `broods machine`. */
   machines: MachineConnection[];
-  /** The project's agents, so an instance's agent reads as a name. */
   agents: Agent[];
-  /** The account's snapshots, so an instance's snapshot reads as a name. */
   snapshots: Doc<"sandboxSnapshots">[];
-  /** Builds the trace deep links. */
   projectId: Id<"projects">;
-  /** Stage-scoped observability WS inputs, handed to the dock's Logs tab. */
   observability: SandboxObservabilityScope | null;
 }
 
-/**
- * The stage's sandboxes and computers as one list, laid out like Monitoring:
- * a search box, a flush table whose headers sort on click, a running switch,
- * a detail panel for the selected row, and a dock under it all for the
- * selected instance's shell and logs. The visible instances refresh from the
- * provider on their own as they scroll in.
- */
 export function SandboxInstancesTable({
   instances,
   machines,
@@ -166,22 +149,20 @@ export function SandboxInstancesTable({
   const refresh = useAction(api.sandbox.public.refreshSandbox);
   const now = useNow();
 
-  // Only the id is held, so the open panel follows the live row instead of a
-  // stale copy once a refresh or suspend moves its status.
+  // Only the id: the open panel follows the live row, not a stale copy.
   const [selectedId, setSelectedId] = useQueryState("sel", ROW_ID);
-  const [dock, setDock] = useState<Dock | null>(null);
-  // A click on the open row closes its panel.
+  const [rawDock, setDock] = useState<DockState | null>(null);
+  const [dockHidden, setDockHidden] = useState(false);
+  const dockOpener = useRef<HTMLElement | null>(null);
   const select = (id: TableRow["id"]): void => {
     void setSelectedId(selectedId === id ? null : id);
   };
   const [confirming, setConfirming] = useState<Instance | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const lastRefresh = useRef<string | null>(null);
 
-  // Computers and instances filter and sort as one list, so the count under
-  // the table matches what is on screen.
   const rows = useMemo((): TableRow[] => {
     const agentById = new Map<string, Agent>(
       agents.map((agent) => [agent._id, agent]),
@@ -222,19 +203,17 @@ export function SandboxInstancesTable({
   });
   const visible = list.shown.slice(0, visibleCount);
   const selected = rows.find((row) => row.id === selectedId) ?? null;
-  // The dock follows the live instance too, and is closed once the row is gone.
-  const docked = dock
-    ? instances.find((instance) => instance._id === dock.id)
-    : undefined;
-  const dockOpen = docked !== undefined;
+  const dock = pruneDock(rawDock, instances);
+  const shellCount = (id: Id<"sandboxInstances">): number =>
+    dock?.sessions.filter(
+      (session) => session.instanceId === id && session.kind === "shell",
+    ).length ?? 0;
   const visibleInstances = useMemo(
     () =>
       visible.flatMap((row) => (row.kind === "instance" ? [row.instance] : [])),
     [visible],
   );
-  // The rows on screen plus the clock's minute, so a new row and a new
-  // minute each trigger one sync. Null before the stage deploys, when no
-  // instance has a provider to ask (and in the gallery fixture).
+  // A new visible row or a new minute each trigger one sync; null before the stage deploys.
   const refreshKey =
     observability === null
       ? null
@@ -263,27 +242,45 @@ export function SandboxInstancesTable({
     ]),
   };
 
-  // The backtick toggles the dock for the selected instance, like an
-  // editor's terminal; with the dock open it closes it whatever is selected.
+  const showDock = (next: DockState): void => {
+    if (
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body
+    ) {
+      dockOpener.current = document.activeElement;
+    }
+    setDock(next);
+    setDockHidden(false);
+  };
+
+  // Focus inside the dock goes back to its opener rather than dropping to the page.
+  const hideDock = (): void => {
+    const focusInDock =
+      document.activeElement?.closest("[data-sandbox-dock]") != null;
+    setDockHidden(true);
+    if (focusInDock && dockOpener.current?.isConnected) {
+      dockOpener.current.focus();
+    }
+  };
+
   useShortcut("sandbox.terminal", () => {
-    if (dockOpen) {
-      setDock(null);
+    if (dock) {
+      if (dockHidden) setDockHidden(false);
+      else hideDock();
     } else if (
       selected?.kind === "instance" &&
       controllable(selected.instance)
     ) {
-      setDock({ id: selected.id, tab: "terminal" });
+      showDock(openDockSession(null, selected.id, "shell"));
     }
   });
 
-  // Resuming is cheap and reversible, so it runs straight from the toggle; suspending
-  // discards the instance's live state and goes through `confirming` first.
   async function toggle(
     instance: Instance,
     nextRunning: boolean,
   ): Promise<void> {
     if (!controllable(instance)) return;
-    setPendingId(instance._id);
+    setPendingIds((ids) => new Set(ids).add(instance._id));
     setError(null);
     try {
       const args = {
@@ -295,12 +292,16 @@ export function SandboxInstancesTable({
     } catch (err) {
       setError(toErrorMessage(err));
     } finally {
-      setPendingId(null);
+      setPendingIds((ids) => {
+        const next = new Set(ids);
+        next.delete(instance._id);
+
+        return next;
+      });
     }
   }
 
-  // A background sync; the rows keep their last known status when the
-  // provider does not answer, so a failure here has nothing to tell the user.
+  // Rows keep their last status when the provider does not answer: nothing to report.
   const refreshVisible = useCallback(async (): Promise<void> => {
     const targets = visibleInstances.filter(controllable);
     if (targets.length === 0) return;
@@ -314,6 +315,7 @@ export function SandboxInstancesTable({
     );
   }, [visibleInstances, refresh]);
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- provider status sync via Convex
   useEffect(() => {
     if (refreshKey === null || lastRefresh.current === refreshKey) return;
     lastRefresh.current = refreshKey;
@@ -347,7 +349,6 @@ export function SandboxInstancesTable({
         />
       </Toolbar>
 
-      {/* The dock opens as a second panel under the list; the list stays mounted. */}
       <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1">
         <ResizablePanel
           minSize={DOCK_MIN_HEIGHT}
@@ -363,7 +364,9 @@ export function SandboxInstancesTable({
                   instance={selected.instance}
                   snapshots={snapshots}
                   projectId={projectId}
-                  onOpenDock={(tab) => setDock({ id: selected.id, tab: tab })}
+                  onOpenDock={(kind) =>
+                    showDock(openDockSession(dock, selected.id, kind))
+                  }
                   onClose={() => setSelectedId(null)}
                 />
               ) : (
@@ -402,6 +405,7 @@ export function SandboxInstancesTable({
                   <DataTableHead sort={list.sortFor("created")}>
                     Created
                   </DataTableHead>
+                  <DataTableHead align="right">Terminals</DataTableHead>
                   <DataTableHead align="right" sort={list.sortFor("running")}>
                     Running
                   </DataTableHead>
@@ -424,7 +428,8 @@ export function SandboxInstancesTable({
                       projectId={projectId}
                       now={now}
                       selected={selectedId === row.id}
-                      canToggle={canWrite && pendingId !== row.id}
+                      shells={shellCount(row.id)}
+                      canToggle={canWrite && !pendingIds.has(row.id)}
                       onSelect={() => select(row.id)}
                       onToggle={(next) =>
                         next
@@ -451,22 +456,31 @@ export function SandboxInstancesTable({
             )}
           </DetailSplit>
         </ResizablePanel>
-        {dock && dockOpen && (
+        {dock && (
           <>
-            <ResizableHandle className="cursor-row-resize" />
+            <ResizableHandle className={dockHidden ? "hidden" : undefined} />
             <ResizablePanel
               defaultSize={DOCK_DEFAULT_HEIGHT}
               minSize={DOCK_MIN_HEIGHT}
-              className="flex min-h-0 flex-col"
+              className={dockHidden ? "hidden" : "flex min-h-0 flex-col"}
             >
               <SandboxDock
-                key={docked._id}
-                instance={docked}
+                state={dock}
+                instances={instances}
                 projectId={projectId}
                 observability={observability}
-                tab={dock.tab}
-                onTab={(tab) => setDock({ id: dock.id, tab: tab })}
-                onClose={() => setDock(null)}
+                onActivate={(key) => setDock({ ...dock, active: key })}
+                onNewShell={(instanceId) =>
+                  setDock(openDockShell(dock, instanceId))
+                }
+                onCloseSession={(key) => {
+                  const next = closeDockSession(dock, key);
+                  setDock(next);
+                  if (!next && dockOpener.current?.isConnected) {
+                    dockOpener.current.focus();
+                  }
+                }}
+                onHide={hideDock}
               />
             </ResizablePanel>
           </>
@@ -474,7 +488,9 @@ export function SandboxInstancesTable({
       </ResizablePanelGroup>
 
       {error && !confirming && (
-        <p className="px-3 py-2 text-xs text-destructive">{error}</p>
+        <p role="alert" className="px-3 py-2 text-xs text-destructive">
+          {error}
+        </p>
       )}
 
       {confirming && (
@@ -482,7 +498,7 @@ export function SandboxInstancesTable({
           title={`Suspend ${confirming.name}?`}
           description="Suspending frees the sandbox's compute. Running processes stop, anything in flight on it is dropped, and it comes back reset. Files on the workspace disk are kept."
           verb="Suspend"
-          pending={pendingId === confirming._id}
+          pending={pendingIds.has(confirming._id)}
           error={error}
           onConfirm={() => toggle(confirming, false)}
           onClose={() => setConfirming(null)}
@@ -492,12 +508,12 @@ export function SandboxInstancesTable({
   );
 }
 
-/** A cloud instance: its facts, a trace link on hover, and the running switch. */
 function InstanceRow({
   row,
   projectId,
   now,
   selected,
+  shells,
   canToggle,
   onSelect,
   onToggle,
@@ -506,6 +522,7 @@ function InstanceRow({
   projectId: Id<"projects">;
   now: number;
   selected: boolean;
+  shells: number;
   canToggle: boolean;
   onSelect: () => void;
   onToggle: (next: boolean) => void;
@@ -513,8 +530,10 @@ function InstanceRow({
   const searchParams = useSearchParams();
   const { instance, agent } = row;
   const running = instance.status === "running";
+  const suspendable = SUSPEND_SANDBOX_PROVIDERS.has(instance.provider);
   const toggleable =
     canToggle &&
+    suspendable &&
     controllable(instance) &&
     (instance.status === "running" || instance.status === "suspended");
   const traceId = instance.lastUsedTraceId ?? instance.createdByTraceId;
@@ -582,20 +601,31 @@ function InstanceRow({
       <DataTableCell muted className="tabular-nums">
         {relativeTime(instance.createdAt, now)}
       </DataTableCell>
-      <DataTableCell align="right" onClick={(event) => event.stopPropagation()}>
+      <DataTableCell align="right" muted className="tabular-nums">
+        {shells > 0 ? shells : "—"}
+      </DataTableCell>
+      <DataTableCell
+        align="right"
+        className={suspendable ? undefined : "cursor-help"}
+        title={
+          suspendable
+            ? undefined
+            : `${formatProvider(instance.provider)} sandboxes can't be suspended. They stop after their idle window; Terminate stops one now.`
+        }
+        onClick={(event) => event.stopPropagation()}
+      >
         <Switch
           checked={running}
           disabled={!toggleable}
-          className="cursor-pointer"
+          className={toggleable ? "cursor-pointer" : "cursor-not-allowed"}
           onCheckedChange={onToggle}
-          aria-label={running ? "Suspend" : "Resume"}
+          aria-label={`${instance.name} running`}
         />
       </DataTableCell>
     </DataTableRow>
   );
 }
 
-/** A computer: its reported size and when it was seen; it has no agent, trace or switch. */
 function MachineRow({
   row,
   now,
@@ -631,11 +661,13 @@ function MachineRow({
       <DataTableCell align="right" muted>
         —
       </DataTableCell>
+      <DataTableCell align="right" muted>
+        —
+      </DataTableCell>
     </DataTableRow>
   );
 }
 
-/** Whether a `field:value` token matches the row. A computer has no agent. */
 function matchesField(row: TableRow, field: Field, value: string): boolean {
   if (field === "provider") return providerOf(row).toLowerCase() === value;
   if (field === "status") return row.status.toLowerCase() === value;
@@ -649,7 +681,6 @@ function providerOf(row: TableRow): string {
     : formatProvider(row.instance.provider);
 }
 
-/** The free text a row answers to: name, ids, conversation and trace. */
 function searchText(row: TableRow): string {
   if (row.kind === "machine") {
     return `${row.machine.name} ${row.machine.hostname ?? ""}`;

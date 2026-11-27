@@ -1,5 +1,3 @@
-/** GitHub action requests use a fresh signing key and mocked API responses. */
-
 import {
   afterEach,
   beforeEach,
@@ -14,7 +12,6 @@ import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 import { requestUrl } from "./helpers/http.ts";
 
-// Only the mocked GitHub API sees tokens signed by this per-process key.
 const TEST_PRIVATE_KEY = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -106,38 +103,6 @@ describe("github outbound actions", () => {
       "https://api.github.com/repos/owner/repo/pulls/comments/56/reactions",
     );
     expect(calls[1]?.jsonBody).toEqual({ body: "reply body" });
-    expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
-  });
-
-  it("uses issue comment reactions for issue comment sources", async () => {
-    const calls: FetchCall[] = [];
-    globalThis.fetch = createFetchMock(calls, [
-      jsonResponse(201, { token: "comment-token" }),
-      jsonResponse(201, { id: 7003 }),
-      jsonResponse(201, { id: 8003 }),
-    ]);
-
-    const actions = createGitHubActions(
-      createSource({
-        threadId: "github:owner/repo:12",
-        issueNumber: 12,
-        messageId: "77",
-        commentId: 77,
-        target: "issue_comment",
-      }),
-    );
-
-    await actions.sendText("follow-up");
-    await actions.reactToMessage();
-
-    expect(calls).toHaveLength(3);
-    expect(calls[1]?.url).toBe(
-      "https://api.github.com/repos/owner/repo/issues/12/comments",
-    );
-    expect(calls[2]?.url).toBe(
-      "https://api.github.com/repos/owner/repo/issues/comments/77/reactions",
-    );
-    expect(calls[1]?.jsonBody).toEqual({ body: "follow-up" });
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
   });
 

@@ -1,0 +1,6 @@
+kind	name	reason
+external	^new HarnessAgent$	Vendor AI SDK Harness class; the twin builds and checks every constructor setting and passes the instance back unread.
+external	^createBroodsSandbox$	Sandbox provider factory from the AI SDK adapter package; the twin checks driver, provider id and ports and returns the provider unread.
+external	^createClaudeCode$	Vendor Claude Code adapter factory; the twin checks every setting passed and returns the adapter unread.
+opaque	FakeHarnessAgent	Test double standing in for the vendor agent; only passed through unread.
+opaque	BroodsSandboxProvider	Returned by createBroodsSandbox and only passed through unread.

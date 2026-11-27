@@ -1,0 +1,2 @@
+pattern	category	reason
+apps/core/src/harness/plan-limits.ts#resetPlanLimitsForTests	test-helper	Clears two module maps for tests; no production caller and no decision.

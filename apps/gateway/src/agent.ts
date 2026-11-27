@@ -23,6 +23,7 @@ import {
   errorText,
   type GatewayLimits,
   parseJson,
+  USER_TOKEN_HEADER,
 } from "./utils.ts";
 import type { ApiError } from "../../../packages/convex/model/apiError.ts";
 import { VIA_GATEWAY_HEADER } from "../../../packages/convex/model/serviceBridge.ts";
@@ -33,6 +34,10 @@ export type AgentTestGatewayData = {
   token: string;
   coreBaseUrl: string;
   accountId: string;
+  userToken?: string;
+  // Core's namespace for this user's conversation keys and event ids.
+  conversationPrefix?: string;
+  userTokenExpiresAt?: number;
 };
 
 type ExecuteMessage = WebSocketClientExecuteMessage;
@@ -42,8 +47,6 @@ type ActiveRun = {
   agentId: string;
   publicConversationKey: string;
   publicEventId: string;
-  // One control input at a time: each one is a core POST plus a status poll.
-  /** Control inputs submitted and not yet applied or terminal. */
   controls: number;
 };
 type IngressHttpResponse = {
@@ -58,33 +61,26 @@ type IngressHttpResponse = {
   statusUrl?: string;
   error?: string | ApiError;
 };
-// Derived from the NATS helpers rather than restated, so neither can drift.
 type ConversationScope = Omit<
   Parameters<typeof conversationReplaySnapshot>[0],
   "connection"
 >;
 type ReplaySnapshot = Awaited<ReturnType<typeof conversationReplaySnapshot>>;
-// A socket turn that starts at once carries the NATS scope core streams it on;
-// a queued one carries none and streams on the requested conversation.
+// nats is set only when the turn started at once; a queued turn streams on the requested key.
 type CoreStartResponse = IngressHttpResponse & { nats?: ConversationScope };
-// Everything the execute and attach paths follow a run with. Only these fields
-// differ between them; the lifecycle itself is shared.
 type FollowedExecution = {
   connection: NatsConnection;
   scope: ConversationScope;
   eventId: string;
   eventKey: string;
   snapshot: ReplaySnapshot;
-  // Undefined replays from the subject's earliest retained frame, which is the
-  // only way to name that boundary on a stream shared by every conversation.
+  // undefined = the subject's earliest retained frame, unnameable on a shared stream.
   startSequence: number | undefined;
   initialConsumedSequence: number;
   isReplay: (sequence: number) => boolean;
   statusRequestId: string;
   runId?: string;
   statusUrl?: string;
-  // Seeds the terminal state and the status fingerprint, so an attach that is
-  // already terminal neither re-sends its seed frame nor polls again.
   seedStatus: IngressHttpResponse | null;
   terminalLabel: string;
 };
@@ -93,21 +89,32 @@ const activeRuns = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
   ActiveRun
 >();
+// A Record, so a status added to the contract fails the build until it is listed here.
+const INGRESS_STATUSES: Record<IngressStatus, true> = {
+  accepted: true,
+  queued: true,
+  applied: true,
+  processing: true,
+  awaiting_approval: true,
+  awaiting_input: true,
+  completed: true,
+  failed: true,
+  expired: true,
+};
 const TERMINAL_STATUSES = new Set<IngressStatus>([
   "completed",
   "failed",
   "expired",
 ]);
 const CURSOR_PREFIX = "ws-responses";
-// An agent id lands raw in a NATS subject (`v1.<account>.<agent>.ws...`), so it
-// must be one token: a `.` would shift the subject and `*` or `>` would widen
-// the subscription across agents.
+// An agent id lands raw in a NATS subject: `.` shifts it, `*` or `>` widens it across agents.
 const SUBJECT_TOKEN = /^[^\s.*>]+$/;
-// Each control in flight polls its status until applied or terminal, and a
-// queued `collect` or `followup` stays in flight until the run ends, so this
-// bounds poll loops per socket without serializing batching.
+// Caps poll loops per socket: a queued collect or followup polls until its run ends.
 const MAX_CONTROLS_IN_FLIGHT = 8;
 const STATUS_POLL_INTERVAL_MS = 500;
+const STATUS_POLL_MAX_INTERVAL_MS = 5_000;
+// A control has no frames to reset its backoff, so it caps lower.
+const CONTROL_POLL_MAX_INTERVAL_MS = 2_000;
 const STATUS_QUIET_MS = 3_000;
 const NATS_TAIL_GRACE_POLLS = 4;
 const NATS_TAIL_MAX_WAIT_MS = 10_000;
@@ -223,10 +230,42 @@ export function parseGatewayMessage(
   return isExecuteMessage(parsed) ? parsed : null;
 }
 
-/**
- * Stops the socket's active run. With `run`, only while that run is still the
- * active one: a run's own cleanup must never abort a newer run on the socket.
- */
+const tokenLifetimes = new WeakMap<
+  Bun.ServerWebSocket<AgentTestGatewayData>,
+  ReturnType<typeof setTimeout>
+>();
+const USER_TOKEN_EXPIRED_CLOSE = {
+  code: 4419,
+  reason: "User token expired",
+};
+
+// Core checks the user token only at the upgrade; past expiry every core call answers 401.
+export function watchUserTokenLifetime(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  const { userTokenExpiresAt } = socket.data;
+  if (userTokenExpiresAt === undefined) return;
+  tokenLifetimes.set(
+    socket,
+    setTimeout(
+      (): void =>
+        socket.close(
+          USER_TOKEN_EXPIRED_CLOSE.code,
+          USER_TOKEN_EXPIRED_CLOSE.reason,
+        ),
+      Math.max(userTokenExpiresAt - Date.now(), 0),
+    ),
+  );
+}
+
+export function cleanupAgentSocket(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
+  clearTimeout(tokenLifetimes.get(socket));
+  stopActiveRun(socket);
+}
+
+// With `run`, only while it is still active: a run's cleanup must never abort a newer one.
 export function stopActiveRun(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   run?: ActiveRun,
@@ -261,8 +300,8 @@ async function runCoreStream(
       abort.abort();
     }, limits.runStartTimeoutMs),
     agentId: String(body.agentId),
-    publicConversationKey: String(body.conversationKey),
-    publicEventId: String(body.eventId),
+    publicConversationKey: userScoped(socket, String(body.conversationKey)),
+    publicEventId: userScoped(socket, String(body.eventId)),
     controls: 0,
   };
   activeRuns.set(socket, active);
@@ -279,8 +318,7 @@ async function runCoreStream(
       conversationKey: active.publicConversationKey,
     };
     const connection = await getNatsConnection();
-    // Taken before the POST, so every frame this run publishes lands after it
-    // and the consumer never replays the subject's earlier turns.
+    // Before the POST, so every frame of this run lands after it and no earlier turn replays.
     const snapshot = await conversationReplaySnapshot({
       connection: connection,
       ...scope,
@@ -299,7 +337,7 @@ async function runCoreStream(
       sendAgentTest(socket, {
         type: "error",
         status: response.status,
-        error: await responseErrorText(response),
+        ...(await responseErrorFrame(response)),
       });
 
       return;
@@ -322,8 +360,6 @@ async function runCoreStream(
 
       return;
     }
-    // A durable 202 is not a terminal answer: follow the queued event to a
-    // terminal frame so the client's stream never hangs on a bare ack.
     if (!payload.nats) {
       sendAgentTest(socket, {
         type: "ack",
@@ -346,12 +382,10 @@ async function runCoreStream(
       snapshot: snapshot,
       startSequence: snapshot.lastSequence + 1,
       initialConsumedSequence: snapshot.lastSequence,
-      // The snapshot predates the run, so nothing it emits is a replay.
       isReplay: (): boolean => false,
       statusRequestId: payload.eventId,
       ...(payload.runId ? { runId: payload.runId } : {}),
       ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
-      // A started turn is seeded so its "processing" is not re-sent as news.
       seedStatus: payload.nats ? payload : null,
       terminalLabel: payload.nats ? "Direct" : "Queued",
     });
@@ -365,11 +399,6 @@ async function runCoreStream(
   }
 }
 
-/**
- * Follows one run to its terminal frame: streams its NATS responses, polls its
- * status, drains the tail, then emits exactly one done or error frame. Shared by
- * the execute and attach paths, which differ only in `execution`.
- */
 async function followExecution(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   signal: AbortSignal,
@@ -384,6 +413,8 @@ async function followExecution(
   let sawDone = false;
   let sawError = false;
   let lastFrameAt = 0;
+  let pollGapMs = STATUS_POLL_INTERVAL_MS;
+  let nextPollAt = 0;
   let streamSettled = messages === null;
   const closeOnAbort = () => void messages?.close().catch(() => {});
   if (messages) {
@@ -400,10 +431,11 @@ async function followExecution(
             );
             const event = decodeNatsStreamEvent(natsMessage.data);
             if (!event || event.headers.eventId !== execution.eventId) {
-              ackNatsMessage(natsMessage);
               continue;
             }
             lastFrameAt = Date.now();
+            pollGapMs = STATUS_POLL_INTERVAL_MS;
+            nextPollAt = 0;
             if (typeof event.data.type === "string") {
               sendAgentTest(socket, {
                 type: "output",
@@ -417,7 +449,6 @@ async function followExecution(
                 data: event.data as WebSocketServerMessage,
               });
             }
-            ackNatsMessage(natsMessage);
             if (event.data.type === "done") {
               sawDone = true;
               break;
@@ -443,9 +474,10 @@ async function followExecution(
       if (signal.aborted || sawDone || terminal) break;
       await Bun.sleep(STATUS_POLL_INTERVAL_MS);
       if (signal.aborted || sawDone) break;
-      // Frames arriving prove the run is alive, so status is only asked for
-      // once the stream has gone quiet.
       if (Date.now() - lastFrameAt < STATUS_QUIET_MS) continue;
+      if (Date.now() < nextPollAt) continue;
+      pollGapMs = Math.min(pollGapMs * 2, STATUS_POLL_MAX_INTERVAL_MS);
+      nextPollAt = Date.now() + pollGapMs;
       const status = await fetchStatus(
         socket,
         execution.runId,
@@ -506,7 +538,6 @@ async function followExecution(
   );
 }
 
-/** Submits one control input and follows its status until it settles. */
 async function submitControl(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   active: ActiveRun,
@@ -588,8 +619,13 @@ async function pollControlStatus(
   statusUrl?: string,
 ): Promise<void> {
   let previous = "";
+  let pollGapMs = STATUS_POLL_INTERVAL_MS;
+  let nextPollAt = 0;
   while (!active.abort.signal.aborted) {
     await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+    if (Date.now() < nextPollAt) continue;
+    pollGapMs = Math.min(pollGapMs * 2, CONTROL_POLL_MAX_INTERVAL_MS);
+    nextPollAt = Date.now() + pollGapMs;
     const payload = await fetchStatus(
       socket,
       runId,
@@ -617,8 +653,7 @@ async function pollControlStatus(
         ...(statusError ? { error: statusError } : {}),
       });
     }
-    // Applied means folded into its target run, whose own stream reports the
-    // outcome, so the control settles there and frees the socket's slot.
+    // applied = folded into its target run, whose own stream reports the outcome.
     if (
       payload.status === "not_found" ||
       payload.status === "applied" ||
@@ -635,16 +670,17 @@ async function attachCoreStream(
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   const abort = new AbortController();
-  const startTimeout = setTimeout(
-    () => abort.abort(),
-    limits.runStartTimeoutMs,
-  );
+  // From the timer: the NATS reads below cannot be aborted, and may never settle.
+  const startTimeout = setTimeout((): void => {
+    sendAgentTest(socket, { type: "error", error: "Attach timed out" });
+    stopActiveRun(socket, active);
+  }, limits.runStartTimeoutMs);
   const active: ActiveRun = {
     abort: abort,
     startTimeout: startTimeout,
     agentId: message.agentId,
-    publicConversationKey: message.conversationKey,
-    publicEventId: message.eventId,
+    publicConversationKey: userScoped(socket, message.conversationKey),
+    publicEventId: userScoped(socket, message.eventId),
     controls: 0,
   };
   activeRuns.set(socket, active);
@@ -662,11 +698,12 @@ async function attachCoreStream(
 
       return;
     }
-    // The run's own agent, not the client's claim, names the NATS subject. A
-    // core that omits it fails closed.
+    // Core's ids, not the client's claim, name what is replayed, so the attach reads only a run
+    // this credential may read; a core that omits them fails closed.
     if (
       status.agentId !== message.agentId ||
-      status.conversationKey !== message.conversationKey
+      status.conversationKey !== active.publicConversationKey ||
+      status.eventId !== active.publicEventId
     ) {
       sendAgentTest(socket, {
         type: "replay_unavailable",
@@ -679,19 +716,21 @@ async function attachCoreStream(
       return;
     }
     const connection = await getNatsConnection();
+    if (abort.signal.aborted) return;
     const scope = {
       accountId: socket.data.accountId,
       agentId: message.agentId,
-      conversationKey: message.conversationKey,
+      conversationKey: active.publicConversationKey,
     };
     const snapshot = await conversationReplaySnapshot({
       connection: connection,
       ...scope,
     });
+    if (abort.signal.aborted) return;
     const cursor = message.afterCursor
       ? parseCursor(message.afterCursor)
       : null;
-    const eventKey = cursorEventKey(message.eventId);
+    const eventKey = cursorEventKey(active.publicEventId);
     const unavailable = () =>
       sendAgentTest(socket, {
         type: "replay_unavailable",
@@ -703,17 +742,15 @@ async function attachCoreStream(
     if (
       (message.afterCursor && !cursor) ||
       (cursor && cursor.generation !== snapshot.generation) ||
-      (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey)
+      (cursor && cursor.eventKey !== eventKey)
     ) {
       unavailable();
 
       return;
     }
     if (cursor) {
-      // A cursor is only resumable when its own message is still retained for
-      // this conversation subject: head eviction guarantees everything after a
-      // retained message is intact, and a sequence past the subject's last
-      // message is a fabricated future cursor, not a resume point.
+      // Resumable only while its own message is retained on this subject (head eviction keeps
+      // all after it intact); a sequence past the subject's last is fabricated.
       const lastSequence = await conversationLastSequence({
         connection: connection,
         ...scope,
@@ -740,9 +777,8 @@ async function attachCoreStream(
         return;
       }
     }
-    // Only a client cursor names a real resume point. A fresh attach replays
-    // from the subject's earliest retained frame, whose sequence is unknown
-    // until it arrives, so no lower bound is advertised for it.
+    if (abort.signal.aborted) return;
+    // A fresh attach starts at the earliest retained frame, whose sequence is not known yet.
     const replayFrom = cursor ? cursor.sequence + 1 : null;
     sendAgentTest(socket, {
       type: "attached",
@@ -801,9 +837,6 @@ async function followAttachedExecution(
   eventKey: string,
 ): Promise<void> {
   const buffered = snapshot.bufferedCount > 0;
-  // Nothing retained: tail from the snapshot boundary. Retained frames with a
-  // cursor: resume after it. Retained frames without one: let the filtered
-  // consumer start at this subject's own first frame.
   let startSequence: number | undefined = snapshot.lastSequence + 1;
   let initialConsumedSequence = snapshot.lastSequence;
   if (buffered && replayFrom !== null) {
@@ -819,14 +852,13 @@ async function followAttachedExecution(
     scope: {
       accountId: socket.data.accountId,
       agentId: message.agentId,
-      conversationKey: message.conversationKey,
+      conversationKey: active.publicConversationKey,
     },
-    eventId: message.eventId,
+    eventId: active.publicEventId,
     eventKey: eventKey,
     snapshot: snapshot,
     startSequence: startSequence,
     initialConsumedSequence: initialConsumedSequence,
-    // Only frames at or below the snapshot existed before the attach.
     isReplay: (sequence) => buffered && sequence <= snapshot.lastSequence,
     statusRequestId: message.requestId,
     runId: message.runId,
@@ -849,8 +881,6 @@ async function waitForNatsTail(options: {
 }): Promise<void> {
   let boundary = options.initialBoundary;
   let stablePolls = 0;
-  // The run is already terminal here, so this drain is bounded: a consumer that
-  // stalls below the boundary would otherwise hold the socket open forever.
   const deadline = Date.now() + NATS_TAIL_MAX_WAIT_MS;
   while (
     !options.signal.aborted &&
@@ -881,11 +911,7 @@ async function waitForNatsTail(options: {
   }
 }
 
-/**
- * Reads a run's status from core's in-cluster address, by run id. Core's
- * `statusUrl` is the public door, so when only that is known just its path is
- * kept: polling the public URL would hairpin through ingress.
- */
+// statusUrl is core's public door: keep only its path so polling stays in-cluster.
 async function fetchStatus(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   runId: string | undefined,
@@ -895,7 +921,6 @@ async function fetchStatus(
   const path = runId
     ? `/v1/runs/${encodeURIComponent(runId)}`
     : statusUrl?.match(/\/v1\/runs\/[^/?#]+/)?.[0];
-  // Nothing to poll; callers treat a status-less answer as "nothing new yet".
   if (!path) return {};
 
   return responseJson(
@@ -914,39 +939,45 @@ function coreHeaders(
     Authorization: `Bearer ${socket.data.token}`,
     "Content-Type": "application/json",
     [VIA_GATEWAY_HEADER]: "1",
+    ...(socket.data.userToken
+      ? { [USER_TOKEN_HEADER]: socket.data.userToken }
+      : {}),
   };
 }
 
-/** Core's error envelope reduced to its message, or the raw body if it is not one. */
-async function responseErrorText(response: Response): Promise<string> {
+// Core applies the same rule, so a bare or already-namespaced key names one NATS subject.
+function userScoped(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  value: string,
+): string {
+  const prefix = socket.data.conversationPrefix;
+
+  return prefix && !value.startsWith(prefix) ? `${prefix}${value}` : value;
+}
+
+// Same fields as core's SSE refusal frame, so a WebSocket client can branch on `code` too.
+async function responseErrorFrame(
+  response: Response,
+): Promise<{ error: string; code?: string; errorType?: string }> {
   const body = await response.text();
   try {
-    const parsed = JSON.parse(body) as { error?: string | ApiError };
+    const { error } = JSON.parse(body) as { error?: string | ApiError };
+    if (typeof error !== "object") return { error: error ?? body };
 
-    return errorText(parsed.error) ?? body;
+    return { error: error.message, code: error.code, errorType: error.type };
   } catch {
-    return body;
+    return { error: body };
   }
 }
 
 async function responseJson(response: Response): Promise<IngressHttpResponse> {
-  // An unknown run answers 404 with the error envelope, which carries no
-  // `status`. The status code is the signal; the body would leave the poll
-  // loops spinning on a payload they cannot read.
+  // An unknown run's 404 envelope carries no `status`; the code is the signal.
   if (response.status === 404) return { status: "not_found" };
   const payload = await response.json().catch(() => ({}));
 
   return payload && typeof payload === "object"
     ? (payload as IngressHttpResponse)
     : {};
-}
-
-function ackNatsMessage(message: { ack?: () => void }): void {
-  try {
-    message.ack?.();
-  } catch {
-    return;
-  }
 }
 
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
@@ -963,10 +994,9 @@ function sendAgentTest(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   payload: WebSocketServerMessage,
 ): void {
-  socket.send(JSON.stringify(payload));
+  socket.send(JSON.stringify(payload), true);
 }
 
-/** Emits the single closing frame for a run: done when completed, else error. */
 function sendTerminalFrame(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
   label: string,
@@ -985,7 +1015,6 @@ function sendTerminalFrame(
   sendAgentTest(socket, { type: "done" });
 }
 
-/** One stable digest of the status fields a client sees, for change detection. */
 function statusFingerprint(status: IngressHttpResponse): string {
   return JSON.stringify([
     status.status,
@@ -995,7 +1024,6 @@ function statusFingerprint(status: IngressHttpResponse): string {
   ]);
 }
 
-/** Binds a cursor to its originating event so it cannot resume another one. */
 function cursorEventKey(eventId: string): string {
   return createHash("sha256").update(eventId).digest("base64url").slice(0, 16);
 }
@@ -1011,17 +1039,17 @@ function formatCursor(
 function parseCursor(value: string): {
   generation: string;
   sequence: number;
-  eventKey?: string;
+  eventKey: string;
 } | null {
-  const match = /^ws-responses:([^:]+):(\d+)(?::([^:]+))?$/.exec(value);
-  if (!match?.[1] || !match[2]) return null;
+  const match = /^ws-responses:([^:]+):(\d+):([^:]+)$/.exec(value);
+  if (!match?.[1] || !match[2] || !match[3]) return null;
   const sequence = Number(match[2]);
   if (!Number.isSafeInteger(sequence) || sequence < 0) return null;
 
   return {
     generation: match[1],
     sequence: sequence,
-    ...(match[3] ? { eventKey: match[3] } : {}),
+    eventKey: match[3],
   };
 }
 
@@ -1115,14 +1143,5 @@ function isIngressMode(
 }
 
 function isIngressStatus(value: unknown): value is IngressStatus {
-  return (
-    value === "accepted" ||
-    value === "queued" ||
-    value === "applied" ||
-    value === "processing" ||
-    value === "awaiting_approval" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "expired"
-  );
+  return typeof value === "string" && Object.hasOwn(INGRESS_STATUSES, value);
 }

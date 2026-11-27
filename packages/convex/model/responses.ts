@@ -1,22 +1,36 @@
-/**
- * Public response projections for the Convex config plane: map stored
- * documents (plus decrypted configs) to the account-management API shapes.
- * Lives apart from the model/*Rules validators so those stay free of
- * `_generated` imports and core can typecheck against them directly.
- */
+// Apart from the model/*Rules validators, which stay free of `_generated` imports for core.
+
+import { v, type Infer } from "convex/values";
 
 import type { Doc } from "../_generated/dataModel";
 import type { AgentConfig } from "./agentRules";
 import { redactConfigSecrets, REDACTED_SECRET_VALUE } from "./configValues";
 import type { SandboxConfig } from "./sandboxRules";
 
-/**
- * Map a crons document to the public cron shape core used to return
- * (cronId = _id, ISO timestamps, scheduler fields omitted).
- * @param doc the crons document
- * @returns the public cron record
- */
-export function toCronResponse(doc: Doc<"crons">): Record<string, unknown> {
+// The crons table fields as the API returns them: timestamps as ISO strings, no internals.
+export const cronResponseValidator = v.object({
+  accountId: v.id("accounts"),
+  cronId: v.id("crons"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  agentId: v.id("agents"),
+  events: v.array(v.any()),
+  conversationKey: v.optional(v.string()),
+  scheduleExpression: v.string(),
+  timezone: v.optional(v.string()),
+  status: v.union(v.literal("active"), v.literal("paused")),
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  lastInvokedAt: v.optional(v.string()),
+  lastStatus: v.optional(
+    v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
+  ),
+  lastError: v.optional(v.string()),
+});
+
+export type CronResponse = Infer<typeof cronResponseValidator>;
+
+export function toCronResponse(doc: Doc<"crons">): CronResponse {
   return {
     accountId: doc.accountId,
     cronId: doc._id,
@@ -38,12 +52,6 @@ export function toCronResponse(doc: Doc<"crons">): Record<string, unknown> {
   };
 }
 
-/**
- * Map a cronRuns document to the public run shape core used to return
- * (runId = _id, ISO timestamps).
- * @param doc the cronRuns document
- * @returns the public run record
- */
 export function toCronRunResponse(
   doc: Doc<"cronRuns">,
 ): Record<string, unknown> {
@@ -63,10 +71,6 @@ export function toCronRunResponse(
   };
 }
 
-/**
- * @param doc the agentPolicies document
- * @returns the public policy record
- */
 export function toPublicAgentPolicyResponse(
   doc: Doc<"agentPolicies">,
 ): Record<string, unknown> {
@@ -82,11 +86,6 @@ export function toPublicAgentPolicyResponse(
   };
 }
 
-/**
- * @param doc agent row
- * @param config decrypted config
- * @returns public agent response
- */
 export function toPublicAgentResponse(
   doc: Doc<"agents">,
   config: AgentConfig,
@@ -103,10 +102,6 @@ export function toPublicAgentResponse(
   };
 }
 
-/**
- * @param doc the channelRecords document
- * @returns the public channel record
- */
 export function toPublicChannelRecordResponse(
   doc: Doc<"channelRecords">,
 ): Record<string, unknown> {
@@ -125,10 +120,6 @@ export function toPublicChannelRecordResponse(
   };
 }
 
-/**
- * Map an accountRoles document to the public role shape. Accepts the bare
- * fields so a create can respond without re-reading its own insert.
- */
 export function toPublicRoleResponse(
   doc: Omit<Doc<"accountRoles">, "_id" | "_creationTime">,
 ): Record<string, unknown> {
@@ -145,11 +136,6 @@ export function toPublicRoleResponse(
   };
 }
 
-/**
- * @param doc the sandboxConfigs document
- * @param config decrypted sandbox config
- * @returns the public sandbox record with secrets redacted
- */
 export function toPublicSandboxConfigResponse(
   doc: Doc<"sandboxConfigs">,
   config: SandboxConfig,
@@ -167,12 +153,6 @@ export function toPublicSandboxConfigResponse(
   };
 }
 
-/**
- * Map a workspaceConfigs document to the public record shape core used to
- * return (workspaceId = _id, ISO timestamps, plaintext config).
- * @param doc the workspaceConfigs document
- * @returns the public workspace record
- */
 export function toPublicWorkspaceConfigResponse(
   doc: Doc<"workspaceConfigs">,
 ): Record<string, unknown> {

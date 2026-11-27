@@ -1,7 +1,3 @@
-// The in-VM capture runs for real here: python3 walks a temporary root, a local
-// server stands in for the presigned S3 URLs, and the uploaded zip is opened to
-// check what the image build would see.
-
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,17 +11,16 @@ let server: ReturnType<typeof Bun.serve> | undefined;
 let uploaded: Uint8Array | undefined;
 let startedAt = new Date();
 
+// skip: needs python3, which runs the in-VM capture
 describe.skipIf(!python)("snapshotCapture", () => {
   beforeAll(async (): Promise<void> => {
     root = mkdtempSync(join(tmpdir(), "snapshot-root-"));
     work = mkdtempSync(join(tmpdir(), "snapshot-work-"));
-    // Files from the image, written before the VM "started".
     write("etc/old.conf", "from the image");
     write("usr/bin/base-tool", "from the image");
     await Bun.sleep(1_200);
     startedAt = new Date();
     await Bun.sleep(1_200);
-    // Changes made while the VM ran: kept, except where a snapshot never looks.
     write("usr/local/bin/new-tool", "installed later");
     write("root/.bashrc", "export EDITOR=vi");
     write("tmp/scratch", "scratch space");
@@ -111,14 +106,12 @@ describe.skipIf(!python)("snapshotCapture", () => {
   });
 });
 
-// Write `relative` under the temporary root, creating its directories.
 function write(relative: string, text: string): void {
   const path = join(root, relative);
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, text);
 }
 
-// Run a short python program and return its stdout, failing on any error.
 function runPython(program: string): string {
   const run = Bun.spawnSync({ cmd: [python ?? "python3", "-c", program] });
   if (run.exitCode !== 0) throw new Error(run.stderr.toString());

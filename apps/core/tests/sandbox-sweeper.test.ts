@@ -1,16 +1,7 @@
-/**
- * Sweeper orchestration. Provider teardown is covered by the executor tests; what
- * matters here is that every reservation the sweep touches ends the pass either
- * released or deferred, and that one account's failure never costs another its sweep.
- */
-
 import { afterEach, beforeEach, expect, it, mock } from "bun:test";
 import type { ReservedSandbox } from "../src/harness/sandbox/types.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-// Returns what it released, so the sweeper can tell the released rows from the
-// ones it still has to defer. Everything handed in is released by default; a test
-// that wants a survivor overrides this.
 const releaseMock = mock(
   async (
     _accountId: string,
@@ -38,7 +29,8 @@ interface MutateCall {
 type ExpiredReservation = ReservedSandbox & { accountId: string };
 
 let expired: ExpiredReservation[] = [];
-let orphans: ExpiredReservation[] = [];
+let orphanPages: ExpiredReservation[][] = [[]];
+let orphanCursors: unknown[] = [];
 let mutateCalls: MutateCall[] = [];
 let leaseResult: (accountId: string) => boolean = (
   _accountId: string,
@@ -64,12 +56,23 @@ function reservation(
 
 beforeEach(() => {
   expired = [];
-  orphans = [];
+  orphanPages = [[]];
+  orphanCursors = [];
   mutateCalls = [];
   leaseResult = (_accountId: string): boolean => true;
   releaseMock.mockClear();
-  runtime.query = (async (name: string) =>
-    name === "listExpiredSandboxReservations" ? expired : orphans) as never;
+  runtime.query = (async (name: string, args: Record<string, unknown>) => {
+    if (name === "listExpiredSandboxReservations") return expired;
+    orphanCursors.push(args.cursor);
+    const index = args.cursor === null ? 0 : Number(args.cursor);
+    const isDone = index + 1 >= orphanPages.length;
+
+    return {
+      page: orphanPages[index],
+      cursor: isDone ? null : String(index + 1),
+      isDone: isDone,
+    };
+  }) as never;
   runtime.mutate = (async (name: string, args: Record<string, unknown>) => {
     mutateCalls.push({ name: name, args: args });
     if (name === "claimEvent") return leaseResult(String(args.accountId));
@@ -97,15 +100,12 @@ it("sweeps each account under its own lease", async () => {
   ]);
   expect(releaseMock.mock.calls[0]?.[1]).toHaveLength(2);
   expect(accountsOf("claimEvent")).toEqual(["acct-a", "acct-b"]);
-  // Everything was released, so there is nothing left to hold off.
   expect(accountsOf("deferSandboxReservations")).toEqual([]);
-  // The lease is handed back at the end of each pass, not left to lapse.
   expect(accountsOf("releaseClaim")).toEqual(["acct-a", "acct-b"]);
 });
 
 it("defers only what it could not release", async () => {
-  // Deferring a released reservation would push its expiry forward and hide it
-  // from the next pass, which is the opposite of what the sweep is for.
+  // Deferring a released reservation would push its expiry forward and hide it from the sweep.
   expired = [
     reservation("acct-a", "ns-kept"),
     reservation("acct-a", "ns-gone"),
@@ -138,8 +138,6 @@ it("defers an account whose lease is refused so its rows stop blocking the page"
 
   expect(await sweepExpiredSandboxes()).toBe(1);
   expect(releaseMock.mock.calls.map((call) => call[0])).toEqual(["acct-ok"]);
-  // acct-ok released everything, so only the account that never got its lease
-  // still has rows that would otherwise hold the head of the expiry page.
   expect(accountsOf("deferSandboxReservations")).toEqual(["acct-gone"]);
 });
 
@@ -155,10 +153,30 @@ it("leaves an account another replica already holds to that replica", async () =
 });
 
 it("hands an orphaned mirror row to the same teardown, by the id it still holds", async () => {
-  orphans = [reservation("acct-a", "ns-orphan")];
+  orphanPages = [[reservation("acct-a", "ns-orphan")]];
 
   expect(await sweepExpiredSandboxes()).toBe(1);
   expect(releaseMock.mock.calls[0]?.[1]).toEqual([
     reservation("acct-a", "ns-orphan"),
   ]);
+});
+
+it("reads on past pages of reserved mirrors to the orphans behind them", async () => {
+  // Mirrors a deferred reservation names keep their age, so they can fill the oldest pages.
+  orphanPages = [[], [], [reservation("acct-a", "ns-orphan")]];
+
+  expect(await sweepExpiredSandboxes()).toBe(1);
+  expect(orphanCursors).toEqual([null, "1", "2"]);
+});
+
+it("stops reading once a page's worth of orphans is found", async () => {
+  orphanPages = [
+    Array.from({ length: 100 }, (_, index) =>
+      reservation("acct-a", `ns-${index}`),
+    ),
+    [reservation("acct-a", "ns-next")],
+  ];
+
+  expect(await sweepExpiredSandboxes()).toBe(100);
+  expect(orphanCursors).toEqual([null]);
 });

@@ -1,9 +1,3 @@
-/**
- * Builds the self-hosted core server binary, the same entry the container runs
- * (apps/core/Dockerfile). Compiles at the host's default target; the Docker
- * build compiles at the amd64 cluster target.
- */
-
 import { $ } from "bun";
 import { syncCompactionPromptModule } from "./compaction-prompt.ts";
 

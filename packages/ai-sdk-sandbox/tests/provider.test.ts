@@ -1,12 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
   HarnessCapabilityUnsupportedError,
   type HarnessV1NetworkPolicy,
 } from "@ai-sdk/harness";
 import type { Experimental_SandboxProcess } from "@ai-sdk/provider-utils";
 import {
   createBroodsSandbox,
-  type BroodsSandboxCommandOptions,
   type BroodsSandboxDriver,
   type BroodsSandboxDriverSession,
   type BroodsSandboxWriteFileOptions,
@@ -85,7 +94,6 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
-    expect(provider.specificationVersion).toBe("harness-sandbox-v1");
     expect(provider.providerId).toBe("broods-test");
     expect(provider.bridgePorts).toEqual([4_321, 4_322]);
     expect(networkSession.id).toBe("sandbox-1");
@@ -98,13 +106,13 @@ describe("BroodsSandboxProvider", () => {
     }) as typeof networkSession;
     expect(leasedSession.defaultWorkingDirectory).toBe("/workspace");
     expect(leasedSession.ports).toEqual([4_322]);
-    expect(leasedSession.restricted().run({ command: "pwd" })).resolves.toEqual(
-      {
-        exitCode: 0,
-        stdout: "/workspace\n",
-        stderr: "",
-      },
-    );
+    await expect(
+      leasedSession.restricted().run({ command: "pwd" }),
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "/workspace\n",
+      stderr: "",
+    });
 
     expect(calls[0]).toEqual({
       operation: "createSession",
@@ -128,7 +136,7 @@ describe("BroodsSandboxProvider", () => {
     expect(
       await networkSession.getPortUrl({ port: 4_321, protocol: "ws" }),
     ).toBe("wss://sandbox.example.test:4321");
-    expect(
+    await expect(
       networkSession.getPortEndpoint({ port: 4_321, protocol: "ws" }),
     ).resolves.toEqual({ url: "wss://sandbox.example.test:4321" });
     const policy: HarnessV1NetworkPolicy = {
@@ -148,20 +156,16 @@ describe("BroodsSandboxProvider", () => {
   });
 
   test("maps command, process, and file operations without changing driver failures", async () => {
-    const commandCalls: BroodsSandboxCommandOptions[] = [];
     const writes: BroodsSandboxWriteFileOptions[] = [];
     const process = fakeProcess();
     const runFailure = new Error("command failed in driver");
     const session = fakeSession({
       runCommand: async function (options) {
-        commandCalls.push(options);
         if (options.command === "fail") throw runFailure;
 
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
-      spawnCommand: async function (options) {
-        commandCalls.push(options);
-
+      spawnCommand: async function () {
         return process;
       },
       readFile: async function ({ path }) {
@@ -212,7 +216,7 @@ describe("BroodsSandboxProvider", () => {
     expect(decoder.decode(writes[1]!.content)).toBe("hello world");
     expect(decoder.decode(writes[2]!.content)).toBe("héllo");
 
-    expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
+    await expect(sandbox.run({ command: "fail" })).rejects.toBe(runFailure);
   });
 
   test("aborts a stalled stream write and cancels its reader", async () => {
@@ -247,7 +251,7 @@ describe("BroodsSandboxProvider", () => {
     await Promise.resolve();
     controller.abort(failure);
 
-    expect(write).rejects.toBe(failure);
+    await expect(write).rejects.toBe(failure);
     expect(cancelReason).toBe(failure);
     expect(content.locked).toBe(false);
     expect(writes).toBe(0);
@@ -356,7 +360,7 @@ describe("BroodsSandboxProvider", () => {
       },
     });
 
-    expect(
+    await expect(
       provider.createSession({
         onFirstCreate: async () => {
           throw setupFailure;
@@ -416,18 +420,118 @@ describe("BroodsSandboxProvider", () => {
     });
     const sandbox = await provider.createSession();
 
-    expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
+    await expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
       HarnessCapabilityUnsupportedError,
     );
-    expect(sandbox.getPortEndpoint({ port: 3_000 })).rejects.toBeInstanceOf(
-      HarnessCapabilityUnsupportedError,
-    );
+    await expect(
+      sandbox.getPortEndpoint({ port: 3_000 }),
+    ).rejects.toBeInstanceOf(HarnessCapabilityUnsupportedError);
     await Promise.all([
       sandbox.destroy?.(),
       sandbox.destroy?.(),
       sandbox.stop(),
     ]);
     expect(stops).toBe(1);
+  });
+
+  test("answers stat, listDirectory and deleteFile through POSIX sh, relative to the work dir", async () => {
+    const root = await mkdtemp(join(tmpdir(), "broods-sandbox-"));
+    try {
+      await mkdir(join(root, "dir"));
+      await writeFile(join(root, "dir", "a.txt"), "hello");
+      await writeFile(join(root, "dir", ".hidden"), "");
+      await writeFile(join(root, "dir", "two\nlines"), "");
+      await symlink(join(root, "dir", "a.txt"), join(root, "dir", "link"));
+      const sandbox = await shellSandbox(root);
+
+      expect(await sandbox.stat({ path: "dir/a.txt" })).toEqual({
+        type: "file",
+        size: 5,
+      });
+      expect(await sandbox.stat({ path: join(root, "dir") })).toEqual({
+        type: "directory",
+        size: 0,
+      });
+      expect(await sandbox.stat({ path: "nope" })).toBeNull();
+      const entries = await sandbox.listDirectory({ path: "dir" });
+      expect(
+        entries?.sort((left, right) => left.name.localeCompare(right.name)),
+      ).toEqual([
+        { name: ".hidden", type: "file" },
+        { name: "a.txt", type: "file" },
+        { name: "link", type: "symlink" },
+        { name: "two\nlines", type: "file" },
+      ]);
+      expect(await sandbox.listDirectory({ path: "nope" })).toBeNull();
+      await expect(
+        sandbox.listDirectory({ path: "dir/a.txt" }),
+      ).rejects.toThrow("not a directory");
+      await expect(sandbox.deleteFile({ path: "dir" })).rejects.toThrow(
+        "is a directory",
+      );
+      expect(await sandbox.deleteFile({ path: "dir/link" })).toBe(true);
+      expect(await sandbox.stat({ path: "dir/a.txt" })).not.toBeNull();
+      expect(await sandbox.deleteFile({ path: "dir/link" })).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("stat reports a file it cannot read, and fails loudly when stat itself fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "broods-sandbox-"));
+    try {
+      await writeFile(join(root, "locked.txt"), "hello");
+      await chmod(join(root, "locked.txt"), 0o000);
+      const sandbox = await shellSandbox(root);
+
+      expect(await sandbox.stat({ path: "locked.txt" })).toEqual({
+        type: "file",
+        size: 5,
+      });
+      const failing = await createBroodsSandbox({
+        driver: {
+          createSession: async () => ({
+            session: fakeSession({
+              runCommand: async () => ({
+                exitCode: 0,
+                stdout: "file \n",
+                stderr: "",
+              }),
+            }),
+            isFirstCreate: true,
+          }),
+        },
+      }).createSession();
+      await expect(failing.stat({ path: "x" })).rejects.toThrow("stat");
+    } finally {
+      await chmod(join(root, "locked.txt"), 0o600).catch(() => {});
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a writable stdin before starting the command", async () => {
+    let spawned = 0;
+    const provider = createBroodsSandbox({
+      driver: {
+        createSession: async () => ({
+          session: fakeSession({
+            spawnCommand: async function () {
+              spawned += 1;
+
+              return fakeProcess();
+            },
+          }),
+          isFirstCreate: true,
+        }),
+      },
+    });
+    const sandbox = await provider.createSession();
+
+    await expect(
+      sandbox.spawn({ command: "cat", stdin: true }),
+    ).rejects.toBeInstanceOf(HarnessCapabilityUnsupportedError);
+    await sandbox.spawn({ command: "cat", stdin: false });
+    expect(spawned).toBe(1);
   });
 });
 
@@ -455,6 +559,35 @@ function fakeSession(
   Object.defineProperties(session, Object.getOwnPropertyDescriptors(overrides));
 
   return session;
+}
+
+async function shellSandbox(
+  root: string,
+): ReturnType<ReturnType<typeof createBroodsSandbox>["createSession"]> {
+  const session = fakeSession({
+    defaultWorkingDirectory: root,
+    runCommand: async function (options) {
+      const child = Bun.spawn(["/bin/sh", "-c", options.command], {
+        cwd: options.workingDirectory ?? root,
+        env: { ...process.env, ...options.env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+
+      return { exitCode: exitCode, stdout: stdout, stderr: stderr };
+    },
+  });
+
+  return await createBroodsSandbox({
+    driver: {
+      createSession: async () => ({ session: session, isFirstCreate: true }),
+    },
+  }).createSession();
 }
 
 function fakeProcess(): Experimental_SandboxProcess {

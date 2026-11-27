@@ -146,6 +146,54 @@ describe("upload grants", () => {
       expect(await ctx.db.system.get(kept)).not.toBeNull();
     });
   });
+
+  test("pruneOrphans keeps a blob a stage source revision points to", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-01T10:00:00Z"));
+    const t = uploadTest();
+    const source = await t.run(async (ctx): Promise<Id<"_storage">> => {
+      const storageId = await ctx.storage.store(new Blob(['{"files":[]}']));
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner",
+        orgId: await ctx.db.insert("orgs", {
+          name: "demo",
+          slug: "demo",
+          ownerAuthId: "auth_owner",
+          plan: "free",
+          createdAt: Date.now(),
+        }),
+        name: "demo",
+        slug: "demo",
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("stageSources", {
+        stageId: await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: "Development",
+          kind: "development",
+          isDefault: true,
+          updatedAt: Date.now(),
+        }),
+        revision: 1,
+        hash: "hash-1",
+        storageId: storageId,
+        fileCount: 0,
+        bytes: 12,
+        origin: "cli",
+        createdAt: Date.now(),
+      });
+
+      return storageId;
+    });
+
+    vi.setSystemTime(new Date("2026-09-03T10:00:00Z"));
+    const result = await t.mutation(internal.account.uploads.pruneOrphans, {});
+    expect(result).toEqual({ deleted: 0, isDone: true });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.system.get(source)).not.toBeNull();
+    });
+  });
 });
 
 describe("claimUploadedBlob", () => {

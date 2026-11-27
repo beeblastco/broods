@@ -1,12 +1,3 @@
-/**
- * Agent configuration: types for the per-agent settings object and the
- * runtime projection of a stored config. The validation rules are the config
- * plane's (`@broods/convex/model/agentRules`), so a config is judged the same
- * on write and on every run. Decrypting the stored blob is
- * `../convex/account-keys.ts`.
- * Account types and auth live in `./accounts.ts` and `../auth.ts`.
- */
-
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GoogleChatAdapterBaseConfig } from "@chat-adapter/gchat";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
@@ -25,78 +16,80 @@ import type {
   SystemModelMessage,
   streamText,
 } from "ai";
+import { z } from "zod/mini";
 import type { AgentHookEventName } from "@broods/convex/model/accountHooks";
+import { partitionAlias } from "@broods/convex/model/channelRules";
+import { parseOr } from "@broods/convex/model/storedJson";
 import {
+  AGENT_CONFIG,
   normalizeAgentConfig,
+  runtimeConfigBranches,
   type AGENT_HARNESS_DEBUG_LEVELS,
   type AGENT_HARNESS_PERMISSION_MODES,
   type AGENT_HARNESS_TYPES,
   type AGENT_LIFECYCLE_EVENT_NAMES,
 } from "@broods/convex/model/agentRules";
-import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+import type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 import type { McpOauth } from "./mcp.ts";
-export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
+export type {
+  AccountModelProviderName,
+  AgentProviderName,
+} from "@broods/convex/model/modelProviders";
 
-// `agent.maxTurn: 0` lifts the step cap: the loop runs until the model stops.
 export const AGENT_MAX_TURN_UNLIMITED = 0;
-// A per-run `model` override may tune sampling (the Vercel AI SDK
-// `LanguageModelCallOptions`: temperature, topP, topK, maxOutputTokens,
-// reasoning, …) and provider-specific `providerOptions`. Identity/credential
-// keys are rejected.
 export const RUN_OVERRIDE_RESERVED_MODEL_KEYS = [
   "provider",
   "modelId",
   "output",
   "apiKey",
 ] as const;
+// Core checks every run, so only core pays the ~30 ms compile; Convex and the dashboard interpret.
+export const COMPILED_AGENT_CONFIG = z.compile(AGENT_CONFIG);
+
+// A channel config's `partition`, read leniently: a malformed one partitions nothing.
+const CHANNEL_PARTITION = z.looseObject({
+  partition: z.union([
+    z.looseObject({
+      by: z.literal("shared"),
+      alias: z.optional(z.undefined()),
+    }),
+    z.looseObject({ by: z.literal("conversation"), alias: partitionAlias }),
+  ]),
+});
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
   harness?: AgentHarnessConfig;
   model?: AgentModelConfig;
+  /** Reads inbound audio; `provider` defaults to `model.provider`. */
+  transcription?: AgentTranscriptionConfig;
   provider?: AgentProviderConfig;
-  // References to standalone, account-scoped sandbox / workspace records. The
-  // concrete configs live in their own tables (see sandbox-config.ts /
-  // workspace-config.ts) and are resolved by the handler before the agent loop.
-  // The first is the default: `bash` with no workspace runs there, a workspace
-  // without its own sandbox inherits it, and a harness runs on it. The others are
-  // reached by name.
+  /** Sandbox record ids. The first is the default for bash, workspaces and a harness. */
   sandboxes?: string[];
   workspaces?: AgentWorkspaceRef[];
   session?: AgentSessionConfig;
   hooks?: AgentHooksConfig;
   channels?: AgentChannelsConfig;
   tools?: AgentToolsConfig;
-  /** Connected MCP servers, keyed by their config-plane row id (#331). */
   mcp?: AgentMcpConfig;
-  /**
-   * Tool names withheld for this run, applied after the tool set is built.
-   * Set by a channel record; a channel can take a tool away, never add one.
-   * Names that are not present are ignored.
-   */
+  /** Withheld after the tool set is built; a channel can take a tool away, never add one. */
   denyTools?: string[];
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
-  /** Registers the `browse` tool, which runs Obscura on the first sandbox. */
+  /** `browse` runs on the first sandbox: a machine, or lambda "obscura" with allow-all. */
   browser?: { enabled?: boolean };
-  /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
-  // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the runtime
-  // key). Off by default: when not `true` the runtime-key request path is
-  // refused. Internal callers (account key, admin secret, cron, async worker)
-  // and channel webhooks are never gated by this.
+  /** Opens the runtime-key path; account keys, cron and channel webhooks never need it. */
   publicAccess?: boolean;
-  // Lets the embeddable runtime key send `system` and `model` overrides. Off by
-  // default; stage tickets and account keys ignore it.
   allowRunOverrides?: boolean;
   [key: string]: unknown;
 }
 
-/**
- * What a code hook reads as ctx.config: the model and the names of what the
- * agent can use. An allow-list, so no credential field can reach hook code.
- */
+// An allow-list, so no credential field can reach hook code.
 export interface HookAgentConfig {
   readonly model: {
     readonly provider?: AccountModelProviderName;
@@ -113,7 +106,7 @@ export interface HookAgentConfig {
 }
 
 export interface AgentBehaviorConfig {
-  // Model/tool loop steps per turn. 0 lifts the cap; unset is the harness default.
+  /** Steps per turn. 0 lifts the cap; unset is the harness default. */
   maxTurn?: number;
   system?: string | SystemModelMessage | SystemModelMessage[];
   [key: string]: unknown;
@@ -135,10 +128,6 @@ export interface AgentHarnessDebugConfig {
   subsystems?: string[];
 }
 
-/**
- * Per-invocation overrides supplied on a single request. They never persist:
- * applyRunOverrides folds them into a copy of the agent config for one run only.
- */
 export interface RunOverrides {
   system?: SystemModelMessage[];
   model?: Partial<AgentModelConfig>;
@@ -153,10 +142,11 @@ export interface AgentSkillsConfig {
   [key: string]: unknown;
 }
 
-/**
- * Opt-in for the `schedule` tool. Off by default: a scheduled task starts
- * billable agent runs long after the turn that asked for it.
- */
+export interface AgentTranscriptionConfig {
+  provider?: AgentProviderName;
+  modelId?: string;
+}
+
 export interface AgentSchedulerConfig {
   enabled?: boolean;
   [key: string]: unknown;
@@ -167,34 +157,21 @@ export interface AgentSubagentConfig {
   allowed?: string[];
   context?: "new" | "inherited";
   mode?: "ephemeral" | "persistent";
-  /**
-   * Publishes child reasoning, text, and tool stream parts to the existing
-   * WebSocket/JetStream response path. Off by default.
-   */
   stream?: boolean;
-  /**
-   * Controls what the parent agent sees from a finished subagent (AI SDK
-   * "controlling what the model sees"): `full` = the child's whole transcript,
-   * `result` = only its final result (default), `none` = nothing. A
-   * `subagent.task.finished` code hook overrides this for custom shaping.
-   */
+  /** What the parent sees of a finished child; default `result`. A code hook can override it. */
   visibility?: "full" | "result" | "none";
+  /** Virtual subagents only, merged over the parent's `model`; registered agents use their own. */
+  model?: Partial<AgentModelConfig>;
   [key: string]: unknown;
 }
 
 export interface AgentModelConfig
   extends
     LanguageModelCallOptions,
-    // Partial keeps these optional when `ai` doesn't resolve, as on a package
-    // manager that skips peers: `Pick<any, K>` would make both keys required.
+    // Partial: when `ai` does not resolve, `Pick<any, K>` would make both keys required.
     Partial<Pick<RequestOptions, "maxRetries" | "timeout">> {
   provider?: AccountModelProviderName;
   modelId?: string;
-  /**
-   * Speech-to-text model for inbound audio, on the same provider and key as
-   * `modelId`. Defaults to the widest-container model the provider ships.
-   */
-  transcriptionModelId?: string;
   providerOptions?: AgentModelProviderOptions;
   output?: AgentModelOutputConfig;
 }
@@ -213,21 +190,16 @@ type AgentModelOutputMetadata = {
 };
 
 export type AgentProviderConfig = Partial<
-  Record<AccountModelProviderName, AgentProviderSettings>
+  Record<AgentProviderName, AgentProviderSettings>
 >;
 
-// Open on purpose: what a provider's AI SDK factory accepts is passed through
-// verbatim. Named keys are only the ones broods reads itself, never a limit.
 export interface AgentProviderSettings {
   apiKey?: string;
-  /** OpenAI-compatible endpoint (`custom`). Snake form, as documented. */
+  // `custom` endpoint, in the documented snake form and the AI SDK form; the dashboard writes both.
   base_url?: string;
-  /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
-  /** Cloudflare AI Gateway id (`cloudflare`). Set, requests go through the gateway. */
   gatewayId?: string;
   headers?: Record<string, string>;
-  /** Endpoint label; becomes the provider id and the pi harness env prefix. */
   name?: string;
   organization?: string;
   project?: string;
@@ -235,18 +207,9 @@ export interface AgentProviderSettings {
 }
 
 export interface AgentWorkspaceRef {
-  // Agent-facing mount label, the `workspace` argument the model selects. Unique per agent.
   name: string;
-  // Account-scoped workspaceConfig record id. Agents that reference the same
-  // workspaceId read and write the SAME files (shared workspace).
   workspaceId: string;
-  // Optional per-workspace sandbox. A sandbox id overrides the agent's default
-  // sandbox for this workspace (and inherits its permissionMode). Omitted =>
-  // inherit the default (first of `sandboxes`); if there is none, the workspace is
-  // read-only and read/glob run through a service-managed read-only mount (so they see
-  // committed writes immediately). `null` forces this workspace read-only AND opts
-  // out of that mount: read/glob then read straight from S3 (no compute, but reads
-  // lag mount writes until the mount uploads them). See docs/internals/storage.md.
+  /** Unset inherits the default; `null` is read-only, read from S3 without a mount. */
   sandbox?: string | null;
 }
 
@@ -261,12 +224,7 @@ export interface AgentSessionPruningConfig {
   [key: string]: unknown;
 }
 
-/**
- * Compaction after a finished turn, on unless `enabled: false`. It runs once
- * the turn's last model call read `maxContextLength` input tokens or more
- * (default 500000), or after the provider refused a turn for context length.
- * `/compact` works whatever this says.
- */
+/** On by default: runs once a turn's last call read `maxContextLength` (500000) tokens. */
 export interface AgentSessionAutoCompactionConfig {
   enabled?: boolean;
   maxContextLength?: number;
@@ -274,24 +232,13 @@ export interface AgentSessionAutoCompactionConfig {
 }
 
 export interface AgentHooksConfig {
-  /** Outbound event webhooks. An agent may register several independent endpoints. */
   webhooks?: AgentWebhookHookConfig[];
-  /**
-   * Uploaded code hooks. Each entry references an accountHooks bundle by id; the
-   * bundle runs in the V8 isolate at the matching fire-points and its validated
-   * return is folded into mutable harness state.
-   */
   code?: AgentCodeHookConfig[];
   [key: string]: unknown;
 }
 
 export interface AgentCodeHookConfig {
   hookId: string;
-  /**
-   * Optional narrowing of the events this reference reacts to. Omitted => the
-   * bundle's own declared `events` set. Any listed event outside the bundle's
-   * declared set is ignored at runtime.
-   */
   events?: AgentHookEventName[];
   enabled?: boolean;
   [key: string]: unknown;
@@ -308,10 +255,6 @@ export interface AgentWebhookHookConfig {
 export type AgentLifecycleEventName =
   (typeof AGENT_LIFECYCLE_EVENT_NAMES)[number];
 
-// The full set of events a user code hook can subscribe to (agent lifecycle plus
-// the channel points: inbound message, before-send). Re-exported from its single
-// home in convex so an event added there reaches this union without a second
-// edit here.
 export type { AgentHookEventName };
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
@@ -319,7 +262,6 @@ export type AgentToolsConfig = Record<string, AgentToolConfig>;
 export interface AgentToolConfig {
   enabled?: boolean;
   needsApproval?: boolean;
-  async?: boolean;
   config?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -328,15 +270,9 @@ export type AgentMcpConfig = Record<string, AgentMcpEntry>;
 
 export interface AgentMcpEntry {
   enabled?: boolean;
-  /** Applies to every tool the server exposes. */
   needsApproval?: boolean;
-  /** Extra request headers; values resolved from account env vars at sync. */
   headers?: Record<string, string>;
-  /**
-   * Overrides for the row's oauth credentials; values resolved from account
-   * env vars at sync, so the row's ${NAME} refs never reach the token
-   * endpoint. tokenUrl stays on the row, where registration checked it.
-   */
+  // `tokenUrl` stays on the row, where registration checked it.
   oauth?: Partial<Omit<McpOauth, "tokenUrl">>;
   [key: string]: unknown;
 }
@@ -352,27 +288,18 @@ export interface AgentChannelsConfig {
   teams?: AgentTeamsChannelConfig;
   twilio?: AgentTwilioChannelConfig;
   zalo?: AgentZaloChannelConfig;
-  matrix?: AgentMatrixChannelConfig;
   instagram?: AgentInstagramChannelConfig;
   messenger?: AgentMessengerChannelConfig;
   whatsapp?: AgentWhatsAppChannelConfig;
   [key: string]: unknown;
 }
 
-export type ChannelPartitionBy = "shared" | "conversation";
-
-/**
- * How an attached partitioned workspace splits its folders for runs arriving
- * through this door. `shared` mounts the workspace root; `conversation` mounts
- * a private child folder per thread, issue or chat under `alias`.
- */
 export type ChannelPartition =
   | { by: "shared"; alias?: never }
   | { by: "conversation"; alias: string };
 
-// The adapter credential fields are spelled out rather than indexed off the
-// adapter configs so the published SDK types resolve without those packages;
-// ChannelCredentialDrift below fails the build if an upstream shape moves.
+// Credential fields are spelled out so the published SDK types resolve without the adapter
+// packages; ChannelCredentialDrift fails the build when an upstream shape moves.
 type Exactly<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
     ? true
@@ -427,7 +354,10 @@ type ChannelCredentialDrift = AssertAllExact<
       string | undefined
     >,
     Exactly<TeamsAdapterConfig["apiUrl"], string | undefined>,
-    Exactly<TeamsAdapterConfig["appId"], string | undefined>,
+    Exactly<
+      SerializedCredential<TeamsAdapterConfig["appId"]>,
+      string | undefined
+    >,
     Exactly<TeamsAdapterConfig["appPassword"], string | undefined>,
     Exactly<TeamsAdapterConfig["appTenantId"], string | undefined>,
     Exactly<
@@ -480,7 +410,6 @@ export interface AgentTelegramChannelConfig {
   webhookSecret?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
-  /** Bot's @username, e.g. `tracy_bot`. Set it to answer only when the agent is mentioned. */
   botUsername?: string;
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
@@ -496,32 +425,22 @@ export interface AgentGitHubChannelConfig {
   privateKey?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
-  /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
   botUserName?: string;
-  /** Bot's numeric GitHub user ID for self-message detection. */
   botUserId?: number;
-  /** When false, the bot does not auto-trigger on new issues (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to an issue. */
+  // Both default to true; the bot still answers when assigned.
   triggerOnIssueOpen?: boolean;
-  /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
   triggerOnPROpen?: boolean;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
-/**
- * A Linear member the agent comments as, through that member's personal API
- * key. The agent answers comments that mention `@userName` on issues, and
- * `webhookSecret` checks every delivery.
- */
 export interface AgentLinearChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
   apiKey?: string;
-  /** Linear GraphQL endpoint. Defaults to `https://api.linear.app/graphql`. */
   apiUrl?: string;
-  /** The member's display name, e.g. `acme-agent`. `@acme-agent` addresses the agent. */
   userName?: string;
   webhookSecret?: string;
   trace?: "enabled" | "disabled";
@@ -549,38 +468,8 @@ export interface AgentDiscordChannelConfig {
   publicKey?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
-  /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
   botUserId?: string;
-  /** Role ids that count as mentioning the agent, e.g. an on-call role. */
   mentionRoleIds?: string[];
-  trace?: "enabled" | "disabled";
-  partition?: ChannelPartition;
-  [key: string]: unknown;
-}
-
-/**
- * A Matrix account the agent speaks as. Matrix has no bot concept, so this is
- * usually a person's own account: replies carry a per-message profile named
- * `botName`, and `mentionText` decides what addresses the agent, because a
- * mention of the account would also be a mention of its owner.
- */
-export interface AgentMatrixChannelConfig {
-  id?: string;
-  /** Homeserver base URL, e.g. `https://matrix.org`. */
-  apiUrl?: string;
-  /** Access token of the account; `apps/matrix-forwarder` syncs with it. */
-  botToken?: string;
-  /** Room ids. */
-  allowedChannelIds?: string[];
-  /** Matrix user ids, e.g. `@alice:matrix.org`. */
-  allowedUserIds?: string[];
-  /** Name replies are shown under. Unset, replies look like the account's own messages. */
-  botName?: string;
-  /**
-   * Text that addresses the agent, e.g. `@georgi-ai`. Unset, a mention of the
-   * account does. Other messages are stored as context either way.
-   */
-  mentionText?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
@@ -610,65 +499,43 @@ export interface AgentZaloChannelConfig {
   [key: string]: unknown;
 }
 
-/**
- * An Instagram professional account, reached through a Meta app with
- * Instagram Login. `accountId` is the account the webhook entries name.
- */
 export interface AgentInstagramChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
-  /** Instagram user access token with `instagram_business_manage_messages`. */
   accessToken?: string;
-  /** Instagram professional account id. */
   accountId?: string;
-  /** Graph API version, e.g. `v26.0`. Defaults to the SDK's. */
   apiVersion?: string;
-  /** Meta app secret; signs every webhook POST. */
   appSecret?: string;
   userName?: string;
-  /** The verify token typed into the Meta webhook settings. */
   verifyToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
-/** A Facebook Page the agent answers Messenger DMs for. */
 export interface AgentMessengerChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
-  /** Graph API version, e.g. `v21.0`. Defaults to the SDK's. */
   apiVersion?: string;
-  /** Meta app secret; signs every webhook POST. */
   appSecret?: string;
-  /** Page access token for the Page the app is subscribed to. */
   pageAccessToken?: string;
   userName?: string;
-  /** The verify token typed into the Meta webhook settings. */
   verifyToken?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
-/**
- * A Google Chat app on the HTTP endpoint connection. It posts as the service
- * account in `credentials`, and a webhook is accepted when its Google-signed
- * token names `endpointUrl` or `googleChatProjectNumber` as the audience.
- */
+// A webhook's Google-signed token must name `endpointUrl` or the project number as audience.
 export interface AgentGoogleChatChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
-  /** The service-account key JSON, as downloaded from Google Cloud. */
   credentials?: string;
-  /** Audience when the app authenticates with "HTTP endpoint URL". */
   endpointUrl?: string;
-  /** Audience when the app authenticates with "Project number". */
   googleChatProjectNumber?: string;
-  /** `service-{projectNumber}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`, for an app built as a Workspace add-on. */
   workspaceAddOnServiceAccountEmail?: string;
   userName?: string;
   trace?: "enabled" | "disabled";
@@ -676,10 +543,6 @@ export interface AgentGoogleChatChannelConfig {
   [key: string]: unknown;
 }
 
-/**
- * A Microsoft Teams bot registered in Azure Bot Service, authenticated with a
- * client secret. `appTenantId` is required unless `appType` is `MultiTenant`.
- */
 export interface AgentTeamsChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
@@ -695,11 +558,6 @@ export interface AgentTeamsChannelConfig {
   [key: string]: unknown;
 }
 
-/**
- * A Twilio number or Messaging Service for SMS and MMS. `authToken` checks
- * Twilio's signature, which covers the exact public URL Twilio called, so
- * `webhookUrl` is only set when that URL is not the broods webhook URL.
- */
 export interface AgentTwilioChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
@@ -707,23 +565,17 @@ export interface AgentTwilioChannelConfig {
   accountSid?: string;
   apiUrl?: string;
   authToken?: string;
-  /** `MG...`. Replies go through the service instead of the number texted. */
   messagingServiceSid?: string;
-  /** E.164 number, e.g. `+15551234567`. Messages to another number go to the agent holding it. */
   phoneNumber?: string;
   statusCallbackUrl?: string;
   userName?: string;
-  /** The URL entered in the Twilio console, when it is not `{PUBLIC_BASE_URL}/v1/webhooks/...`. */
+  /** The URL Twilio calls, when not the broods webhook: its signature covers the exact URL. */
   webhookUrl?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
-/**
- * A WhatsApp Business Cloud API number. `appSecret` signs every delivery and
- * `verifyToken` answers Meta's subscription handshake.
- */
 export interface AgentWhatsAppChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
@@ -740,12 +592,7 @@ export interface AgentWhatsAppChannelConfig {
   [key: string]: unknown;
 }
 
-/**
- * Folds per-run overrides into a shallow copy of the agent config for one
- * invocation. Model overrides ride on `model` and are read where the config
- * already flows. `system` is handled separately as ephemeral system messages.
- * Returns the original config untouched when there are no model overrides.
- */
+// Also where a queued run meets its agent's current config, which may have gained a harness.
 export function applyRunOverrides(
   config: AgentConfig,
   overrides?: RunOverrides,
@@ -756,16 +603,15 @@ export function applyRunOverrides(
   ) {
     return config;
   }
-  const next: AgentConfig = { ...config };
-  if (overrides.model && Object.keys(overrides.model).length > 0) {
-    next.model = { ...config.model, ...overrides.model };
+  if (config.harness && overrides.model.providerOptions !== undefined) {
+    throw new Error(
+      "model.providerOptions is not supported with config.harness; set model.reasoning",
+    );
   }
 
-  return next;
+  return { ...config, model: { ...config.model, ...overrides.model } };
 }
 
-// The step cap an external harness (claude-code, deepagents) is handed. Unset
-// falls back to that harness's own default; 0 lifts it there too.
 export function configuredMaxTurn(config: AgentConfig): number | undefined {
   const maxTurn = config.agent?.maxTurn;
 
@@ -774,8 +620,6 @@ export function configuredMaxTurn(config: AgentConfig): number | undefined {
     : maxTurn;
 }
 
-// Off by default: only an explicit `trace: "enabled"` on the channel appends
-// the dashboard trace link to replies. Trace collection is unaffected.
 export function isChannelTraceEnabled(
   config: AgentConfig,
   channelName: string | undefined,
@@ -788,8 +632,13 @@ export function isChannelTraceEnabled(
   return channelConfig?.trace === "enabled";
 }
 
-// Persistent is the default so a child owns a durable conversation that can be
-// resumed and controlled; only an explicit "ephemeral" opts out.
+export function channelPartitionOf(
+  config: AgentConfig,
+  channelName: string,
+): ChannelPartition | undefined {
+  return parseOr(CHANNEL_PARTITION, config.channels?.[channelName])?.partition;
+}
+
 export function resolveSubagentMode(
   config: AgentConfig,
 ): "ephemeral" | "persistent" {
@@ -813,58 +662,11 @@ export function toChannelRuntimeAgentConfig(
   };
 }
 
-/**
- * The stored config cut down to the branches a run reads, re-checked with the
- * config plane's rules so a row written before a rule tightened fails by name.
- */
+// Re-checked so a row written before a rule tightened fails by name.
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
-  const {
-    agent,
-    harness,
-    model,
-    provider,
-    sandboxes,
-    workspaces,
-    session,
-    hooks,
-    tools,
-    mcp,
-    denyTools,
-    skills,
-    subagent,
-    scheduler,
-    browser,
-    policies,
-    publicAccess,
-    allowRunOverrides,
-  } = config;
-
-  return normalizeAgentConfig({
-    // A stored config from before `sandboxes` absorbed `sandbox` would otherwise
-    // lose the key here and quietly promote its first extra to the default, so it
-    // is carried through for the normalizer to refuse.
-    ...("sandbox" in config && config.sandbox !== undefined
-      ? { sandbox: config.sandbox }
-      : {}),
-    ...(agent !== undefined ? { agent: agent } : {}),
-    ...(harness !== undefined ? { harness: harness } : {}),
-    ...(model !== undefined ? { model: model } : {}),
-    ...(provider !== undefined ? { provider: provider } : {}),
-    ...(sandboxes !== undefined ? { sandboxes: sandboxes } : {}),
-    ...(workspaces !== undefined ? { workspaces: workspaces } : {}),
-    ...(session !== undefined ? { session: session } : {}),
-    ...(hooks !== undefined ? { hooks: hooks } : {}),
-    ...(tools !== undefined ? { tools: tools } : {}),
-    ...(mcp !== undefined ? { mcp: mcp } : {}),
-    ...(denyTools !== undefined ? { denyTools: denyTools } : {}),
-    ...(skills !== undefined ? { skills: skills } : {}),
-    ...(subagent !== undefined ? { subagent: subagent } : {}),
-    ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
-    ...(browser !== undefined ? { browser: browser } : {}),
-    ...(policies !== undefined ? { policies: policies } : {}),
-    ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
-    ...(allowRunOverrides !== undefined
-      ? { allowRunOverrides: allowRunOverrides }
-      : {}),
-  }) as AgentConfig;
+  return normalizeAgentConfig(
+    runtimeConfigBranches(config),
+    {},
+    COMPILED_AGENT_CONFIG,
+  ) as AgentConfig;
 }

@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** The canvas reads every MCP server a stage's nodes own in one query. */
 
 import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
@@ -9,8 +8,7 @@ import schema from "../schema";
 
 const OWNER_AUTH_ID = "auth_owner";
 
-// The query reads its caller through the WorkOS component, which the test
-// runtime does not register. The org owner is the caller here.
+// convex-test does not register the WorkOS component the query reads its caller from.
 vi.mock("../auth", () => ({
   authKit: { getAuthUser: async () => ({ id: OWNER_AUTH_ID }) },
 }));
@@ -53,7 +51,7 @@ describe("mcp.listByStage", () => {
         disabled: true,
         name: "blender",
         nodeId: "node_blender",
-        sandbox: "kien-mac",
+        sandbox: "laptop-mac",
         stageId: stageId,
         transport: "machine",
       },
@@ -85,7 +83,7 @@ describe("mcp.listByStage", () => {
         nodeId: "node_blender",
         name: "blender",
         transport: "machine",
-        sandbox: "kien-mac",
+        sandbox: "laptop-mac",
         disabled: true,
       },
       {
@@ -179,7 +177,6 @@ async function insertServers(
   });
 }
 
-/** An org its owner can read, one project, and two of its stages. */
 async function seed(t: T): Promise<Seeded> {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -201,8 +198,8 @@ async function seed(t: T): Promise<Seeded> {
     const projectId = await ctx.db.insert("projects", {
       authId: OWNER_AUTH_ID,
       orgId: orgId,
-      name: "tracy",
-      slug: "tracy",
+      name: "support",
+      slug: "support",
       updatedAt: now,
     });
     const stage = async (

@@ -1,9 +1,3 @@
-/**
- * Runs the real Worker in local workerd (Miniflare) with a real Worker Loader,
- * so auth, bundle integrity, tenant isolation and egress are checked against
- * the runtime, not a mock. The outbound service stands in for S3 and the web.
- */
-
 import { afterAll, beforeAll, beforeEach, expect, it } from "bun:test";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 
@@ -26,7 +20,6 @@ const TENANT_SOURCE = `export default async function (request) {
 const TENANT_SHA256 = new Bun.CryptoHasher("sha256")
   .update(TENANT_SOURCE)
   .digest("hex");
-/** Loads, but exports no fetch handler: refused before any request runs. */
 const BROKEN_SOURCE = "export default 42;";
 const BROKEN_SHA256 = new Bun.CryptoHasher("sha256")
   .update(BROKEN_SOURCE)
@@ -42,6 +35,7 @@ interface Frame {
 let runtime: Miniflare;
 let runtimeUrl: URL;
 let bundleFetches = 0;
+let slowGate = Promise.withResolvers<void>();
 
 beforeAll(async (): Promise<void> => {
   const build = await Bun.build({
@@ -60,12 +54,13 @@ beforeAll(async (): Promise<void> => {
       bindings: { MCP_API_KEY: API_KEY, BUNDLE_ORIGIN: BUNDLE_ORIGIN },
       outboundService: async (request: Request): Promise<Response> => {
         if (new URL(request.url).host === "slow.example.com") {
-          await Bun.sleep(1_500);
+          await slowGate.promise;
         }
         if (new URL(request.url).origin !== BUNDLE_ORIGIN) {
           return new Response("public-ok");
         }
         bundleFetches++;
+        if (request.url.includes("/hung/")) await new Promise((): void => {});
 
         return new Response(
           request.url.includes(BROKEN_SHA256) ? BROKEN_SOURCE : TENANT_SOURCE,
@@ -83,6 +78,7 @@ afterAll(async (): Promise<void> => {
 
 beforeEach((): void => {
   bundleFetches = 0;
+  slowGate = Promise.withResolvers<void>();
 });
 
 it("refuses a wrong bearer before it downloads tenant code", async (): Promise<void> => {
@@ -134,7 +130,6 @@ it("keeps a verified copy in R2 and loads the next tenant from it instead of S3"
   expect(bundleFetches).toBe(1);
 });
 
-// A 422 is core's signal that no tool ran and the bundle cannot load here.
 it("answers 422 before running anything when the bundle does not match its sha256", async (): Promise<void> => {
   const response = await send({
     ...batch("acct-b"),
@@ -146,6 +141,17 @@ it("answers 422 before running anything when the bundle does not match its sha25
   expect(await response.text()).toContain("sha256");
 });
 
+it("answers 504, not 422, when the bundle download times out", async (): Promise<void> => {
+  const response = await send({
+    ...batch("acct-h"),
+    expectedSha256: "1".repeat(64),
+    bundleUrl: `${BUNDLE_ORIGIN}/hung/${"1".repeat(64)}.mjs`,
+  });
+
+  expect(response.status).toBe(504);
+  expect(response.headers.get("x-broods-nothing-ran")).toBe("1");
+}, 20_000);
+
 it("answers 422 before running anything when the bundle has no fetch handler", async (): Promise<void> => {
   const response = await send(batch("acct-c", ["{}"], BROKEN_SHA256));
 
@@ -154,11 +160,18 @@ it("answers 422 before running anything when the bundle has no fetch handler", a
 });
 
 it("streams each frame as its request settles", async (): Promise<void> => {
-  const frames = await framesOf(
-    await send(batch("acct-a", ["slow", "fast", "PATCH"])),
-  );
+  const response = await send(batch("acct-a", ["slow", "fast", "PATCH"]));
+  const lines = response.body!.pipeThrough(new TextDecoderStream()).values();
+  const frames: Frame[] = [];
+  let buffered = "";
+  for await (const chunk of lines) {
+    buffered += chunk;
+    const complete = buffered.split("\n");
+    buffered = complete.pop()!;
+    frames.push(...complete.map((line): Frame => JSON.parse(line)));
+    if (frames.length === 2) slowGate.resolve();
+  }
 
-  // The slow request went first but answers last; PATCH passes like on Lambda.
   expect(
     frames.map((frame): string => `${frame.t}:${frame.id}`).slice(2),
   ).toEqual(["final:1", "end:undefined"]);
@@ -188,7 +201,6 @@ it("budgets encoded frames, escaping included, against the 16 MiB batch cap", as
   expect(frames.at(-1)?.t).toBe("end");
 });
 
-/** A batch whose request bodies pick the tenant's behaviour; `PATCH` sends `{}` as a PATCH. */
 function batch(
   tenantId: string,
   bodies: string[] = ["{}"],

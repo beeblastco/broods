@@ -1,20 +1,11 @@
-/**
- * Runtime config (dashboard URL, token, project, stage) for SDK/CLI callers.
- *
- * Reads `.env`/`.env.local` from the target project directory (`cwd`, which is
- * not always the directory the process started in) so a generated client picks
- * up package-local config without wiring up dotenv. Kept zero-dependency and
- * synchronous so the BroodsClient constructor can call it without awaiting.
- */
+// Synchronous and dependency-free: the BroodsClient constructor calls it without awaiting.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { readStoredAuth, stageFromEnv } from "./config.ts";
+import { readStoredAuth } from "./config.ts";
 
 export interface BroodsRuntimeConfig {
-  /** Dashboard UI base URL; only used for browser login and deep links. */
   dashboardUrl?: string;
-  /** Convex control-plane base URL for /v1/account/* calls. */
   baseUrl?: string;
   token?: string;
   project?: string;
@@ -27,21 +18,8 @@ interface EnvCacheEntry {
 
 const envFileCache = new Map<string, EnvCacheEntry>();
 
-/**
- * Snapshot of `process.env` keys captured once at module load time. Represents
- * the "real" shell environment before any `.env`/`.env.local` loading. Used to
- * decide which variables `loadEnvFiles` is allowed to set: it will never touch
- * a key that was already present at startup (i.e. set in the shell), but it
- * *will* overwrite keys it loaded itself on a previous call.
- */
 const realEnvSnapshot = new Set(Object.keys(process.env));
 
-/**
- * Keys that were loaded from a `.env`/`.env.local` file by this module. On
- * re-read (file mtime changed) these can be overwritten; keys outside this set
- * that were present at startup are treated as part of the real environment and
- * left untouched.
- */
 const loadedFromFiles = new Set<string>();
 
 export function loadBroodsRuntimeConfig(
@@ -56,15 +34,11 @@ export function loadBroodsRuntimeConfig(
     // From the resolved login only, so it always belongs to the same server.
     token: stored?.token,
     project: process.env.BROODS_PROJECT,
-    stage: stageFromEnv(),
+    stage: process.env.BROODS_STAGE,
   };
 }
 
-/**
- * The environment `broods machine` hands to agent commands and MCP servers:
- * the user's own, minus the CLI's `BROODS_*` credentials. An agent shell that
- * could `echo $BROODS_API_KEY` could call the stage as the developer.
- */
+// An agent shell that could `echo $BROODS_API_KEY` could call the stage as the developer.
 export function agentEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
@@ -76,15 +50,7 @@ export function agentEnv(): Record<string, string> {
   return env;
 }
 
-/**
- * True when the live value of `name` came from the shell rather than from
- * `.env`/`.env.local`, which means rewriting the file cannot change what the
- * next `broods` command reads. Compares against the files instead of the
- * startup snapshot because Bun loads `.env.local` into `process.env` before any
- * user code runs, so a snapshot cannot tell a file value from an export. A
- * shell export that already matches the file reads as file-owned; the two
- * agree, so there is nothing to report at that moment.
- */
+// Reads the files, not a startup snapshot: Bun loads `.env.local` before any user code runs.
 export function isShellOwnedEnv(name: string, cwd = process.cwd()): boolean {
   const current = process.env[name];
   if (current === undefined) return false;
@@ -99,23 +65,10 @@ export function isShellOwnedEnv(name: string, cwd = process.cwd()): boolean {
   return true;
 }
 
-/**
- * Loads `.env` then `.env.local` from `cwd` into `process.env`, so `.env.local`
- * overrides `.env`. A variable is only set when:
- *
- *  1. It was NOT present in the real shell environment at module load time, OR
- *  2. It was previously loaded from a `.env`/`.env.local` file by this module.
- *
- * This lets `dev` child processes pick up `.env.local` edits while still
- * respecting variables exported in the shell (`BROODS_STAGE=staging broods dev`).
- *
- * Cached by file path + mtime so unchanged files are not re-read.
- */
+// Never overwrites a shell export (`BROODS_STAGE=x broods dev`), only keys an earlier load set.
 function loadEnvFiles(cwd: string): void {
   const root = resolve(cwd);
-  // When BROODS_RELOAD_ENV is set (by `dev` child processes), skip the
-  // real-env guard so `.env.local` edits are always picked up even when the
-  // child inherited stale values from the parent's process.env.
+  // `dev` children inherit the parent's loaded values, so they cannot tell them from the shell's.
   const forceReload = process.env.BROODS_RELOAD_ENV === "1";
 
   for (const file of [".env", ".env.local"]) {
@@ -144,8 +97,7 @@ function loadEnvFiles(cwd: string): void {
   }
 }
 
-/** Parses dotenv-style `KEY=value` lines, tolerating `export `, comments, and blanks. */
-function parseEnv(source: string): Record<string, string> {
+export function parseEnv(source: string): Record<string, string> {
   const values: Record<string, string> = {};
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -165,7 +117,12 @@ function parseEnv(source: string): Record<string, string> {
 
 function unquoteEnvValue(value: string): string {
   if (value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    // The CLI writes JSON strings; a hand-written value that is not one keeps the old reading.
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return value.slice(1, -1).replace(/\\n/g, "\n").replace(/\\"/g, '"');
+    }
   }
   if (value.startsWith("'") && value.endsWith("'")) {
     return value.slice(1, -1);

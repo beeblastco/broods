@@ -1,15 +1,13 @@
-/**
- * Example: tool approval flow via declarative broods resources.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 const conversationKey = `approval-${Date.now()}`;
 
-// First pass: stream until approval request is received.
 let approvalRequest: { approvalId: string; toolName: string } | null = null;
 
 for await (const chunk of client.stream(api.agents.approvalAgent, {
@@ -66,7 +64,6 @@ console.log(
   JSON.stringify(approvalRequest, null, 2),
 );
 
-// Second pass: respond with approval.
 for await (const chunk of client.stream(api.agents.approvalAgent, {
   events: [
     {

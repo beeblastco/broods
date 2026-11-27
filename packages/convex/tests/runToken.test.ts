@@ -1,8 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A run token (`brt_`) is a core credential for one agent run: the config
- * plane and the CLI routes refuse it on the prefix alone.
- */
 
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";

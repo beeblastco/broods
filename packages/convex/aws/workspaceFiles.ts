@@ -1,11 +1,5 @@
 "use node";
 
-/**
- * Node-runtime internal actions for S3 workspace file operations, called by
- * the default-runtime config HTTP surface (config/http). Dashboard actions use
- * model/workspaceFs directly via workspaceFilesPublic instead.
- */
-
 import { v } from "convex/values";
 import { internalAction } from "../_generated/server";
 import { workspaceStorageValidator } from "../workspace/files";
@@ -15,13 +9,12 @@ import {
   purgeWorkspaceFilesystem,
   renameWorkspacePath,
   uploadWorkspaceFile,
-  withR2Credentials,
+  withStorageAccess,
   workspaceFileDownloadUrl,
   type WorkspaceFileEntry,
 } from "../model/workspaceFs";
 
-// Every op takes the workspace's own storage block so a bring-your-own bucket is
-// read and written where the sandbox mounts it, not in the managed bucket.
+// Per-workspace storage, so a bring-your-own bucket is used where the sandbox mounts it.
 const workspaceRef = {
   accountId: v.id("accounts"),
   workspaceId: v.id("workspaceConfigs"),
@@ -36,26 +29,14 @@ const fileEntry = v.object({
   updatedAt: v.optional(v.string()),
 });
 
-/**
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @returns files plus synthesized folder entries
- */
 export const list = internalAction({
   args: workspaceRef,
   returns: v.array(fileEntry),
   handler: async (ctx, args): Promise<WorkspaceFileEntry[]> => {
-    return await listWorkspaceFiles(await withR2Credentials(ctx, args));
+    return await listWorkspaceFiles(await withStorageAccess(ctx, args));
   },
 });
 
-/**
- * Upload or replace one workspace file.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path file path, contentBase64 contents, contentType optional
- * @returns the stored file entry
- */
 export const upload = internalAction({
   args: {
     ...workspaceRef,
@@ -65,7 +46,7 @@ export const upload = internalAction({
   },
   returns: fileEntry,
   handler: async (ctx, args): Promise<WorkspaceFileEntry> => {
-    return await uploadWorkspaceFile(await withR2Credentials(ctx, args), {
+    return await uploadWorkspaceFile(await withStorageAccess(ctx, args), {
       path: args.path,
       contentBase64: args.contentBase64,
       contentType: args.contentType,
@@ -73,68 +54,42 @@ export const upload = internalAction({
   },
 });
 
-/**
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path the file path
- * @returns a short-lived S3 GET URL
- */
 export const downloadUrl = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.string(),
   handler: async (ctx, args): Promise<string> => {
     return await workspaceFileDownloadUrl(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
     );
   },
 });
 
-/**
- * Delete a workspace file or folder prefix.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path the file or folder path
- * @returns the number of objects deleted
- */
 export const removePath = internalAction({
   args: { ...workspaceRef, path: v.string() },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     return await deleteWorkspacePath(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
     );
   },
 });
 
-/**
- * Purge all files in a managed workspace filesystem namespace.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @returns the number of objects deleted
- */
 export const purge = internalAction({
   args: workspaceRef,
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
-    return await purgeWorkspaceFilesystem(await withR2Credentials(ctx, args));
+    return await purgeWorkspaceFilesystem(await withStorageAccess(ctx, args));
   },
 });
 
-/**
- * Rename a workspace file or folder prefix.
- * @param accountId account owning the workspace
- * @param workspaceId workspace config id
- * @param path source path, newPath destination path
- * @returns the number of objects moved
- */
 export const renamePath = internalAction({
   args: { ...workspaceRef, path: v.string(), newPath: v.string() },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     return await renameWorkspacePath(
-      await withR2Credentials(ctx, args),
+      await withStorageAccess(ctx, args),
       args.path,
       args.newPath,
     );

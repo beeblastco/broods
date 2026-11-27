@@ -1,12 +1,6 @@
 /**
- * Organization › Access: permissions, policies and roles, all owned by the
- * org so one policy serves any agent, role or key in it.
- *
- * A permission names one thing an agent or member may do: the built-in
- * action vocabulary, or a custom name the org adds. A policy is named rules
- * over permissions, each in one scope, optionally narrowed by a condition.
- * A role is a named set of policies; a member gets one role. Owners and
- * admins may change all of it; `access:write` lets a custom role do so too.
+ * Org-owned permissions, policies (rules over permissions, each in one scope) and roles (sets
+ * of policies; a member holds one). Owners, admins and `access:write` roles may change them.
  */
 
 import { v, type Infer } from "convex/values";
@@ -29,6 +23,13 @@ import {
 } from "./model/access";
 import { randomToken } from "./model/accountSecrets";
 import { actorsOf, actorValidator, type Actor } from "./model/actor";
+import { requireActiveAccount } from "./model/activeAccount";
+import {
+  appendAuditEvent,
+  auditDetailsJson,
+  dashboardAuditActor,
+  type AuditResource,
+} from "./model/auditEvents";
 import { ClientError } from "./model/clientError";
 import { orgIdOf } from "./model/ownership/org";
 import { assertPolicyUnreferenced } from "./model/policyReferences";
@@ -42,8 +43,8 @@ import {
   type PolicyCondition,
   type PolicyDocument,
   type PolicyRule,
-} from "./model/policyRules";
-import { getActiveCaller, type ActiveAccount } from "./org/orgs";
+} from "./model/policyDocument";
+import { getActiveCaller, type ActiveAccount } from "./model/activeCaller";
 import { orgMembersFields } from "./schema";
 
 const AGENT_DESCRIPTIONS: Record<
@@ -59,7 +60,6 @@ const AGENT_DESCRIPTIONS: Record<
   "skill.load": "Load a skill",
 };
 
-/** The built-in permissions, one line each. */
 const BUILT_IN: Array<{
   kind: "built-in";
   name: string;
@@ -86,7 +86,7 @@ const BUILT_IN: Array<{
   })),
 ];
 
-const BUILT_IN_ROLE_NAMES = ["owner", "admin", "member"];
+const BUILT_IN_ROLE_NAMES = new Set(["owner", "admin", "member"]);
 
 const dashboardActionValidator = v.union(
   ...DASHBOARD_POLICY_ACTIONS.map((action) => v.literal(action)),
@@ -100,7 +100,6 @@ const conditionValidator = v.object({
   value: v.string(),
 });
 
-/** Where a rule applies: the whole org, one project, or one stage. */
 const scopeValidator = v.object({
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
@@ -140,7 +139,6 @@ const policyRowValidator = v.object({
   scope: v.string(),
   managedBy: v.optional(v.string()),
   rules: v.array(ruleRowValidator),
-  /** The distinct permissions across the rules, for counts and summaries. */
   permissions: v.array(v.string()),
   createdAt: v.number(),
   createdBy: v.optional(actorValidator),
@@ -151,7 +149,6 @@ const roleFields = {
   description: v.string(),
   policyIds: v.array(v.id("agentPolicies")),
   members: v.array(actorValidator),
-  /** The dashboard permissions the role grants org-wide. */
   permissions: v.array(dashboardActionValidator),
 };
 
@@ -176,7 +173,6 @@ type RoleRow = Infer<typeof roleRowValidator>;
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** What the signed-in member may do in the active org's dashboard, org-wide or in one project. */
 export const viewerPermissions = query({
   args: { projectId: v.optional(v.id("projects")) },
   returns: v.array(dashboardActionValidator),
@@ -192,7 +188,6 @@ export const viewerPermissions = query({
   },
 });
 
-/** Built-in permissions first, then the org's custom ones. */
 export const listPermissions = query({
   args: {},
   returns: v.array(permissionRowValidator),
@@ -288,7 +283,6 @@ export const removePermission = mutation({
   },
 });
 
-/** Every active policy the org owns, org-wide ones and stage ones alike. */
 export const listPolicies = query({
   args: {},
   returns: v.array(policyRowValidator),
@@ -296,7 +290,7 @@ export const listPolicies = query({
     const caller = await getActiveCaller(ctx);
     if (!caller) return [];
     const policies = await accountPolicies(ctx, caller.account._id);
-    const names = await scopeNames(ctx, policies);
+    const names = await scopeNames(ctx, orgIdOf(ctx, caller.account), policies);
     const creators = await actorsOf(
       ctx,
       policies.map((policy) => policy.createdBy),
@@ -315,12 +309,10 @@ export const createPolicy = mutation({
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
     const caller = await requireAccessWriter(ctx);
-    const name = args.name.trim();
-    if (!name) throw new ClientError("A policy needs a name");
+    const name = policyName(args.name);
     const document: PolicyDocument = { version: 1, mode: args.mode, rules: [] };
     const now = Date.now();
-
-    return await ctx.db.insert("agentPolicies", {
+    const policyId = await ctx.db.insert("agentPolicies", {
       accountId: caller.account._id,
       name: name,
       description: args.description?.trim() || undefined,
@@ -331,6 +323,15 @@ export const createPolicy = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "created",
+      { kind: "policy", id: policyId, name: name },
+      "Policy created",
+    );
+
+    return policyId;
   },
 });
 
@@ -347,25 +348,35 @@ export const updatePolicy = mutation({
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
     const document =
       args.mode !== undefined ? { ...policy.document, mode: args.mode } : null;
-    // An audit policy grants and denies nothing: switching to enforce lets its
-    // allows count, and switching to audit drops its denies.
+    // Audit grants and denies nothing, so either mode switch can widen what the policy grants.
     if (document && document.mode !== policy.document.mode) {
       await assertPolicyWithinReach(ctx, caller, policy, document);
     }
     await ctx.db.patch(policy._id, {
-      ...(args.name !== undefined ? { name: args.name.trim() } : {}),
+      ...(args.name !== undefined ? { name: policyName(args.name) } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
       ...(document ? { document: document } : {}),
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      {
+        kind: "policy",
+        id: policy._id,
+        name: args.name === undefined ? policy.name : policyName(args.name),
+      },
+      "Policy updated",
+      { mode: args.mode },
+    );
 
     return null;
   },
 });
 
-/** One permission in one scope, optionally narrowed by a condition. */
 export const addRule = mutation({
   args: {
     policyId: v.id("agentPolicies"),
@@ -378,6 +389,7 @@ export const addRule = mutation({
   handler: async (ctx, args): Promise<string> => {
     const caller = await requireAccessWriter(ctx);
     const policy = await editablePolicy(ctx, caller.account._id, args.policyId);
+    await assertOwnedScope(ctx, caller.account, args.scope);
     const known = await permissionNames(ctx, caller.account._id);
     if (!known.has(args.permission)) {
       throw new ClientError(`${args.permission} is not a permission`);
@@ -385,8 +397,7 @@ export const addRule = mutation({
     const dashboardAction = DASHBOARD_POLICY_ACTIONS.find(
       (action) => action === args.permission,
     );
-    // The dashboard evaluator reads only the scope, so a condition on any
-    // other attribute could neither grant nor refuse anything there.
+    // The dashboard evaluator reads only the scope; any other condition would be inert.
     if (dashboardAction && args.condition) {
       throw new ClientError(
         "A dashboard permission takes only a project or stage scope",
@@ -412,7 +423,6 @@ export const addRule = mutation({
       conditions.push({
         attribute: args.condition.attribute.trim(),
         operator: operator,
-        // `in` and `notIn` compare against a list, typed comma-separated.
         value:
           operator === "in" || operator === "notIn"
             ? args.condition.value.split(",").map((entry) => entry.trim())
@@ -436,6 +446,14 @@ export const addRule = mutation({
       document: document,
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy rule added",
+      { rule: rule },
+    );
 
     return rule.id;
   },
@@ -462,12 +480,21 @@ export const removeRule = mutation({
       document: document,
       updatedAt: Date.now(),
     });
+    if (dropped) {
+      await recordAccessAudit(
+        ctx,
+        caller,
+        "updated",
+        { kind: "policy", id: policy._id, name: policy.name },
+        "Policy rule removed",
+        { rule: dropped },
+      );
+    }
 
     return null;
   },
 });
 
-/** Soft-deletes a policy no agent, role or key still names. */
 export const removePolicy = mutation({
   args: { policyId: v.id("agentPolicies") },
   returns: v.null(),
@@ -481,12 +508,18 @@ export const removePolicy = mutation({
       deletedAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "deleted",
+      { kind: "policy", id: policy._id, name: policy.name },
+      "Policy deleted",
+    );
 
     return null;
   },
 });
 
-/** Built-in roles first, then the org's custom ones, each with its members and permissions. */
 export const listRoles = query({
   args: {},
   returns: v.array(roleRowValidator),
@@ -578,11 +611,7 @@ export const createRole = mutation({
     const caller = await requireAccessWriter(ctx);
     const orgId = orgIdOf(ctx, caller.account);
     if (!orgId) throw new ClientError("No organization");
-    const name = args.name.trim();
-    if (!name) throw new ClientError("A role needs a name");
-    if (BUILT_IN_ROLE_NAMES.includes(name.toLowerCase())) {
-      throw new ClientError(`${name} is a built-in role`);
-    }
+    const name = roleName(args.name);
     await assertOwnedPolicies(ctx, caller.account._id, args.policyIds);
     await assertGrantsWithinReach(
       ctx,
@@ -591,8 +620,7 @@ export const createRole = mutation({
       await activePolicies(ctx, args.policyIds),
     );
     const now = Date.now();
-
-    return await ctx.db.insert("orgRoles", {
+    const roleId = await ctx.db.insert("orgRoles", {
       orgId: orgId,
       name: name,
       description: args.description?.trim() || undefined,
@@ -601,6 +629,16 @@ export const createRole = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "created",
+      { kind: "role", id: roleId, name: name },
+      "Role created",
+      { policyIds: args.policyIds },
+    );
+
+    return roleId;
   },
 });
 
@@ -626,19 +664,30 @@ export const updateRole = mutation({
       );
     }
     await ctx.db.patch(role._id, {
-      ...(args.name !== undefined ? { name: args.name.trim() } : {}),
+      ...(args.name !== undefined ? { name: roleName(args.name) } : {}),
       ...(args.description !== undefined
         ? { description: args.description?.trim() || undefined }
         : {}),
       ...(args.policyIds !== undefined ? { policyIds: args.policyIds } : {}),
       updatedAt: Date.now(),
     });
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "updated",
+      {
+        kind: "role",
+        id: role._id,
+        name: args.name === undefined ? role.name : roleName(args.name),
+      },
+      "Role updated",
+      { policyIds: args.policyIds },
+    );
 
     return null;
   },
 });
 
-/** Deletes a role nobody holds. */
 export const removeRole = mutation({
   args: { roleId: v.id("orgRoles") },
   returns: v.null(),
@@ -650,24 +699,38 @@ export const removeRole = mutation({
       .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", role.orgId))
       .filter((q) => q.eq(q.field("roleId"), role._id))
       .first();
-    if (holder) {
+    const invited = await ctx.db
+      .query("orgInvitations")
+      .withIndex("by_orgId_and_email", (q) => q.eq("orgId", role.orgId))
+      .filter((q) => q.eq(q.field("roleId"), role._id))
+      .first();
+    if (holder || invited) {
       throw new ClientError(
-        "A member holds this role; give them another first",
+        holder
+          ? "A member holds this role; give them another first"
+          : "A pending invitation holds this role; revoke it first",
       );
     }
     await ctx.db.delete(role._id);
+    await recordAccessAudit(
+      ctx,
+      caller,
+      "deleted",
+      { kind: "role", id: role._id, name: role.name },
+      "Role deleted",
+    );
 
     return null;
   },
 });
 
-/** The caller, who must hold `access:write` in the active org. */
 async function requireAccessWriter(ctx: MutationCtx): Promise<ActiveAccount> {
   const caller = await getActiveCaller(ctx);
   const orgId = caller ? orgIdOf(ctx, caller.account) : null;
   if (!caller || !orgId) {
     throw new ClientError("No permission for this", "unauthorized");
   }
+  await requireActiveAccount(ctx, caller.account._id);
   await requireDashboardPermission(ctx, orgId, caller.user, "access:write");
 
   return caller;
@@ -698,7 +761,6 @@ async function ownedPolicy(
   return policy;
 }
 
-/** An owned policy the dashboard may change: one it made, not one `broods deploy` owns. */
 async function editablePolicy(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -714,10 +776,7 @@ async function editablePolicy(
   return policy;
 }
 
-/**
- * The document a policy would hold grants nothing new the caller lacks, alone
- * or in any role that holds it: a deny here can mask another policy's allow.
- */
+/** Checked alone and beside each role's other policies: a deny can mask another's allow. */
 async function assertPolicyWithinReach(
   ctx: MutationCtx,
   caller: ActiveAccount,
@@ -766,6 +825,23 @@ async function assertOwnedPolicies(
   );
 }
 
+// Else a rule could name another org's project or stage, and the policy list would show it.
+async function assertOwnedScope(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  scope: Infer<typeof scopeValidator>,
+): Promise<void> {
+  const stage = scope.stageId ? await ctx.db.get(scope.stageId) : null;
+  const projectId = scope.projectId ?? stage?.projectId;
+  const project = projectId ? await ctx.db.get(projectId) : null;
+  const owned = !projectId || project?.orgId === orgIdOf(ctx, account);
+  const stageFits =
+    !scope.stageId || (stage !== null && stage.projectId === projectId);
+  if (!owned || !stageFits) {
+    throw new ClientError("Project or stage not found", "not_found");
+  }
+}
+
 async function ownedRole(
   ctx: Ctx,
   account: Doc<"accounts">,
@@ -779,7 +855,6 @@ async function ownedRole(
   return role;
 }
 
-/** Every permission name a rule may use: built-in and the org's custom ones. */
 async function permissionNames(
   ctx: Ctx,
   accountId: Id<"accounts">,
@@ -795,9 +870,32 @@ async function permissionNames(
   ]);
 }
 
-/** The project and stage names the policies' scopes point at, each fetched once. */
+async function recordAccessAudit(
+  ctx: MutationCtx,
+  caller: ActiveAccount,
+  action: string,
+  resource: AuditResource,
+  summary: string,
+  details?: Record<string, unknown>,
+): Promise<void> {
+  await appendAuditEvent(ctx.db, {
+    accountId: caller.account._id,
+    actor: dashboardAuditActor({
+      id: caller.user.authId,
+      email: caller.user.email,
+      name: caller.user.name,
+    }),
+    action: action,
+    resource: resource,
+    summary: summary,
+    ...(details ? { detailsJson: auditDetailsJson(details) } : {}),
+  });
+}
+
+// A rule may hold any id, so only the account's own projects and stages are named.
 async function scopeNames(
   ctx: Ctx,
+  orgId: Id<"orgs"> | null,
   policies: readonly Doc<"agentPolicies">[],
 ): Promise<Map<string, string>> {
   const stageIds = new Set<Id<"stages">>();
@@ -823,23 +921,21 @@ async function scopeNames(
   for (const stage of stages) projectIds.add(stage.projectId);
   const projects = (
     await Promise.all([...projectIds].map((id) => ctx.db.get(id)))
-  ).filter((project) => project !== null);
+  )
+    .filter((project) => project !== null)
+    .filter((project) => project.orgId === orgId);
   const names = new Map<string, string>();
   for (const project of projects) {
     names.set(project._id, `project ${project.name}`);
   }
   for (const stage of stages) {
     const project = projects.find((entry) => entry._id === stage.projectId);
-    names.set(
-      stage._id,
-      `stage ${project ? `${project.name} / ` : ""}${stage.name}`,
-    );
+    if (project) names.set(stage._id, `stage ${project.name} / ${stage.name}`);
   }
 
   return names;
 }
 
-/** A policy as the list draws it: its rules in words, its scope, who made it. */
 function policyRow(
   policy: Doc<"agentPolicies">,
   names: Map<string, string>,
@@ -867,7 +963,23 @@ function policyRow(
   };
 }
 
-/** "organization", "project demo-app" or "stage demo-app / production". */
+function policyName(raw: string): string {
+  const name = raw.trim();
+  if (!name) throw new ClientError("A policy needs a name");
+
+  return name;
+}
+
+function roleName(raw: string): string {
+  const name = raw.trim();
+  if (!name) throw new ClientError("A role needs a name");
+  if (BUILT_IN_ROLE_NAMES.has(name.toLowerCase())) {
+    throw new ClientError(`${name} is a built-in role`);
+  }
+
+  return name;
+}
+
 function ruleScope(rule: PolicyRule, names: Map<string, string>): string {
   const scoped =
     conditionValue(rule, "stage.id") ?? conditionValue(rule, "project.id");
@@ -875,7 +987,6 @@ function ruleScope(rule: PolicyRule, names: Map<string, string>): string {
   return (scoped && names.get(scoped)) || "organization";
 }
 
-/** The rule's conditions that are not its scope, in one line. */
 function ruleCondition(rule: PolicyRule): string | undefined {
   const others = (rule.conditions ?? []).filter(
     (condition) =>

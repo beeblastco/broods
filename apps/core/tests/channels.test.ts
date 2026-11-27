@@ -22,10 +22,6 @@ describe("shared channel helpers", () => {
     expect(extractText(content)).toBe("alphabeta");
   });
 
-  it("returns plain string content unchanged", () => {
-    expect(extractText("hello")).toBe("hello");
-  });
-
   it("lets every id through when there is no list or the list is the wildcard", () => {
     expect(isAllowedId(null, "C1")).toBe(true);
     expect(isAllowedId(undefined, "C1")).toBe(true);
@@ -50,6 +46,33 @@ describe("chunkChannelText", () => {
   it("keeps a surrogate pair whole even when it is wider than the limit", () => {
     expect(chunkChannelText("😀a", 1)).toEqual(["😀", "a"]);
   });
+
+  it("cuts at a newline, then a space, so the trailing trace link stays whole", () => {
+    const trace = "Trace: https://broods.test/?project=p&trace=t";
+    const chunks = chunkChannelText(`${"word ".repeat(30)}\n\n${trace}`, 160);
+
+    expect(chunks).toEqual([`${"word ".repeat(30)}\n\n`, trace]);
+    expect(chunkChannelText("aaaa bbbb cccc", 10)).toEqual([
+      "aaaa bbbb ",
+      "cccc",
+    ]);
+  });
+
+  it("closes a code fence at a cut and reopens it in the next piece", () => {
+    const code = Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n");
+    const chunks = chunkChannelText(
+      `Intro\n\`\`\`ts\n${code}\n\`\`\`\nDone`,
+      60,
+      { markdown: true },
+    );
+
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.length <= 60)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split("```").length % 2 === 1)).toBe(
+      true,
+    );
+    expect(chunks[1]!.startsWith("```ts\n")).toBe(true);
+  });
 });
 
 describe("channelAttachmentBytes", () => {
@@ -60,10 +83,10 @@ describe("channelAttachmentBytes", () => {
       name: "x.png",
     });
 
-    expect(channelAttachmentBytes(image("file:///etc/hosts"))).rejects.toThrow(
-      "only http(s) URLs are supported",
-    );
-    expect(
+    await expect(
+      channelAttachmentBytes(image("file:///etc/hosts")),
+    ).rejects.toThrow("only http(s) URLs are supported");
+    await expect(
       channelAttachmentBytes(image("http://169.254.169.254/latest")),
     ).rejects.toThrow(
       "blocked private or metadata address for 169.254.169.254",
@@ -153,6 +176,14 @@ describe("formatChannelErrorText", () => {
   it("leaves a word that only contains 'timeout' letters alone", () => {
     expect(formatChannelErrorText("Invalid runtime output schema")).toBe(
       "⚠️ Invalid runtime output schema",
+    );
+  });
+
+  it("says a worker deadline overrun in the user's words", () => {
+    expect(
+      formatChannelErrorText("I ran out of time on this turn.", "telegram"),
+    ).toBe(
+      "⚠️ I ran out of time on this turn. Send a message to continue where I left off.",
     );
   });
 

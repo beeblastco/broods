@@ -1,5 +1,8 @@
 {
   "functions": ".",
+  "codegen": {
+    "staticApi": true
+  },
   "authKit": {
     "redirectUris": [
       "http://localhost:3000/auth/callback",

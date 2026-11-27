@@ -1,17 +1,15 @@
-/**
- * Public mutation wrappers for cron CRUD used by the dashboard. These run the
- * transactional cron mutations in agent/crons in the same transaction, so the
- * crons table and the registered schedules can never drift apart.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { mutation } from "../_generated/server";
-import { getActiveAccountForUser, getActiveCaller } from "../org/orgs";
+import { requireActiveAccount } from "../model/activeAccount";
+import { ClientError } from "../model/clientError";
+import {
+  getActiveAccountForUser,
+  getActiveCaller,
+} from "../model/activeCaller";
 
 const STATUS_VALIDATOR = v.union(v.literal("active"), v.literal("paused"));
-// A cron runs stored instructions as any agent of the org, on a schedule, and
-// can answer into a live channel session: that is an org admin operation.
+// Runs stored instructions as any org agent, into live channels: an org admin operation.
 const CRON_ADMIN_REQUIRED =
   "Scheduled jobs can only be changed by an org admin.";
 
@@ -29,13 +27,14 @@ export const create = mutation({
   returns: v.object({ cronId: v.string() }),
   handler: async (ctx, args): Promise<{ cronId: string }> => {
     const caller = await getActiveCaller(ctx, "admin");
-    if (!caller) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!caller) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
+    await requireActiveAccount(ctx, caller.account._id);
 
-    const cron = (await ctx.runMutation(internal.agent.crons.create, {
+    const cron = await ctx.runMutation(internal.agent.crons.create, {
       accountId: caller.account._id,
       input: args,
       createdBy: caller.user._id,
-    })) as { cronId: string };
+    });
 
     return { cronId: cron.cronId };
   },
@@ -47,17 +46,18 @@ export const update = mutation({
     name: v.optional(v.string()),
     agentId: v.optional(v.id("agents")),
     input: v.optional(v.string()),
-    conversationKey: v.optional(v.string()),
+    conversationKey: v.optional(v.union(v.string(), v.null())),
     scheduleExpression: v.optional(v.string()),
     timezone: v.optional(v.string()),
     status: v.optional(STATUS_VALIDATOR),
-    description: v.optional(v.string()),
+    description: v.optional(v.union(v.string(), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const { cronId, ...patch } = args;
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
+    await requireActiveAccount(ctx, account._id);
 
     const updated = await ctx.runMutation(internal.agent.crons.update, {
       accountId: account._id,
@@ -75,7 +75,8 @@ export const remove = mutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const account = await getActiveAccountForUser(ctx, "admin");
-    if (!account) throw new Error(CRON_ADMIN_REQUIRED);
+    if (!account) throw new ClientError(CRON_ADMIN_REQUIRED, "forbidden");
+    await requireActiveAccount(ctx, account._id);
 
     const removed = await ctx.runMutation(internal.agent.crons.remove, {
       accountId: account._id,

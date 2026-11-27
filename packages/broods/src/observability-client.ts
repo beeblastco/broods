@@ -1,15 +1,11 @@
-/**
- * Lightweight WebSocket client for the observability gateway's logs stream.
- * Subscribes and yields ObservabilityLogEntry items (backfill then live) until
- * the AbortSignal fires or the socket closes. Imports only the shared contracts.
- */
-
 import { toWebSocketBaseUrl, webSocketSubprotocols } from "./websocket.ts";
 import type {
   LogLevel,
+  ObservabilityHistoryRange,
   ObservabilityClientMessage,
   ObservabilityLogEntry,
   ObservabilityServerMessage,
+  ObservabilitySpanRow,
 } from "./observability-contracts.ts";
 
 export interface ObservabilityClientOptions {
@@ -21,31 +17,30 @@ export interface ObservabilityClientOptions {
 }
 
 export interface ObservabilitySubscribeOptions {
-  // Recent lines to backfill from Loki before going live; 0/absent = live-only.
   backfill?: number;
-  // Explicitly skip the gateway's recent JetStream replay. Defaults to true when
-  // no backfill is requested, matching CLI/client live-tail expectations.
   liveOnly?: boolean;
   minLevel?: LogLevel;
-  // Tail one sandbox instance's guest output instead of the deployment's logs.
-  // The id is the last segment of the instance's log stream (dashboard Instances
-  // sheet, or `logStream` on the instance row).
   sandboxId?: string;
   signal?: AbortSignal;
-  /** Called before each reconnect, so a terminal can say the tail is down. */
   onReconnect?: (attempt: number, reason: string) => void;
-  /** Never give up after a minute down, for a tail that lives as long as its session. */
   keepReconnecting?: boolean;
+}
+
+/** `agentId` is set when the gateway searched only that agent's traces. */
+export interface BackfillResult<T> {
+  rows: T[];
+  nextTo?: number;
+  error?: string;
+  agentId?: string;
 }
 
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
-/** How long the stream may stay down before reconnecting gives up. */
 const RECONNECT_GIVE_UP_MS = 60_000;
-/** How long a new socket may wait for the gateway's first answer. */
 const READY_TIMEOUT_MS = 15_000;
+// Log history widens through queries with 5s, 10s and 15s budgets.
+const HISTORY_TIMEOUT_MS = 45_000;
 
-/** Resolves after `ms`, or at once when `signal` aborts; never rejects. */
 export function reconnectDelay(
   ms: number,
   signal: AbortSignal | undefined,
@@ -78,13 +73,8 @@ export function resolveWebSocket(): new (
   return impl;
 }
 
-/** The server refused to mint a stage credential. Reconnecting cannot fix it. */
 export class StageSessionRefusedError extends Error {}
 
-/**
- * Continuously stream logs, reconnecting transient socket failures until
- * aborted. Throws once the stream has been down for a minute.
- */
 export async function* subscribeObservabilityLogs(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions = {},
@@ -104,7 +94,8 @@ export async function* subscribeObservabilityLogs(
           live = true;
         },
       )) {
-        const key = `${entry.ts}|${entry.eventType}|${entry.message}`;
+        const key =
+          entry.logId ?? `${entry.ts}|${entry.eventType}|${entry.message}`;
         if (seen.has(key)) continue;
         seen.add(key);
         if (seen.size > 5_000) seen.delete(seen.values().next().value!);
@@ -122,7 +113,6 @@ export async function* subscribeObservabilityLogs(
         throw error;
     }
     if (subscribeOptions.signal?.aborted) return;
-    // A stream that went live was up until now, so the outage starts here.
     if (live) {
       retryMs = 500;
       attempt = 0;
@@ -143,24 +133,16 @@ export async function* subscribeObservabilityLogs(
   }
 }
 
-// One socket lifecycle. The exported wrapper above owns reconnect and dedupe.
-// `onLive` fires once the gateway accepts the subscription.
 async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
   onLive: () => void,
 ): AsyncGenerator<ObservabilityLogEntry> {
-  const { baseUrl, credential, project, stage } = options;
   const { backfill = 0, minLevel, sandboxId, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
 
-  const url = buildObservabilityUrl(baseUrl, project, stage);
-  const displayUrl = url;
-  const WebSocketImpl = resolveWebSocket();
-
-  // Queues and flow-control for the generator ↔ WS event loop bridge.
   const entries: ObservabilityLogEntry[] = [];
   let socketError: Error | null = null;
   let done = false;
@@ -171,13 +153,12 @@ async function* subscribeObservabilityLogsOnce(
     wake = null;
   };
 
-  const socket = new WebSocketImpl(
-    url,
-    webSocketSubprotocols(await credential()),
+  const { socket, url } = openObservabilitySocket(
+    options,
+    await options.credential(),
   );
 
-  // A socket that opens but never answers would wait forever, out of reach of
-  // the reconnect loop above.
+  // An open socket that never answers would hang beyond the reconnect loop's reach.
   const readyTimer = setTimeout((): void => {
     socketError = new Error(
       `The observability gateway did not answer within ${READY_TIMEOUT_MS / 1000} s.`,
@@ -244,7 +225,6 @@ async function* subscribeObservabilityLogsOnce(
         notify();
         break;
       case "ready":
-        // The gateway is now live; `onLive` above already recorded it.
         break;
       default:
         break;
@@ -253,7 +233,7 @@ async function* subscribeObservabilityLogsOnce(
 
   socket.onerror = (): void => {
     socketError = new Error(
-      `Cannot connect to the observability gateway at ${displayUrl}.`,
+      `Cannot connect to the observability gateway at ${url}.`,
     );
     done = true;
     notify();
@@ -261,13 +241,7 @@ async function* subscribeObservabilityLogsOnce(
 
   socket.onclose = (event: CloseEvent): void => {
     if (!done) {
-      if (event.code !== 1000) {
-        socketError = new Error(
-          event.reason
-            ? `Observability WebSocket closed: ${event.reason}`
-            : `Observability WebSocket closed with code ${event.code}.`,
-        );
-      }
+      if (event.code !== 1000) socketError = closedError(event);
       done = true;
       notify();
     }
@@ -281,13 +255,209 @@ async function* subscribeObservabilityLogsOnce(
       }
       if (socketError) throw socketError;
       if (done) return;
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve): void => {
         wake = resolve;
       });
     }
   } finally {
     cleanup();
   }
+}
+
+export async function fetchObservabilityTrace(
+  options: ObservabilityClientOptions,
+  traceId: string,
+): Promise<ObservabilitySpanRow[]> {
+  const { error, rows } = await requestBackfill<ObservabilitySpanRow>(
+    options,
+    { type: "fetchTrace", traceId: traceId },
+    "traces",
+  );
+  if (error) throw new Error(error);
+
+  return rows;
+}
+
+/** One page of history with no live tail: what a tool or a one-shot command wants. */
+export async function fetchObservabilityLogPage(
+  options: ObservabilityClientOptions,
+  request: {
+    limit: number;
+    sandboxId?: string;
+    minLevel?: LogLevel;
+    range: ObservabilityHistoryRange;
+  },
+): Promise<BackfillResult<ObservabilityLogEntry>> {
+  if (request.limit <= 0) return { rows: [] };
+
+  return await requestBackfill<ObservabilityLogEntry>(
+    options,
+    {
+      type: "subscribe",
+      stream: "logs",
+      backfill: request.limit,
+      historyOnly: true,
+      range: request.range,
+      ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
+      ...(request.minLevel ? { minLevel: request.minLevel } : {}),
+    },
+    "logs",
+  );
+}
+
+export async function fetchObservabilityLogs(
+  options: ObservabilityClientOptions,
+  request: {
+    limit: number;
+    minLevel?: LogLevel;
+    sandboxId?: string;
+    range?: ObservabilityHistoryRange;
+  },
+): Promise<ObservabilityLogEntry[]> {
+  // The gateway answers a zero backfill with `ready` alone, so no closing frame would come.
+  if (request.limit <= 0) return [];
+  const { error, rows } = await requestBackfill<ObservabilityLogEntry>(
+    options,
+    {
+      type: "subscribe",
+      stream: "logs",
+      backfill: request.limit,
+      historyOnly: true,
+      ...(request.range ? { range: request.range } : {}),
+      ...(request.minLevel ? { minLevel: request.minLevel } : {}),
+      ...(request.sandboxId ? { sandboxId: request.sandboxId } : {}),
+    },
+    "logs",
+  );
+  if (error) throw new Error(error);
+
+  return rows;
+}
+
+/** The latest traces' spans with no live tail, and why any of them could not be read. */
+export async function fetchObservabilitySpans(
+  options: ObservabilityClientOptions,
+  limit: number,
+  agentId?: string,
+  range?: ObservabilityHistoryRange,
+): Promise<BackfillResult<ObservabilitySpanRow>> {
+  return await requestBackfill<ObservabilitySpanRow>(
+    options,
+    {
+      type: "subscribe",
+      stream: "traces",
+      backfill: limit,
+      historyOnly: true,
+      ...(agentId ? { agentId: agentId } : {}),
+      ...(range ? { range: range } : {}),
+    },
+    "traces",
+  );
+}
+
+async function requestBackfill<T>(
+  options: ObservabilityClientOptions,
+  message: ObservabilityClientMessage,
+  stream: "logs" | "traces",
+): Promise<BackfillResult<T>> {
+  const { socket, url } = openObservabilitySocket(
+    options,
+    await options.credential(),
+  );
+
+  return new Promise<BackfillResult<T>>((resolve, reject): void => {
+    let settled = false;
+    const rows: T[] = [];
+    let agentId: string | undefined;
+    const settle = (outcome: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
+        socket.close(1000, "client closed");
+      outcome();
+    };
+    const fail = (error: Error): void => settle((): void => reject(error));
+    let timeoutMs = READY_TIMEOUT_MS;
+    const silent = (): void => {
+      fail(
+        new Error(
+          `The observability gateway did not answer within ${timeoutMs / 1000} s.`,
+        ),
+      );
+    };
+    // Each piece restarts it: a long backfill that keeps arriving is not a silent gateway.
+    let timer = setTimeout(silent, READY_TIMEOUT_MS);
+
+    socket.onopen = (): void => socket.send(JSON.stringify(message));
+    socket.onmessage = (event: MessageEvent): void => {
+      const msg = parseServerMessage(event.data);
+      if (msg?.type === "error") {
+        fail(new Error(`Observability gateway error: ${msg.error}`));
+      } else if (msg?.type === "ready") {
+        agentId = msg.agentId;
+        timeoutMs = HISTORY_TIMEOUT_MS;
+        clearTimeout(timer);
+        timer = setTimeout(silent, timeoutMs);
+      } else if (msg?.type === "backfill" && msg.stream === stream) {
+        rows.push(...(msg.entries as T[]));
+        clearTimeout(timer);
+        timeoutMs = HISTORY_TIMEOUT_MS;
+        timer = setTimeout(silent, timeoutMs);
+        const expectedRange =
+          message.type === "subscribe" ? message.range : undefined;
+        const error =
+          msg.error ??
+          (expectedRange &&
+          !msg.more &&
+          (msg.range?.from !== expectedRange.from ||
+            msg.range?.to !== expectedRange.to)
+            ? "This gateway does not support bounded history. Update the gateway before reading pages."
+            : undefined);
+        if (!msg.more)
+          settle((): void =>
+            resolve({
+              rows: rows,
+              ...(!error && msg.nextTo !== undefined
+                ? { nextTo: msg.nextTo }
+                : {}),
+              ...(error ? { error: error } : {}),
+              ...(agentId ? { agentId: agentId } : {}),
+            }),
+          );
+      }
+    };
+    socket.onerror = (): void => {
+      fail(new Error(`Cannot connect to the observability gateway at ${url}.`));
+    };
+    socket.onclose = (event: CloseEvent): void => fail(closedError(event));
+  });
+}
+
+// Synchronous, so the caller attaches its handlers before any event can fire.
+function openObservabilitySocket(
+  options: ObservabilityClientOptions,
+  credential: string,
+): { socket: WebSocket; url: string } {
+  const url = buildObservabilityUrl(
+    options.baseUrl,
+    options.project,
+    options.stage,
+  );
+  const WebSocketImpl = resolveWebSocket();
+
+  return {
+    socket: new WebSocketImpl(url, webSocketSubprotocols(credential)),
+    url: url,
+  };
+}
+
+function closedError(event: CloseEvent): Error {
+  return new Error(
+    event.reason
+      ? `Observability WebSocket closed: ${event.reason}`
+      : `Observability WebSocket closed with code ${event.code}.`,
+  );
 }
 
 function buildObservabilityUrl(

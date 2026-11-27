@@ -1,11 +1,3 @@
-/**
- * `broods machine --mcp <file>`: the daemon as MCP host. The file has the
- * `.mcp.json` shape Claude Code, Cursor and Codex read, so a server already
- * set up for them works here unchanged. Each server is a stdio child the SDK
- * client spawns on first use and keeps. Core only ever learns names, tool
- * listings and results: the file and its command lines stay on this computer.
- */
-
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
@@ -18,6 +10,8 @@ import { z } from "zod";
 import { agentEnv } from "../runtime-config.ts";
 
 const CLIENT_INFO = { name: "broods-machine", version: "1.0.0" };
+// Refuses a server that never answers `server/discover` before the SDK's 60s request timeout.
+const DISCOVER_TIMEOUT_MS = 10_000;
 
 const serverSpec = z.object({
   command: z.string().min(1),
@@ -30,13 +24,15 @@ const serversFile = z.object({
   mcpServers: z
     .record(z.string(), serverSpec)
     .refine(
-      (servers) => Object.keys(servers).length > 0,
+      (servers): boolean => Object.keys(servers).length > 0,
       "lists no MCP servers",
     ),
 });
 
 export type McpServerSpec = z.infer<typeof serverSpec>;
 
+// Servers must speak MCP 2026-07-28, no 2025-era fallback. Core only sees names, tool
+// listings and results: the file and its command lines stay on this computer.
 export class McpHost {
   readonly #clients = new Map<string, Promise<Client>>();
   readonly #log: (line: string) => void;
@@ -74,14 +70,15 @@ export class McpHost {
     const clients = [...this.#clients.values()];
     this.#clients.clear();
     await Promise.all(
-      clients.map((pending) =>
-        pending.then((client) => client.close()).catch((): void => {}),
+      clients.map((pending): Promise<void> =>
+        pending
+          .then((client): Promise<void> => client.close())
+          .catch((): void => {}),
       ),
     );
   }
 
-  // Spawned on first use and kept. A server that exits is forgotten, so the
-  // next call spawns it again instead of failing forever.
+  // A server that exits is forgotten, so the next call respawns it instead of failing forever.
   #client(server: string): Promise<Client> {
     const spec = this.#servers.get(server);
     if (!spec) {
@@ -102,7 +99,12 @@ export class McpHost {
         this.#log(`mcp ${server}: exited`);
         if (this.#clients.get(server) === pending) this.#clients.delete(server);
       };
-      const client = new Client(CLIENT_INFO);
+      const client = new Client(CLIENT_INFO, {
+        versionNegotiation: {
+          mode: "auto",
+          probe: { timeoutMs: DISCOVER_TIMEOUT_MS },
+        },
+      });
       await client.connect(transport);
 
       return client;
@@ -116,7 +118,6 @@ export class McpHost {
   }
 }
 
-/** Parse a `.mcp.json`; a relative `cwd` resolves against the file. */
 export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
   const file = resolve(path);
   const parsed = serversFile.safeParse(readJson(file));
@@ -125,10 +126,12 @@ export function readMcpServersFile(path: string): Map<string, McpServerSpec> {
   }
 
   return new Map(
-    Object.entries(parsed.data.mcpServers).map(([name, spec]) => [
-      name,
-      spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
-    ]),
+    Object.entries(parsed.data.mcpServers).map(
+      ([name, spec]): [string, McpServerSpec] => [
+        name,
+        spec.cwd ? { ...spec, cwd: resolve(dirname(file), spec.cwd) } : spec,
+      ],
+    ),
   );
 }
 

@@ -1,16 +1,8 @@
-/**
- * Storage mirror writes for sandbox lifecycle audit events. These are
- * best-effort: lifecycle calls should not fail if the audit mirror is
- * temporarily unavailable.
- */
-
-const internal: any = require("@broods/convex/_generated/api").internal;
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";
-import { getConvexClient } from "./client.ts";
+import { adminMutation, internal } from "./client.ts";
 import type { SandboxInstanceStatus } from "./sandbox-instances.ts";
 
-/** Sandbox lifecycle actions represented in the audit stream. */
 export type SandboxAuditAction =
   | "reserve"
   | "suspend"
@@ -21,7 +13,6 @@ export type SandboxAuditAction =
   | "exec"
   | "terminal";
 
-/** Actor metadata propagated from dashboard/agent/service callers. */
 export interface SandboxAuditActor {
   source: "dashboard" | "agent" | "service" | "unknown";
   id?: string;
@@ -47,10 +38,10 @@ export async function recordSandboxAuditEvent(input: {
 }): Promise<void> {
   const actor = input.actor ?? { source: "unknown" as const };
   try {
-    await getConvexClient().mutation(internal.sandbox.auditEvents.insert, {
-      accountId: input.accountId as any,
+    await adminMutation(internal.sandbox.auditEvents.insert, {
+      accountId: input.accountId,
       ...(input.sandboxConfigId
-        ? { sandboxConfigId: input.sandboxConfigId as any }
+        ? { sandboxConfigId: input.sandboxConfigId }
         : {}),
       reservationKey: input.reservationKey,
       provider: input.provider,

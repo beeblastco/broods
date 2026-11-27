@@ -1,8 +1,6 @@
 import { StatusPage } from "@/app/components/StatusPage";
 import { Button } from "@/app/components/ui/button";
 
-// Where /auth/callback lands when its one automatic retry also failed. The
-// error itself only reaches the server log, so the page carries no ref.
 // /auth/sign-in is a route handler, so a plain GET form does a full navigation.
 export default function SignInError(): React.JSX.Element {
   return (

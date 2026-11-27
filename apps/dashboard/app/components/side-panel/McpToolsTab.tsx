@@ -8,21 +8,12 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { ChevronRight, Play, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-interface RemoteTool {
-  name: string;
-  description?: string;
-  inputSchema?: unknown;
-  outputSchema?: unknown;
-}
-
-interface RunResult {
-  isError: boolean;
-  text: string;
-  durationMs: number;
-}
+type RemoteTool = FunctionReturnType<typeof api.mcp.listTools>[number];
+type RunResult = FunctionReturnType<typeof api.mcp.callTool>;
 
 export function McpToolsTab({
   projectId,
@@ -38,16 +29,16 @@ export function McpToolsTab({
   const [tools, setTools] = useState<RemoteTool[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  // Loading is derived: a refresh clears both states in its event handler.
   const isListing = tools === null && listError === null;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- lists tools via a Convex action
   useEffect(() => {
     if (!projectId || !stageId) return;
 
     let cancelled = false;
     listTools({ projectId: projectId, stageId: stageId, nodeId: nodeId })
       .then((listing) => {
-        if (!cancelled) setTools(listing as RemoteTool[]);
+        if (!cancelled) setTools(listing);
       })
       .catch((error: unknown) => {
         if (!cancelled) setListError(toErrorMessage(error));
@@ -90,7 +81,11 @@ export function McpToolsTab({
         </Button>
       </div>
 
-      {listError && <p className="text-xs text-destructive">{listError}</p>}
+      {listError && (
+        <p role="alert" className="text-xs text-destructive">
+          {listError}
+        </p>
+      )}
 
       {tools?.length === 0 && !isListing && (
         <p className="text-xs text-muted-foreground">
@@ -132,9 +127,8 @@ function ToolRow({
   const [result, setResult] = useState<RunResult | null>(null);
 
   async function handleRun(): Promise<void> {
-    let parsedInput: unknown;
     try {
-      parsedInput = JSON.parse(inputJson);
+      JSON.parse(inputJson);
     } catch {
       setRunError("Input must be valid JSON.");
 
@@ -145,14 +139,15 @@ function ToolRow({
     setRunError(null);
     setResult(null);
     try {
-      const response = await callTool({
-        projectId: projectId,
-        stageId: stageId,
-        nodeId: nodeId,
-        toolName: tool.name,
-        input: parsedInput,
-      });
-      setResult(toRunResult(response));
+      setResult(
+        await callTool({
+          projectId: projectId,
+          stageId: stageId,
+          nodeId: nodeId,
+          toolName: tool.name,
+          inputJson: inputJson,
+        }),
+      );
     } catch (error) {
       setRunError(toErrorMessage(error));
     } finally {
@@ -180,7 +175,7 @@ function ToolRow({
         <div className="flex flex-col gap-2 border-t border-border/70 p-3">
           <SectionHeader>Input Schema</SectionHeader>
           <pre className="max-h-40 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-2xs text-foreground">
-            {JSON.stringify(tool.inputSchema ?? {}, null, 2)}
+            {tool.inputSchemaJson}
           </pre>
 
           <SectionHeader>Try it (JSON arguments)</SectionHeader>
@@ -192,7 +187,11 @@ function ToolRow({
             className="resize-y"
           />
 
-          {runError && <p className="text-xs text-destructive">{runError}</p>}
+          {runError && (
+            <p role="alert" className="text-xs text-destructive">
+              {runError}
+            </p>
+          )}
 
           <div className="flex items-center gap-2">
             {canWrite && (
@@ -228,29 +227,4 @@ function ToolRow({
       )}
     </div>
   );
-}
-
-function toRunResult(response: {
-  result: unknown;
-  durationMs: number;
-}): RunResult {
-  const raw = response.result as {
-    isError?: boolean;
-    content?: Array<{ type?: string; text?: string }>;
-    structuredContent?: unknown;
-  };
-  const text =
-    raw.structuredContent !== undefined
-      ? JSON.stringify(raw.structuredContent, null, 2)
-      : (raw.content ?? [])
-          .map((block) =>
-            typeof block.text === "string" ? block.text : `[${block.type}]`,
-          )
-          .join("\n");
-
-  return {
-    isError: raw.isError === true,
-    text: text || "(empty result)",
-    durationMs: response.durationMs,
-  };
 }

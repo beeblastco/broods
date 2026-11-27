@@ -1,9 +1,3 @@
-/**
- * Internal functions over the audit ledger: append from HTTP actions and
- * core, read a page since a seq, verify the chain, and prune rows past retention.
- * The chain itself lives in `model/auditEvents.ts`.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -41,7 +35,6 @@ const chainHeadValidator = v.union(
   v.null(),
 );
 
-/** The ledger tip: null for an account that has never written a row. */
 export const head = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: chainHeadValidator,
@@ -50,7 +43,6 @@ export const head = internalQuery({
   },
 });
 
-/** Rows with `seq > since`, ascending, at most `limit` (capped at 500). */
 export const list = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -70,13 +62,6 @@ export const list = internalQuery({
   },
 });
 
-/**
- * Delete rows older than each account's retention window, one page of
- * accounts per invocation. A sink's `exportedSeq` is a floor, so a row it has
- * not exported is never dropped, and the head row stays so the chain always
- * has a tip to link from. Reschedules itself while a batch fills or accounts
- * remain.
- */
 export const pruneExpired = internalMutation({
   args: {
     now: v.optional(v.number()),
@@ -85,13 +70,10 @@ export const pruneExpired = internalMutation({
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
     const now = args.now ?? Date.now();
-    // One head row per account that has ever written to its ledger.
     const tips = await ctx.db.query("auditChainHeads").paginate({
       numItems: PRUNE_ACCOUNT_PAGE_SIZE,
       cursor: args.cursor ?? null,
     });
-    // One delete budget for the whole page keeps the mutation's writes
-    // bounded however many accounts have rows to drop.
     let budget = PRUNE_BATCH_SIZE;
     for (const tip of tips.page) {
       if (budget === 0) break;
@@ -109,7 +91,6 @@ export const pruneExpired = internalMutation({
   },
 });
 
-/** Append one row from an HTTP action or from core. */
 export const record = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -138,15 +119,8 @@ export const record = internalMutation({
   },
 });
 
-/**
- * Recompute the chain over `[fromSeq, toSeq]` (defaults: oldest kept row to
- * the head), at most 1000 rows per call; `checkedTo` says where it stopped.
- * Stored rows are gapless from the oldest kept row to the head, so the nearest
- * stored row below the range must be its direct predecessor and anchors the
- * first link: a row deleted at the range start is reported, a pruned prefix
- * is not. Without `toSeq` the last row must also match the head, so a dropped
- * tail is reported at the first missing seq.
- */
+// Kept rows are gapless up to the head, so the nearest stored row below the range must be its
+// predecessor: a deleted row is reported, a pruned prefix is not.
 export const verifyChain = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -171,8 +145,6 @@ export const verifyChain = internalQuery({
       })
       .take(VERIFY_ROWS_MAX);
     const first = rows[0];
-    // The genesis row links to ""; anything else anchors on the nearest
-    // stored row below it.
     const before =
       first?.seq === 1
         ? null
@@ -223,12 +195,7 @@ async function chainHead(
   return row ? { seq: row.seq, hash: row.hash } : null;
 }
 
-/**
- * The seq a verify of an empty range must report as missing, or null when
- * nothing should be there. The row after a stored one exists unless that one
- * is the head, and an open-ended range always holds the head row, which is
- * never pruned.
- */
+// The head row is never pruned, and every kept row below the head has a successor.
 function missingFromEmptyRange(
   before: Doc<"auditEvents"> | null,
   tip: AuditChainHead,
@@ -241,12 +208,6 @@ function missingFromEmptyRange(
   return toSeq === undefined && tip.seq >= fromSeq ? tip.seq : null;
 }
 
-/**
- * Delete up to `limit` rows for one account: older than its retention, never
- * the head, and never past what its sink exported when it has one. Rows are
- * read one at a time, so an account with nothing to drop reads one row.
- * @returns the count deleted
- */
 async function pruneAccount(
   ctx: MutationCtx,
   tip: Doc<"auditChainHeads">,
@@ -258,11 +219,9 @@ async function pruneAccount(
   const sink = await auditSinkRow(ctx.db, tip.accountId);
   const cutoff =
     now - (account.auditRetentionDays ?? DEFAULT_RETENTION_DAYS) * DAY_MS;
-  // Below the head, which is the chain tip and stays whatever its age, and
-  // with a sink also at or below its watermark.
+  // Never the head (the chain tip), nor a row the sink has not exported.
   const belowSeq = sink ? Math.min(sink.exportedSeq + 1, tip.seq) : tip.seq;
-  // Walking in seq order and stopping at the first row inside the window
-  // only ever removes a prefix, so the kept range has no gap to verify over.
+  // Stopping at the first row in the window removes only a prefix, so no gap is left.
   const expired: Id<"auditEvents">[] = [];
   for await (const row of ctx.db
     .query("auditEvents")
@@ -277,7 +236,6 @@ async function pruneAccount(
   return expired.length;
 }
 
-/** The nearest stored row with a seq below `seq`, or null when none is kept. */
 async function rowBelow(
   ctx: QueryCtx,
   accountId: Id<"accounts">,

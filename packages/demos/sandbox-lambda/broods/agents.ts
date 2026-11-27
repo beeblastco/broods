@@ -1,6 +1,5 @@
 import { defineAgent, defineSandbox, env } from "broods";
 
-// A stateless, bash-only sandbox, fresh ephemeral container per call.
 export const statelessSandbox = defineSandbox({
   name: "stateless-sandbox",
   provider: "lambda",

@@ -5,7 +5,6 @@ import { Button } from "@/app/components/ui/button";
 import type { ErrorInfo } from "next/error";
 import Link from "next/link";
 
-// Wraps the (main) layout too, so a throw in the header lands here as well.
 export default function RouteError({
   error,
   retry,

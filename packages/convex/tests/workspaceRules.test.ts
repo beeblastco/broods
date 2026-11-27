@@ -1,8 +1,3 @@
-/**
- * Workspace config validation tests, ported from core's former
- * workspace-config.test.ts when the normalizers moved here.
- */
-
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +12,7 @@ import {
   normalizeWorkspaceConfig,
   type WorkspaceConfig,
 } from "../model/workspaceRules";
-import { upsertEnvironmentVariable } from "../model/environmentValues";
+import { upsertEnvironmentVariable } from "../model/environmentWrites";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -87,7 +82,7 @@ describe("workspace config", () => {
       storage: { provider: "s3" },
       harness: { workspace: { enabled: false } },
     });
-    // The legacy top-level harness.enabled flag is gone; unknown harness keys drop.
+    // Unknown harness keys, the old top-level `enabled` among them, are dropped.
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
@@ -106,8 +101,7 @@ describe("workspace config", () => {
       storage: { provider: "s3" },
       harness: { memory: { enabled: false } },
     });
-    // Features default to on, so a redundant `enabled: true` (or an empty
-    // feature object) normalizes away to the omitted form.
+    // Features default to on, so `enabled: true` or `{}` normalizes away to the omitted form.
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3" },
@@ -154,7 +148,6 @@ describe("workspace config", () => {
           auth: {
             type: "assumeRole",
             roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-            externalId: "ext-1",
           },
         },
       }),
@@ -168,13 +161,59 @@ describe("workspace config", () => {
         auth: {
           type: "assumeRole",
           roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-          externalId: "ext-1",
         },
       },
     });
   });
 
-  it("accepts managed auth and an assume-role without externalId", () => {
+  it("refuses a customer-chosen externalId: Broods assigns it per account", () => {
+    for (const externalId of ["ext-1", "", null]) {
+      expect(() =>
+        normalizeWorkspaceConfig({
+          storage: {
+            provider: "s3",
+            bucket: "acme-workspaces",
+            prefix: "agents/",
+            auth: {
+              type: "assumeRole",
+              roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+              externalId: externalId,
+            },
+          },
+        }),
+      ).toThrow(
+        /config\.storage\.auth\.externalId is no longer accepted: Broods assigns the external id.*GET \/v1\/account\/storage-trust/,
+      );
+    }
+  });
+
+  it("drops a stored externalId on a PATCH that sends it as null", () => {
+    const existing = {
+      storage: {
+        provider: "s3",
+        bucket: "acme-workspaces",
+        prefix: "agents/",
+        auth: {
+          type: "assumeRole",
+          roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+          externalId: "old",
+        },
+      },
+    } as unknown as WorkspaceConfig;
+    expect(
+      normalizeUpdateWorkspaceConfigInput(existing, {
+        config: { storage: { auth: { externalId: null } } },
+      }).config.storage.auth,
+    ).toEqual({
+      type: "assumeRole",
+      roleArn: "arn:aws:iam::111122223333:role/broods-mount",
+    });
+    expect(() =>
+      normalizeUpdateWorkspaceConfigInput(existing, { name: "renamed" }),
+    ).not.toThrow();
+  });
+
+  it("accepts managed auth and an assume-role", () => {
     expect(
       normalizeWorkspaceConfig({
         storage: { provider: "s3", auth: { type: "managed" } },
@@ -247,8 +286,7 @@ describe("workspace config", () => {
       description: null,
       config: { harness: { workspace: { enabled: true } } },
     });
-    // Re-enabling a feature restores the default form: the opt-out is removed
-    // rather than replaced with a stored `enabled: true`.
+    // Re-enabling removes the opt-out rather than storing `enabled: true`.
     expect(patched).toEqual({
       name: "renamed",
       description: null,
@@ -721,5 +759,18 @@ describe("R2 workspace storage", () => {
       });
     });
     expect((await mint()).accessKeyId).toBe("stage-key-id");
+  });
+});
+
+describe("disk workspace storage", () => {
+  it("takes no bucket field, since its files live on the sandbox", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "disk" } })).toEqual(
+      {
+        storage: { provider: "disk" },
+      },
+    );
+    expect(() =>
+      normalizeWorkspaceConfig({ storage: { provider: "disk", prefix: "a/" } }),
+    ).toThrow('config.storage.prefix does not apply to "disk"');
   });
 });

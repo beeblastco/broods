@@ -1,14 +1,16 @@
-/**
- * Render-budget probe. Loads every page cold in its own fresh browser context
- * (so no page is served from another's cache) and reaches every sidebar
- * destination by client-side navigation. Each is timed until its own content
- * is on screen; anything over the render budget fails the run. The
- * dashboard sub-tabs (Monitoring, Tracing, Usage, Billing) are covered by the
- * cold loads; sidebar navigation covers the top-level routes. The session and
- * project come from `auth.setup.ts`.
- */
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { PAGE_RENDER_BUDGET_MS } from "../../app/lib/perfReport";
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type WebSocketRoute,
+} from "@playwright/test";
+import type {
+  ObservabilityLogEntry,
+  ObservabilityClientMessage,
+} from "../../../../packages/broods/src/observability-contracts";
+import { checkPerfBaseline } from "../lib/perfBaseline";
+import { PAGE_RENDER_BUDGET_MS, PERF_BUDGETS } from "../../app/lib/perfReport";
 import {
   BASE_URL,
   CANVAS_READY,
@@ -17,11 +19,16 @@ import {
   readProjectId,
   SIGNED_IN_CONTEXT,
 } from "../lib/session";
+import {
+  LONG_TASK_SETTLE_MS,
+  timeClientNavigation,
+  waitForReady,
+  watchLongTasks,
+} from "../lib/timing";
 
 interface ProbePage {
   name: string;
   path: string;
-  // The element that means this page's own content is on screen.
   ready: (page: Page) => Locator;
 }
 
@@ -32,16 +39,12 @@ interface Sample {
 }
 
 const COLD_VISITS = 2;
-const READY_TIMEOUT_MS = 30_000;
+// The log hook's whole retention, the most one burst can show.
+const BURST_EVENTS = 2_000;
+const BACKFILL_ROWS = 200;
 
-/**
- * A deployment is probed from a GitHub runner on another continent, so the
- * network is in the number: measured from Azure westus2 to Hetzner, every
- * page loads cold in 2.3 s and the canvas in 2.9 s, at a 160 ms round trip.
- * The same margin over that as PAGE_RENDER_BUDGET_MS holds over the local
- * figures. A server on this machine, on any port (the local stack's own), keeps
- * the page's own budget.
- */
+// A deployment is probed from a runner 160 ms away: pages took 2.3 s cold, the canvas 2.9 s.
+// This keeps PAGE_RENDER_BUDGET_MS's margin over those figures.
 const DEPLOYED_RENDER_BUDGET_MS = 3500;
 const RENDER_BUDGET_MS = ["localhost", "127.0.0.1"].includes(
   new URL(BASE_URL).hostname,
@@ -49,7 +52,6 @@ const RENDER_BUDGET_MS = ["localhost", "127.0.0.1"].includes(
   ? PAGE_RENDER_BUDGET_MS
   : DEPLOYED_RENDER_BUDGET_MS;
 
-// Pages under one project, keyed by the nav label that reaches them.
 const PROJECT_PAGES: ProbePage[] = [
   {
     name: "Architecture",
@@ -93,9 +95,6 @@ const PROJECT_PAGES: ProbePage[] = [
   },
 ];
 
-// Sidebar destinations reached by client-side navigation, each paired with the
-// marker that means it has rendered. "Dashboard" lands on the Monitoring tab,
-// so its marker is that tab's heading, not a probe named "Dashboard".
 const SIDEBAR_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
   {
     label: "Dashboard",
@@ -121,16 +120,13 @@ const SIDEBAR_NAV: Array<{ label: string; ready: (page: Page) => Locator }> = [
 
 test.skip(!hasProbe(), MISSING_PROBE);
 
-test("every page renders cold within budget, and every sidebar destination by navigation", async ({
+test("every page renders cold within budget, and every sidebar destination by navigation @post-rollout", async ({
   browser,
 }) => {
   const projectId = readProjectId();
   const samples: Sample[] = [];
 
-  // Cold load: a throwaway context per visit, so nothing is served from
-  // another page's cache and each timing is a true first visit. The faster
-  // of two visits counts: a shared runner swings by hundreds of ms between
-  // runs, and the budget is for the page, not the runner.
+  // The faster of two cold visits counts: a shared runner swings by hundreds of ms.
   for (const probe of PROJECT_PAGES) {
     let fastest = Number.POSITIVE_INFINITY;
     for (let visit = 0; visit < COLD_VISITS; visit++) {
@@ -138,26 +134,26 @@ test("every page renders cold within budget, and every sidebar destination by na
       const page = await context.newPage();
       await page.goto(`/${projectId}${probe.path}`, { waitUntil: "commit" });
       await waitForReady(probe.ready(page));
-      // performance.now() counts from this document's navigation start, so
-      // it is the cold-load time to the ready marker with no harness overhead.
       fastest = Math.min(fastest, await page.evaluate(() => performance.now()));
       await context.close();
     }
     samples.push({ page: probe.name, kind: "cold", ms: fastest });
   }
 
-  // Client-side navigation across the sidebar, one warm context, the path a
-  // user actually walks between top-level routes.
   const navContext = await browser.newContext(SIGNED_IN_CONTEXT);
   const navPage = await navContext.newPage();
   await navPage.goto(`/${projectId}`, { waitUntil: "commit" });
   await waitForReady(PROJECT_PAGES[0].ready(navPage));
+  // The start page is ready before hydration; a click that early loads a new document.
+  await waitForReady(navPage.locator('[data-hydrated="true"]'));
   for (const dest of SIDEBAR_NAV) {
-    const start = await navPage.evaluate(() => performance.now());
-    await navPage.getByRole("link", { name: dest.label, exact: true }).click();
-    await waitForReady(dest.ready(navPage));
-    const end = await navPage.evaluate(() => performance.now());
-    samples.push({ page: dest.label, kind: "navigate", ms: end - start });
+    const link = navPage.getByRole("link", { name: dest.label, exact: true });
+    const ms = await timeClientNavigation(
+      navPage,
+      () => link.click(),
+      dest.ready(navPage),
+    );
+    samples.push({ page: dest.label, kind: "navigate", ms: ms });
   }
   await navContext.close();
 
@@ -174,22 +170,130 @@ test("every page renders cold within budget, and every sidebar destination by na
     body: JSON.stringify(samples, null, 2),
     contentType: "application/json",
   });
-
-  const over = samples.filter((sample) => sample.ms > RENDER_BUDGET_MS);
-  expect(
-    over.map(
-      (sample) => `${sample.kind} ${sample.page}: ${Math.round(sample.ms)} ms`,
+  checkPerfBaseline(
+    "render times",
+    Object.fromEntries(
+      samples.map((sample) => [
+        `pages.${sample.kind}.${sample.page}`,
+        {
+          value: Math.round(sample.ms),
+          gate: "informational",
+          maxRegressionPct: 50,
+          slack: 100,
+          ceiling: RENDER_BUDGET_MS,
+        },
+      ]),
     ),
-    `pages over the ${RENDER_BUDGET_MS} ms render budget`,
-  ).toEqual([]);
+  );
 });
 
-/** Polls every frame: `locator.waitFor` backs off to 500 ms, rounding timings up to the next half second. */
-async function waitForReady(marker: Locator): Promise<void> {
+test("a live log burst on Monitoring reaches the screen without blocking the page", async ({
+  browser,
+}) => {
+  const projectId = readProjectId();
+  const context = await browser.newContext(SIGNED_IN_CONTEXT);
+  const page = await context.newPage();
+  const now = Date.now();
+  // Routed before goto: a route added while the page loads never reaches that document.
+  const subscribed: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/observability\/ws$/, (socket) => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as ObservabilityClientMessage;
+      if (message.type !== "subscribe") return;
+      socket.send(JSON.stringify({ type: "ready" }));
+      socket.send(
+        JSON.stringify({
+          type: "backfill",
+          stream: "logs",
+          range: message.range,
+          entries: Array.from({ length: BACKFILL_ROWS }, (_, index) =>
+            logLine(`backfill ${index}`, now - 60_000 + index * 100, 300),
+          ),
+        }),
+      );
+      subscribed.push(socket);
+    });
+  });
+  await page.goto(`/${projectId}/dashboard?tab=monitoring`, {
+    waitUntil: "commit",
+  });
   await expect
-    .poll(() => marker.first().isVisible(), {
-      intervals: [16],
-      timeout: READY_TIMEOUT_MS,
+    .poll(() => subscribed.length, {
+      message: "Monitoring subscribes to its log stream",
+      timeout: 30_000,
     })
-    .toBe(true);
+    .toBeGreaterThan(0);
+  const route = subscribed[0];
+  const opened = page.getByRole("cell", {
+    name: `backfill ${BACKFILL_ROWS - 1}`,
+    exact: true,
+  });
+  await waitForReady(opened);
+  await opened.click();
+  const detail = page.getByRole("button", { name: "Close details" });
+  await waitForReady(detail);
+
+  const burst = Array.from({ length: BURST_EVENTS }, (_, index) => {
+    // Every 50th line repeats the one before it; every 25th is older than all before it.
+    const line = index % 50 === 25 ? index - 1 : index;
+    const at = line % 25 === 12 ? now - 30_000 + line : now + line;
+
+    return JSON.stringify({
+      type: "log",
+      entry: logLine(`burst ${line}`, at, line % 100 === 0 ? 8_000 : 300),
+    });
+  });
+  const longTasks = await watchLongTasks(page);
+  const start = performance.now();
+  for (const message of burst) route.send(message);
+  await page
+    .getByRole("button", {
+      name: `Show ${BURST_EVENTS - BURST_EVENTS / 50} new logs`,
+      exact: true,
+    })
+    .click();
+  await waitForReady(
+    page.getByRole("cell", { name: `burst ${BURST_EVENTS - 1}`, exact: true }),
+  );
+  const visibleMs = performance.now() - start;
+  await page.waitForTimeout(LONG_TASK_SETTLE_MS);
+  const tasks = await longTasks.jsonValue();
+  const longestMs = Math.max(0, ...tasks);
+  await expect(detail).toBeVisible();
+  await context.close();
+
+  const result = {
+    events: BURST_EVENTS,
+    visibleMs: Math.round(visibleMs),
+    longTasks: tasks.length,
+    longestTaskMs: Math.round(longestMs),
+    totalLongTaskMs: Math.round(tasks.reduce((sum, ms) => sum + ms, 0)),
+  };
+  console.log(`Live burst ${JSON.stringify(result)}`);
+  await test.info().attach("burst", {
+    body: JSON.stringify(result, null, 2),
+    contentType: "application/json",
+  });
+  // Every frame rides the browser protocol, in this number as a network is: deployed budget.
+  expect(
+    visibleMs,
+    `newest of ${BURST_EVENTS} live lines on screen`,
+  ).toBeLessThanOrEqual(DEPLOYED_RENDER_BUDGET_MS);
+  expect(longestMs, "longest main-thread task").toBeLessThanOrEqual(
+    PERF_BUDGETS["long-task"],
+  );
+});
+
+function logLine(
+  name: string,
+  ts: number,
+  bytes: number,
+): ObservabilityLogEntry {
+  return {
+    ts: ts,
+    level: "INFO",
+    eventType: "",
+    message: JSON.stringify({ message: name, payload: "x".repeat(bytes) }),
+    service: "core",
+  };
 }

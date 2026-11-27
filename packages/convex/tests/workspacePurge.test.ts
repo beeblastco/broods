@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { purgeWorkspaceFilesystem } from "../model/workspaceFs";
 import { workspaceNamespace } from "../model/workspaceRules";
@@ -7,10 +7,9 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
   const bucketKeys = new Set<string>();
   const mockSend = vi.fn(
     async (
-      command: ListObjectsV2Command | DeleteObjectCommand,
+      command: ListObjectsV2Command | DeleteObjectsCommand,
     ): Promise<{ Contents?: { Key: string }[] }> => {
-      // Only the managed bucket holds objects, so a purge aimed at any other
-      // bucket deletes nothing and fails the assertions.
+      // Only the managed bucket holds objects: a purge of any other one fails the assertions.
       if (command.input.Bucket !== "managed-workspace-bucket") return {};
       if (command instanceof ListObjectsV2Command) {
         const prefix = command.input.Prefix ?? "";
@@ -21,7 +20,9 @@ const { bucketKeys, mockSend } = vi.hoisted(() => {
             .map((key) => ({ Key: key })),
         };
       }
-      bucketKeys.delete(command.input.Key ?? "");
+      for (const object of command.input.Delete?.Objects ?? []) {
+        bucketKeys.delete(object.Key ?? "");
+      }
 
       return {};
     },
@@ -81,6 +82,7 @@ test("purge refuses a bring-your-own bucket with no prefix", async () => {
           roleArn: "arn:aws:iam::123456789012:role/broods-workspace",
         },
       },
+      externalId: "broods-account-a",
     }),
   ).rejects.toThrow(
     "Refusing to purge a workspace bucket without a key prefix",

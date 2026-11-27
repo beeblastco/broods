@@ -1,0 +1,5 @@
+kind	name	reason
+external	^options\.lastConsumedSequence$	A closure over the stream loop's position, passed in by the caller; its answer is an input to the wait.
+external	^options\.sawDone$	A closure over the stream loop's done flag, passed in by the caller; its answer is an input to the wait.
+external	^options\.streamSettled$	A closure over the stream loop's end flag, passed in by the caller; its answer is an input to the wait.
+external	^connection\.closed$	The NATS client's close notification; the twin starts it and reads nothing from it.

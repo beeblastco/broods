@@ -1,10 +1,3 @@
-/**
- * Workspace file routes: list/upload/rename/delete under
- * `/v1/workspaces/{id}/files`, capability-link minting under
- * `/v1/workspaces/{id}/download-links`, and the unauthenticated token
- * redemption at `/v1/downloads/{token}`.
- */
-
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -22,11 +15,7 @@ import { json, jsonError, methodNotAllowed, writeAudit } from "./shared";
 
 export const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
-/**
- * Redeem a capability link: mint a presigned S3 URL and redirect to it. The
- * signed URL never touches a chat client, which is the whole point. An unknown,
- * expired or revoked token is a flat 404 so the route cannot be used as an oracle.
- */
+// The signed URL never reaches a chat client. Any bad token is a flat 404: the route is no oracle.
 export async function handleDownloadRedeemRoute(
   ctx: ActionCtx,
   req: Request,
@@ -72,11 +61,7 @@ export async function handleDownloadRedeemRoute(
   });
 }
 
-/**
- * Mint a capability link for one workspace file. Returns the token and the path
- * to join to the base URL the caller reached us on. The config plane sits behind
- * the gateway, which strips Host, so it cannot know its own public origin.
- */
+// Answers a path, not a URL: behind the gateway, which strips Host, we cannot know our origin.
 export async function handleWorkspaceDownloadLinkRoute(
   ctx: ActionCtx,
   req: Request,
@@ -100,8 +85,7 @@ export async function handleWorkspaceDownloadLinkRoute(
   if (ttl instanceof Response) return ttl;
   const path = normalizeFilePath(body.path);
 
-  // Presigning now proves the file exists and that we can read it, so a link is
-  // never handed out for something that will 404 when someone follows it.
+  // Presign now so a link is never handed out for a file that would 404 when followed.
   try {
     await ctx.runAction(internal.aws.workspaceFiles.downloadUrl, {
       accountId: accountId,
@@ -147,10 +131,6 @@ export async function handleWorkspaceDownloadLinkRoute(
   });
 }
 
-/**
- * Workspace files: list/presign on GET, upload on POST, rename on PATCH,
- * delete on DELETE. Mirrors core's former handleWorkspaceFilesRoute contract.
- */
 export async function handleWorkspaceFilesRoute(
   ctx: ActionCtx,
   req: Request,
@@ -287,23 +267,13 @@ export async function handleWorkspaceFilesRoute(
   return methodNotAllowed(["GET", "POST", "PATCH", "DELETE"]);
 }
 
-/**
- * Kept separate from parseRoute because this one route runs before
- * authentication.
- * @param pathname request path
- * @returns the token, or null when the path is not a redemption
- */
 export function parseDownloadRoute(pathname: string): string | null {
   const match = pathname.match(/^\/v1\/downloads\/([A-Za-z0-9_-]{16,128})$/);
 
   return match?.[1] ?? null;
 }
 
-/**
- * Mint a download token. base64url only: a `+` in a link is exactly the bug this
- * route exists to avoid, since chat clients decode it back into a space.
- * @returns a 256-bit URL-safe token
- */
+// base64url only: chat clients decode a `+` in a link back into a space.
 function generateDownloadToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   let binary = "";
@@ -315,10 +285,6 @@ function generateDownloadToken(): string {
     .replace(/=+$/, "");
 }
 
-/**
- * @param value client-supplied expiresInSeconds
- * @returns the lifetime in seconds, or a 400 response
- */
 function parseDownloadTtlSeconds(value: unknown): number | Response {
   if (value === undefined) return DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS;
   if (

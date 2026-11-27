@@ -1,14 +1,4 @@
-/**
- * Per-run code hook dispatch.
- * Resolves an agent's configured code hooks (config.hooks.code) into an
- * event→records index, then runs the matching hooks at each fire-point and
- * merges their sanitized mutations. Per-event isolate execution + the
- * field-scoped mutation boundary live in hook-runner.ts; the fold into harness
- * state lives at the call sites (harness.ts / handler.ts / integrations.ts /
- * subagents.ts).
- */
-
-import type { JSONValue, ToolSet } from "ai";
+import { asSchema, type JSONValue, type Tool, type ToolSet } from "ai";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
 import type {
   AgentCodeHookConfig,
@@ -16,25 +6,22 @@ import type {
   AgentHookEventName,
   HookAgentConfig,
 } from "../shared/domain/agent-config.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
+import type { SandboxStandIn } from "./tools/sandbox-stand-in.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import { wrapToolExecute } from "./tool-execute.ts";
 
-/** One run's code hooks, asked at each fire-point. */
 export interface HookDispatcher {
-  /** Lets a call site skip building a payload when no hook listens for the event. */
   hasHooksFor(event: AgentHookEventName): boolean;
-  /** Runs every hook registered for the event and returns the merged, field-scoped mutation. */
   runMutation(
     event: AgentHookEventName,
     payload: AgentLifecycleEventPayload,
   ): Promise<Record<string, unknown> | undefined>;
 }
 
-/** Returned when the agent has no active code hooks, so call sites never null-check. */
 const NO_HOOKS: HookDispatcher = {
   hasHooksFor: (): boolean => false,
   runMutation: async function (): Promise<Record<string, unknown> | undefined> {
@@ -42,11 +29,6 @@ const NO_HOOKS: HookDispatcher = {
   },
 };
 
-/**
- * Runs channel.message.sending hooks on an outbound reply. Returns null when a
- * hook drops the message, otherwise the (possibly rewritten) text. Shared by
- * every reply-delivery path so outbound policy cannot silently miss one.
- */
 export async function applyMessageSendingHook(
   hooks: HookDispatcher,
   channel: string,
@@ -63,7 +45,6 @@ export async function applyMessageSendingHook(
   return typeof mutation?.text === "string" ? mutation.text : text;
 }
 
-/** Builds the dispatcher for one agent run, resolving referenced hook records once. */
 export async function createAgentHookDispatcher(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -83,22 +64,13 @@ export async function createAgentHookDispatcher(
   return createHookDispatcher(accountId, index, hookVisibleConfig(agentConfig));
 }
 
-/**
- * Runs the indexed hooks for each fire-point, one at a time, sharing one run
- * state and handing each the allow-listed `config` as ctx.config. Called by
- * `createAgentHookDispatcher`, and directly by the hook tests.
- */
 export function createHookDispatcher(
   accountId: string,
   index: Map<AgentHookEventName, AccountHookRecord[]>,
   config: HookAgentConfig,
 ): HookDispatcher {
-  // ctx.state: a mutable scratchpad shared by every hook in this run. Seeded
-  // empty, threaded into each hook, and replaced with what the hook left behind
-  // so a later fire-point sees what an earlier one stored.
   let runState: Record<string, unknown> = {};
-  // Fire-points can overlap (parallel tool calls, a subagent finishing mid-step);
-  // hook runs queue on this chain so no two read-modify-write runState at once.
+  // Fire-points overlap (parallel tool calls), so runs queue: no two update runState at once.
   let queue: Promise<unknown> = Promise.resolve();
 
   return {
@@ -112,7 +84,6 @@ export function createHookDispatcher(
         return undefined;
       }
       const run = queue.then(async () => {
-        // Hooks run in config order; later hooks' fields override earlier ones.
         let merged: Record<string, unknown> | undefined;
         for (const record of records) {
           const { mutation, state } = await runCodeHook({
@@ -124,9 +95,7 @@ export function createHookDispatcher(
             state: runState,
           });
           runState = state;
-          if (mutation) {
-            merged = { ...merged, ...mutation };
-          }
+          if (mutation) merged = Object.assign(merged ?? {}, mutation);
         }
 
         return merged;
@@ -138,14 +107,11 @@ export function createHookDispatcher(
   };
 }
 
-/**
- * Wraps every executable tool so a `tool.call.started` hook can deny or edit its
- * args before it runs and a `tool.result` hook can transform its output after.
- * Returns the ToolSet unchanged when no tool-scoped hooks are registered.
- */
+// A stand-in call also carries `runsAs`, the Broods call it makes, so a hook guarding bash sees it.
 export function wrapToolsWithHooks(
   tools: ToolSet,
   hooks: HookDispatcher,
+  standIns?: ReadonlyMap<string, SandboxStandIn>,
 ): ToolSet {
   const wantsStart = hooks.hasHooksFor("tool.call.started");
   const wantsResult = hooks.hasHooksFor("tool.result");
@@ -156,9 +122,11 @@ export function wrapToolsWithHooks(
   return wrapToolExecute(tools, (name) => ({
     before: async (input: unknown) => {
       if (!wantsStart) return input;
+      const runsAs = standIns?.get(name)?.toSandboxCall(input);
       const mutation = await hooks.runMutation("tool.call.started", {
         toolName: name,
         input: toLifecycleValue(input),
+        ...(runsAs ? { runsAs: toLifecycleValue(runsAs) } : {}),
       });
       if (!mutation) return input;
       if (mutation.decision === "deny") {
@@ -169,7 +137,9 @@ export function wrapToolsWithHooks(
         throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
 
-      return isPlainObject(mutation.args) ? mutation.args : input;
+      const args = parseOr(configObject, mutation.args);
+
+      return args ? hookArgs(tools[name]!, name, args) : input;
     },
     after: async (output: unknown) => {
       if (!wantsResult) return output;
@@ -183,7 +153,6 @@ export function wrapToolsWithHooks(
   }));
 }
 
-/** Maps each event to the active hook records that fire on it, in config order. */
 function buildEventIndex(
   refs: AgentCodeHookConfig[],
   records: AccountHookRecord[],
@@ -195,8 +164,6 @@ function buildEventIndex(
     if (!record || record.status !== "active") {
       continue;
     }
-    // A ref may narrow the bundle's declared events; the effective set is the
-    // intersection so a hook only fires for events it actually handles.
     const events = ref.events
       ? record.events.filter((event) => ref.events!.includes(event))
       : record.events;
@@ -210,7 +177,26 @@ function buildEventIndex(
   return index;
 }
 
-/** Projects the agent config onto what a hook may read as ctx.config; see HookAgentConfig. */
+// The schema check the SDK ran on the model's args; no runtime schema = accepted, as in the SDK.
+async function hookArgs(
+  tool: Tool,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const { validate } = asSchema(tool.inputSchema);
+  if (!validate) {
+    return args;
+  }
+  const result = await validate(args);
+  if (!result.success) {
+    throw new Error(
+      `Tool "${name}" got invalid args from hook: ${result.error.message}`,
+    );
+  }
+
+  return result.value;
+}
+
 function hookVisibleConfig(agentConfig: AgentConfig): HookAgentConfig {
   return {
     model: {
@@ -228,7 +214,6 @@ function hookVisibleConfig(agentConfig: AgentConfig): HookAgentConfig {
   };
 }
 
-/** Fetches the active account hook records an agent's config refers to, once per run. */
 async function loadAgentHooks(
   accountId: string,
   refs: AgentCodeHookConfig[],

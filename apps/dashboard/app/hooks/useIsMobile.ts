@@ -2,7 +2,6 @@ import { useSyncExternalStore } from "react";
 
 const MOBILE_QUERY = "(max-width: 767px)";
 
-/** True below the md breakpoint, where the sidebar becomes a sheet. */
 export function useIsMobile(): boolean {
   return useSyncExternalStore(
     subscribe,

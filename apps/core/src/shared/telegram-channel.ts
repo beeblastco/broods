@@ -1,5 +1,3 @@
-/** Telegram channel adapter. */
-
 import {
   TelegramAdapter,
   type TelegramMessage,
@@ -24,12 +22,14 @@ import type {
   ChannelQuestionPrompt,
 } from "./channels.ts";
 import {
+  botIdFromToken,
   isAllowedId,
   parseChannelWebhookBody,
   parseQuestionButtonId,
   questionButtonId,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
+import { MAX_ATTACHMENT_BYTES } from "./media-types.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const BOT_COMMAND_ENTITY = "bot_command";
@@ -37,27 +37,18 @@ const MENTION_ENTITY = "mention";
 const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 const TELEGRAM_API_URL = "https://api.telegram.org";
-// Telegram takes 2-10 attachments as a single album and one attachment on its
-// own; past ten it rejects the batch, so a longer list goes out as consecutive
-// albums rather than failing.
+// Telegram rejects an album of more than ten.
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
 // Telegram serves every static sticker as WebP whatever the set was built from.
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
-// A quote is context for the turn, not the turn itself; Telegram allows 4096.
+const TELEGRAM_FILE_ID_PATTERN = /^[\w-]+$/;
 const TELEGRAM_REPLY_QUOTE_MAX = 500;
-// callback_data on a reply button: the reply itself, sent as the person's message.
 const REPLY_CALLBACK_PATTERN = /^r:(.{1,60})$/s;
 
 export interface TelegramChannelOptions {
   botUsername?: string;
 }
 
-/**
- * A Telegram sticker, including the two flags that separate a static WebP from
- * an animated `.tgs` or a `.webm` video sticker. The Chat SDK's message type
- * models the file and its emoji but neither flag, and the difference decides
- * whether the sticker is worth downloading at all.
- */
 interface TelegramSticker {
   emoji?: string;
   file_id: string;
@@ -76,7 +67,6 @@ export interface TelegramSource {
   fromUsername?: string;
 }
 
-/** One Bot API answer, as the SDK's error mapping reads it. */
 interface TelegramApiAnswer<TResult> {
   description?: string;
   error_code?: number;
@@ -85,15 +75,16 @@ interface TelegramApiAnswer<TResult> {
   result?: TResult;
 }
 
-// A tenant `apiUrl` is their host, and the bot token rides every path to it,
-// so the SDK's two calls there go pinned to a checked public address with
-// redirects refused. Telegram itself keeps the SDK's own calls.
+// The bot token rides every path to a tenant `apiUrl`, so those calls go pinned to a checked
+// public address with redirects refused.
 class BroodsTelegramAdapter extends TelegramAdapter {
   private get tenantApiUrl(): boolean {
     return this.apiBaseUrl !== TELEGRAM_API_URL;
   }
 
-  protected override async downloadFile(fileId: string): Promise<Buffer> {
+  protected override async downloadFile(
+    fileId: string,
+  ): Promise<Buffer | ArrayBuffer> {
     if (!this.tenantApiUrl) return super.downloadFile(fileId);
     const file = await this.telegramFetch<{ file_path?: string }>("getFile", {
       file_id: fileId,
@@ -112,7 +103,7 @@ class BroodsTelegramAdapter extends TelegramAdapter {
       );
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    return await readCappedFile(response, fileId);
   }
 
   protected override async telegramFetch<TResult>(
@@ -161,6 +152,7 @@ export function createTelegramChannel(
   options: TelegramChannelOptions = {},
 ): ChannelAdapter {
   const botUsername = normalizeBotUsername(options.botUsername);
+  const botId = botIdFromToken(botToken);
   const transport = new BroodsTelegramAdapter({
     apiUrl: apiUrl,
     botToken: botToken,
@@ -170,8 +162,6 @@ export function createTelegramChannel(
     logger: new ConsoleLogger("error").child("telegram"),
   });
 
-  // A click on an ask_questions button. The click is answered and the keyboard
-  // cleared here, best effort, so the chat keeps no spinner or second chance.
   const parseQuestionClick = (
     callback: NonNullable<TelegramUpdate["callback_query"]>,
     updateId: number,
@@ -206,10 +196,12 @@ export function createTelegramChannel(
       message,
       transport.parseMessage(message),
       callback.from,
+      botId,
     );
 
     return {
       kind: "message",
+      redelivers: true,
       message: {
         eventId: `${TELEGRAM_INTEGRATION_PREFIX}${updateId}`,
         conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
@@ -256,9 +248,8 @@ export function createTelegramChannel(
       if (update.callback_query) {
         return parseQuestionClick(update.callback_query, update.update_id);
       }
-      const message = extractInboundMessage(update);
-      // A photo, voice note or document with no caption is still a message. It
-      // is only nothing to answer when it carries no media either.
+      // An edit arrives as `edited_message`, left unread: edits never start a run on any channel.
+      const message = update.message;
       if (
         !message ||
         (!telegramMessageText(message) && !hasTelegramMedia(message))
@@ -279,10 +270,6 @@ export function createTelegramChannel(
         return { kind: "ignore" };
       }
 
-      // Only a message addressed to the agent runs it; the rest is stored so a
-      // later mention still sees what the chat said. Without a configured
-      // botUsername a mention cannot be recognised, so every message keeps
-      // running the agent.
       const runAgent =
         !botUsername || addressesTelegramBot(message, botUsername);
       const parsed = transport.parseMessage(message);
@@ -292,16 +279,17 @@ export function createTelegramChannel(
         parsed,
       );
       const commandToken = telegramCommandToken(message, botUsername);
-      const envelope = telegramEnvelope(message, parsed, message.from);
+      const envelope = telegramEnvelope(message, parsed, message.from, botId);
 
       return {
         kind: runAgent ? "message" : "context",
+        redelivers: true,
         message: {
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
           content: withReplyContext(
-            parsed.text || skippedStickerText(message.sticker),
+            message.sticker ? stickerText(message.sticker) : parsed.text,
             parsed.replyTo,
           ),
           ...(attachments.length > 0 ? { attachments: attachments } : {}),
@@ -332,9 +320,6 @@ export function createTelegramChannel(
       };
 
       return {
-        // One body for both: the Chat SDK picks sendPhoto or sendDocument from
-        // each attachment's own `type`. They stay separate keys so a channel can
-        // advertise one without the other.
         sendFiles: sendAttachments,
         sendImages: sendAttachments,
         sendQuestions: async function (prompt): Promise<void> {
@@ -348,7 +333,6 @@ export function createTelegramChannel(
           });
         },
         sendReplyButtons: async function (text, replies): Promise<void> {
-          // Long text goes out in chunks like sendText; the buttons ride on the last.
           const chunks = splitTelegramRawText(text);
           const last = chunks.pop() ?? text;
           const thread =
@@ -378,13 +362,12 @@ export function createTelegramChannel(
         },
         sendSticker: async function (sticker): Promise<void> {
           const value = sticker.trim();
-          if (!value) {
-            throw new Error(
-              "Telegram sendSticker needs a file id or public http(s) URL",
-            );
-          }
           if (value.includes("://")) {
             assertTelegramStickerUrl(value);
+          } else if (!TELEGRAM_FILE_ID_PATTERN.test(value)) {
+            throw new Error(
+              "Telegram sendSticker needs a sticker file_id or a public http(s) URL, not a file path",
+            );
           }
           await callTelegramBotApi(apiUrl, botToken, "sendSticker", {
             chat_id: source.chatId,
@@ -409,9 +392,8 @@ export function createTelegramChannel(
           ),
         ...(source.chatId > 0
           ? {
-              // Telegram refuses a stream that carried no text, which is all a
-              // run that fails before its first word leaves. Nothing was posted
-              // then, so null hands the reply back to be sent as plain text.
+              // Telegram refuses a stream with no text, which a run that fails early leaves.
+              // Nothing was posted then, so null hands the reply back as plain text.
               stream: async (textStream, options) => {
                 let sawText = false;
                 const chunks = (async function* (): AsyncGenerator<
@@ -443,14 +425,7 @@ export function createTelegramChannel(
   };
 }
 
-/**
- * Whether the message asks the agent to answer. A private chat always does. In a
- * group the agent answers an @-mention, a slash command, or a reply to one of
- * its own messages; anything else is people talking to each other.
- *
- * Another bot never triggers a run, so two bots sharing a group cannot mention
- * each other into a loop.
- */
+// Never another bot, so two bots in one group can not mention each other into a loop.
 function addressesTelegramBot(
   message: TelegramMessage,
   botUsername: string,
@@ -468,12 +443,7 @@ function addressesTelegramBot(
   );
 }
 
-function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
-  return update.message ?? update.edited_message ?? null;
-}
-
-// Whether the message carries anything the agent could look at. Kept beside the
-// Chat SDK's own extraction list, plus the sticker it does not model.
+// Mirrors the Chat SDK's attachment extraction list.
 function hasTelegramMedia(message: TelegramMessage): boolean {
   return Boolean(
     message.photo?.length ||
@@ -487,8 +457,6 @@ function hasTelegramMedia(message: TelegramMessage): boolean {
   );
 }
 
-// One button per option, one row each; the header disambiguates when the
-// prompt carries more than one question.
 function questionKeyboard(
   prompt: ChannelQuestionPrompt,
 ): { text: string; callback_data: string }[][] {
@@ -509,41 +477,57 @@ function questionKeyboard(
   );
 }
 
-// The stand-in text for a sticker `telegramAttachments` skips: an animated or
-// video sticker carries no caption, so without its emoji the turn would arrive
-// entirely empty.
-function skippedStickerText(sticker: TelegramSticker | undefined): string {
-  if (!sticker || (!sticker.is_animated && !sticker.is_video)) {
-    return "";
+// The SDK's own download cap, so a tenant host can not stream gigabytes into core.
+async function readCappedFile(
+  response: Response,
+  fileId: string,
+): Promise<Buffer> {
+  const tooLarge = (): Error =>
+    new Error(`Telegram file ${fileId} exceeds the download limit`);
+  if (Number(response.headers.get("content-length")) > MAX_ATTACHMENT_BYTES) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const read = await reader?.read();
+    if (!read || read.done) break;
+    size += read.value.byteLength;
+    if (size > MAX_ATTACHMENT_BYTES) {
+      await reader?.cancel();
+      throw tooLarge();
+    }
+    chunks.push(read.value);
   }
 
-  return sticker.emoji ?? "[sticker]";
+  return Buffer.concat(chunks, size);
 }
 
-/**
- * The media on a Telegram message, as Chat SDK attachments.
- *
- * `parsed.attachments` holds what the SDK extracts: photos, video, audio, voice
- * notes, documents and video notes, each with a reader that resolves the file id
- * and signs the download with the bot token. The SDK has no notion of a sticker,
- * so that one is built here against the same reader, since `rehydrateAttachment`
- * turns a file id back into a download.
- *
- * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
- * a model can read; `skippedStickerText` carries their emoji as the message text
- * instead, which says more than a failed download would.
- */
+function stickerText(sticker: TelegramSticker): string {
+  return `${sticker.emoji ?? ""} [sticker file_id: ${sticker.file_id}]`.trim();
+}
+
+// A static sticker is rebuilt with a WebP name the model can read; animated and video ones
+// (.tgs, .webm) are skipped, and `stickerText` carries their emoji instead.
 function telegramAttachments(
   transport: TelegramAdapter,
   sticker: TelegramSticker | undefined,
   parsed: Message,
 ): Attachment[] {
-  if (!sticker || sticker.is_animated || sticker.is_video) {
+  if (!sticker) {
     return parsed.attachments;
+  }
+  const media = parsed.attachments.filter(
+    (attachment) => attachment.fetchMetadata?.fileId !== sticker.file_id,
+  );
+  if (sticker.is_animated || sticker.is_video) {
+    return media;
   }
 
   return [
-    ...parsed.attachments,
+    ...media,
     transport.rehydrateAttachment({
       type: "image",
       name: `sticker${sticker.emoji ? `-${sticker.emoji}` : ""}.webp`,
@@ -554,13 +538,8 @@ function telegramAttachments(
   ];
 }
 
-/**
- * The slash command opening the message, bare of any `@name` suffix, or
- * undefined when the message does not open with a command for this bot. Read
- * from the entity Telegram tags rather than the assembled content: the reply
- * frame and the `@name` a client appends in a group would both hide the token
- * from the exact-match command parser downstream.
- */
+// Read from the entity, not the content: the reply frame and a group's `@name` suffix would
+// hide the command from the exact-match parser.
 function telegramCommandToken(
   message: TelegramMessage,
   botUsername: string | null,
@@ -575,9 +554,6 @@ function telegramCommandToken(
   const [command, target] = telegramMessageText(message)
     .slice(0, entity.length)
     .split("@");
-  // A command aimed at another bot is that bot's to answer; without a
-  // configured botUsername the target cannot be checked, matching the
-  // answer-everything stance the mention gate takes in that case.
   if (target && botUsername && target.toLowerCase() !== botUsername) {
     return undefined;
   }
@@ -585,12 +561,11 @@ function telegramCommandToken(
   return command;
 }
 
-// Reply routing and sender identity for one inbound message or button click.
-// `from` is the person acting: the message author, or whoever clicked.
 function telegramEnvelope(
   message: TelegramMessage,
   parsed: Message,
   from: TelegramMessage["from"],
+  botId: string | undefined,
 ): { source: TelegramSource; identity: ChannelIdentity } {
   return {
     source: {
@@ -604,6 +579,7 @@ function telegramEnvelope(
       fromUsername: from?.username,
     },
     identity: {
+      ...(botId ? { workspaceRef: botId } : {}),
       channelId: String(message.chat.id),
       ...(message.message_thread_id !== undefined
         ? { threadId: String(message.message_thread_id) }
@@ -614,9 +590,7 @@ function telegramEnvelope(
   };
 }
 
-// Entities are indexed against whichever of the two text fields carries the
-// message, so the pair must be read together. Otherwise an @-mention in a photo
-// caption is matched against the offsets of a `text` that is not there.
+// Entity offsets index whichever of text or caption carries the message.
 function telegramEntities(
   message: TelegramMessage,
 ): NonNullable<TelegramMessage["entities"]> {
@@ -625,19 +599,11 @@ function telegramEntities(
     : (message.caption_entities ?? []);
 }
 
-// A caption is the text of a photo or document message, and Telegram never sets
-// both. Everything reading the message text has to agree on that, or a captioned
-// picture reads as an empty message.
 function telegramMessageText(message: TelegramMessage): string {
   return message.text ?? message.caption ?? "";
 }
 
-/**
- * Telegram tags every `@name` and `/command` in the text with an entity, so the
- * entities decide this rather than a substring search. A bare `/command` counts
- * as addressed: Telegram only appends `@name` to a command when a group holds
- * more than one bot.
- */
+// A bare /command counts: Telegram only appends `@name` when the group holds several bots.
 function mentionsTelegramBot(
   message: TelegramMessage,
   botUsername: string,
@@ -660,8 +626,6 @@ function mentionsTelegramBot(
   });
 }
 
-// BotFather hands out the name without a leading `@`, but people paste it both
-// ways, and Telegram treats usernames case-insensitively.
 function normalizeBotUsername(value: string | undefined): string | null {
   const name = value?.trim().replace(/^@/, "").toLowerCase();
 
@@ -679,12 +643,7 @@ function repliesToTelegramBot(
   );
 }
 
-/**
- * One Bot API call outside the Chat SDK. The bot token rides the URL path, so
- * the endpoint is checked for https before anything is sent and a redirect is
- * refused rather than followed: either would hand the token to a host the
- * operator never configured.
- */
+// The bot token rides the URL path, so a redirect is refused rather than followed.
 async function callTelegramBotApi(
   apiUrl: string | undefined,
   botToken: string,
@@ -727,8 +686,6 @@ async function callTelegramBotApi(
   }
 }
 
-// A configured Bot API base is only accepted over https: the token sits in the
-// path, so plain http would send it in clear.
 function telegramBotApiUrl(
   apiUrl: string | undefined,
   botToken: string,
@@ -769,10 +726,6 @@ function assertTelegramStickerUrl(value: string): void {
   }
 }
 
-// One album per ten attachments, in order. The caption rides the first message
-// only: repeating it once per batch reads as the same message sent twice. The
-// Chat SDK picks the endpoint from `type`, so pictures land as photos the
-// recipient sees inline and documents as files they download.
 async function postTelegramAttachments(
   transport: TelegramAdapter,
   threadId: string,
@@ -841,14 +794,8 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
   };
 }
 
-/**
- * Frames the message a reply answers ahead of the reply itself.
- *
- * Telegram draws that quote in its own UI, but the conversation the model reads
- * is a flat list in time order, so without this "and with margin?" arrives with
- * nothing to attach it to. Same delimited shape as `withScheduledRunContext`, so
- * a member cannot type one by hand to forge it.
- */
+// The model reads a flat timeline, so a reply carries its quote. Same delimited shape as
+// `withScheduledRunContext`, so a member can not forge one by typing it.
 function withReplyContext(
   text: string,
   repliedTo: Message | undefined,

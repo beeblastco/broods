@@ -1,37 +1,16 @@
-/**
- * Shared skill storage primitives and validation rules.
- * Keep endpoint CRUD in account-manage and prompt loading in harness-processing.
- */
-
 import { readS3Text } from "./s3.ts";
 import { requireEnv } from "./env.ts";
 import path from "node:path";
+import {
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_FILE_BYTES,
+} from "@broods/convex/model/skillLimits";
+
+export { MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_FILE_BYTES };
 
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
-export const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
-const TEXT_EXTENSIONS = new Set([
-  ".css",
-  ".csv",
-  ".html",
-  ".js",
-  ".json",
-  ".md",
-  ".mjs",
-  ".py",
-  ".sh",
-  ".sql",
-  ".svg",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
 const EXECUTABLE_EXTENSIONS = new Set([
   ".sh",
   ".bash",
@@ -42,21 +21,10 @@ const EXECUTABLE_EXTENSIONS = new Set([
   ".ts",
 ]);
 
-export interface SkillBundleFile {
-  path: string;
-  bytes: Uint8Array;
-  contentType?: string;
-}
-
 export interface SkillMetadata {
   name: string;
   description: string;
   path: string;
-}
-
-export interface ValidatedSkillBundle {
-  metadata: Omit<SkillMetadata, "path">;
-  files: SkillBundleFile[];
 }
 
 export class SkillAuthorizationError extends Error {
@@ -75,12 +43,6 @@ export function contentTypeForSkillPath(filePath: string): string {
   return path.extname(filePath).toLowerCase() === ".json"
     ? "application/json"
     : "text/plain; charset=utf-8";
-}
-
-export function formatSkillPath(accountId: string, skillName: string): string {
-  validateSkillName(skillName);
-
-  return `${accountId}/${skillName}`;
 }
 
 export function isExecutableSkillPath(filePath: string): boolean {
@@ -106,49 +68,6 @@ export function normalizeBundlePath(value: string): string {
   return trimmed;
 }
 
-export function parseGitHubSkillUrl(value: unknown): {
-  owner: string;
-  repo: string;
-  ref: string;
-  subdir: string;
-  archiveUrl: string;
-} {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("url must be a non-empty string");
-  }
-
-  const url = new URL(value.trim());
-  if (url.protocol !== "https:" || url.hostname !== "github.com") {
-    throw new Error("GitHub skill URL must use https://github.com");
-  }
-  if (/%2e/i.test(value.trim()) || value.trim().includes("..")) {
-    throw new Error(
-      "Invalid skill file path: GitHub URL must not contain path traversal",
-    );
-  }
-
-  const [owner, repo, kind, ref, ...subdirParts] = url.pathname
-    .split("/")
-    .filter(Boolean);
-  if (!owner || !repo || kind !== "tree" || !ref) {
-    throw new Error(
-      "GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}",
-    );
-  }
-  assertSafeGitHubSegment(owner, "owner");
-  assertSafeGitHubSegment(repo, "repo");
-  assertSafeGitHubSegment(ref, "ref");
-  const subdir = subdirParts.map((part) => normalizeBundlePath(part)).join("/");
-
-  return {
-    owner: owner,
-    repo: repo,
-    ref: ref,
-    subdir: subdir,
-    archiveUrl: `https://codeload.github.com/${owner}/${repo}/tar.gz/${encodeURIComponent(ref)}`,
-  };
-}
-
 export function parseSkillMarkdown(
   markdown: string,
 ): Omit<SkillMetadata, "path"> {
@@ -166,10 +85,7 @@ export function parseSkillMarkdown(
   return { name: name, description: description };
 }
 
-/**
- * Parses a configured skill path and rejects one owned by another account.
- * No S3 call: a caller that needs the skill to exist reads or HEADs it itself.
- */
+// No S3 call: a caller that needs the skill to exist reads or HEADs it itself.
 export function parseOwnedSkillPath(
   accountId: string,
   skillPath: string,
@@ -207,10 +123,13 @@ export function parseSkillPath(
 export async function readSkillText(
   skillPath: string,
   resourcePath: string,
+  maxBytes = MAX_SKILL_FILE_BYTES,
 ): Promise<string> {
   return readS3Text(
     skillsBucketName(),
     `${skillPath}/${normalizeBundlePath(resourcePath)}`,
+    undefined,
+    maxBytes,
   );
 }
 
@@ -220,43 +139,6 @@ export function skillInstructionsFromMarkdown(markdown: string): string {
 
 export function skillsBucketName(): string {
   return requireEnv("SKILLS_BUCKET_NAME");
-}
-
-export function validateSkillBundle(
-  input: SkillBundleFile[],
-): ValidatedSkillBundle {
-  const files = input.map((file) => ({
-    ...file,
-    path: normalizeBundlePath(file.path),
-  }));
-  const seen = new Set<string>();
-  let totalBytes = 0;
-  for (const file of files) {
-    if (seen.has(file.path)) {
-      throw new Error(`Duplicate skill file path: ${file.path}`);
-    }
-    seen.add(file.path);
-    totalBytes += file.bytes.byteLength;
-    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new Error(`Skill file is too large: ${file.path}`);
-    }
-    if (!isSupportedTextFile(file.path, file.bytes)) {
-      throw new Error(`Skill file must be a supported text file: ${file.path}`);
-    }
-  }
-  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new Error("Skill bundle exceeds 30 MB");
-  }
-
-  const skillFile = files.find((file) => file.path === SKILL_FILE);
-  if (!skillFile) {
-    throw new Error("Skill bundle must include SKILL.md at the root");
-  }
-
-  return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
-    files: files,
-  };
 }
 
 export function validateSkillDescription(
@@ -288,20 +170,6 @@ export function validateSkillName(value: unknown): asserts value is string {
       "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
     );
   }
-}
-
-function assertSafeGitHubSegment(value: string, name: string): void {
-  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
-    throw new Error(`GitHub ${name} contains unsupported characters`);
-  }
-}
-
-function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
-  if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-    return false;
-  }
-
-  return !bytes.includes(0);
 }
 
 function parseSimpleYamlFrontmatter(

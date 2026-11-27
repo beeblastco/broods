@@ -1,12 +1,10 @@
-/**
- * Example: OPA-backed agent policy rollout modes on the AWS Lambda MicroVM
- * sandbox with Bedrock MiniMax.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 const input = [
   "Run the policy smoke test now.",

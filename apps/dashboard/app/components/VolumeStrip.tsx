@@ -9,21 +9,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface Props {
   bins: VolumeBin[];
-  /** The window the bins cover; the strip draws it edge to edge. */
   window: TimeWindow;
-  /** The part of the window the list is narrowed to, or null for all of it. */
   selection: TimeWindow | null;
   onSelect: (selection: TimeWindow | null) => void;
-  /** A time to mark with a red line, such as the selected trace or log line. */
   marker?: number;
 }
 
-/**
- * Volume per bin under the toolbar, error and warn share tinted. Dragging
- * across it narrows the list to those bins; a click on the strip outside a
- * selection clears it. The whole window reads at the right edge. A marker
- * inside the window draws as a red line.
- */
 export function VolumeStrip({
   bins,
   window,
@@ -64,14 +55,12 @@ export function VolumeStrip({
     onSelect(to - from < span / bins.length ? null : { from: from, to: to });
   };
 
-  // A selection may be open-ended or reach past the strip; draw its visible part.
   const shown = drag
     ? { from: Math.min(drag.from, drag.to), to: Math.max(drag.from, drag.to) }
     : selection && {
         from: Math.max(selection.from, window.from),
         to: Math.min(selection.to, window.to),
       };
-  // Clock times alone read the same at both ends of a multi-day window.
   const formatEdge = span >= DAY_MS ? formatDateTime : formatTime;
   const labelled = shown ?? window;
   const label = `${formatEdge(labelled.from)} → ${formatEdge(labelled.to)}`;

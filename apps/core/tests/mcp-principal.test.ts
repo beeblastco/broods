@@ -1,15 +1,13 @@
-/**
- * Remote MCP requests name the calling agent and its delegation chain, on
- * headers kept apart from the row's own so the listing cache stays shared.
- */
-
 import { describe, expect, it } from "bun:test";
 import {
+  cacheKeyFor,
   mcpConnection,
   mcpRequestHeaders,
   MCP_AGENT_ID_HEADER,
   MCP_PRINCIPAL_HEADER,
+  MCP_USER_CREDENTIAL_HEADER,
 } from "../src/harness/mcp/client.ts";
+import { Session } from "../src/harness/session.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 import type { Principal } from "../src/shared/domain/principal.ts";
 
@@ -89,6 +87,49 @@ describe("mcp principal headers", () => {
       );
       expect(wire.get("X-Api-Key")).toBe("k");
     }
+  });
+});
+
+describe("mcp user credential", () => {
+  const hosted: McpRecord = { ...MCP_RECORD, transport: "hosted" };
+  const spoofed = { "x-broods-user-credential": "bcli_tenant" };
+
+  it("reaches only a hosted server, past any tenant copy, and never the cache key", async () => {
+    const connection = mcpConnection(
+      { ...hosted, headers: { ...hosted.headers, ...spoofed } },
+      spoofed,
+      undefined,
+      undefined,
+      "bcli_user",
+    );
+    const wire = new Headers(await mcpRequestHeaders(connection));
+    expect(wire.get(MCP_USER_CREDENTIAL_HEADER)).toBe("bcli_user");
+    expect(cacheKeyFor(connection)).toBe(
+      cacheKeyFor(mcpConnection(hosted, undefined)),
+    );
+
+    const remote = mcpConnection(
+      MCP_RECORD,
+      spoofed,
+      undefined,
+      undefined,
+      "bcli_user",
+    );
+    expect(
+      new Headers(await mcpRequestHeaders(remote)).get(
+        MCP_USER_CREDENTIAL_HEADER,
+      ),
+    ).toBeNull();
+  });
+
+  it("is a secret the session redacts from spans and logs", () => {
+    const session = new Session({
+      eventId: "evt",
+      conversationKey: "acct:a:agent:b:api:c",
+      userCredential: "bcli_user",
+    });
+
+    expect(session.secretValues()).toContain("bcli_user");
   });
 });
 

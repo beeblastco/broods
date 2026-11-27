@@ -7,11 +7,6 @@ import {
 } from "../../../packages/broods/src/sync.ts";
 import { assertStep, type VerifyContext } from "../harness.ts";
 
-/**
- * Concurrent SDK deploys leave one complete manifest; a stale revision cannot
- * overwrite it. The runtime key the deploy minted then authenticates on core,
- * and a stage env var name a `${NAME}` ref could not reach is refused.
- */
 export async function manifestSync(context: VerifyContext): Promise<void> {
   const client = new BroodsSyncClient({
     baseUrl: context.edgeUrl,
@@ -97,6 +92,46 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
       diffManifests(remote.manifest, after.manifest).length === 0,
     "stale sync changed resources",
   );
+  const winner = manifests.find(
+    (manifest): boolean => diffManifests(manifest, after.manifest).length === 0,
+  );
+  const [agent, mcp] = winner?.resources ?? [];
+  const cron = {
+    kind: "cron" as const,
+    name: "daily",
+    config: {
+      agentId: agent?.name ?? "",
+      events: [{ role: "user", content: "Report." }],
+      scheduleExpression: "rate(1 day)",
+    },
+  };
+  const withCron = await client.putManifest(
+    { ...manifests[0]!, resources: [...(winner?.resources ?? []), cron] },
+    false,
+    false,
+    after.revision,
+  );
+  await client.putManifest(
+    { ...manifests[0]!, resources: [] },
+    [
+      { kind: "mcp", name: mcp?.name ?? "" },
+      { kind: "cron", name: cron.name },
+    ],
+    false,
+    withCron.revision,
+  );
+  const pruned = (
+    await client.getManifest(project, "development")
+  )?.manifest.resources.map(
+    (resource): string => `${resource.kind}:${resource.name}`,
+  );
+  assertStep(
+    "a prune list removes only the resources it names",
+    pruned?.includes(`agent:${agent?.name}`) === true &&
+      !pruned.includes(`mcp:${mcp?.name}`) &&
+      !pruned.includes(`cron:${cron.name}`),
+    JSON.stringify(pruned),
+  );
   const runtimeKey = await client.getRuntimeKey(project, "development");
   const runtime = new BroodsClient({
     apiKey: runtimeKey?.apiKey,
@@ -123,5 +158,75 @@ export async function manifestSync(context: VerifyContext): Promise<void> {
     lowercase.includes("env name must match") &&
       !stored.some((variable): boolean => variable.name === "api_key"),
     lowercase,
+  );
+  // The sync checks each agent against the stored column shape before it writes any.
+  const malformed = await client
+    .putManifest(
+      {
+        version: 1,
+        project: `${project}-shape`,
+        stage: "development",
+        resources: [
+          {
+            kind: "agent",
+            name: "malformed",
+            config: { model: context.model.model, sandboxes: "sb_offline" },
+          },
+        ],
+      },
+      true,
+    )
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "an agent config of the wrong shape is refused with its path",
+    malformed.includes("config.sandboxes must be array"),
+    malformed,
+  );
+  // No harness reads providerOptions, so the sync refuses them instead of storing them unused.
+  const harnessOptions = await client
+    .putManifest(
+      {
+        version: 1,
+        project: `${project}-harness`,
+        stage: "development",
+        resources: [
+          {
+            kind: "sandbox",
+            name: "box",
+            config: { provider: "lambda", persistent: true },
+          },
+          {
+            kind: "agent",
+            name: "coder",
+            config: {
+              model: {
+                ...context.model.model,
+                providerOptions: {
+                  anthropic: {
+                    thinking: { type: "enabled", budgetTokens: 1024 },
+                  },
+                },
+              },
+              harness: { type: "pi" },
+              sandboxes: ["box"],
+            },
+          },
+        ],
+      },
+      true,
+    )
+    .then(
+      (): string => "accepted",
+      (error: unknown): string => String(error),
+    );
+  assertStep(
+    "a harness agent with providerOptions is refused by name",
+    harnessOptions.includes(
+      "config.model.providerOptions is not supported with config.harness",
+    ),
+    harnessOptions,
   );
 }

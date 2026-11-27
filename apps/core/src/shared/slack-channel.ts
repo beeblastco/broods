@@ -1,5 +1,3 @@
-/** Slack channel adapter. */
-
 import {
   cardToBlockKit,
   cardToFallbackText,
@@ -39,6 +37,7 @@ import {
 import {
   channelAttachmentBytes,
   channelAttachmentName,
+  chunkChannelText,
   isAllowedId,
   parseChannelWebhookBody,
   parseQuestionButtonId,
@@ -55,21 +54,17 @@ import {
   SLACK_INTEGRATION_PREFIX,
 } from "./runtime-keys.ts";
 
-// Minimum gap between reasoning task_update flushes. Each flush blocks the
-// model stream on one Slack API round trip (~200ms), so this bounds the
-// streaming slowdown to roughly one round trip per interval.
+// Each flush blocks the model stream on one Slack API round trip (~200ms).
 const REASONING_FLUSH_INTERVAL_MS = 500;
 
-// Cap on the text a single task accumulates in the card, whether appended
-// delta-by-delta (reasoning details) or set once (tool output).
 const SLACK_TASK_TEXT_LIMIT = 1200;
 
-// The one message subtype that is a message rather than an event about one.
+// chat.postMessage refuses markdown_text past this.
+const SLACK_TEXT_LIMIT = 12_000;
+
 const SLACK_FILE_SHARE_SUBTYPE = "file_share";
 
-// Hosts a Slack bot token may be sent to. A file URL arrives inside a webhook
-// body, so without this an attacker who can post to a channel could name a host
-// of their choosing and be handed the workspace's token.
+// File URLs come from the webhook body; only Slack hosts may be handed the bot token.
 const SLACK_FILE_HOST_SUFFIXES = [
   ".slack.com",
   ".slack-edge.com",
@@ -79,14 +74,10 @@ const SLACK_FILE_HOST_SUFFIXES = [
 // Slack rejects a whole message whose button text runs past this.
 const SLACK_BUTTON_TEXT_LIMIT = 75;
 
-// Button value for a prompt posted with no thread, such as a slash command's.
 const SLACK_NO_THREAD = "channel";
 
-// Slack signs a file URL and then redirects to its CDN; more hops than this is
-// a loop, not a download.
 const SLACK_FILE_MAX_REDIRECTS = 5;
 
-// Per hop, so one stalled response cannot hold the turn open indefinitely.
 const SLACK_FILE_TIMEOUT_MS = 30_000;
 
 type SlackUserNameResolver = (userId: string) => Promise<string | null>;
@@ -103,9 +94,9 @@ interface SlackEventEnvelope {
 export interface SlackSource {
   teamId: string;
   channelId: string;
-  /** Where the reply goes. Unset posts to the channel. */
+  /** Where the reply goes; unset posts to the channel. */
   threadTs?: string;
-  /** The thread the message arrived in, unset when it arrived in the channel. */
+  /** The thread the message arrived in. */
   inThreadTs?: string;
   messageTs?: string;
   responseUrl?: string;
@@ -113,26 +104,8 @@ export interface SlackSource {
   userId?: string;
 }
 
-/**
- * Converts the AI SDK full stream into Slack Chat SDK chunks.
- *
- * Text is buffered and sent once at the end so partial answer text does not jump
- * below the progress card while reasoning and tool chunks are still updating.
- * Only the final (stop) step's text becomes the reply: some models repeat their
- * answer alongside tool calls in earlier steps, and concatenating every step
- * posts the same answer twice. Interim text is kept as a fallback for models
- * that put the whole answer in a tool-call step.
- *
- * Slack's chat.appendStream APPENDS every task_update's `details` to the task
- * card, it never replaces, so reasoning streams as new-suffix deltas: sending
- * the accumulated text re-appends each snapshot and renders "TheThe user isThe
- * user is asking…" (broods#115 follow-up).
- *
- * Every yielded task_update costs one blocking Slack API round trip and this
- * generator is the model stream's only consumer, so per-delta reasoning yields
- * throttle generation to Slack's pace. Deltas are coalesced and flushed at most
- * once per REASONING_FLUSH_INTERVAL_MS.
- */
+// The reply is sent once at the end, below the progress card, from the final step only: some
+// models repeat it in tool steps. appendStream appends `details`, so reasoning goes as deltas.
 export async function* toSlackStream(
   textStream: AsyncIterable<unknown>,
 ): AsyncGenerator<string | StreamChunk> {
@@ -148,8 +121,6 @@ export async function* toSlackStream(
   const reasoningTaskIds = new Map<string, string>();
   const toolNamesById = new Map<string, string>();
 
-  // Drain the coalesced reasoning buffer into one task_update, clipped to the
-  // per-segment card budget. Returns null when there is nothing left to send.
   const flushReasoning = (): StreamChunk | null => {
     if (!pendingReasoning || reasoningChars >= SLACK_TASK_TEXT_LIMIT) {
       pendingReasoning = "";
@@ -176,11 +147,8 @@ export async function* toSlackStream(
     };
   };
 
-  // Adapters reuse the same reasoning id (e.g. `reasoning-0`) on every step,
-  // which would merge all thinking segments into one task pinned wherever the
-  // first was created. The card then shows all thinking first and every tool
-  // after, instead of the real execution order. A per-segment task id keeps
-  // each thinking burst interleaved with the tool tasks.
+  // Adapters reuse one reasoning id every step; a per-segment id keeps each thinking burst in
+  // execution order with the tool tasks instead of merged into the first.
   const reasoningTaskId = (rawId: unknown, fresh: boolean): string => {
     const key = stringValue(rawId) ?? "default";
     let id = fresh ? undefined : reasoningTaskIds.get(key);
@@ -223,8 +191,7 @@ export async function* toSlackStream(
       case "finish-step": {
         const pending = flushReasoning();
         if (pending) yield pending;
-        // finishReason is absent on UI-stream chunks; the tool events seen
-        // during the step stand in for it there.
+        // UI-stream chunks carry no finishReason; the step's tool events stand in.
         const finishReason = stringValue(event.finishReason);
         const interim = finishReason
           ? finishReason === "tool-calls"
@@ -275,8 +242,7 @@ export async function* toSlackStream(
       case "reasoning-end": {
         const update = flushReasoning();
         if (update) yield update;
-        // No `output` here: the appended details already carry the reasoning,
-        // and output would re-append the whole text as one more copy.
+        // No `output`: it would re-append the reasoning the details already carry.
         yield {
           type: "task_update",
           id: reasoningTaskId(event.id, false),
@@ -289,8 +255,6 @@ export async function* toSlackStream(
       }
 
       case "tool-input-start": {
-        // Providers may jump into tool calls without a reasoning-end; commit
-        // pending reasoning first so the card keeps the real execution order.
         const pending = flushReasoning();
         if (pending) yield pending;
         stepHadToolCalls = true;
@@ -307,7 +271,6 @@ export async function* toSlackStream(
       }
 
       case "tool-input-delta": {
-        // Ignore input deltas; we already announced the tool call.
         break;
       }
 
@@ -382,10 +345,8 @@ export async function* toSlackStream(
     }
   }
 
-  // Trailing stepText covers streams that end without a finish-step event.
-  // When no kept step produced visible text, and whitespace-only counts as none,
-  // fall back to the last interim text so a model that answered only inside a
-  // tool-call step still gets a reply out.
+  // Covers a stream with no closing finish-step. With no final text, fall back to the last
+  // interim step so a model that answered only beside a tool call still replies.
   const trailingText = stepText.trim()
     ? appendBufferedSlackText(finalText, stepText, true)
     : finalText;
@@ -492,9 +453,6 @@ export function createSlackChannel(
       );
     },
 
-    // Slack is the one provider where the reply has two places it can land, so
-    // it is the one that can honour the record. A slash command still answers
-    // through its response URL, which carries no thread either way.
     applyReplyIn: function (source, replyIn) {
       const slackSource = toSlackSource(source);
       const threadTs =
@@ -507,35 +465,18 @@ export function createSlackChannel(
   };
 }
 
-/**
- * Prefix a group-channel message with the sender's user identifier so the
- * agent knows who is talking when multiple users are in the conversation.
- * DMs and app_home messages are not prefixed because there is only one user.
- * A command keeps its bare text so its leading token still parses.
- */
-async function formatSlackMessageText(
-  text: string,
-  userId: string | undefined,
+function formatSlackMessageText(
+  normalized: string,
+  userName: string | undefined,
   isGroupChannel: boolean,
-  omittedUserIds: Set<string>,
-  resolveUserName: SlackUserNameResolver,
-): Promise<string> {
-  const normalized = await normalizeSlackMentions(
-    text,
-    omittedUserIds,
-    resolveUserName,
-  );
-  if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
+): string {
+  if (!isGroupChannel || !userName || !normalized || parseCommand(normalized)) {
     return normalized;
   }
 
-  return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
+  return `${userName}: ${normalized}`;
 }
 
-/**
- * Convert Slack mrkdwn mention syntax into readable names for the model. Bot
- * mentions that only target the app are removed from the user text.
- */
 async function normalizeSlackMentions(
   text: string,
   omittedUserIds: Set<string>,
@@ -654,18 +595,15 @@ async function parseEventCallback(
     payload.event.type === "app_mention" && botUserIds.size === 0
       ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
       : (payload.event.text ?? "");
-  const text = await formatSlackMessageText(
-    rawText,
-    payload.event.user,
-    isGroupChannel,
-    botUserIds,
-    resolveUserName,
-  );
+  const [normalized, userName] = await Promise.all([
+    normalizeSlackMentions(rawText, botUserIds, resolveUserName),
+    payload.event.user
+      ? resolveSlackUserName(payload.event.user, resolveUserName)
+      : undefined,
+  ]);
+  const text = formatSlackMessageText(normalized, userName, isGroupChannel);
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
-  const userName = payload.event.user
-    ? await resolveSlackUserName(payload.event.user, resolveUserName)
-    : undefined;
   const attachments = slackAttachments(payload.event.files ?? [], botToken);
   const source: SlackSource = {
     teamId: payload.team_id,
@@ -678,12 +616,11 @@ async function parseEventCallback(
 
   return {
     kind: runAgent ? "message" : "context",
+    redelivers: true,
     ack: { statusCode: 200 },
     message: {
-      // Use team:channel:ts as the eventId so that duplicate Slack deliveries
-      // (app_mention + message for the same mention) dedupe naturally via
-      // session.claim().  ts is unique per message within a channel.
-      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
+      // A user install sends a mention's message copy as context; its own id keeps both.
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}${runAgent ? "" : ":context"}`,
       conversationKey: getSlackConversationKey(
         payload.team_id,
         channelId,
@@ -702,7 +639,6 @@ async function parseEventCallback(
         ...(payload.event.user ? { userId: payload.event.user } : {}),
         ...(userName ? { userName: userName } : {}),
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };
@@ -782,9 +718,7 @@ function createSlackActions(
 
   return {
     sendFiles: async function (files, caption): Promise<void> {
-      // Slack ignores an outbound URL attachment entirely; files.uploadV2 is the
-      // only way in, and it takes the whole batch in one call so the files land
-      // as a single upload rather than one message each.
+      // Slack ignores URL attachments; one files.uploadV2 call lands the batch as one upload.
       await uploadSlackFiles(
         await Promise.all(
           files.map(async (file): Promise<SlackFileUpload> => {
@@ -807,10 +741,7 @@ function createSlackActions(
     },
 
     sendImages: async function (images, caption): Promise<void> {
-      // Block Kit stacks image blocks inside one message, so a batch stays a
-      // single post rather than a run of them. Pictures keep the URL path even
-      // though sendFiles uploads: an image block renders inline, while an
-      // uploaded file shows as an attachment to open.
+      // Image blocks, not an upload: a block renders inline, an uploaded file is an attachment.
       await postSlackCard(
         api,
         source,
@@ -828,9 +759,7 @@ function createSlackActions(
       );
     },
 
-    // One row of buttons per question under the numbered text. Each button
-    // carries the conversation's thread, so a click in a thread or at the
-    // channel top level resolves to the same conversation.
+    // Each button carries the thread, so a click anywhere resolves to the same conversation.
     sendQuestions: async function (prompt): Promise<void> {
       const single = prompt.questions.length === 1;
       const thread = source.inThreadTs ?? source.messageTs ?? SLACK_NO_THREAD;
@@ -899,23 +828,24 @@ function createSlackActions(
     },
 
     sendText: async function (text) {
-      if (source.responseUrl) {
-        await sendSlackWebhookResponse(
-          source.responseUrl,
-          formatter.toResponseUrlText({ markdown: text }),
-        );
+      for (const chunk of chunkChannelText(text, SLACK_TEXT_LIMIT)) {
+        if (source.responseUrl) {
+          await sendSlackWebhookResponse(
+            source.responseUrl,
+            formatter.toResponseUrlText({ markdown: chunk }),
+          );
+          continue;
+        }
 
-        return;
+        await postSlackMessage({
+          ...api,
+          channel: source.channelId,
+          markdownText: chunk,
+          threadTs: source.threadTs,
+          unfurlLinks: false,
+          unfurlMedia: false,
+        });
       }
-
-      await postSlackMessage({
-        ...api,
-        channel: source.channelId,
-        markdownText: text,
-        threadTs: source.threadTs,
-        unfurlLinks: false,
-        unfurlMedia: false,
-      });
     },
 
     sendTyping: async function () {
@@ -1050,15 +980,8 @@ function getSlackReplyThreadTs(
   return event.thread_ts;
 }
 
-/**
- * The files on a Slack message, as Chat SDK attachments.
- *
- * Slack never puts the bytes in the webhook, only a `url_private` that answers
- * nothing without the bot token, so each attachment carries a reader that adds the
- * bearer header. The Chat SDK builds the same thing, but only along its own
- * `handleWebhook` path, which this adapter does not take: it parses the raw event
- * to gate on channel, sender and mention before anything else runs.
- */
+// url_private needs the bot token. The Chat SDK adds that reader only on its handleWebhook
+// path, which this adapter skips to gate on channel, sender and mention first.
 function slackAttachments(
   files: NonNullable<SlackEvent["files"]>,
   botToken: string,
@@ -1093,9 +1016,7 @@ function slackAttachmentType(mimeType: string | undefined): Attachment["type"] {
   return "file";
 }
 
-// Slack serves a recorded voice clip as video/* even though there is no picture
-// in it. Left alone, the file is offered to the model as a video and refused by
-// every provider that would happily have listened to it.
+// Slack serves a voice clip as video/*, which providers refuse though they could hear it.
 function slackFileMediaType(
   file: NonNullable<SlackEvent["files"]>[number],
 ): string | undefined {
@@ -1107,13 +1028,8 @@ function slackFileMediaType(
     : mimeType;
 }
 
-/**
- * Downloads one Slack file with the bot token. The host is checked before the
- * token is attached, and redirects are followed by hand so the token is dropped
- * the moment a hop leaves Slack. Slack answers an expired or unscoped token with
- * 200 and an HTML login page rather than a 401, so the content type is the only
- * reliable failure signal.
- */
+// Redirects are followed by hand so each hop's host is checked before the token goes out.
+// Slack answers a bad token with a 200 HTML login page, so content type is the failure signal.
 async function fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
   let target = assertSlackFileUrl(url);
   for (let hop = 0; hop < SLACK_FILE_MAX_REDIRECTS; hop++) {
@@ -1200,10 +1116,7 @@ function isSupportedSlackEvent(event: SlackEvent): boolean {
   if (event.bot_id) {
     return false;
   }
-  // Every subtype but one is a message about a message, a join, a pin, an edit,
-  // and answering those is noise. `file_share` is the exception: it is how
-  // Slack delivers an ordinary message that happens to carry an upload, so
-  // rejecting it dropped every file anyone ever sent the agent.
+  // file_share is a message carrying an upload; every other subtype is an event about one.
   if (event.subtype && event.subtype !== SLACK_FILE_SHARE_SUBTYPE) {
     return false;
   }
@@ -1245,8 +1158,6 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
   return false;
 }
 
-// A click on an ask_questions button. The buttons are swapped for the choice
-// here, best effort, so the thread shows the answer and keeps no second chance.
 function parseQuestionClick(
   payload: SlackBlockActionsPayload,
   allowedChannelIds: Set<string> | null,
@@ -1279,8 +1190,7 @@ function parseQuestionClick(
       });
     });
   }
-  // A DM or a slash command is one conversation per channel; anywhere else it
-  // is the thread the button names.
+  // A DM (id starts with D) or a slash command is one conversation per channel.
   const thread =
     channelId.startsWith("D") || action.value === SLACK_NO_THREAD
       ? undefined
@@ -1358,9 +1268,7 @@ function parseSlashCommand(
     ack: { statusCode: 200 },
     message: {
       eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${payload.triggerId ?? `${teamId}:${channelId}:${command}:${text}`}`,
-      // Slack does not send thread context on a slash command, so it can only
-      // ever address the channel conversation. `@bot /new` inside a thread is
-      // the threaded equivalent, and that arrives as an app_mention.
+      // Slack sends no thread on a slash command; in a thread, `@bot /new` is an app_mention.
       conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
       content: [{ type: "text", text: text }],
@@ -1369,7 +1277,6 @@ function parseSlashCommand(
         channelId: channelId,
         ...(payload.userId ? { userId: payload.userId } : {}),
       },
-      // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
   };

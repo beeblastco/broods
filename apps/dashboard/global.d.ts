@@ -6,16 +6,6 @@ declare module "*.css" {
   export default content;
 }
 
-declare module "*.scss" {
-  const content: Record<string, string>;
-  export default content;
-}
-
-declare module "*.sass" {
-  const content: Record<string, string>;
-  export default content;
-}
-
 // Lets `style` carry CSS custom properties for classes to read, as in `w-(--bar-width)`.
 declare namespace React {
   interface CSSProperties {
@@ -43,4 +33,26 @@ declare module "react-file-icon" {
   export const FileIcon: ComponentType<
     SVGProps<SVGSVGElement> & { extension?: string } & StyleProps
   >;
+}
+
+// CSSOM View `container` (Chrome 140+): other engines ignore it and scroll every ancestor.
+interface ScrollIntoViewOptions {
+  container?: "all" | "nearest";
+}
+
+// Long Animation Frames (Chromium only): lib.dom ships no types for them yet.
+interface PerformanceScriptTiming extends PerformanceEntry {
+  forcedStyleAndLayoutDuration: number;
+  invoker: string;
+  sourceURL: string;
+}
+
+interface PerformanceLongAnimationFrameTiming extends PerformanceEntry {
+  scripts: PerformanceScriptTiming[];
+}
+
+interface PerformanceObserverEntryList {
+  getEntriesByType(
+    type: "long-animation-frame",
+  ): PerformanceLongAnimationFrameTiming[];
 }

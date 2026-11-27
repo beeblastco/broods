@@ -64,6 +64,8 @@ A Telegram bot puts your agent in private chats, groups and forum topics.
 
 A direct-message bot cannot know chat ids in advance, because a person's chat only exists once they write. Set `allowedChannelIds: ["*"]` and gate people with `allowedUserIds` instead of declaring channels.
 
+A channel applies on every bot the account has. Add `botId`, the digits before `:` in the bot token, to tie it to one bot.
+
 ## Configuration
 
 | Field               | Required | Description                                                           |
@@ -101,7 +103,7 @@ A bare `/command` counts as addressing the agent, since Telegram appends `@name`
 A Telegram reply shows the quoted message, but the agent reads a flat history. So a reply reaches the agent with the quoted text framed above it:
 
 ```text
-<replying-to from="Tracy">
+<replying-to from="Support">
 here is the template
 </replying-to>
 
@@ -115,6 +117,7 @@ Quoted text over 500 characters is cut. A reply to a message with no text, such 
 - Private chats stream the answer as a live draft, then persist the final message. Groups get one final reply.
 - Replies stay in the current forum topic.
 - `ask_questions` renders as an inline keyboard with one button per option.
-- The agent can send images, documents and stickers by file id or URL. Telegram fetches URLs itself.
+- The agent can send images, documents and stickers by file id or URL. Telegram fetches URLs itself. A workspace path is refused for a sticker.
+- An incoming sticker arrives as its emoji and `[sticker file_id: …]`, so the agent can send the same sticker back. A static sticker also arrives as an image.
 
 See [Channels](index.md) for commands, channel tools and attachment limits.

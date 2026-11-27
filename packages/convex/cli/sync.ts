@@ -1,13 +1,5 @@
-/**
- * CLI manifest sync for code-defined Broods resources.
- *
- * Authenticates with the account key and writes desired-state resources
- * into the SaaS project/stage model before syncing runtime agent rows. This
- * file holds the registered Convex functions; the sync passes and shared
- * helpers live in `model/cliSync*.ts`.
- */
-
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
+import { getStageForWrite } from "../model/ownership/stage";
 import type { GeneratedIds } from "./types";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
@@ -15,9 +7,16 @@ import {
   internalQuery,
   type MutationCtx,
 } from "../_generated/server";
-import { ensureStageDeployment } from "../agent/deployments";
+import {
+  ensureStageDeployment,
+  rotateStageUserTokenSecret,
+  userTokenSecretReturn,
+} from "../agent/deployments";
+import { hasDashboardPermission } from "../model/access";
+import { userByAuthId } from "../model/ownership/org";
 import { accountCipher } from "../model/accountKeys";
-import { sha256Hex } from "../model/accountSecrets";
+import { hexFromBytes, sha256Hex } from "../model/accountSecrets";
+import { deploymentRegionValidator } from "../schema";
 import { refreshAgentConfigsForEnvironmentVariable } from "../model/agentSync";
 import {
   auditDetailsJson,
@@ -35,6 +34,8 @@ import {
   envName,
   isExternalResourceKind,
   manifestRevision,
+  prunes,
+  deploymentRegionToPin,
   resourceName,
   releaseManifestSync,
   snapshotExternalConfig,
@@ -75,15 +76,18 @@ import {
 import {
   assertEnvironmentVariableUnreferenced,
   loadEnvironmentVariableValues,
-  upsertEnvironmentVariable,
 } from "../model/environmentValues";
+import {
+  recordEnvironmentVariableAudit,
+  upsertEnvironmentVariable,
+} from "../model/environmentWrites";
 import { deleteWorkspaceFile } from "../model/cascade";
 import { resolveProjectStage } from "../model/projectScope";
+import { base64UrlToBytes } from "../model/stageSessionTicket";
 import { refreshSandboxConfigsForEnvironmentVariable } from "../model/sandboxConfigSync";
 import { ClientError } from "../model/clientError";
 import { workspaceNamespace } from "../model/workspaceRules";
 
-// `touchProject` bumps `updatedAt` at most this often.
 const PROJECT_TOUCH_INTERVAL_MS = 60_000;
 
 const resourceValidator = v.object({
@@ -107,6 +111,7 @@ const manifestValidator = v.object({
   version: v.literal(1),
   project: v.string(),
   stage: v.string(),
+  region: v.optional(deploymentRegionValidator),
   resources: v.array(resourceValidator),
 });
 
@@ -122,13 +127,7 @@ const idsValidator = v.object({
   channelRecords: v.record(v.string(), v.string()),
 });
 
-/**
- * Non-fatal deploy advisories returned to the CLI. `missingPolicies` lists
- * `policy.policyIds` refs that did not resolve to a policy resource in this
- * deploy, so a typo cannot silently weaken the intended policy set. Unset
- * `env("NAME")` refs are not advisory: they fail the sync outright, see
- * `assertEnvRefsResolved`.
- */
+// missingPolicies: policyIds refs that resolved to nothing; a typo must not weaken the set.
 const warningsValidator = v.object({
   missingPolicies: v.array(v.string()),
 });
@@ -181,18 +180,16 @@ export const deleteResourceBySecretHash = internalMutation({
   },
 });
 
-/**
- * The reservation holders (sandbox config ids, workspace namespaces) of the
- * CLI rows a prune (`resources`: the synced manifest) or a single delete
- * (`kind` + `name`) is about to remove.
- */
 export const deleteTargetsBySecretHash = internalQuery({
   args: {
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
     target: v.union(
-      v.object({ resources: v.array(resourceValidator) }),
+      v.object({
+        resources: v.array(resourceValidator),
+        pruneOnly: v.optional(v.array(v.string())),
+      }),
       v.object({
         kind: v.union(v.literal("workspace"), v.literal("sandbox")),
         name: v.string(),
@@ -220,11 +217,13 @@ export const deleteTargetsBySecretHash = internalQuery({
         ctx,
         stageId,
         target.resources,
+        target.pruneOnly,
       );
       workspaces = await undeclaredWorkspaceConfigs(
         ctx,
         stageId,
         target.resources,
+        target.pruneOnly,
       );
     } else if (target.kind === "sandbox") {
       const sandbox = await sandboxConfigByName(
@@ -261,18 +260,13 @@ export const deleteTargetsBySecretHash = internalQuery({
   },
 });
 
-/**
- * Creates the synced stage's runtime key (`bsk_…`) when it has none,
- * so the CLI can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
- * so reconnecting clients do not need to rotate the key.
- */
+// Returns the stored plaintext, so a reconnecting CLI need not rotate the key.
 export const ensureRuntimeKeyBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
     rotate: v.optional(v.boolean()),
-    /** WorkOS id of the CLI-login user, so a key it mints shows who made it. */
     createdByAuthId: v.optional(v.string()),
     auditSync: v.optional(
       v.object({
@@ -297,6 +291,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       ),
       keyHint: v.string(),
       apiKey: v.string(),
+      userTokenSecretHint: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -322,7 +317,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       accountId: account._id,
       projectId: projectDoc._id,
       stageId: stageDoc._id,
-      projectSlug: projectDoc.slug ?? resourceName(args.project),
+      projectSlug: projectDoc.slug,
       stageSlug: stageDoc.name.toLowerCase(),
       createdBy: creator?.name,
       rotate: args.rotate === true,
@@ -358,17 +353,74 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       stageKind: stageDoc.kind,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
+      ...(result.userTokenSecretHint
+        ? { userTokenSecretHint: result.userTokenSecretHint }
+        : {}),
     };
   },
 });
 
-// The HTTP action needs these ids before it uploads bundles, so rows land in
-// the right stage instead of matching by name across the whole account.
+// An account or project key holds keys:write by issue; a login token's member must hold it now.
+export const rotateUserTokenSecretBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    stage: v.string(),
+    cliAuthId: v.optional(v.string()),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.optional(v.string()),
+  },
+  returns: v.union(v.null(), userTokenSecretReturn),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof userTokenSecretReturn> | null> => {
+    const account = await accountFromSecretHash(ctx, args.secretHash);
+    if (!account) return null;
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      args.project,
+      args.stage,
+    );
+    if (!resolved) return null;
+    const { projectDoc, stageDoc } = resolved;
+    const member = args.cliAuthId
+      ? await userByAuthId(ctx, args.cliAuthId)
+      : null;
+    if (
+      args.cliAuthId &&
+      !(
+        member &&
+        (await hasDashboardPermission(
+          ctx,
+          projectDoc.orgId,
+          member,
+          "keys:write",
+          { projectId: projectDoc._id, stageId: stageDoc._id },
+        ))
+      )
+    ) {
+      throw new ClientError(
+        "Rotating the user token signing secret needs keys:write on this stage",
+        "forbidden",
+      );
+    }
+
+    return await rotateStageUserTokenSecret(ctx, projectDoc._id, stageDoc._id, {
+      kind: args.actorKind,
+      id: args.actorId,
+    });
+  },
+});
+
+// Ids before any bundle upload, so rows land in this stage, not matched by name account-wide.
 export const ensureScopeBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
+    region: v.optional(deploymentRegionValidator),
     revision: v.optional(v.number()),
   },
   returns: v.object({
@@ -388,6 +440,8 @@ export const ensureScopeBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, args.project);
     const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
+    // Refuse a region change before any upload; the sync pins it.
+    deploymentRegionToPin(stageDoc, args.region);
     // The PUT's first write, so a sync refused here writes nothing.
     const revision = await claimManifestRevision(
       ctx,
@@ -403,7 +457,6 @@ export const ensureScopeBySecretHash = internalMutation({
   },
 });
 
-/** Ends the manifest action's claim; an older action cannot release a newer sync. */
 export const finishManifestSync = internalMutation({
   args: { stageId: v.id("stages"), revision: v.number() },
   returns: v.null(),
@@ -414,12 +467,7 @@ export const finishManifestSync = internalMutation({
   },
 });
 
-/**
- * Decrypts and returns one environment variable's plaintext value for the CLI
- * `env get`, writing an audit record of the reveal. A mutation (not a query) so
- * decryption and the audit insert happen together. Returns null when the
- * project/stage or the named variable does not exist.
- */
+// A mutation, not a query, so the decrypt and its audit insert commit together.
 export const getEnvBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -514,13 +562,8 @@ export const getManifestBySecretHash = internalQuery({
   },
 });
 
-/**
- * Names, update times and value digests for the CLI `env list` / `env sync`.
- * Values are never returned, since they are encrypted at rest and write-only.
- * The digest is SHA-256 of the plaintext computed per request, so the CLI can
- * compare it to its own hash of `.env.local`; the stored `valueDigest` is an
- * HMAC under the account key and would not match anything a client computes.
- */
+// Plain SHA-256 per request, so the CLI can compare `.env.local`; the stored valueDigest is an
+// HMAC under the account key that no client can compute.
 export const listEnvBySecretHash = internalQuery({
   args: {
     secretHash: v.string(),
@@ -578,17 +621,14 @@ export const listEnvBySecretHash = internalQuery({
   },
 });
 
-/**
- * Every CLI-managed external resource of the account with the stage that
- * manages it, so a sync can refuse to touch a name another stage owns.
- */
+// `own`: recorded by this stage. Writes nothing, so it can run before the stage exists.
 export const listExternalResourcesForAccount = internalQuery({
-  args: { accountId: v.id("accounts") },
+  args: { accountId: v.id("accounts"), project: v.string(), stage: v.string() },
   returns: v.array(
     v.object({
       kind: v.union(v.literal("skill"), v.literal("hook"), v.literal("mcp")),
       name: v.string(),
-      stageId: v.id("stages"),
+      own: v.boolean(),
       externalId: v.string(),
     }),
   ),
@@ -599,10 +639,14 @@ export const listExternalResourcesForAccount = internalQuery({
     Array<{
       kind: "skill" | "hook" | "mcp";
       name: string;
-      stageId: Id<"stages">;
+      own: boolean;
       externalId: string;
     }>
   > => {
+    const account = await ctx.db.get(args.accountId);
+    const resolved =
+      account &&
+      (await resolveProjectStage(ctx, account, args.project, args.stage));
     const rows = await ctx.db
       .query("cliExternalResources")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -611,26 +655,22 @@ export const listExternalResourcesForAccount = internalQuery({
     return rows.map((row) => ({
       kind: row.kind,
       name: row.name,
-      stageId: row.stageId,
+      own: row.stageId === resolved?.stageDoc._id,
       externalId: row.externalId,
     }));
   },
 });
 
-/**
- * Deletes the stage's undeclared CLI workspaces and sandbox configs, keeping
- * any sandbox config that still holds a reserved instance. Runs after the sync
- * and after the HTTP layer tried to terminate their instances. Returns the
- * kept resources.
- */
+// After the HTTP layer tried to terminate instances; returns sandboxes kept as still reserved.
 export const pruneSandboxesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     manifest: manifestValidator,
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args): Promise<string[]> => {
-    const { secretHash, manifest } = args;
+    const { secretHash, manifest, pruneOnly } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const resolved = await resolveProjectStage(
@@ -643,11 +683,17 @@ export const pruneSandboxesBySecretHash = internalMutation({
       throw new ClientError("Project/stage not found", "not_found");
     const { projectDoc, stageDoc } = resolved;
 
-    await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+    await pruneWorkspaceResources(
+      ctx,
+      stageDoc._id,
+      manifest.resources,
+      pruneOnly,
+    );
     const sandboxes = await pruneSandboxResources(
       ctx,
       stageDoc._id,
       manifest.resources,
+      pruneOnly,
     );
     await touchProject(ctx, projectDoc);
 
@@ -667,6 +713,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       mcp: v.record(v.string(), v.string()),
     }),
     prune: v.optional(v.boolean()),
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -687,8 +734,6 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     const desiredKeys = new Set(
       desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`),
     );
-    // No fallback branch: a kind added to EXTERNAL_RESOURCE_KINDS without an
-    // id map here is a type error, not a row written under the wrong kind.
     const idsByKind: Record<ExternalResourceKind, Record<string, string>> = {
       skill: args.ids.skills,
       hook: args.ids.hooks,
@@ -723,7 +768,10 @@ export const recordExternalResourcesBySecretHash = internalMutation({
 
     if (args.prune === true) {
       for (const resource of existing) {
-        if (!desiredKeys.has(`${resource.kind}:${resource.name}`))
+        if (
+          !desiredKeys.has(`${resource.kind}:${resource.name}`) &&
+          prunes(args.pruneOnly, resource.kind, resource.name)
+        )
           await ctx.db.delete(resource._id);
       }
     }
@@ -732,17 +780,14 @@ export const recordExternalResourcesBySecretHash = internalMutation({
   },
 });
 
-/**
- * Removes one environment variable by name for the CLI `env rm`. Resolving the
- * project/stage is required; a missing variable is treated as success so
- * the command is idempotent.
- */
 export const removeEnvBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
     stage: v.string(),
     name: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.object({ removed: v.boolean() }),
   handler: async (ctx, args): Promise<{ removed: boolean }> => {
@@ -782,6 +827,18 @@ export const removeEnvBySecretHash = internalMutation({
       resolved.stageDoc._id,
       normalizedName,
       undefined,
+    );
+    await recordEnvironmentVariableAudit(
+      ctx,
+      { kind: args.actorKind, id: args.actorId },
+      {
+        projectId: resolved.projectDoc._id,
+        stageId: resolved.stageDoc._id,
+        variableId: existing._id,
+        action: "deleted",
+        name: normalizedName,
+        summary: "Environment variable deleted",
+      },
     );
 
     return { removed: true };
@@ -849,14 +906,100 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   },
 });
 
-/**
- * Resolves a CLI Bearer token hash to the account key hash it authorizes with.
- * `keyKind` comes from the token's prefix, so each kind costs one lookup.
- * The account key grants full account access (`scoped: false`); a project
- * key grants access only when the route resolves to the exact
- * project/stage the key is bound to (`scoped: true`). Returns null when the
- * token is unknown, revoked, or out of scope.
- */
+// Whether the skill's canvas copy in the project does not hold exactly these files (hex sha256).
+export const staleSkillNode = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    stage: v.string(),
+    name: v.string(),
+    files: v.array(v.object({ path: v.string(), sha256: v.string() })),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const account = await ctx.db.get(args.accountId);
+    const resolved =
+      account &&
+      (await resolveProjectStage(ctx, account, args.project, args.stage));
+    const rows = resolved
+      ? await ctx.db
+          .query("workspaceFiles")
+          .withIndex("by_projectId_nodeId_and_path", (q) =>
+            q
+              .eq("projectId", resolved.projectDoc._id)
+              .eq("nodeId", canvasNodeId("skill", resourceName(args.name))),
+          )
+          .collect()
+      : [];
+    const held = new Map<string, string>();
+    for (const row of rows) {
+      const blob = row.storageId && (await ctx.db.system.get(row.storageId));
+      // `_storage` keeps sha256 as base64.
+      if (blob) held.set(row.path, hexFromBytes(base64UrlToBytes(blob.sha256)));
+    }
+
+    return (
+      rows.length !== args.files.length ||
+      args.files.some((file) => held.get(file.path) !== file.sha256)
+    );
+  },
+});
+
+// Checked at use, not only at mint: a member who lost write access mid-Apply deploys nothing.
+export const resolveApplyTicketAuth = internalQuery({
+  args: {
+    accountId: v.string(),
+    projectId: v.string(),
+    stageId: v.string(),
+    authId: v.string(),
+    expiresAt: v.number(),
+    project: v.string(),
+    stage: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      accountId: v.id("accounts"),
+      secretHash: v.string(),
+      scoped: v.literal(true),
+      applyAuthId: v.string(),
+    }),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    accountId: Id<"accounts">;
+    secretHash: string;
+    scoped: true;
+    applyAuthId: string;
+  } | null> => {
+    const accountId = ctx.db.normalizeId("accounts", args.accountId);
+    const account = accountId ? await ctx.db.get(accountId) : null;
+    if (!account || account.status !== "active") return null;
+    const resolved = await resolveProjectStage(
+      ctx,
+      account,
+      args.project,
+      args.stage,
+    );
+    if (
+      !resolved ||
+      resolved.projectDoc._id !== args.projectId ||
+      resolved.stageDoc._id !== args.stageId ||
+      !(await getStageForWrite(ctx, args.authId, resolved.stageDoc._id))
+    )
+      return null;
+
+    return {
+      accountId: account._id,
+      secretHash: account.secretHash,
+      scoped: true,
+      applyAuthId: args.authId,
+    };
+  },
+});
+
 export const resolveCliAuth = internalQuery({
   args: {
     tokenHash: v.string(),
@@ -871,6 +1014,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: v.string(),
       scoped: v.boolean(),
       deployKeyId: v.optional(v.id("deployKeys")),
+      lastUsedAt: v.optional(v.number()),
     }),
   ),
   handler: async (
@@ -881,6 +1025,7 @@ export const resolveCliAuth = internalQuery({
     secretHash: string;
     scoped: boolean;
     deployKeyId?: Id<"deployKeys">;
+    lastUsedAt?: number;
   } | null> => {
     const { tokenHash, keyKind, project, stage } = args;
 
@@ -915,6 +1060,7 @@ export const resolveCliAuth = internalQuery({
       secretHash: keyAccount.secretHash,
       scoped: true,
       deployKeyId: deployKey._id,
+      lastUsedAt: deployKey.lastUsedAt,
     };
   },
 });
@@ -926,6 +1072,8 @@ export const setEnvBySecretHash = internalMutation({
     stage: v.string(),
     name: v.string(),
     value: v.string(),
+    actorKind: cliAuditActorKindValidator,
+    actorId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -935,22 +1083,32 @@ export const setEnvBySecretHash = internalMutation({
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     const projectDoc = await ensureProject(ctx, account, project);
     const stageDoc = await ensureStage(ctx, projectDoc, stage);
-    await upsertEnvironmentVariable(ctx, {
+    const written = await upsertEnvironmentVariable(ctx, {
       projectId: projectDoc._id,
       stageId: stageDoc._id,
       name: name,
       value: value,
     });
+    if (written.change !== "unchanged") {
+      await recordEnvironmentVariableAudit(
+        ctx,
+        { kind: args.actorKind, id: args.actorId },
+        {
+          projectId: projectDoc._id,
+          stageId: stageDoc._id,
+          variableId: written.id,
+          action: written.change,
+          name: name,
+          summary: `Environment variable ${written.change}`,
+        },
+      );
+    }
 
     return null;
   },
 });
 
-/**
- * Runs the rules `syncManifestBySecretHash` applies to a manifest, before the
- * PUT uploads any of its skills, hooks or MCP servers. Their refs carry
- * placeholder ids, since those rows may not exist yet.
- */
+// Runs before the PUT uploads skills, hooks or MCP servers, so their refs carry placeholder ids.
 export const validateManifestForStage = internalQuery({
   args: {
     projectId: v.id("projects"),
@@ -980,16 +1138,13 @@ export const validateManifestForStage = internalQuery({
   },
 });
 
-/**
- * Create, rename and update the manifest's resources. `prune` also drops
- * undeclared agents, channel records and policies; sandbox configs and
- * workspaces go in `pruneSandboxesBySecretHash`.
- */
+// Sandbox configs and workspaces are pruned later, in pruneSandboxesBySecretHash.
 export const syncManifestBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     manifest: manifestValidator,
     prune: v.optional(v.boolean()),
+    pruneOnly: v.optional(v.array(v.string())),
   },
   returns: v.object({
     manifest: v.any(),
@@ -997,13 +1152,20 @@ export const syncManifestBySecretHash = internalMutation({
     warnings: warningsValidator,
   }),
   handler: async (ctx, args) => {
-    const { secretHash, manifest, prune } = args;
+    const { secretHash, manifest, prune, pruneOnly } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new ClientError("Invalid Broods token", "unauthorized");
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
     const stageDoc = await ensureStage(ctx, projectDoc, manifest.stage);
+    const region = deploymentRegionToPin(stageDoc, manifest.region);
+    if (region) {
+      await ctx.db.patch(stageDoc._id, {
+        deploymentRegion: region,
+        updatedAt: Date.now(),
+      });
+    }
     const envValues = await loadEnvironmentVariableValues(
       ctx,
       projectDoc._id,
@@ -1067,9 +1229,20 @@ export const syncManifestBySecretHash = internalMutation({
         projectDoc._id,
         stageDoc._id,
         manifest.resources,
+        pruneOnly,
       );
-      await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
-      await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
+      await pruneChannelRecordResources(
+        ctx,
+        stageDoc._id,
+        manifest.resources,
+        pruneOnly,
+      );
+      await prunePolicyResources(
+        ctx,
+        stageDoc._id,
+        manifest.resources,
+        pruneOnly,
+      );
     }
 
     await syncCanvasLayoutForManifest(ctx, {
@@ -1115,8 +1288,8 @@ export const syncManifestBySecretHash = internalMutation({
   },
 });
 
-// Nearly every dashboard subscription reads the project doc, and `broods dev`
-// syncs on every file save. The gallery only needs "recently deployed".
+// Throttled: nearly every dashboard subscription reads the project doc, and `broods dev`
+// syncs on every save.
 async function touchProject(
   ctx: MutationCtx,
   project: Doc<"projects">,

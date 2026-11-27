@@ -1,8 +1,3 @@
-/**
- * Parent-dispatched subagent tool.
- * Keep model-facing input validation here; execution orchestration lives in the harness.
- */
-
 import {
   jsonSchema,
   tool,
@@ -24,7 +19,6 @@ export interface RunSubagentTaskInput {
   agentId?: string;
   prompt: string;
   conversationKey?: string;
-  /** Run a harness subagent on a machine of its own instead of its agent's shared one. */
   isolated?: boolean;
 }
 
@@ -33,7 +27,7 @@ export type RunSubagentTaskDispatch = {
   agentId: string;
   description?: string;
   conversationKey: string;
-  /** The child's run id; what an `attach` names and `statusPath` resolves. */
+  address?: string;
   runId: string;
   statusPath: string;
   status: "running";
@@ -49,14 +43,12 @@ export type RunSubagentDispatch = (
   parentEphemeralSystem?: SystemModelMessage[],
 ) => Promise<RunSubagentDispatchResult>;
 
-export function buildRunSubagentInputSchema(
-  mode?: RunSubagentMode,
-): JSONSchema7 {
+function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7 {
   const taskProperties: Record<string, JSONSchema7> = {
     agentId: {
       type: "string",
       description:
-        "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
+        "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit it only for a virtual subagent, which runs on your own config.",
     },
     prompt: {
       type: "string",
@@ -105,8 +97,9 @@ export default function runSubagentTool(context: {
     run_subagent: tool({
       description: [
         "Dispatch one or more subagents for independent parallel work.",
-        "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
-        "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual one-shot subagent.",
+        "Returns task ids immediately, and each result arrives in this conversation on its own when the subagent finishes, even after your turn ends.",
+        "Keep going with your other steps while subagents run; end your turn only when you have nothing else to do.",
+        "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual subagent, which runs on your own config.",
         ...(context.mode === "persistent"
           ? [
               "Use conversationKey to resume an existing persistent subagent conversation; omit it to start a new one.",
@@ -153,11 +146,12 @@ function normalizeInput(
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
+// Models send null for an optional field they mean to omit.
 function normalizeOptionalString(
   value: unknown,
   name: string,
 ): string | undefined {
-  if (value === undefined) {
+  if (value == null) {
     return undefined;
   }
   if (typeof value !== "string") {
@@ -197,7 +191,7 @@ function normalizeTask(
     task.agentId,
     `tasks[${index}].agentId`,
   );
-  if (mode !== "persistent" && task.conversationKey !== undefined) {
+  if (mode !== "persistent" && task.conversationKey != null) {
     throw new Error(
       `tasks[${index}].conversationKey is only supported in persistent mode`,
     );
@@ -209,7 +203,7 @@ function normalizeTask(
           `tasks[${index}].conversationKey`,
         )
       : undefined;
-  if (task.isolated !== undefined && typeof task.isolated !== "boolean") {
+  if (task.isolated != null && typeof task.isolated !== "boolean") {
     throw new Error(`tasks[${index}].isolated must be a boolean`);
   }
 

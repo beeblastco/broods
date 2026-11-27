@@ -4,19 +4,18 @@ How core turns a provider webhook into an agent run and sends the reply back. Pe
 
 ## File map
 
-| File                                | Owns                                                                                         |
-| ----------------------------------- | -------------------------------------------------------------------------------------------- |
-| `src/harness/integrations.ts`       | Webhook routing, the credential scan, record lookup, policy gate, provider ACK               |
-| `src/harness/handler.ts`            | `handleChannelRequest` admission, `runChannelTurns` on the worker pool, final reply          |
-| `src/shared/channels.ts`            | The contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                          |
-| `src/shared/<channel>-channel.ts`   | Provider auth, parsing, formatting and reply calls                                           |
-| `src/shared/matrix-wire.ts`         | Wire shapes shared with `apps/matrix-forwarder`. No imports, so the forwarder can bundle it. |
-| `src/shared/commands.ts`            | `/new` and `/clear`, `/compact`, `/steer`, `/stop` and `/cancel`, `/queue`, `/help`          |
-| `src/harness/tools/channel.tool.ts` | The model-facing `send-*` tools                                                              |
-| `src/harness/channel-media.ts`      | Inbound attachment download, storage and model hand-off                                      |
-| `src/shared/media-ticket.ts`        | Sealed `/v1/media/{ticket}` links                                                            |
+| File                                | Owns                                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `src/harness/integrations.ts`       | Webhook routing, the credential scan, record lookup, policy gate, provider ACK      |
+| `src/harness/handler.ts`            | `handleChannelRequest` admission, `runChannelTurns` on the worker pool, final reply |
+| `src/shared/channels.ts`            | The contracts: `ChannelAdapter`, `ChannelActions`, `InboundMessage`                 |
+| `src/shared/<channel>-channel.ts`   | Provider auth, parsing, formatting and reply calls                                  |
+| `src/shared/commands.ts`            | `/new` and `/clear`, `/compact`, `/steer`, `/stop` and `/cancel`, `/queue`, `/help` |
+| `src/harness/tools/channel.tool.ts` | The model-facing `send-*` tools                                                     |
+| `src/harness/channel-media.ts`      | Inbound attachment download, storage and model hand-off                             |
+| `src/shared/media-ticket.ts`        | Sealed `/v1/media/{ticket}` links                                                   |
 
-Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram use Chat SDK adapters (`@chat-adapter/*`) as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing kept in Chat state survives. That is why Linear takes a personal API key only (OAuth tokens are refreshed and cached in Chat state). Messenger and Instagram share Meta webhook handling in `meta-channel.ts`. Matrix, Pancake and Zalo are Broods-native.
+Slack, Telegram, Discord, GitHub, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram use Chat SDK adapters (`@chat-adapter/*`) as transport only: verify, parse, post. Core never creates a `Chat` instance and builds a fresh adapter per request, so nothing kept in Chat state survives. That is why Linear takes a personal API key only (OAuth tokens are refreshed and cached in Chat state). Messenger and Instagram share Meta webhook handling in `meta-channel.ts`. Pancake and Zalo are Broods-native.
 
 ## Inbound paths
 
@@ -26,10 +25,8 @@ flowchart LR
     Hook["Slack, Telegram, WhatsApp,<br/>GitHub, Linear, Teams, ..."]
     DInt["Discord interactions"]
     DGw["Discord Gateway"]
-    HS["Matrix homeserver"]
   end
   DF["apps/discord-forwarder<br/>one socket per bot token"]
-  MF["apps/matrix-forwarder<br/>/sync long-poll, E2EE keys"]
   T["Traefik<br/>route webhooks, no rate limit"]
   C["core<br/>integrations.ts"]
   CX["Convex<br/>runtimeIngress, channelRecords"]
@@ -38,15 +35,10 @@ flowchart LR
   DInt -->|"POST interaction"| T
   DGw -->|"MESSAGE_CREATE"| DF
   DF -->|"POST GATEWAY_MESSAGE_CREATE"| T
-  MF -->|"/sync"| HS
-  MF -->|"POST MATRIX_ROOM_EVENT"| T
   T --> C
   C <--> CX
   DF -.->|"listConnections"| CX
-  MF -.->|"listConnections"| CX
   C -->|"provider REST replies"| providers
-  C -->|"POST /v1/send, /v1/typing"| MF
-  MF -->|"m.room.encrypted"| HS
 ```
 
 Webhook URLs are `/v1/webhooks/{accountId}/{channel}` for the production stage and `/v1/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage, so two stages sharing one bot never see each other's traffic. The URL names no agent. Traefik (`apps/edge/src/routes.ts`) sends the path straight to core with no per-address limit, because providers post from shared egress addresses.
@@ -97,7 +89,7 @@ sequenceDiagram
   critical at most CHANNEL_ACK_BUDGET_MS, 2 s
     I->>I: onMessageReceived hook, may drop or rewrite
     I-->>P: sendTyping, reactToMessage, fire and forget
-    I->>H: handleChannelRequest
+    I->>H: handleChannelRequest, holding a run queue place
     H->>H: command, plan limits, ingestChannelAttachments
     H->>CX: accept, mode steer
     CX-->>H: owner, queued, duplicate, rejected or capacity
@@ -114,7 +106,11 @@ sequenceDiagram
   CX-->>W: next queued group, or lease released
 ```
 
-The 2 s budget stays under Slack's and Discord's 3 s retry limit, so a provider retry never races an admitted message. Whatever is still admitting when the budget runs out carries on after the ACK. A `queued` or `duplicate` outcome starts no worker: the current owner drains the queue on its own worker slot (`runChannelTurns` loops on `takeNext`). Busy-conversation rules are in [queue and steer](queue-and-steer.md). Model work runs on the `MAX_INPROCESS_WORKERS` pool shared with async and WebSocket runs.
+The 2 s budget starts once every receiver has parsed the delivery, so it covers admission only; scan and parse come on top. It stays under Slack's and Discord's 3 s retry limit when those are quick. A provider that times out first treats the delivery as failed and resends it, the same as after a `503`. Whatever is still admitting when the budget runs out carries on after the ACK.
+
+Like an API run, a message holds one run queue place while it is admitted (`withQueuePlace` in `handleChannelRequest`). A full queue turns it away before the plan counts it or ingress records it, and an account out of budget hears its refusal first. A turn whose parse result sets `redelivers` (the provider or its forwarder resends after a 5xx) rejects, and the webhook answers `503` with `Retry-After`; in a `batch` that answers the whole delivery, and the turns already admitted come back as duplicates. Any other turn, or one turned away after the ACK went, says the agent is busy in the channel and is acked. Slack slash commands and buttons, Discord interactions, GitHub, Pancake, Zalo, Teams, Google Chat and Twilio do not resend, so they get the busy reply. Discord Gateway messages get it too: the Discord forwarder gives up after 3 tries in about 10 s, too soon to outlast a full queue, and a dropped message would leave the chat with nothing.
+
+A `queued` or `duplicate` outcome starts no worker: the current owner drains the queue on its own worker slot (`runChannelTurns` loops on `takeNext`). Busy-conversation rules are in [queue and steer](queue-and-steer.md). Model work runs on the `MAX_INPROCESS_WORKERS` pool shared with streamed, async and WebSocket runs.
 
 ## Adapter contract
 
@@ -131,14 +127,14 @@ Each provider implements `ChannelAdapter` from `src/shared/channels.ts`:
 | `applyReplyIn?()`        | Rewrites reply routing for a record's `replyIn`. Only Slack implements it.        |
 | `rehydrateAttachment?()` | Rebuilds an attachment reader from stored metadata so a later turn can re-read it |
 
-| `parse()` kind | Meaning                                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `message`      | Run the agent, after sending `ack` or a default `200`                                                          |
-| `context`      | Store as conversation context, no run. Slack, Discord, Telegram and Matrix use it for messages not to the bot. |
-| `batch`        | Several `message` or `context` results from one POST, admitted in order under one ACK budget (Meta batching)   |
-| `cleanup`      | Delete the conversation's partition folders. GitHub returns it when an issue or PR closes.                     |
-| `ignore`       | Stop without a run, usually an unsupported event                                                               |
-| `response`     | Answer the provider at once, such as a challenge reply                                                         |
+| `parse()` kind | Meaning                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------ |
+| `message`      | Run the agent, after sending `ack` or a default `200`. `redelivers` when the provider resends after a 5xx    |
+| `context`      | Store as conversation context, no run. Slack, Discord and Telegram use it for messages not to the bot.       |
+| `batch`        | Several `message` or `context` results from one POST, admitted in order under one ACK budget (Meta batching) |
+| `cleanup`      | Delete the conversation's partition folders. GitHub returns it when an issue or PR closes.                   |
+| `ignore`       | Stop without a run, usually an unsupported event                                                             |
+| `response`     | Answer the provider at once, such as a challenge reply                                                       |
 
 `InboundMessage` carries `eventId` (provider id, used for dedup), `conversationKey` (thread, chat or channel), `channelName`, `content` (AI SDK `UserContent`), `attachments` (named readers, no bytes yet), `events` (extra model messages such as a one-turn system message), `identity` (`ChannelIdentity`: `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`, `userRoles`), `source` (opaque reply routing, which can hold interaction tokens) and `answer` (an `ask_questions` button click).
 
@@ -159,7 +155,7 @@ Only Slack, Telegram and GitHub implement `stream()` (GitHub buffers and posts o
 
 Adapters do not implement these:
 
-- Commands. Channels in `INLINE_COMMAND_CHANNELS` (Discord, Google Chat, Instagram, Matrix, Messenger, Slack, Teams, Telegram, Twilio, WhatsApp, Zalo) route `/command` text through `commands.ts`. GitHub, Linear and Pancake pass it to the agent.
+- Commands. Channels in `INLINE_COMMAND_CHANNELS` (Discord, Google Chat, Instagram, Messenger, Slack, Teams, Telegram, Twilio, WhatsApp, Zalo) route `/command` text through `commands.ts`. GitHub, Linear and Pancake pass it to the agent.
 - Typing and reaction never fail the turn.
 - Tools with `needsApproval` are denied on channel turns.
 - A failed turn replies with `formatChannelErrorText()`: the provider's reason, secrets redacted, plus the step that fixes it. `sendChannelFailure()` adds a Retry button where `sendReplyButtons` exists (Telegram), or `Reply "retry"` text.
@@ -201,7 +197,6 @@ sequenceDiagram
 | Telegram                                      | fetches the URL                   | fetches the URL                   | album of 2 to 10        |
 | Slack                                         | Block Kit image blocks            | uploads bytes (`files.uploadV2`)  | one message, one upload |
 | Discord                                       | uploads bytes                     | uploads bytes                     | one multipart message   |
-| Matrix                                        | uploads bytes                     | uploads bytes                     | one per message         |
 | Pancake                                       | uploads bytes (`upload_contents`) | uploads bytes                     | one per message         |
 | Zalo                                          | fetches the URL                   | none                              | one per message         |
 | WhatsApp                                      | uploads bytes, or links a URL     | uploads bytes, or links a URL     | one per message         |
@@ -209,7 +204,7 @@ sequenceDiagram
 | Twilio                                        | fetches the URL (MMS)             | none                              | one per message         |
 | Teams, Google Chat, Messenger, GitHub, Linear | none                              | none                              | text links only         |
 
-The link has no expiry because some providers re-fetch on every view, and Zalo stores the URL itself. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` revokes every link sealed with it. A caption rides the first message only. Rejection reasons go to the log, not the chat.
+The link expires: the sealed ticket carries an expiry, `MEDIA_TICKET_TTL_SECONDS` (default 30 days) from sealing, and a pre-expiry `ml1` link is refused outright. Some providers re-fetch on every view and Zalo stores the URL itself, so an expired link 404s in old chat history; the route's cache headers let a provider CDN keep bytes it fetched in time, but only until the ticket expires. A conversation replayed past the expiry shows the model `[a linked file is no longer available]` in place of the file. Storage stays private and the sealed ticket is the only credential. Dropping a value from `MEDIA_TICKET_SECRET` stops every link sealed with it at the origin; a CDN copy fetched in time lives until the ticket would have expired. A copy fetched before the route bounded its cache lifetime (2026-11) keeps the old one-year `max-age`. A caption rides the first message only. Rejection reasons go to the log, not the chat.
 
 ## Inbound attachments
 
@@ -229,44 +224,17 @@ flowchart LR
 - The attachment store is a managed-bucket prefix no sandbox mounts, so the link survives the agent tidying its workspace. Nothing is inlined as base64. Deleting the account deletes the store.
 - Without a workspace, a later turn re-reads the provider's copy, so the provider decides how long media works (a Telegram file id lasts, a Discord link expires within a day).
 - Limits: 6 MB per picture, 25 MB otherwise, ten attachments per message (`src/shared/media-types.ts`, `channel-media.ts`). An unreadable attachment becomes a line of text.
-- Transcription fails fast at ingest, and the note says whether the provider was busy, refused the file, or has no speech-to-text. `config.model.transcriptionModelId` overrides the default.
+- Transcription fails fast at ingest, and the note says whether the provider was busy, refused the file, or has no speech-to-text. `config.transcription` names another provider or model: `provider` defaults to `config.model.provider`, `modelId` to that provider's default.
 
 ## Forwarders
 
-Discord sends regular messages only over a Gateway socket, and Matrix has no webhooks, so each has a single-replica deployment that holds the connection and POSTs to the channel webhook. Both read connections from every plane in `BROODS_CONFIG_PLANES`, keep one connection per credential, and fan each event out to every webhook that credential serves. Neither filters: which message runs is core's decision.
+Discord sends regular messages only over a Gateway socket, so a single-replica deployment holds the connection and POSTs to the channel webhook. It reads connections from every plane in `BROODS_CONFIG_PLANES`, keeps one connection per bot token, and fans each event out to every webhook that token serves. It does not filter: which message runs is core's decision.
 
-| Forwarder                | POSTs                                                                                     | Header                    | Core calls back                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------- |
-| `apps/discord-forwarder` | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }`                                       | `x-discord-gateway-token` | nothing, replies use Discord REST                       |
-| `apps/matrix-forwarder`  | `{ "type": "MATRIX_ROOM_EVENT", "encrypted", "event", "roomId", "senderName", "userId" }` | `x-matrix-access-token`   | `POST /v1/send`, `/v1/typing` at `MATRIX_FORWARDER_URL` |
+| Forwarder                | POSTs                                               | Header                    | Core calls back                   |
+| ------------------------ | --------------------------------------------------- | ------------------------- | --------------------------------- |
+| `apps/discord-forwarder` | `{ "type": "GATEWAY_MESSAGE_CREATE", "data": ... }` | `x-discord-gateway-token` | nothing, replies use Discord REST |
 
-A Matrix message and its reply:
-
-```mermaid
-sequenceDiagram
-  participant HS as Matrix homeserver
-  participant F as matrix-forwarder
-  participant T as Traefik
-  participant C as core matrix-channel.ts
-
-  F->>HS: /sync long-poll from the stored sync token
-  HS-->>F: timeline events
-  F->>F: OlmMachine decrypt, hold back until keys arrive
-  F->>T: POST channel webhook, MATRIX_ROOM_EVENT
-  T->>C: route to core
-  C->>C: admit, as in runtime flow
-  C-->>F: 200
-  F->>F: write sync token after the batch
-  C->>C: run the turn
-  C->>F: POST /v1/send
-  F->>F: encrypt for the room
-  F->>HS: m.room.encrypted
-  F-->>C: event id
-```
-
-Media skips the forwarder: the attachment key rides the decrypted event, so core downloads, decrypts, encrypts and uploads against the homeserver itself. Replies carry the `app.broods.bot` marker (`MATRIX_BOT_MARKER`) so core never answers its own events.
-
-Core's Discord adapter takes interactions and forwarded messages on one URL and tells them apart by `x-discord-gateway-token`. A deployment without the forwarder can post `MESSAGE_CREATE` events itself in the same wrapper. An absent `author.bot` means a human. For a thread message add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits the parent. Deployment constraints are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
+Core's Discord adapter takes interactions and forwarded messages on one URL and tells them apart by `x-discord-gateway-token`, whose value is `discordForwarderToken(botToken)` from `apps/core/src/shared/discord-wire.ts`; core refuses the raw bot token there. A deployment without the forwarder can post `MESSAGE_CREATE` events itself in the same wrapper, deriving the header the same way: HKDF-SHA256 over the bot token with an empty salt, info `broods-discord-forwarder` and 32 bytes of output, base64url-encoded without padding. An absent `author.bot` means a human. For a thread message add `thread: { "id": ..., "parent_id": ... }` to `data`, because Discord sets `channel_id` to the thread and omits the parent. Deployment constraints are in [operations](operations.md), and each app's `AGENTS.md` lists its failure modes.
 
 ## Add a channel
 
@@ -348,5 +316,6 @@ export function createExampleChannel(
 
 - Verify signatures or secrets before parsing user-controlled payloads deeply.
 - Use stable provider ids for `eventId` so redeliveries dedup, and thread or chat ids for `conversationKey` so follow-ups keep context.
+- Set `redelivers: true` on a `message` result only when the provider, or your forwarder, sends the delivery again after a 5xx and keeps trying long enough to outlast a full queue. A full run queue then answers `503` instead of a busy reply.
 - Never download attachments in `parse`.
 - A provider `apiUrl` override must be a public `https` URL, checked when the channel is saved, because core sends the token to it.

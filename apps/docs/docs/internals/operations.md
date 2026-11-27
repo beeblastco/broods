@@ -10,7 +10,6 @@ The managed service runs on one k3s cluster, deployed from the infra repo (`kube
 flowchart TB
   Users(("Clients, CLI,<br/>chat providers"))
   DiscordGW((Discord Gateway))
-  Homeserver((Matrix homeserver))
 
   subgraph k3s["k3s cluster"]
     Traefik["Traefik<br/>hostPort 80/443, 1 replica"]
@@ -19,7 +18,6 @@ flowchart TB
       Core["core / core-dev<br/>1 replica"]
       Dashboard["dashboard / dashboard-dev"]
       DFwd["discord-forwarder<br/>1 replica, Recreate"]
-      MFwd["matrix-forwarder<br/>1 replica, Recreate, PVC"]
       OPA["opa"]
     end
     subgraph convexns["namespace convex"]
@@ -41,6 +39,7 @@ flowchart TB
   subgraph CF["Cloudflare"]
     McpWorker["cloudflare-mcp Worker<br/>dev stages only"]
     SbxWorker["cloudflare-sandbox<br/>bridge Worker"]
+    IsoWorker["cloudflare-worker<br/>Worker + R2"]
   end
 
   Users -->|HTTPS| Traefik
@@ -61,23 +60,21 @@ flowchart TB
   Core --> MicroVM
   Core --> McpWorker
   Core --> SbxWorker
+  Core --> IsoWorker
   Convex --> S3
   MicroVM -->|CloudWatch| LogFwd
   LogFwd -->|OTLP| Obs
   DiscordGW <-->|socket| DFwd
-  Homeserver <-->|"/sync"| MFwd
   DFwd -->|webhook| Traefik
-  MFwd -->|webhook| Traefik
-  Core -->|Matrix sends| MFwd
 ```
 
-| Piece          | Replicas                 | Why                                                                                  |
-| -------------- | ------------------------ | ------------------------------------------------------------------------------------ |
-| core           | 1                        | The machine sandbox registry and the in-process worker queue live in memory          |
-| gateway        | any                      | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere |
-| forwarders     | 1, `strategy: Recreate`  | A second pod means a second socket per token and every message answered twice        |
-| Traefik        | 1                        | Rate-limit buckets count in memory per pod                                           |
-| cloudflare-mcp | one Worker per dev stage | `deploy.yaml` skips production, so production hosted MCP stays on Lambda             |
+| Piece             | Replicas                | Why                                                                                   |
+| ----------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| core              | 1                       | The machine sandbox registry and the in-process worker queue live in memory           |
+| gateway           | any                     | Stateless. On `SIGTERM` it closes sockets with `1012` so clients reconnect elsewhere  |
+| discord-forwarder | 1, `strategy: Recreate` | A second pod means a second socket per token and every message answered twice         |
+| Traefik           | 1                       | Rate-limit buckets count in memory per pod                                            |
+| cloudflare-mcp    | one Worker per stage    | Core uses it only once infra sets `CLOUDFLARE_MCP_URL` and its key; until then Lambda |
 
 - Core authenticates to AWS with an access key for the per-stage `core-runtime` IAM user. Convex uses the `convex-bootstrap` user, which can only assume `ConvexAwsRole`.
 - Core schedules nothing. The Convex crons component owns every schedule and POSTs each firing to core's `/v1/cron-runs` in-cluster.
@@ -87,9 +84,9 @@ flowchart TB
 
 | Knob                                                     | Default | Effect                                                                              |
 | -------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `MAX_INPROCESS_WORKERS`                                  | 8       | Async runs in flight per pod. The rest queue, with their conversation lease renewed |
+| `MAX_INPROCESS_WORKERS`                                  | 8       | Runs in flight per pod, streamed runs too. The rest queue, with their lease renewed |
 | `WORKER_TIMEOUT_BUDGET_MS`                               | 600000  | A run still going 5 s past this loses its slot and fails                            |
-| `MODEL_FIRST_CHUNK_TIMEOUT_MS`, `MODEL_CHUNK_TIMEOUT_MS` | 300000  | Model silence before the first chunk, or between chunks, fails the run              |
+| `MODEL_FIRST_CHUNK_TIMEOUT_MS`, `MODEL_CHUNK_TIMEOUT_MS` | 300000  | No text, reasoning, tool input or file from the model for this long fails the run   |
 | `REQUEST_TIMEOUT_BUDGET_MS`                              | 600000  | Work deadline of one request                                                        |
 | `SHUTDOWN_DEADLINE_MS`                                   | 25000   | Drain time on `SIGTERM` before live runs are failed                                 |
 | `SANDBOX_SWEEP_INTERVAL_SECONDS`                         | 3600    | How often core releases reserved sandboxes whose conversation never came back       |
@@ -160,14 +157,15 @@ The gateway has its own limit: `GATEWAY_AUTH_FAILURES_PER_MINUTE` (default 20) f
 
 Each secret has one job and none falls back to another. Core refuses to boot without the first four, and the gateway without `TERMINAL_TICKET_SECRET`.
 
-| Secret                             | Job                                       | Set on                    | Format       |
-| ---------------------------------- | ----------------------------------------- | ------------------------- | ------------ |
-| `SERVICE_AUTH_SECRET`              | Service bearer, with `X-Account-Id`       | core, Convex              | single value |
-| `STAGE_TICKET_SECRET`              | Signs `bdts_` stage tickets (15 min)      | Convex signs, core reads  | single value |
-| `TERMINAL_TICKET_SECRET`           | Seals sandbox terminal tickets            | core seals, gateway opens | list         |
-| `MEDIA_TICKET_SECRET`              | Seals `/v1/media/:ticket` links           | core                      | list         |
-| `ACCOUNT_CONFIG_ENCRYPTION_SECRET` | Wraps each account's data key             | core, Convex              | list         |
-| `ADMIN_ACCOUNT_SECRET`             | Admin bearer for the account admin routes | core, Convex, dashboard   | single value |
+| Secret                             | Job                                                                               | Set on                    | Format       |
+| ---------------------------------- | --------------------------------------------------------------------------------- | ------------------------- | ------------ |
+| `SERVICE_AUTH_SECRET`              | Service bearer, with `X-Account-Id`; keys the config plane's failed-login buckets | core, Convex              | single value |
+| `STAGE_TICKET_SECRET`              | Signs `bdts_` stage tickets (15 min)                                              | Convex signs, core reads  | single value |
+| `TERMINAL_TICKET_SECRET`           | Seals sandbox terminal tickets                                                    | core seals, gateway opens | list         |
+| `MEDIA_TICKET_SECRET`              | Seals `/v1/media/:ticket` links                                                   | core                      | list         |
+| `ACCOUNT_CONFIG_ENCRYPTION_SECRET` | Wraps each account's data key                                                     | core, Convex              | list         |
+| `ADMIN_ACCOUNT_SECRET`             | Admin bearer for the account admin routes                                         | core, Convex, dashboard   | single value |
+| `ANALYTICS_ID_SECRET`              | Keys the PostHog user and AI session ids; optional                                | core, Convex              | single value |
 
 A list is comma-separated: the first entry seals, every entry opens.
 
@@ -176,9 +174,10 @@ flowchart LR
   A["Prepend new value"] --> B["Roll the pods"] --> C["Drop the old value"]
 ```
 
-- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link never expires, so dropping a value is what revokes the links it sealed.
+- `TERMINAL_TICKET_SECRET`, `MEDIA_TICKET_SECRET`: the steps above. A media link expires on its own after `MEDIA_TICKET_TTL_SECONDS` (default 30 days); dropping a value stops every link it sealed at the origin, though a CDN that fetched the bytes in time can serve its copy until the ticket would have expired, which is where the route's cache-control stops it. A copy fetched before 2026-11 keeps the old one-year `max-age`.
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET`: follow the [rotation runbook](security.md#rotation-runbook). It adds a `rewrapAllKeys` step; dropping a value before the rewrap finishes makes every config it wrapped unreadable.
 - `SERVICE_AUTH_SECRET`, `STAGE_TICKET_SECRET`: change core and Convex together. Rotating the stage secret logs out open dashboard log streams and `broods logs` until they mint a new ticket.
+- `ANALYTICS_ID_SECRET`: never rotate it for security; it guards nothing. A new value makes every user and AI session look new in PostHog.
 
 ## Service token rules
 
@@ -194,9 +193,9 @@ flowchart LR
   Convex[Convex actions] -->|"SERVICE_AUTH_SECRET<br/>+ X-Account-Id, in-cluster"| Core
   Convex -->|"ADMIN_ACCOUNT_SECRET<br/>account delete"| Core
   Core -->|CONVEX_DEPLOY_KEY| Convex
-  Core -->|Matrix access token| MFwd[matrix-forwarder]
   Core -->|CLOUDFLARE_MCP_API_KEY| MCP[cloudflare-mcp]
   Core -->|CLOUDFLARE_SANDBOX_API_KEY| SBX[cloudflare-sandbox]
+  Core -->|CLOUDFLARE_WORKER_API_KEY| ISO[cloudflare-worker]
   Gateway -->|sealed terminal ticket| SBX
 ```
 
@@ -206,7 +205,7 @@ flowchart LR
 
 ## Forwarders
 
-Discord sends regular messages only over a Gateway socket, and Matrix only over `/sync` long-polls. Every other channel posts to a webhook and needs no forwarder. The Matrix forwarder imports the Discord forwarder's config, connection, backoff, forward, log and supervisor modules, so both work the same way:
+Discord sends regular messages only over a Gateway socket. Every other channel posts to a webhook and needs no forwarder:
 
 ```mermaid
 flowchart LR
@@ -216,15 +215,15 @@ flowchart LR
   end
   P1 -->|"listConnections<br/>subscription"| Sup[supervisor]
   P2 -->|subscription| Sup
-  Sup -->|one per token| Conn["socket or /sync loop"]
+  Sup -->|one per token| Conn["socket"]
   Conn -->|fan out| W1["webhook, prod"]
   Conn -->|fan out| W2["webhook, dev"]
 ```
 
 - One release serves every config plane. Plane `dev` reads its admin key from `CONVEX_DEPLOY_KEY_DEV`. Add a plane to the array, never a release per stage.
-- Convex decrypts and returns only the token and webhook path. Neither forwarder holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
+- Convex decrypts and returns only the token and webhook path. The forwarder never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`.
 - A plane that errors keeps its last answer, so a Convex blip closes no socket. `/healthz` never waits on Convex; `/readyz` is `503` until the first plane answers.
-- A webhook that rejects an event loses it. There is no outbox.
+- A webhook that still rejects an event after three tries loses it.
 
 A Discord socket, from `apps/discord-forwarder/src/socket.ts`:
 
@@ -243,13 +242,7 @@ stateDiagram-v2
 
 - Discord resets a token after 1000 IDENTIFYs in 24 hours. `DISCORD_IDENTIFY_LIMIT` (default 500) parks the socket first. The counter is in memory, so a crash loop defeats it.
 - A RESUME spends no IDENTIFY and only dials a host under `.discord.gg`, so the bot token cannot be sent elsewhere.
-- Events go out as `GATEWAY_MESSAGE_CREATE` with the token in `x-discord-gateway-token`, plus `thread` for a message in a thread.
-
-Matrix:
-
-- `MATRIX_STORE_DIR` holds each account's crypto store and sync token and must be a persistent volume. Losing it loses the device keys.
-- Core sends replies, reactions and typing through the forwarder's `POST /v1/send` and `POST /v1/typing`, authenticated with the access token, because only the forwarder can encrypt for the room.
-- An undecryptable event waits up to 5 minutes for its room key and holds the stored sync token back, so a restart replays it.
+- Events go out as `GATEWAY_MESSAGE_CREATE` with a credential derived from the bot token (`discordForwarderToken` in `apps/core/src/shared/discord-wire.ts`) in `x-discord-gateway-token`, plus `thread` for a message in a thread. The bot token itself never crosses the edge, and core refuses it there.
 
 ## Runbooks
 
@@ -261,11 +254,10 @@ Matrix:
 | Every agent config fails to decrypt                            | Put the value that wrapped the keys back in `ACCOUNT_CONFIG_ENCRYPTION_SECRET`                  |
 | `deny-all` or `restricted` `lambda` sandboxes fail to launch   | Set `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN` from the `microvmEgressNetworkConnectorArn` output   |
 | Discord agent answers `/new` but ignores mentions              | discord-forwarder down or missing that plane. Check `/readyz`                                   |
-| Matrix agent cannot read encrypted rooms after a redeploy      | Put `MATRIX_STORE_DIR` on a persistent volume, log in again as a new device                     |
 | Image built but pods run the old version                       | Check the build workflow's `rollout` job and `INFRA_DISPATCH_TOKEN`                             |
 | `broods logs` or dashboard stream stops after about 15 minutes | Stage ticket could not be renewed. Re-run `broods login`                                        |
 
-A Discord or Matrix agent that stays silent:
+A Discord agent that stays silent:
 
 ```mermaid
 flowchart TD
@@ -274,9 +266,7 @@ flowchart TD
   B -->|"200"| C{"Discord socket state"}
   C -->|fatal| C1["Read the close code.<br/>4014: turn on Message Content Intent"]
   C -->|exhausted| C2["IDENTIFY budget spent:<br/>find the reconnect loop"]
-  C -->|"ready, or Matrix"| D{"Matrix account failed?"}
-  D -->|yes| D1["M_UNKNOWN_TOKEN:<br/>log in, set new access token"]
-  D -->|no| E["Forwarder logs a non-OK<br/>webhook response?<br/>Check core and the agent's channel config"]
+  C -->|ready| E["Forwarder logs a non-OK<br/>webhook response?<br/>Check core and the agent's channel config"]
 ```
 
 ## Drift cleanup

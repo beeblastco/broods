@@ -1,18 +1,7 @@
-/**
- * Content types for workspace files, by extension, and the byte ceiling on an
- * attachment. One table for both ways a file leaves: the media route sets this
- * as the response header for providers that fetch a URL, and the channel tools
- * set it on the attachment for providers that upload bytes. Two tables drift,
- * and the drift is invisible until a file previews on one channel and downloads
- * on another.
- */
-
-// One ceiling for everything stored, matching the public media route: past it
-// the route answers 413 and the link the model was handed would be dead.
+// Matches the media route: past it the route answers 413 and the link handed out is dead.
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
-// Pictures are the one kind a model reads inline on nearly every provider, and
-// a 25 MB one costs far more in tokens than it carries in meaning.
+// Models read images inline, and a 25 MB one costs far more tokens than it carries.
 export const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
 const MEDIA_EXTENSION_TYPES: Record<string, string> = {
@@ -39,23 +28,12 @@ const MEDIA_EXTENSION_TYPES: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-/**
- * A chat client decides whether to preview or download from this type, so an
- * unmapped extension becomes application/octet-stream and every client just
- * downloads it.
- */
 export function contentTypeForPath(path: string): string {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
 
   return MEDIA_EXTENSION_TYPES[extension] ?? "application/octet-stream";
 }
 
-/**
- * The line that stands in for a file the model cannot read, wherever that is
- * discovered: the gate before the call, the replay of a stored message, or the
- * provider refusing the part outright. One wording, so the model is not told
- * three different stories about one situation.
- */
 export function unreadableMediaNote(
   filename: string | undefined,
   mediaType: string,

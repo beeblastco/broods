@@ -1,21 +1,18 @@
 /// <reference types="vite/client" />
-/**
- * The monthly usage meter: the sandbox billing math, the price of a meter,
- * the sandbox mirror writing to it, and the budget read core enforces.
- */
-
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import {
   FREE_MONTHLY_BUDGET_EUR,
   PLAN_LIMITS,
+  type Plan,
   PRO_MONTHLY_BUDGET_EUR,
 } from "../model/planLimits";
 import {
   EMPTY_USAGE,
   HOSTED_MCP_MEMORY_GB,
+  meterCostByCategoryEur,
   meterCostEur,
 } from "../model/pricing";
 import {
@@ -142,6 +139,10 @@ describe("sandboxAccrual", () => {
     expect(sandboxAccrual({ ...base, provider: "machine" }, NOW).usage).toEqual(
       {},
     );
+    // An isolate's commands are metered as they end; its row never bills.
+    expect(sandboxAccrual({ ...base, provider: "worker" }, NOW).usage).toEqual(
+      {},
+    );
     expect(
       sandboxAccrual({ ...daytona, ownCredentials: true }, NOW).usage,
     ).toEqual({});
@@ -183,8 +184,19 @@ test("an hour of the default MicroVM costs about €0.14", () => {
   expect(cost).toBeCloseTo(0.1368, 4);
 });
 
+test("an hour of worker commands costs about €0.07 and counts as sandbox time", () => {
+  const usage = {
+    ...EMPTY_USAGE,
+    workerMs: 3600 * 1000,
+    workerRequests: 3600,
+  };
+
+  expect(meterCostEur(usage)).toBeCloseTo(0.07308, 4);
+  expect(meterCostByCategoryEur(usage).sandboxes).toBeCloseTo(0.07308, 4);
+});
+
 test("maxing every cap costs no more than the plan's budget", () => {
-  const capsCost = (plan: "free" | "pro"): number => {
+  const capsCost = (plan: Plan): number => {
     const caps = PLAN_LIMITS[plan].caps;
 
     return meterCostEur({
@@ -202,18 +214,21 @@ test("maxing every cap costs no more than the plan's budget", () => {
 });
 
 test("a sandbox's launch and running time land on its account's meter", async () => {
-  vi.useFakeTimers({ now: NOW });
+  vi.useFakeTimers({ now: NOW - 1000 });
   const t = meterTest();
   const accountId = await seedAccount(t);
-
-  await t.mutation(internal.sandbox.instances.upsert, {
+  const sandbox = {
     accountId: accountId,
-    provider: "lambda",
+    provider: "lambda" as const,
     reservationKey: "fs-abc",
     externalId: "vm-1",
     name: "default",
     specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  });
+  };
+
+  await reserve(t, sandbox);
+  vi.setSystemTime(NOW);
+  await t.mutation(internal.sandbox.instances.upsert, sandbox);
   vi.setSystemTime(NOW + 10 * 60 * 1000);
   await t.mutation(internal.sandbox.instances.remove, {
     accountId: accountId,
@@ -229,6 +244,238 @@ test("a sandbox's launch and running time land on its account's meter", async ()
     sandboxGbSeconds: 1200,
     sandboxSnapshotGb: 2,
   });
+});
+
+test("a running sandbox's per-command refreshes bill once a minute, to the same total", async () => {
+  vi.useFakeTimers({ now: NOW - 1000 });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  const sandbox = {
+    accountId: accountId,
+    provider: "cloudflare" as const,
+    reservationKey: "cf-abc",
+    externalId: "cf-1",
+    name: "default",
+    specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+  };
+  await reserve(t, sandbox);
+  const refresh = (atSeconds: number) => {
+    vi.setSystemTime(NOW + atSeconds * 1000);
+
+    return t.mutation(internal.sandbox.instances.upsert, sandbox);
+  };
+  const billed = () =>
+    t.run(async (ctx) => ({
+      meter: await ctx.db.query("usageMeters").unique(),
+      pools: await ctx.db.query("usagePools").collect(),
+      row: await ctx.db.query("sandboxInstances").unique(),
+    }));
+
+  await refresh(0);
+  const launched = await billed();
+  for (const atSeconds of [10, 20, 30, 59]) await refresh(atSeconds);
+  const refreshed = await billed();
+  expect(refreshed.meter).toEqual(launched.meter);
+  expect(refreshed.pools).toEqual(launched.pools);
+  expect(refreshed.row).toMatchObject({
+    lastUsedAt: NOW + 59_000,
+    meteredUntil: NOW,
+  });
+
+  await refresh(70);
+  expect((await billed()).meter).toMatchObject({ sandboxVcpuSeconds: 70 });
+  vi.setSystemTime(NOW + 100_000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+  });
+  expect((await billed()).meter).toMatchObject({
+    sandboxVcpuSeconds: 100,
+    sandboxGbSeconds: 200,
+  });
+});
+
+test.each([
+  ["resumed after a suspend", {}, "suspend"],
+  ["was replaced by a new machine", { externalId: "cf-2" }, undefined],
+  ["switched to its own credentials", { ownCredentials: true }, undefined],
+  ["moved to a project", {}, "project"],
+] as const)(
+  "a refresh inside the minute still bills when the machine %s",
+  async (_case, change, step) => {
+    vi.useFakeTimers({ now: NOW - 1000 });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    const sandbox = {
+      accountId: accountId,
+      provider: "cloudflare" as const,
+      reservationKey: "cf-abc",
+      externalId: "cf-1",
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    };
+    await reserve(t, sandbox);
+    vi.setSystemTime(NOW);
+    await t.mutation(internal.sandbox.instances.upsert, sandbox);
+    vi.setSystemTime(NOW + 10_000);
+    if (step === "suspend") {
+      await t.mutation(internal.sandbox.instances.setStatus, {
+        accountId: accountId,
+        reservationKey: "cf-abc",
+        status: "suspended",
+      });
+    }
+    const projectId =
+      step === "project"
+        ? await t.run(async (ctx) => {
+            const org = await ctx.db.query("orgs").unique();
+            if (!org) throw new Error("no org seeded");
+
+            return await ctx.db.insert("projects", {
+              authId: "auth_owner",
+              orgId: org._id,
+              name: "demo-app",
+              slug: "demo-app",
+              updatedAt: NOW,
+            });
+          })
+        : undefined;
+
+    await reserve(t, { ...sandbox, ...change });
+    vi.setSystemTime(NOW + 20_000);
+    await t.mutation(internal.sandbox.instances.upsert, {
+      ...sandbox,
+      ...change,
+      ...(projectId ? { projectId: projectId } : {}),
+    });
+
+    const billed = await t.run(async (ctx) => ({
+      meter: await ctx.db.query("usageMeters").unique(),
+      row: await ctx.db.query("sandboxInstances").unique(),
+    }));
+    expect(billed.row?.meteredUntil).toBe(NOW + 20_000);
+    // Billed on the terms it ran under: a suspended machine stopped running at 10 s.
+    expect(billed.meter).toMatchObject({
+      sandboxVcpuSeconds: step === "suspend" ? 10 : 20,
+    });
+  },
+);
+
+describe("a failed suspend's status writes", () => {
+  const seedMicrovm = async (): Promise<{
+    t: T;
+    meters: () => Promise<unknown>;
+    row: () => Promise<Doc<"sandboxInstances"> | null>;
+    set: (
+      status: "running" | "suspending" | "suspended",
+      onlyFrom?: "running" | "suspending",
+    ) => Promise<boolean>;
+  }> => {
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    const sandbox = {
+      accountId: accountId,
+      provider: "lambda" as const,
+      reservationKey: "vm",
+      externalId: "vm-1",
+    };
+    await reserve(t, sandbox);
+    await t.mutation(internal.sandbox.instances.upsert, {
+      ...sandbox,
+      name: "default",
+      specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
+    });
+
+    return {
+      t: t,
+      meters: () =>
+        t.run(async (ctx) => await ctx.db.query("usageMeters").collect()),
+      row: () =>
+        t.run(async (ctx) => await ctx.db.query("sandboxInstances").unique()),
+      set: (status, onlyFrom) =>
+        t.mutation(internal.sandbox.instances.setStatus, {
+          accountId: accountId,
+          reservationKey: "vm",
+          status: status,
+          onlyFrom: onlyFrom,
+          observed: status === "running",
+        }),
+    };
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("a rollback that lost the race to suspended changes and bills nothing", async () => {
+    const { meters, row, set } = await seedMicrovm();
+    await set("suspended");
+    const billed = await meters();
+
+    expect(await set("running", "suspending")).toBe(false);
+
+    expect((await row())?.status).toBe("suspended");
+    expect(await meters()).toEqual(billed);
+  });
+
+  test("the marker leaves a row that is not running alone", async () => {
+    const { row, set } = await seedMicrovm();
+    await set("suspended");
+
+    expect(await set("suspending", "running")).toBe(false);
+
+    expect((await row())?.status).toBe("suspended");
+  });
+
+  test("a rollback from suspending applies without counting as a use", async () => {
+    const { row, set } = await seedMicrovm();
+    await set("suspending", "running");
+    const lastUsedAt = (await row())?.lastUsedAt;
+    vi.setSystemTime(NOW + 60_000);
+
+    expect(await set("running", "suspending")).toBe(true);
+
+    expect(await row()).toMatchObject({
+      status: "running",
+      lastUsedAt: lastUsedAt,
+    });
+  });
+});
+
+test("a refresh at a new size bills the time before it at the old size", async () => {
+  vi.useFakeTimers({ now: NOW - 1000 });
+  const t = meterTest();
+  const accountId = await seedAccount(t);
+  const sandbox = {
+    accountId: accountId,
+    provider: "cloudflare" as const,
+    reservationKey: "cf-abc",
+    externalId: "cf-1",
+    name: "default",
+  };
+  await reserve(t, sandbox);
+  const refresh = (atSeconds: number, vcpu: number) => {
+    vi.setSystemTime(NOW + atSeconds * 1000);
+
+    return t.mutation(internal.sandbox.instances.upsert, {
+      ...sandbox,
+      specs: { vcpu: vcpu, memoryMb: 2048, storageGb: 8 },
+    });
+  };
+
+  await refresh(0, 1);
+  await refresh(20, 2);
+  vi.setSystemTime(NOW + 30_000);
+  await t.mutation(internal.sandbox.instances.remove, {
+    accountId: accountId,
+    reservationKey: "cf-abc",
+  });
+
+  const meter = await t.run(async (ctx) =>
+    ctx.db.query("usageMeters").unique(),
+  );
+  expect(meter).toMatchObject({ sandboxVcpuSeconds: 20 + 10 * 2 });
 });
 
 test("burst bills the growth of the guest's totals and nothing for a late report", () => {
@@ -248,14 +495,16 @@ test("a MicroVM's burst lands on its account's meter once per report", async () 
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-  await t.mutation(internal.sandbox.instances.upsert, {
+  const sandbox = {
     accountId: accountId,
-    provider: "lambda",
+    provider: "lambda" as const,
     reservationKey: "fs-abc",
     externalId: "vm-1",
     name: "default",
     specs: { vcpu: 1, memoryMb: 2048, storageGb: 8 },
-  });
+  };
+  await reserve(t, sandbox);
+  await t.mutation(internal.sandbox.instances.upsert, sandbox);
   const before = await t.run(async (ctx) =>
     ctx.db.query("usageMeters").unique(),
   );
@@ -289,16 +538,21 @@ test("a sandbox on the account's own credentials never reaches the meter", async
   vi.useFakeTimers({ now: NOW });
   const t = meterTest();
   const accountId = await seedAccount(t);
-
-  await t.mutation(internal.sandbox.instances.upsert, {
+  const sandbox = {
     accountId: accountId,
-    provider: "daytona",
+    provider: "daytona" as const,
     reservationKey: "fs-own",
     externalId: "dt-1",
     name: "own-daytona",
     specs: { vcpu: 2, memoryMb: 4096, storageGb: 16 },
     ownCredentials: true,
-  });
+  };
+
+  await reserve(t, sandbox);
+  await t.mutation(internal.sandbox.instances.upsert, sandbox);
+  expect(
+    await t.run(async (ctx) => ctx.db.query("sandboxInstances").unique()),
+  ).toMatchObject({ ownCredentials: true });
   vi.setSystemTime(NOW + 10 * 60 * 1000);
   await t.mutation(internal.sandbox.instances.remove, {
     accountId: accountId,
@@ -331,7 +585,8 @@ test("the hourly accrual pages through every recent sandbox", async () => {
     }
   });
 
-  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  // Pinned: each commit moves the next transaction's clock past it.
+  await t.mutation(internal.sandbox.instances.accrueRecent, { now: NOW });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
   const meter = await t.run(async (ctx) =>
@@ -366,7 +621,8 @@ test("the hourly accrual bills and deletes ephemeral rows whose call is over", a
     }
   });
 
-  await t.mutation(internal.sandbox.instances.accrueRecent, {});
+  // Pinned: each commit moves the next transaction's clock past it.
+  await t.mutation(internal.sandbox.instances.accrueRecent, { now: NOW });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
   const rows = await t.run(async (ctx) =>
@@ -442,7 +698,10 @@ describe("budget", () => {
       accountId: accountId,
     });
 
-    expect(budget).toMatchObject({ enforced: false, usedPercent: 0 });
+    expect(budget).toMatchObject({
+      enforced: false,
+      usedPercent: 0,
+    });
   });
 
   test("measures the closest cap and warns once at 80%", async () => {
@@ -467,9 +726,44 @@ describe("budget", () => {
       }),
     ];
 
-    expect(budget).toMatchObject({ enforced: true, plan: "free" });
+    expect(budget).toMatchObject({
+      enforced: true,
+      plan: "free",
+      shares: {
+        sandboxHours: 0,
+        hostedMcpHours: 0,
+        storageGb: 10,
+        egressGb: 80,
+      },
+    });
     expect(budget?.usedPercent).toBe(80);
     expect(claims).toEqual([true, false]);
+  });
+
+  test("stops a free account at 10 GB of workspaces and files, not a Pro one", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    vi.useFakeTimers({ now: NOW });
+    const t = meterTest();
+    const [free, pro] = await Promise.all(
+      (["free", "pro"] as const).map(async (plan) => {
+        const accountId = await seedAccount(t, plan);
+        await t.mutation(internal.account.budget.record, {
+          accountId: accountId,
+          usage: { storageGbMonths: 10 / 30 },
+        });
+
+        return {
+          budget: await t.query(internal.account.budget.get, {
+            accountId: accountId,
+          }),
+          usage: await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW)),
+        };
+      }),
+    );
+
+    expect(free.usage).toMatchObject({ usedPercent: 100, level: "exhausted" });
+    expect(free.budget?.shares.storageGb).toBe(100);
+    expect(pro.usage).toMatchObject({ usedPercent: 20, level: "ok" });
   });
 
   test("reaches the dashboard as amounts and percentages with no euro figures", async () => {
@@ -479,7 +773,7 @@ describe("budget", () => {
     const accountId = await seedAccount(t);
     await t.mutation(internal.account.budget.record, {
       accountId: accountId,
-      usage: { egressGb: 16.5, storageGbMonths: 0.5, ingressGb: 2 },
+      usage: { egressGb: 16.5, storageGbMonths: 0.1, ingressGb: 2 },
     });
 
     const usage = await t.run(async (ctx) => budgetUsage(ctx, accountId, NOW));
@@ -487,9 +781,15 @@ describe("budget", () => {
     const amounts = {
       sandboxHours: 0,
       hostedMcpHours: 0,
-      storageGb: 15,
+      storageGb: 3,
       egressGb: 16.5,
       ingressGb: 2,
+    };
+    const shares = {
+      sandboxHours: 0,
+      hostedMcpHours: 0,
+      storageGb: 30,
+      egressGb: 110,
     };
     expect(usage).toEqual({
       enforced: true,
@@ -498,15 +798,13 @@ describe("budget", () => {
       months: ["2026-09"],
       usedPercent: 110,
       caps: PLAN_LIMITS.free.caps,
-      shares: {
-        sandboxHours: 0,
-        hostedMcpHours: 0,
-        storageGb: 30,
-        egressGb: 110,
-      },
+      shares: shares,
+      // The owner's one org is its own pool.
+      orgShares: shares,
       level: "exhausted",
       totals: amounts,
       days: [{ day: "2026-09-23", ...amounts }],
+      pool: { orgs: 1, shared: false, totals: amounts },
     });
   });
 
@@ -534,6 +832,30 @@ describe("budget", () => {
       { day: "2026-09-21", storageGb: 3 },
       { day: "2026-09-22", storageGb: 0 },
     ]);
+  });
+
+  test("keeps last month's storage until this month's first snapshot", async () => {
+    vi.stubEnv("BROODS_MANAGED_SERVICE", "true");
+    const october = Date.UTC(2026, 9, 1, 0, 30);
+    vi.useFakeTimers({ now: october });
+    const t = meterTest();
+    const accountId = await seedAccount(t);
+    await t.mutation(internal.account.budget.record, {
+      accountId: accountId,
+      usage: { storageGbMonths: 10 / 30 },
+      at: Date.UTC(2026, 8, 30, 12),
+    });
+
+    const budget = await t.query(internal.account.budget.get, {
+      accountId: accountId,
+    });
+    const usage = await t.run(async (ctx) =>
+      budgetUsage(ctx, accountId, october),
+    );
+
+    expect(budget).toMatchObject({ month: "2026-10", usedPercent: 100 });
+    expect(budget?.shares.storageGb).toBe(100);
+    expect(usage.totals.storageGb).toBe(10);
   });
 
   test("reads an empty account's first snapshot as 0 GB, not unknown", async () => {
@@ -597,13 +919,13 @@ describe("budget", () => {
   });
 });
 
-async function seedAccount(t: T): Promise<Id<"accounts">> {
+async function seedAccount(t: T, plan: Plan = "free"): Promise<Id<"accounts">> {
   return await t.run(async (ctx) => {
     const orgId = await ctx.db.insert("orgs", {
       name: "beeblast",
       slug: "beeblast",
-      ownerAuthId: "auth_owner",
-      plan: "free" as const,
+      ownerAuthId: `auth_owner_${plan}`,
+      plan: plan,
       createdAt: Date.now(),
     });
 
@@ -614,6 +936,33 @@ async function seedAccount(t: T): Promise<Id<"accounts">> {
       status: "active" as const,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+    });
+  });
+}
+
+async function reserve(
+  t: T,
+  sandbox: Pick<
+    Doc<"sandboxReservations">,
+    "accountId" | "provider" | "reservationKey" | "externalId"
+  >,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const held = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", sandbox.provider)
+          .eq("reservationKey", sandbox.reservationKey),
+      )
+      .unique();
+    if (held) await ctx.db.delete(held._id);
+    await ctx.db.insert("sandboxReservations", {
+      accountId: sandbox.accountId,
+      provider: sandbox.provider,
+      reservationKey: sandbox.reservationKey,
+      externalId: sandbox.externalId,
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
     });
   });
 }

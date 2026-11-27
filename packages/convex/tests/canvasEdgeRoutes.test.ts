@@ -10,7 +10,6 @@ import {
 } from "../model/canvasEdgeRoutes";
 import type { LayoutRect } from "../model/canvasLayout";
 
-/** An agent over two stacked cards in the column to its right. */
 const BOXES = new Map<string, LayoutRect>([
   ["agent", box(0, 0)],
   ["top", box(240, 144)],
@@ -35,7 +34,6 @@ describe("routeCanvasEdges", () => {
     expect(route.gutter).toBeNull();
     expect(points[0]).toEqual({ x: 88, y: 96 });
     expect(points.at(-1)).toEqual({ x: 328, y: 144 });
-    // Every run is vertical or horizontal.
     for (let index = 1; index < points.length; index++) {
       const [a, b] = [points[index - 1], points[index]];
       expect(a.x === b.x || a.y === b.y).toBe(true);
@@ -43,8 +41,7 @@ describe("routeCanvasEdges", () => {
   });
 
   it("drops straight past a frame beside the route, not through it", () => {
-    // The sandbox frame stands in the rectangle between the two handles but
-    // under the bus and left of the drop, so the edge keeps its two corners.
+    // The frame sits under the bus and left of the drop, so the edge keeps its two corners.
     const boxes = new Map<string, LayoutRect>([
       ["agent", box(0, 0)],
       ["frame", { height: 230, width: 280, x: 0, y: 200 }],
@@ -79,7 +76,6 @@ describe("routeCanvasEdges", () => {
     );
 
     expect(agent.get("top")!.gutter).toBeNull();
-    // Left of the column, one lane the two deep edges branch off.
     expect(agent.get("deep")!.gutter?.x).toBe(216);
     expect(agent.get("deeper")!.gutter?.x).toBe(216);
     expect(
@@ -109,7 +105,6 @@ describe("routeCanvasEdges", () => {
   });
 
   it("keeps two agents' buses clearly apart where their ends come close", () => {
-    // Both agents reach one card between them, so their buses end a fan apart.
     const boxes = new Map([
       ["left", box(0, 0)],
       ["right", box(600, 0)],
@@ -167,8 +162,7 @@ describe("routeCanvasEdges", () => {
   });
 
   it("narrows a gutter that would run through a dragged neighbour", () => {
-    // 14px between the source and its neighbour: a full ARROW_RUN gutter
-    // lands inside the neighbour, so the lane takes the middle of the gap.
+    // A 14px gap: a full ARROW_RUN gutter lands inside the neighbour, so take its middle.
     const boxes = new Map([
       ["source", box(0, 0)],
       ["neighbour", box(190, 0)],
@@ -215,8 +209,7 @@ describe("routeCanvasEdges", () => {
   });
 
   it("keeps a full gutter that is clear rather than narrowing it into a blocker", () => {
-    // The neighbour sits below the approach lane, so the full gutter clears
-    // it; the middle of the gap would run through the blocker.
+    // The neighbour sits below the approach lane; the gap's middle would hit the blocker.
     const boxes = new Map([
       ["agent", box(0, 0)],
       ["blocker", box(420, 200)],
@@ -262,9 +255,7 @@ describe("routeCanvasEdges", () => {
 
 describe("side edge legs", () => {
   it("keep a lane apart where a mount and an inherited edge meet one handle", () => {
-    // A sandbox chip left of two workspace chips, the upper inheriting it and
-    // the lower mounted on it: the upper's lead-in must not run along the
-    // lower's last leg.
+    // The upper chip inherits the sandbox, the lower mounts it.
     const boxes = new Map([
       ["sandbox", { height: 44, width: 184, x: 0, y: 0 }],
       ["upper", { height: 60, width: 184, x: 240, y: 0 }],
@@ -325,8 +316,6 @@ describe("side edge legs", () => {
 
 describe("crowded handles", () => {
   it("merge edges of one kind into a trunk where a chip is too short to fan them", () => {
-    // Five workspace chips inheriting one sandbox chip: 44px cannot hold five
-    // ends a lane apart, so they share one end and one lane.
     const boxes = new Map([
       ["sandbox", { height: 44, width: 184, x: 0, y: 0 }],
       ...Array.from({ length: 5 }, (_, index): [string, LayoutRect] => [
@@ -373,7 +362,6 @@ function box(x: number, y: number): LayoutRect {
   return { height: 96, width: 176, x: x, y: y };
 }
 
-/** A side edge from one box's side handle to another's, each box its own top-level box. */
 function sideEdge(
   id: string,
   boxes: ReadonlyMap<string, LayoutRect>,

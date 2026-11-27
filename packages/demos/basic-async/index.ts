@@ -1,11 +1,10 @@
-/**
- * Example: start an async run and poll its status via the SDK.
- */
-
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 const run = await client.runAsync(api.agents.search, {
   input: "Search the web for the latest weather in Hanoi.",

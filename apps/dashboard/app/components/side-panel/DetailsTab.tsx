@@ -38,23 +38,18 @@ import {
 import {
   readAgentBranch,
   readModelReasoning,
-  type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
-import { isPlainObject } from "@/app/lib/utils";
+import { configObject, parseOr } from "@broods/convex/model/storedJson";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Eye, EyeOff, KeyRound, RefreshCw, Wifi } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
-/**
- * Public (hash-free) view of a stage's runtime deployment, as returned by
- * `agentDeployments.getForStage`. The key is stage-wide; the agent is
- * selected per request by its Agent ID.
- */
+/** `agentDeployments.getForStage` minus the key hash. One key per stage, not per agent. */
 export type StageDeployment = {
   _id: Id<"agentDeployments">;
   endpointId: string;
@@ -64,14 +59,9 @@ export type StageDeployment = {
   updatedAt: number;
 };
 
-type OutputFormatConfig = {
-  type?: string;
-  schema?: unknown;
-  name?: string;
-  description?: string;
-};
-
 export type AgentProvider = AccountModelProviderName;
+
+type SaveSection = "name" | "model" | "reasoning" | "access" | "tools";
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> =
   ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
@@ -126,7 +116,7 @@ export function DetailsTab({
   deploymentApiKey?: string;
   editName: string;
   setEditName: (name: string) => void;
-  onSaveName: () => void;
+  onSaveName: () => Promise<void>;
   onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
   onGenerateKey?: () => Promise<boolean>;
   onRotateKey?: () => Promise<boolean>;
@@ -156,8 +146,10 @@ export function DetailsTab({
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
-  // Reveal a freshly generated/rotated key the moment it arrives (render-time
-  // sync, not an effect); hide again once the plaintext is cleared.
+  const [saveError, setSaveError] = useState<{
+    section: SaveSection;
+    message: string;
+  } | null>(null);
   const [syncedApiKey, setSyncedApiKey] = useState(deploymentApiKey);
   if (deploymentApiKey !== syncedApiKey) {
     setSyncedApiKey(deploymentApiKey);
@@ -174,26 +166,28 @@ export function DetailsTab({
   const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(
     readCustomBaseUrl(agentConfig),
   );
+  const storedModel = `${selectedProvider}:${agentConfig?.modelId ?? ""}`;
+  const [syncedModel, setSyncedModel] = useState(storedModel);
+  if (storedModel !== syncedModel) {
+    setSyncedModel(storedModel);
+    setEditProvider(selectedProvider);
+    setEditModelId(agentConfig?.modelId ?? "");
+    setEditCustomBaseUrl(readCustomBaseUrl(agentConfig));
+  }
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
+  const fieldId = useId();
 
-  // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
   const allTools = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "tools",
-      ) as Record<string, unknown>)
+    ? (readAgentBranch(agentConfig, "tools") as Record<string, unknown>)
     : {};
-  const googleSearchCfg = isPlainObject(allTools.googleSearch)
-    ? (allTools.googleSearch as Record<string, unknown>)
-    : { enabled: agentConfig?.searchToolEnabled };
+  const googleSearchCfg: Record<string, unknown> = parseOr(
+    configObject,
+    allTools.googleSearch,
+  ) ?? { enabled: agentConfig?.searchToolEnabled };
   const googleSearchEnabled = googleSearchCfg.enabled === true;
 
-  // Reasoning lives under model.providerOptions.<provider>.* (Vercel AI SDK shape).
   const modelBranch = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "model",
-      ) as Record<string, unknown>)
+    ? (readAgentBranch(agentConfig, "model") as Record<string, unknown>)
     : {};
   const { budgetTokens: reasoningBudget, effort: reasoningEffortValue } =
     readModelReasoning(modelBranch);
@@ -203,6 +197,14 @@ export function DetailsTab({
   const [reasoningBudgetText, setReasoningBudgetText] = useState(() =>
     reasoningBudget !== undefined ? String(reasoningBudget) : "",
   );
+  const [syncedReasoningBudget, setSyncedReasoningBudget] =
+    useState(reasoningBudget);
+  if (!Object.is(reasoningBudget, syncedReasoningBudget)) {
+    setSyncedReasoningBudget(reasoningBudget);
+    setReasoningBudgetText(
+      reasoningBudget !== undefined ? String(reasoningBudget) : "",
+    );
+  }
 
   const coreEndpoint = resolveCoreEndpoint();
   const scopePrefix =
@@ -218,36 +220,28 @@ export function DetailsTab({
       ? `${coreEndpoint.websocketBaseUrl}/v1${scopePrefix}/agents/${activeDeployment.endpointId}/ws`
       : "";
 
-  // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar
-  // in extraConfig; off by default so the agent is secured until enabled.
-  const publicAccess =
-    (agentConfig?.extraConfig as Record<string, unknown> | undefined)
-      ?.publicAccess === true;
-  // The `browse` tool switch, `config.browser.enabled` in extraConfig.
+  const publicAccess = agentConfig?.extraConfig?.publicAccess === true;
   const browserEnabled =
     readAgentBranch<{ enabled?: boolean }>(agentConfig, "browser").enabled ===
     true;
 
-  const outputFormat =
-    agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
-      ? (agentConfig.outputFormat as OutputFormatConfig)
-      : undefined;
+  const outputFormat = agentConfig?.outputFormat;
   const outputFormatEnabled = outputFormat !== undefined;
-  const schemaFromConfigText = isPlainObject(outputFormat?.schema)
-    ? JSON.stringify(outputFormat.schema, null, 2)
+  const configSchema = parseOr(configObject, outputFormat?.schema);
+  const schemaFromConfigText = configSchema
+    ? JSON.stringify(configSchema, null, 2)
     : "";
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
     : schemaFromConfigText;
-  // The provider key is a `${NAME}` ref to a stage variable (or, before one is
-  // written, the default name); warn until the stage has that variable.
+  // The key is a `${NAME}` stage-variable ref (the default name until set): warn until it exists.
   const stageVariables = useQuery(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
   const apiKey = agentConfig
     ? readAgentBranch<Record<string, { apiKey?: unknown } | undefined>>(
-        agentConfig as unknown as FlatAgentConfig,
+        agentConfig,
         "provider",
       )[editProvider]?.apiKey
     : undefined;
@@ -288,8 +282,8 @@ export function DetailsTab({
 
   function parseSchemaText(input: string): Record<string, unknown> | null {
     try {
-      const parsed = JSON.parse(input);
-      if (!isPlainObject(parsed)) {
+      const parsed = parseOr(configObject, JSON.parse(input));
+      if (!parsed) {
         setOutputSchemaError("Schema must be a JSON object.");
 
         return null;
@@ -314,9 +308,7 @@ export function DetailsTab({
       return;
     }
 
-    const existingSchema = isPlainObject(outputFormat?.schema)
-      ? (outputFormat.schema as Record<string, unknown>)
-      : undefined;
+    const existingSchema = parseOr(configObject, outputFormat?.schema);
     setOutputSchemaError(null);
 
     if (existingSchema) {
@@ -360,7 +352,6 @@ export function DetailsTab({
     reader.readAsText(file);
   }
 
-  /** Auto-saves provider/model/base-URL settings; no-ops when required values are empty. */
   function saveModel(
     provider: AgentProvider,
     modelId: string,
@@ -375,30 +366,51 @@ export function DetailsTab({
       return;
     }
 
-    void onSaveModelSettings?.({
-      provider: provider,
-      modelId: trimmed,
-      ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+    save(
+      "model",
+      onSaveModelSettings?.({
+        provider: provider,
+        modelId: trimmed,
+        ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+      }),
+    );
+  }
+
+  function save(
+    section: SaveSection,
+    write: Promise<unknown> | undefined,
+  ): void {
+    setSaveError(null);
+    write?.catch((err: unknown): void => {
+      setSaveError({ section: section, message: toErrorMessage(err) });
     });
+  }
+
+  function saveErrorFor(section: SaveSection): React.JSX.Element | null {
+    return saveError?.section === section ? (
+      <p role="alert" className="text-xs text-destructive">
+        {saveError.message}
+      </p>
+    ) : null;
   }
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
-      {/* Editable name, auto-saves on blur or Enter */}
       <div className="flex flex-col gap-1.5">
         <SectionHeader>Name</SectionHeader>
         <Input
           value={editName}
           onChange={(e) => setEditName(e.target.value)}
           className="h-8 text-sm"
-          onBlur={onSaveName}
+          onBlur={() => save("name", onSaveName())}
           onKeyDown={(e) => {
-            if (e.key === "Enter") onSaveName();
+            if (e.key === "Enter" && !e.nativeEvent.isComposing)
+              save("name", onSaveName());
           }}
         />
+        {saveErrorFor("name")}
       </div>
 
-      {/* Agent info */}
       {agentConfig && (
         <>
           {agentConfig.description && (
@@ -440,9 +452,14 @@ export function DetailsTab({
               onChange={(event) => setEditModelId(event.target.value)}
               className="h-8 text-xs"
               placeholder="Model ID"
+              aria-label="Model ID"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
               onBlur={() => saveModel(editProvider, editModelId)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") saveModel(editProvider, editModelId);
+                if (event.key === "Enter" && !event.nativeEvent.isComposing)
+                  saveModel(editProvider, editModelId);
               }}
             />
             {editProvider === "custom" && (
@@ -455,7 +472,7 @@ export function DetailsTab({
                   saveModel(editProvider, editModelId, editCustomBaseUrl)
                 }
                 onKeyDown={(event) => {
-                  if (event.key === "Enter")
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing)
                     saveModel(editProvider, editModelId, editCustomBaseUrl);
                 }}
               />
@@ -472,10 +489,9 @@ export function DetailsTab({
                 before running the agent.
               </p>
             )}
+            {saveErrorFor("model")}
           </div>
 
-          {/* Reasoning: budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),
-                        written to model.providerOptions.<provider> for the selected provider. */}
           {onUpdateModelReasoning && (
             <div className="flex flex-col gap-2">
               <ToggleRow
@@ -484,17 +500,22 @@ export function DetailsTab({
                 checked={reasoningEnabled}
                 onCheckedChange={(next) => {
                   if (next) {
-                    // Seed a provider-appropriate default so the toggle has effect:
                     // OpenAI reasons by effort, the others by a thinking-token budget.
                     if (selectedProvider === "openai") {
-                      void onUpdateModelReasoning({ effort: "medium" });
+                      save(
+                        "reasoning",
+                        onUpdateModelReasoning({ effort: "medium" }),
+                      );
                     } else {
                       setReasoningBudgetText("4096");
-                      void onUpdateModelReasoning({ budgetTokens: 4096 });
+                      save(
+                        "reasoning",
+                        onUpdateModelReasoning({ budgetTokens: 4096 }),
+                      );
                     }
                   } else {
                     setReasoningBudgetText("");
-                    void onUpdateModelReasoning({});
+                    save("reasoning", onUpdateModelReasoning({}));
                   }
                 }}
               />
@@ -518,10 +539,13 @@ export function DetailsTab({
                         const n = parseInt(reasoningBudgetText, 10);
                         const budget =
                           Number.isFinite(n) && n > 0 ? n : undefined;
-                        void onUpdateModelReasoning({
-                          budgetTokens: budget,
-                          effort: reasoningEffort || undefined,
-                        });
+                        save(
+                          "reasoning",
+                          onUpdateModelReasoning({
+                            budgetTokens: budget,
+                            effort: reasoningEffort || undefined,
+                          }),
+                        );
                       }}
                     />
                   </div>
@@ -540,10 +564,13 @@ export function DetailsTab({
                         const n = parseInt(reasoningBudgetText, 10);
                         const budget =
                           Number.isFinite(n) && n > 0 ? n : undefined;
-                        void onUpdateModelReasoning({
-                          budgetTokens: budget,
-                          effort: effort,
-                        });
+                        save(
+                          "reasoning",
+                          onUpdateModelReasoning({
+                            budgetTokens: budget,
+                            effort: effort,
+                          }),
+                        );
                       }}
                     >
                       <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
@@ -566,6 +593,7 @@ export function DetailsTab({
                   </p>
                 </ExpandBlock>
               )}
+              {saveErrorFor("reasoning")}
             </div>
           )}
         </>
@@ -573,7 +601,6 @@ export function DetailsTab({
 
       <Separator />
 
-      {/* Public access controls */}
       <div className="flex flex-col gap-3">
         <SectionHeader>Public API</SectionHeader>
         {onUpdatePublicAccess && (
@@ -581,8 +608,14 @@ export function DetailsTab({
             label="Public access"
             description="Reachable over HTTP/SSE and WebSocket with the runtime key"
             checked={publicAccess}
-            onCheckedChange={(next) => void onUpdatePublicAccess(next)}
+            onCheckedChange={(next) =>
+              save("access", onUpdatePublicAccess(next))
+            }
           />
+        )}
+        {saveErrorFor("access")}
+        {publicAccess && agentConfig && (
+          <UserTokenToggle configId={agentConfig._id} canWrite={canWrite} />
         )}
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-2xs text-muted-foreground">
@@ -608,7 +641,7 @@ export function DetailsTab({
                 variant="outline"
                 className="h-8 w-fit cursor-pointer text-xs"
                 disabled={isSavingKey}
-                onClick={() => void onGenerateKey?.()}
+                onClick={() => save("access", onGenerateKey?.())}
               >
                 {isSavingKey ? "Generating…" : "Generate runtime key"}
               </Button>
@@ -683,10 +716,8 @@ export function DetailsTab({
                     disabled={isSavingKey}
                     onClick={() => setRotateOpen(true)}
                   >
-                    <RefreshCw
-                      className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
-                    />
-                    Rotate
+                    <RefreshCw className="size-3" />
+                    {isSavingKey ? "Rotating…" : "Rotate"}
                   </Button>
                 )}
               </div>
@@ -723,7 +754,6 @@ export function DetailsTab({
         )}
       </div>
 
-      {/* Built-in Tools */}
       {agentConfig && onUpdateToolConfig && (
         <>
           <Separator />
@@ -735,11 +765,10 @@ export function DetailsTab({
                 label="Web browsing"
                 description="Read pages and take screenshots. Needs a first sandbox on Lambda with the Obscura image and internet."
                 checked={browserEnabled}
-                onCheckedChange={(next) => void onUpdateBrowser(next)}
+                onCheckedChange={(next) => save("tools", onUpdateBrowser(next))}
               />
             )}
 
-            {/* Google Search */}
             <ToggleRow
               label="Google Search"
               description={
@@ -750,10 +779,13 @@ export function DetailsTab({
               checked={googleSearchEnabled}
               disabled={selectedProvider !== "google"}
               onCheckedChange={(next) =>
-                void onUpdateToolConfig("googleSearch", {
-                  ...googleSearchCfg,
-                  enabled: next,
-                })
+                save(
+                  "tools",
+                  onUpdateToolConfig("googleSearch", {
+                    ...googleSearchCfg,
+                    enabled: next,
+                  }),
+                )
               }
             />
             {googleSearchEnabled && selectedProvider === "google" && (
@@ -762,19 +794,22 @@ export function DetailsTab({
                   label="Needs approval"
                   checked={googleSearchCfg.needsApproval === true}
                   onCheckedChange={(next) =>
-                    void onUpdateToolConfig("googleSearch", {
-                      ...googleSearchCfg,
-                      needsApproval: next,
-                    })
+                    save(
+                      "tools",
+                      onUpdateToolConfig("googleSearch", {
+                        ...googleSearchCfg,
+                        needsApproval: next,
+                      }),
+                    )
                   }
                 />
               </ExpandBlock>
             )}
+            {saveErrorFor("tools")}
           </div>
         </>
       )}
 
-      {/* Output format schema */}
       {agentConfig && (
         <>
           <Separator />
@@ -782,14 +817,22 @@ export function DetailsTab({
             <SectionHeader>Output Format</SectionHeader>
             <div className="flex items-center justify-between">
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-foreground">
+                <span
+                  id={`${fieldId}-output-label`}
+                  className="text-xs font-medium text-foreground"
+                >
                   Structured Output
                 </span>
-                <span className="text-2xs text-muted-foreground">
+                <span
+                  id={`${fieldId}-output-description`}
+                  className="text-2xs text-muted-foreground"
+                >
                   Import a JSON schema or write one manually
                 </span>
               </div>
               <Switch
+                aria-labelledby={`${fieldId}-output-label`}
+                aria-describedby={`${fieldId}-output-description`}
                 checked={outputFormatEnabled}
                 onCheckedChange={(checked) => handleToggleOutputFormat(checked)}
               />
@@ -840,10 +883,21 @@ export function DetailsTab({
                     '{\n  "type": "object",\n  "additionalProperties": true,\n  "properties": {\n    "answer": { "type": "string" }\n  },\n  "required": ["answer"]\n}'
                   }
                   spellCheck={false}
+                  aria-label="Output schema"
+                  aria-invalid={outputSchemaError !== null}
+                  aria-describedby={
+                    outputSchemaError !== null
+                      ? `${fieldId}-output-error`
+                      : undefined
+                  }
                   className="min-h-36 resize-y font-mono text-xs"
                 />
                 {outputSchemaError && (
-                  <p className="text-xs text-destructive">
+                  <p
+                    id={`${fieldId}-output-error`}
+                    role="alert"
+                    className="text-xs text-destructive"
+                  >
                     {outputSchemaError}
                   </p>
                 )}
@@ -853,7 +907,6 @@ export function DetailsTab({
         </>
       )}
 
-      {/* Channels: inbound webhook integrations on the agent's `channels` branch */}
       {agentConfig && onUpdateChannelConfig && (
         <>
           <Separator />
@@ -882,7 +935,10 @@ export function DetailsTab({
             </DialogDescription>
           </DialogHeader>
           {rotateError && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive"
+            >
               {rotateError}
             </p>
           )}
@@ -894,9 +950,7 @@ export function DetailsTab({
               onClick={async () => {
                 setRotateError(null);
                 try {
-                  // Close only on a confirmed rotation. A rejected mutation or
-                  // an unconfigured stage must not read as success. The
-                  // user would redeploy against a key that never changed.
+                  // Close only once rotated, or the user redeploys with a key that never changed.
                   const rotated = await onRotateKey?.();
                   if (rotated === false) {
                     setRotateError(
@@ -923,15 +977,47 @@ export function DetailsTab({
 function readCustomBaseUrl(
   agentConfig: Doc<"agentConfigs"> | null | undefined,
 ): string {
-  const extraConfig = isPlainObject(agentConfig?.extraConfig)
-    ? agentConfig.extraConfig
-    : {};
-  const provider = isPlainObject(extraConfig.provider)
-    ? extraConfig.provider
-    : {};
-  const custom = isPlainObject(provider.custom) ? provider.custom : {};
+  const custom = agentConfig?.extraConfig?.provider?.custom ?? {};
   const value =
     typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
 
   return typeof value === "string" ? value : "";
+}
+
+function UserTokenToggle({
+  configId,
+  canWrite,
+}: {
+  configId: Id<"agentConfigs">;
+  canWrite: boolean;
+}): React.JSX.Element | null {
+  const required = useQuery(api.agent.config.userTokenRequirement, {
+    configId: configId,
+  });
+  const setRequired = useMutation(api.agent.config.setRequireUserToken);
+  const [error, setError] = useState<string | null>(null);
+  if (required === undefined || required === null) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <ToggleRow
+        label="Require user token"
+        description="Runtime-key callers must send a signed user token"
+        checked={required}
+        disabled={!canWrite}
+        onCheckedChange={(next) => {
+          setError(null);
+          setRequired({ configId: configId, required: next }).catch(
+            (err: unknown) => {
+              setError(toErrorMessage(err));
+            },
+          );
+        }}
+      />
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }

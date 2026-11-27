@@ -25,7 +25,6 @@ import type { FunctionReturnType } from "convex/server";
 import { Trash2 } from "lucide-react";
 import { useState } from "react";
 
-/** Each type's mark; a new type fails the type check until it has one. */
 const LOGOS: Record<
   ConnectionType,
   (props: { className?: string }) => React.JSX.Element
@@ -37,24 +36,19 @@ export type Connection = FunctionReturnType<
   typeof api.account.connectionsPublic.list
 >[number];
 
-/** The account's connections from Convex, with disconnect behind a confirm. */
 export function ConnectionsPanel(): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const connections = useQuery(api.account.connectionsPublic.list, {});
   const disconnect = useMutation(api.account.connectionsPublic.disconnect);
   const [removing, setRemoving] = useState<Connection | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function handleDisconnect(): Promise<void> {
     if (!removing) return;
     setIsRemoving(true);
-    setError(null);
     try {
       await disconnect({ type: removing.type });
       setRemoving(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setIsRemoving(false);
     }
@@ -67,7 +61,6 @@ export function ConnectionsPanel(): React.JSX.Element {
         canWrite={canWrite}
         onDisconnect={setRemoving}
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
 
       {removing && (
         <DeleteConfirmDialog
@@ -86,13 +79,12 @@ export function ConnectionsPanel(): React.JSX.Element {
   );
 }
 
-/** Every connection type as a row: signed in, or Connect. Data-free so the UI gallery can render it. */
+// Data-free so the UI gallery can render it.
 export function ConnectionsView({
   connections,
   canWrite,
   onDisconnect,
 }: {
-  /** Undefined while loading. */
   connections: Connection[] | undefined;
   canWrite: boolean;
   onDisconnect: (connection: Connection) => void;
@@ -174,7 +166,6 @@ export function ConnectionsView({
   );
 }
 
-/** The command that signs a type in; the sign-in itself runs in the CLI's browser flow. */
 function ConnectDialogContent({
   type,
 }: {

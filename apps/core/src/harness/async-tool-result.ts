@@ -1,9 +1,17 @@
-/** Async tool result, callback, delivery, and observed state in Convex. */
-
+import type {
+  Handback,
+  HandbackMove,
+  SweptHandback,
+} from "@broods/convex/model/subagentResults";
 import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
-import { redactWithRunSecrets, runSecretValues } from "../shared/log.ts";
+import { toErrorMessage } from "../shared/errors.ts";
+import {
+  logError,
+  redactWithRunSecrets,
+  runSecretValues,
+} from "../shared/log.ts";
 import type { ReservedSandbox } from "./sandbox/types.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -33,14 +41,12 @@ export interface AsyncToolResultRecord {
   response?: JSONValue;
   error?: string;
   delivery?: AsyncToolDelivery;
-  observed?: boolean;
-  // The machine a detached job launched on; Convex fails the settle if the
-  // reservation stops naming it. Vercel's id is a name shared by every
-  // replacement, so the fence never trips there.
+  handback?: Handback;
+  // The settle fails once the reservation stops naming this machine. Vercel reuses one id
+  // across replacements, so the fence never trips there.
   sandbox?: ReservedSandbox;
   expiresAt: number;
 }
-/** Records the machine a background bash job launched on, so a replaced machine fails its settle. */
 export function bindAsyncToolResultSandbox(
   resultId: string,
   sandbox: ReservedSandbox,
@@ -50,11 +56,7 @@ export function bindAsyncToolResultSandbox(
     sandbox: sandbox,
   });
 }
-/**
- * A row for a tool that settles on its own later (a background job, an open
- * question). Its parent event is unique to the row, derived from the turn that
- * started it, so settling it resumes the conversation alone.
- */
+// The parent event is unique to the row, so settling it resumes the conversation alone.
 export function createDetachedAsyncToolResult(options: {
   eventId: string;
   tag: string;
@@ -74,21 +76,13 @@ export function createDetachedAsyncToolResult(options: {
     parentEventId: `${eventId}:${tag}:${options.resultId}`,
   });
 }
-/** Inserts a `processing` row for an async tool call; `AsyncToolCoordinator` calls it before the tool starts in the background. */
-export function createPendingAsyncToolResult(options: {
-  resultId: string;
-  parentEventId: string;
-  conversationKey: string;
-  toolName: string;
-  toolCallId: string;
-  input: unknown;
-  delivery?: AsyncToolDelivery;
-  completionToken?: string;
-}): Promise<boolean> {
-  return runtime.mutate("createAsyncToolResult", {
-    ...options,
-    input: redactWithRunSecrets(options.input),
-  });
+// The exact event that made the row: undoes `createDetachedAsyncToolResult`'s `:<tag>:<resultId>`.
+export function askingEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  const tagged = row.parentEventId.slice(0, -`:${row.resultId}`.length);
+
+  return tagged.slice(0, tagged.lastIndexOf(":"));
 }
 /** Reads one async tool row; the handler uses it for callbacks, answers and continuation runs. */
 export function getAsyncToolResult(
@@ -96,7 +90,7 @@ export function getAsyncToolResult(
 ): Promise<AsyncToolResultRecord | null> {
   return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
-/** Settles a still-processing row as completed; the coordinator and `async_status` call it. */
+/** Settles a still-processing row as completed; `async_status` calls it. */
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
   response?: JSONValue;
@@ -108,7 +102,6 @@ export async function markAsyncToolResultCompleted(options: {
     onlyWhenProcessing: true,
   });
 }
-/** Settles a still-processing row as failed; the coordinator, tools and questions call it. */
 export async function markAsyncToolResultFailed(options: {
   resultId: string;
   error: string;
@@ -120,27 +113,53 @@ export async function markAsyncToolResultFailed(options: {
     onlyWhenProcessing: true,
   });
 }
-/** Marks a finished row observed so it is not delivered again; `async_status` calls it. */
-export async function markAsyncToolResultObserved(
-  resultId: string,
-): Promise<void> {
-  await runtime.mutate("observeAsyncToolResult", { resultId: resultId });
+export function listOwedAsyncToolResults(options: {
+  handback: SweptHandback;
+  status: AsyncToolStatus;
+  updatedAfter: string;
+  updatedBefore: string;
+  cursor: string | null;
+}): Promise<{
+  page: AsyncToolResultRecord[];
+  cursor: string;
+  isDone: boolean;
+}> {
+  return runtime.query("listOwedAsyncToolResults", options);
 }
-/**
- * The event a person started, for a run that continues it: everything before the
- * first `:async-` segment of a detached or continuation event id. Traces use it to
- * group an answer's run with the run that asked.
- */
+// True when a queued continuation will deliver it: the caller must not hand it over itself.
+export async function markAsyncToolHandback(
+  resultId: string,
+  handback: HandbackMove,
+): Promise<void> {
+  try {
+    await runtime.mutate("markAsyncToolHandback", {
+      resultId: resultId,
+      handback: handback,
+    });
+  } catch (error) {
+    logError("Failed to record an async tool result's hand-back", {
+      resultId: resultId,
+      handback: handback,
+      error: toErrorMessage(error),
+    });
+  }
+}
+// Only these tags end the root: a person's own event id may start with `async-` too.
+const CONTINUATION_TAG = /:async-(?:bg|question|subagent|tools)(?::|$)/;
+
 export function rootEventId(eventId: string): string {
-  const index = eventId.indexOf(":async-");
+  const index = eventId.search(CONTINUATION_TAG);
 
   return index === -1 ? eventId : eventId.slice(0, index);
 }
-/**
- * Settles a still-processing row from outside the run, for background job
- * callbacks and question answers. Null when already settled. `secretValues`
- * are the run's own, from a caller that no run's context covers.
- */
+// Root event, not parent: a detached row's parent event id already names the row.
+export function asyncToolContinuationEventId(
+  row: Pick<AsyncToolResultRecord, "parentEventId" | "resultId">,
+): string {
+  return `${rootEventId(row.parentEventId)}:async-tools:${row.resultId}`;
+}
+
+// A callback runs outside any run's context, so it passes the run's `secretValues` itself.
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
@@ -164,7 +183,6 @@ export function settleAsyncToolResultFromCallback(options: {
         }),
   });
 }
-/** Checks a callback's completion token against the row; the handler calls it before settling. */
 export function verifyAsyncToolCompletionToken(
   resultId: string,
   completionToken: string,

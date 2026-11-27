@@ -1,9 +1,3 @@
-/**
- * Audit webhook sinks: one per account, upserted from the config route, and
- * the cron export that posts unexported ledger rows to it with an HMAC
- * signature and advances the watermark the prune reads.
- */
-
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
@@ -37,10 +31,6 @@ const auditSinkDoc = v.object({
 
 type DueSinksPage = { due: Doc<"auditSinks">[]; cursor: string | null };
 
-/**
- * Cron: drain every due sink, one page of sinks at a time. Sinks export side
- * by side, so one slow or failing receiver never holds up the rest.
- */
 export const exportDue = internalAction({
   args: {},
   returns: v.null(),
@@ -54,8 +44,7 @@ export const exportDue = internalAction({
       const outcomes = await Promise.allSettled(
         page.due.map((sink) => exportSink(ctx, sink)),
       );
-      // A delivery failure is on the sink row as `lastError`; this is the
-      // export itself failing (a query or mutation), which leaves no row.
+      // Delivery failures land on the sink row; this is the export itself failing.
       for (const [index, outcome] of outcomes.entries()) {
         if (outcome.status === "rejected") {
           console.error("Audit sink export failed", {
@@ -71,7 +60,6 @@ export const exportDue = internalAction({
   },
 });
 
-/** The sink row for one account, or null. */
 export const get = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.union(auditSinkDoc, v.null()),
@@ -80,10 +68,6 @@ export const get = internalQuery({
   },
 });
 
-/**
- * One page of sinks, keeping those whose account ledger has rows past their
- * watermark. `cursor` is null on the first page and null again after the last.
- */
 export const listDue = internalQuery({
   args: { cursor: v.union(v.string(), v.null()) },
   returns: v.object({
@@ -109,7 +93,6 @@ export const listDue = internalQuery({
   },
 });
 
-/** Record a failed delivery; the watermark stays where it was. */
 export const markError = internalMutation({
   args: { sinkId: v.id("auditSinks"), error: v.string() },
   returns: v.null(),
@@ -125,7 +108,6 @@ export const markError = internalMutation({
   },
 });
 
-/** Advance the watermark after a 2xx; never moves it backwards. */
 export const markExported = internalMutation({
   args: { sinkId: v.id("auditSinks"), exportedSeq: v.number() },
   returns: v.null(),
@@ -143,11 +125,7 @@ export const markExported = internalMutation({
   },
 });
 
-/**
- * Create or replace the account's sink and return the stored row. A new url
- * or secret keeps the watermark: the ledger is one stream, and the receiver
- * that moved still wants only what it has not seen.
- */
+// A new url or secret keeps the watermark: the moved receiver wants only what it has not seen.
 export const put = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -186,7 +164,6 @@ export const put = internalMutation({
   },
 });
 
-/** Delete the account's sink. Returns whether one existed. */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.boolean(),
@@ -199,11 +176,6 @@ export const remove = internalMutation({
   },
 });
 
-/**
- * Post one sink its unexported rows, a batch at a time, until it is caught up,
- * a delivery fails, or the per-tick cap is reached. Each 2xx moves the
- * watermark, so a failure part way keeps what was already delivered.
- */
 async function exportSink(
   ctx: ActionCtx,
   sink: Doc<"auditSinks">,
@@ -250,7 +222,6 @@ async function exportSink(
   }
 }
 
-/** Sign and post one batch. Returns null on a 2xx, else why the delivery failed. */
 async function postBatch(
   url: string,
   secret: string,
@@ -258,9 +229,7 @@ async function postBatch(
 ): Promise<string | null> {
   const body = JSON.stringify(rows.map(publicAuditEvent));
   try {
-    // No redirects: the signed body goes to the host the account named or
-    // nowhere, so a 3xx counts as a failed delivery. The timeout keeps a
-    // receiver that never answers from holding the action open.
+    // No redirects: the signed body goes to the host the account named or nowhere.
     const response = await fetch(url, {
       method: "POST",
       headers: {

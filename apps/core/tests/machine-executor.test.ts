@@ -1,18 +1,38 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { sealStageSessionTicket } from "@broods/convex/model/stageSessionTicket";
-import type { ToolExecuteFunction } from "ai";
+import {
+  simulateReadableStream,
+  streamText,
+  tool,
+  type ModelMessage,
+  type ToolApprovalRequestOutput,
+  type ToolApprovalResponse,
+  type ToolApprovalStatus,
+  type ToolExecuteFunction,
+  type ToolSet,
+} from "ai";
+import { MockLanguageModelV4 } from "ai/test";
+import { z } from "zod";
 import {
   callMcpTool,
   listMcpTools,
   mcpConnection,
 } from "../src/harness/mcp/client.ts";
-import { compatibilityApprovalStatus } from "../src/harness/policy.ts";
+import {
+  compatibilityApprovalStatus,
+  createRuntimeToolApproval,
+} from "../src/harness/policy.ts";
 import {
   MachineSandboxExecutor,
   isMachineUpgrade,
   runMachineComputerAction,
   type MachineSocketData,
 } from "../src/harness/sandbox/machine-executor.ts";
+import {
+  serializeToolCalls,
+  type ToolExecute,
+} from "../src/harness/tool-execute.ts";
 import computerTool from "../src/harness/tools/computer.tool.ts";
 import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
@@ -21,6 +41,7 @@ import {
   occupiedReason,
   parseCoreFrame,
   parseDaemonFrame,
+  type ComputerInput,
   type MachineComputerFrame,
   type MachineExecFrame,
   type MachineHelloFrame,
@@ -52,10 +73,11 @@ import {
   type MachineConnectionWrite,
 } from "./helpers/machine.ts";
 
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 const servers: Bun.Server<MachineSocketData>[] = [];
 const sockets: WebSocket[] = [];
 
-/** What a fake daemon says in its hello, and how it answers. */
 interface FakeDaemon {
   force?: boolean;
   /** The bearer it connects with; the account key when unset. */
@@ -113,7 +135,7 @@ test("a run round-trips through the daemon socket that claimed the record", asyn
 test("a run with no daemon connected names the command to fix it", async () => {
   core();
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -185,20 +207,19 @@ test("a daemon that hangs up while its claim is looked up leaves the record free
 test("another daemon is refused naming the holder, even on the same host, and --force takes over", async () => {
   const server = core();
   const holder = await connectDaemon(server, "my-mac", () => {}, {
-    hostname: "phicks-mac",
+    hostname: "office-mac",
   });
   const hello = (extra: Record<string, unknown>): string =>
     JSON.stringify({ type: "hello", sandbox: "my-mac", ...extra });
 
-  // A second daemon on the holder's own computer is the case a hostname check
-  // would have let through.
+  // A second daemon on the holder's own computer: a hostname check would let it through.
   const local = openSocket(server);
   local.onopen = (): void =>
-    local.send(hello({ hostname: "phicks-mac", instance: "second-daemon" }));
+    local.send(hello({ hostname: "office-mac", instance: "second-daemon" }));
   const refused = await closeOf(local);
 
   expect(refused.code).toBe(MACHINE_CLOSE.occupied.code);
-  expect(refused.reason).toBe(occupiedReason("phicks-mac"));
+  expect(refused.reason).toBe(occupiedReason("office-mac"));
 
   // No instance is not the same daemon.
   const anonymous = openSocket(server);
@@ -209,7 +230,7 @@ test("another daemon is refused naming the holder, even on the same host, and --
   const holderClosed = closeOf(holder.socket);
   await connectDaemon(server, "my-mac", () => {}, {
     force: true,
-    hostname: "kien-mac",
+    hostname: "laptop-mac",
     instance: "second-daemon",
   });
 
@@ -233,8 +254,7 @@ test("a role session without sandboxes:write cannot claim a machine", async () =
 test("the refusal reason fits a close frame however long the holder's host is", () => {
   const reason = occupiedReason("ü".repeat(80));
 
-  // 123 bytes is the WebSocket cap; over it, or cut mid-character, the daemon
-  // sees 1007 instead of 4423.
+  // Close reasons cap at 123 bytes; past that or cut mid-character the daemon gets 1007, not 4423.
   expect(new TextEncoder().encode(reason).length).toBeLessThanOrEqual(123);
   expect(reason).toEndWith("pass --force to take it over");
 });
@@ -351,7 +371,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
   });
   const firstClosed = closeOf(first.socket);
 
-  expect(
+  await expect(
     new MachineSandboxExecutor(machineExecutorConfig()).run({
       code: "true",
       timeoutSeconds: 5,
@@ -370,7 +390,7 @@ test("a result with missing fields is a bad frame, and so is a second hello", as
 test("the computer tool reaches a daemon started with --computer, and names the flag otherwise", async () => {
   const server = core();
   await connectDaemon(server, "my-mac", () => {});
-  expect(
+  await expect(
     runMachineComputerAction(machineExecutorConfig(), { action: "screenshot" }),
   ).rejects.toThrow("broods machine my-mac --computer");
 
@@ -381,10 +401,12 @@ test("the computer tool reaches a daemon started with --computer, and names the 
           type: "computer-result",
           id: frame.id,
           ...(frame.action === "screenshot"
-            ? { image: { data: "AAAA", mediaType: "image/png" } }
-            : {
-                text: `X=${frame.coordinate?.[0]},Y=${frame.coordinate?.[1]}`,
-              }),
+            ? { image: { data: PNG_1X1, mediaType: "image/png" } }
+            : frame.action === "zoom"
+              ? { image: { data: "AAAA", mediaType: "image/png" } }
+              : {
+                  text: `X=${frame.coordinate?.[0]},Y=${frame.coordinate?.[1]}`,
+                }),
           app: "com.apple.Safari",
         }),
       );
@@ -402,7 +424,19 @@ test("the computer tool reaches a daemon started with --computer, and names the 
     type: "content",
     value: [
       { type: "text", text: "Screenshot (frontmost app: com.apple.Safari)" },
-      { type: "image-data", data: "AAAA", mediaType: "image/png" },
+      { type: "image-data", data: PNG_1X1, mediaType: "image/png" },
+    ],
+  });
+  expect(
+    await execute({ action: "zoom", region: [0, 0, 10, 10] }, options),
+  ).toEqual({
+    type: "content",
+    value: [
+      { type: "text", text: "Zoomed region (frontmost app: com.apple.Safari)" },
+      {
+        type: "text",
+        text: "[An image (image/png, 4 base64 characters) was not shown to you: it is not a PNG, JPEG, GIF or WebP image.]",
+      },
     ],
   });
   expect(
@@ -436,7 +470,7 @@ test("with two computers attached, a call reaches the one it names", async () =>
     await execute({ action: "cursor_position", sandbox: "my-mac" }, options),
   ).toEqual({ type: "text", value: "mine on my-mac" });
   // Two screens and no name is ambiguous, so it is refused rather than guessed.
-  expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
+  await expect(execute({ action: "cursor_position" }, options)).rejects.toThrow(
     "pass sandbox with the computer to act on: my-mac, other-mac",
   );
 });
@@ -454,9 +488,8 @@ test("a name from a longer list is refused once one computer is left", async () 
   >;
   const options = { toolCallId: "call-1", messages: [], context: {} };
 
-  // An approval replayed after the agent lost a machine still carries the name it
-  // was granted for. That must not land on the machine that is left.
-  expect(
+  // A replayed approval names the machine it was granted for, never the one that is left.
+  await expect(
     execute({ action: "cursor_position", sandbox: "other-mac" }, options),
   ).rejects.toThrow("pass sandbox with the computer to act on: my-mac");
   expect(await execute({ action: "cursor_position" }, options)).toEqual({
@@ -465,13 +498,180 @@ test("a name from a longer list is refused once one computer is left", async () 
   });
 });
 
+test("one step's computer actions reach the daemon one at a time, in the model's order", async () => {
+  const server = core();
+  const sent: string[] = [];
+  let inFlight = 0;
+  let overlapped = false;
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket): void => {
+      sent.push(frame.action);
+      overlapped ||= inFlight > 0;
+      inFlight += 1;
+      setTimeout((): void => {
+        inFlight -= 1;
+        answersWith("OK")(frame, socket);
+      }, 10);
+    },
+  });
+  const { tools, reserve } = serializeToolCalls(
+    computerTool([machine()]),
+    "computer",
+  );
+  const actions: ComputerInput[] = [
+    { action: "left_click", coordinate: [10, 20] },
+    { action: "type", text: "hello" },
+    { action: "screenshot" },
+  ];
+
+  await streamText({
+    model: computerStepModel(actions),
+    prompt: "type hello into the field",
+    tools: tools,
+    // Like the harness: reserve first, then await; the click's start (a webhook) resolves last.
+    onToolExecutionStart: async ({ toolCall }): Promise<void> => {
+      reserve(toolCall);
+      if (toolCall.toolCallId === "call-0") await Bun.sleep(50);
+    },
+  }).consumeStream();
+
+  expect(sent).toEqual(["left_click", "type", "screenshot"]);
+  expect(overlapped).toBe(false);
+});
+
+test("a stopped run drops queued computer actions without waiting for the running one", async () => {
+  const click = Promise.withResolvers<void>();
+  const ran: string[] = [];
+  const { tools, reserve } = serializeToolCalls(
+    recordingComputer(ran, click.promise),
+    "computer",
+  );
+  const execute = tools.computer?.execute;
+  const controller = new AbortController();
+  const options = (toolCallId: string): Parameters<ToolExecute>[1] => ({
+    toolCallId: toolCallId,
+    messages: [],
+    abortSignal: controller.signal,
+    context: undefined,
+  });
+  reserve({ toolName: "computer", toolCallId: "click" });
+  reserve({ toolName: "computer", toolCallId: "type" });
+  const clicked = Promise.resolve(
+    execute?.({ action: "left_click" }, options("click")),
+  );
+  const typed = Promise.resolve(execute?.({ action: "type" }, options("type")));
+  await Bun.sleep(1);
+
+  controller.abort();
+  const outcome = await Promise.race([
+    typed.then(
+      (): string => "ran",
+      (): string => "dropped",
+    ),
+    Bun.sleep(50).then((): string => "still waiting"),
+  ]);
+  click.resolve();
+  await clicked;
+
+  expect(outcome).toBe("dropped");
+  expect(ran).toEqual(["left_click"]);
+});
+
+test("a computer call the SDK never runs does not hold up the next one", async () => {
+  const sent: string[] = [];
+  const server = core();
+  await connectDaemon(server, "my-mac", () => {}, {
+    onComputer: (frame, socket): void => {
+      sent.push(frame.action);
+      answersWith("OK")(frame, socket);
+    },
+  });
+  const { tools, reserve } = serializeToolCalls(
+    computerTool([machine()]),
+    "computer",
+  );
+
+  // call-0 is denied, call-1 is not valid input, so neither starts.
+  await streamText({
+    model: computerStepModel([
+      { action: "left_click", coordinate: [10, 20] },
+      { action: "dance" },
+      { action: "screenshot" },
+    ]),
+    prompt: "look at the screen",
+    tools: tools,
+    toolApproval: ({ toolCall }): "denied" | "approved" =>
+      toolCall.toolCallId === "call-0" ? "denied" : "approved",
+    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
+  }).consumeStream();
+
+  expect(sent).toEqual(["screenshot"]);
+});
+
+test("in ask mode, a screenshot after a click waiting for approval waits with it and runs after it", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+
+  expect(ran).toEqual([]);
+  expect(
+    asked.requests.map((request): [string, boolean] => [
+      request.toolCall.toolCallId,
+      request.isAutomatic === true,
+    ]),
+  ).toEqual([
+    ["call-0", false],
+    ["call-1", false],
+  ]);
+
+  await resumed(
+    ran,
+    asked,
+    [true, true],
+    [{ action: "screenshot" }],
+  ).consumeStream();
+
+  // The hold ends with its step: the next step's screenshot does not ask.
+  expect(ran).toEqual(["left_click", "screenshot", "screenshot"]);
+});
+
+test("a denied click does not hold up the screenshot that waited with it", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+  const outcome = await Promise.race([
+    resumed(ran, asked, [false, true], [])
+      .consumeStream()
+      .then((): string => "settled"),
+    Bun.sleep(500).then((): string => "hung"),
+  ]);
+
+  expect(outcome).toBe("settled");
+  expect(ran).toEqual(["screenshot"]);
+});
+
+test("a stopped run drops the screenshot queued behind an approved click", async () => {
+  const ran: string[] = [];
+  const asked = await askedClickThenScreenshot(ran);
+  const stop = new AbortController();
+  const outcome = Promise.race([
+    resumed(ran, asked, [true, true], [], stop)
+      .consumeStream({ onError: (): void => {} })
+      .then((): string => "settled"),
+    Bun.sleep(500).then((): string => "hung"),
+  ]);
+  await waitFor((): boolean => ran.length > 0);
+  stop.abort();
+
+  expect(await outcome).toBe("settled");
+  expect(ran).toEqual(["left_click"]);
+});
+
 test("an MCP row lists and calls through the daemon that serves that server", async () => {
   const server = core();
   const connection = mcpConnection(machineMcpRecord(), undefined);
 
-  expect(listMcpTools(connection)).rejects.toThrow("is not connected");
+  await expect(listMcpTools(connection)).rejects.toThrow("is not connected");
   await connectDaemon(server, "my-mac", () => {}, { mcp: ["other"] });
-  expect(listMcpTools(connection)).rejects.toThrow(
+  await expect(listMcpTools(connection)).rejects.toThrow(
     'does not serve MCP server "echo"',
   );
 
@@ -547,6 +747,30 @@ test("core records each daemon connection, and a disconnect names that same conn
   expect(second?.ref.connectionId).not.toBe(first?.ref.connectionId);
 });
 
+test("a policy deny stands in ask mode instead of becoming a prompt", async () => {
+  const { approval } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+    policyApproval: async (): Promise<ToolApprovalStatus> => "denied",
+  });
+
+  expect(
+    await approval?.({
+      toolCall: {
+        type: "tool-call",
+        toolCallId: "call-0",
+        toolName: "computer",
+        input: { action: "left_click" },
+      },
+      tools: {},
+      toolsContext: {},
+      runtimeContext: {},
+      messages: [],
+    }),
+  ).toBe("denied");
+});
+
 test("looking at the screen is free, anything else asks unless the sandbox is bypass", () => {
   const approval = (
     action: string,
@@ -599,8 +823,7 @@ test("approval follows the computer a call names, not the agent's own", () => {
 
   expect(approval("my-mac")).toBe("user-approval");
   expect(approval("other-mac")).toBeUndefined();
-  // Naming none, or naming one that is not attached, cannot silently land on the
-  // machine that happens to be `bypass`.
+  // Naming none, or one not attached, must never land on the machine that is `bypass`.
   expect(approval()).toBe("user-approval");
   expect(approval("nope")).toBe("user-approval");
 });
@@ -677,13 +900,96 @@ test("each side's parser drops a frame whose fields do not match its type", () =
   });
 });
 
-/** A fake daemon that answers every computer frame with one fixed text. */
 function answersWith(text: string): NonNullable<FakeDaemon["onComputer"]> {
   return (frame, socket): void => {
     socket.send(
       JSON.stringify({ type: "computer-result", id: frame.id, text: text }),
     );
   };
+}
+
+async function askedClickThenScreenshot(ran: string[]): Promise<{
+  messages: ModelMessage[];
+  requests: ToolApprovalRequestOutput<ToolSet>[];
+}> {
+  const prompt: ModelMessage[] = [
+    { role: "user", content: "click the field, then look" },
+  ];
+  const step = askModeStream(ran, Bun.sleep(10), {
+    model: computerStepModel([
+      { action: "left_click", coordinate: [10, 20] },
+      { action: "screenshot" },
+    ]),
+    messages: prompt,
+  });
+  const content = await step.content;
+
+  return {
+    messages: [...prompt, ...(await step.response).messages],
+    requests: content.flatMap((part): ToolApprovalRequestOutput<ToolSet>[] =>
+      part.type === "tool-approval-request" ? [part] : [],
+    ),
+  };
+}
+
+function askModeStream(
+  ran: string[],
+  clicked: Promise<void>,
+  options: {
+    model: MockLanguageModelV4;
+    messages: ModelMessage[];
+    abortSignal?: AbortSignal;
+  },
+): ReturnType<typeof streamText> {
+  const { tools, reserve } = serializeToolCalls(
+    recordingComputer(ran, clicked),
+    "computer",
+  );
+  const { approval, startStep } = createRuntimeToolApproval({
+    configuredApprovals: new Map(),
+    workspaces: [],
+    sandboxes: [machine()],
+  });
+
+  return streamText({
+    ...options,
+    tools: tools,
+    ...(approval ? { toolApproval: approval } : {}),
+    onStepStart: startStep,
+    onToolExecutionStart: ({ toolCall }): void => reserve(toolCall),
+  });
+}
+
+function computerStepModel(
+  inputs: Record<string, unknown>[],
+): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    doStream: {
+      stream: simulateReadableStream<LanguageModelV4StreamPart>({
+        chunks: [
+          ...inputs.map((input, index): LanguageModelV4StreamPart => ({
+            type: "tool-call",
+            toolCallId: `call-${index}`,
+            toolName: "computer",
+            input: JSON.stringify(input),
+          })),
+          {
+            type: "finish",
+            finishReason: { unified: "tool-calls", raw: "tool_use" },
+            usage: {
+              inputTokens: {
+                total: 1,
+                noCache: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
+              outputTokens: { total: 1, text: 1, reasoning: 0 },
+            },
+          },
+        ],
+      }),
+    },
+  });
 }
 
 function connectDaemon(
@@ -734,7 +1040,6 @@ function core(): Bun.Server<MachineSocketData> {
   return server;
 }
 
-/** One of the two machine records, as the computer tool sees it. */
 function machine(
   name: "my-mac" | "other-mac" = "my-mac",
   permissionMode: SandboxPermissionMode = "ask",
@@ -761,6 +1066,21 @@ function openSocket(
   return socket;
 }
 
+// A click lasts until `clicked` settles.
+function recordingComputer(ran: string[], clicked: Promise<void>): ToolSet {
+  return {
+    computer: tool({
+      inputSchema: z.object({ action: z.string() }).loose(),
+      execute: async ({ action }): Promise<string> => {
+        ran.push(action);
+        if (action === "left_click") await clicked;
+
+        return action;
+      },
+    }),
+  };
+}
+
 function result(
   id: string,
   overrides: Partial<MachineResultFrame>,
@@ -776,4 +1096,35 @@ function result(
     truncated: false,
     ...overrides,
   };
+}
+
+// The pass after a person answers `asked`; the click lasts until `stop` aborts, if given.
+function resumed(
+  ran: string[],
+  asked: Awaited<ReturnType<typeof askedClickThenScreenshot>>,
+  answers: boolean[],
+  next: Record<string, unknown>[],
+  stop?: AbortController,
+): ReturnType<typeof streamText> {
+  const clicked = stop
+    ? new Promise<void>((resolve): void => {
+        stop.signal.addEventListener("abort", (): void => resolve());
+      })
+    : Bun.sleep(10);
+
+  return askModeStream(ran, clicked, {
+    model: computerStepModel(next),
+    messages: [
+      ...asked.messages,
+      {
+        role: "tool",
+        content: asked.requests.map((request, index): ToolApprovalResponse => ({
+          type: "tool-approval-response",
+          approvalId: request.approvalId,
+          approved: answers[index] === true,
+        })),
+      },
+    ],
+    ...(stop ? { abortSignal: stop.signal } : {}),
+  });
 }

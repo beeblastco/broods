@@ -1,17 +1,12 @@
-/**
- * Shared plumbing for the config-plane HTTP routes: Bearer auth resolution,
- * collection paging, audit writes, and the reserved-sandbox teardown used by
- * workspace and sandbox deletes. The JSON response helpers it re-exports live
- * in `model/httpJson` so the CLI plane can answer the same way.
- */
-
 import type { PaginationOptions, PaginationResult } from "convex/server";
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import type { AccountLogin } from "../../cli/auth";
 import { cipherFromKeys } from "../../model/accountKeys";
 import {
   ACCOUNT_KEY_PREFIX,
+  CLI_TOKEN_PREFIX,
   RUNTIME_KEY_PREFIX,
   sha256Hex,
 } from "../../model/accountSecrets";
@@ -39,20 +34,28 @@ import type { AccountCipher, WrappedAccountKey } from "../../model/envelope";
 export { json, jsonError, methodNotAllowed, rateLimitHeaders };
 
 const AUTH_FAILURE_MAX = 20;
+export const AUTH_FAILURE_BUCKETS = 4096;
 
 const MAX_PAGE_SIZE = 1000;
 
 export type ConfigAuth =
   | { kind: "admin" }
-  | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
+  | {
+      kind: "account";
+      account: Doc<"accounts">;
+      viaServiceToken?: boolean;
+      // Set for a `bcli_` login: an owner or admin's own token, refused for key rotation.
+      cliLogin?: { authId: string; lentToAgent: boolean };
+    }
   | { kind: "deployment" }
-  | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
+  | {
+      kind: "role";
+      account: Doc<"accounts">;
+      role: RolePrincipal;
+      // Set when a scoped account key, not a bsts_ session, carries the role.
+      keyId?: Id<"accountApiKeys">;
+    };
 
-/**
- * The keyring from an HTTP action, which has no `ctx.db`. A `read` fetches the
- * keys with a query; a `write` runs the mutation that mints the first key when
- * the account has none. Build it once per request and pass it down.
- */
 export async function accountCipherForAction(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -70,15 +73,17 @@ export async function accountCipherForAction(
   return cipherFromKeys(accountId, keys);
 }
 
-/**
- * @param auth resolved config HTTP auth
- * @returns actor metadata for audit rows
- */
 export function auditActorForAuth(auth: ConfigAuth): AuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
-  if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
+  if (auth.kind === "role") {
+    return auth.keyId
+      ? { kind: "accountApiKey", id: auth.keyId }
+      : { kind: "role", id: auth.role.roleId };
+  }
   if (auth.viaServiceToken === true) return { kind: "service" };
+  // The user, not the token: expired tokens are pruned, the ledger keeps who acted.
+  if (auth.cliLogin) return { kind: "cli", id: auth.cliLogin.authId };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
 }
@@ -90,12 +95,6 @@ export function bearerToken(req: Request): string | null {
   return match?.[1]?.trim() || null;
 }
 
-/**
- * Fetch an account document by id, treating malformed ids as not found.
- * @param ctx Convex action context
- * @param accountId account id string from the route
- * @returns account document or null
- */
 export async function getAccountById(
   ctx: ActionCtx,
   accountId: string,
@@ -114,19 +113,6 @@ export async function getAccountById(
   }
 }
 
-/**
- * One page of a Convex-backed collection under the collection's own key, or the
- * whole collection when the caller asked for no page.
- *
- * `source.page` runs only when the caller supplies `limit` or `cursor`, and it
- * walks the index rather than reading the collection and slicing it, so the
- * cursor bounds the backend read and not just the response. `source.item` runs
- * over the rows actually served, so a route that decrypts each row pays for the
- * page instead of the collection.
- *
- * A cursor with no `limit` is a client continuing a walk without restating its
- * page size; it gets the largest page these routes serve.
- */
 export async function collectionPage<Row, Item>(
   key: string,
   req: Request,
@@ -140,9 +126,8 @@ export async function collectionPage<Row, Item>(
   const rawLimit = url.searchParams.get("limit")?.trim() ?? "";
   const rawCursor = url.searchParams.get("cursor")?.trim() ?? "";
 
-  // No `limit` and no `cursor` means the whole collection, the way these routes
-  // answered before paging existed. A default page size would silently drop
-  // rows for every client that has not asked for a page yet.
+  // No limit and no cursor serves the whole collection: a default page size would
+  // silently drop rows for every client that never asked for a page.
   if (rawLimit === "" && rawCursor === "") {
     return json({
       [key]: await Promise.all((await source.all()).map(source.item)),
@@ -180,20 +165,12 @@ export async function collectionPage<Row, Item>(
   });
 }
 
-/**
- * One page of an in-memory collection. Only for a collection that is not a
- * Convex table walk: `skills` comes back from an AWS action with no index to
- * key a cursor on, so its cursor stays an offset and the whole list is still
- * materialized. Table-backed collections use `collectionPage`.
- */
+/** For a list with no index to key a cursor on (`skills`): the cursor is an offset. */
 export function paginated<T>(key: string, items: T[], req: Request): Response {
   const url = new URL(req.url);
   const rawLimit = url.searchParams.get("limit")?.trim() ?? "";
   const rawCursor = url.searchParams.get("cursor")?.trim() ?? "";
 
-  // No `limit` means the whole collection. A default page size would silently
-  // drop rows for every client that has not asked for a page. The cursor is an
-  // offset, so moving to keyset paging later changes only its encoding.
   const limit = rawLimit === "" ? items.length : parsePageLimit(rawLimit);
   if (limit === null) {
     return jsonError(
@@ -222,11 +199,6 @@ export function paginated<T>(key: string, items: T[], req: Request): Response {
   });
 }
 
-/**
- * Read and parse a JSON request body with core's empty-body and syntax strings.
- * @param req incoming HTTP request
- * @returns parsed JSON value or empty object
- */
 export async function parseJsonRequest(req: Request): Promise<unknown> {
   const text = await req.text();
   if (!text.trim()) return {};
@@ -239,11 +211,6 @@ export async function parseJsonRequest(req: Request): Promise<unknown> {
   }
 }
 
-/**
- * @param ctx the action context
- * @param req the incoming request
- * @returns account or role auth, or an error response
- */
 export async function requireAccount(
   ctx: ActionCtx,
   req: Request,
@@ -256,12 +223,6 @@ export async function requireAccount(
   return jsonError(401, "Unauthorized");
 }
 
-/**
- * Require the admin bearer secret for `/accounts*` routes.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns true or an error response
- */
 export async function requireAdminAuth(
   ctx: ActionCtx,
   req: Request,
@@ -273,13 +234,6 @@ export async function requireAdminAuth(
   return true;
 }
 
-/**
- * Require account-secret or role-session auth for `/v1/account*` routes with
- * core parity. Callers decide what a role session may do on the route.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns active account or role auth, or an error response
- */
 export async function requireSelfAccount(
   ctx: ActionCtx,
   req: Request,
@@ -300,24 +254,56 @@ export async function requireSelfAccount(
   return auth;
 }
 
-/**
- * The 401 a run token (`brt_`) gets on every config-plane and CLI route,
- * on the prefix alone: it is a core credential for one agent run. Null for
- * any other bearer.
- */
+// A login lent to the agent dies with its user token: nothing it mints may outlive it.
+export async function lentLoginRefusal(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response | null> {
+  const token = bearerToken(req);
+  if (!token?.startsWith(CLI_TOKEN_PREFIX)) return null;
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: await sha256Hex(token) },
+  );
+
+  return login?.lentToAgent
+    ? jsonError(
+        403,
+        "A login lent to the agent cannot mint or manage credentials; use the dashboard or an account key",
+      )
+    : null;
+}
+
+// Text from end users' chats may now sit in the agent's context, so its login may only read.
+export async function observedLoginRefusal(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response | null> {
+  const token = bearerToken(req);
+  if (req.method === "GET" || !token?.startsWith(CLI_TOKEN_PREFIX)) return null;
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: await sha256Hex(token) },
+  );
+
+  return login?.observed
+    ? jsonError(
+        403,
+        "This conversation read logs, so it is read-only. Propose the change for the user to apply. Reloading the page starts a new conversation.",
+        { code: "read_only_after_logs" },
+      )
+    : null;
+}
+
+/** A run token (`brt_`) is core's credential for one run: refused on its prefix alone. */
 export function runTokenRefusal(req: Request): Response | null {
   return bearerToken(req)?.startsWith(RUN_TOKEN_PREFIX)
     ? jsonError(401, "run tokens cannot reach the config plane")
     : null;
 }
 
-/**
- * Terminate reserved sandbox instances matching a predicate through core's
- * lifecycle route (which owns the decrypted provider credentials). Best-effort:
- * skips rows without a sandboxConfigId, already terminating or ephemeral (core
- * refuses those, and their call removes them), and swallows per-instance
- * failures. `error` rows are tried: they may still hold a machine.
- */
+// Best-effort, through core: it holds the provider credentials. Ephemeral rows are removed
+// by their own call; `error` rows are still tried, they may hold a machine.
 export async function terminateReservedInstances(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -360,12 +346,6 @@ export async function terminateReservedInstances(
   );
 }
 
-/**
- * Apply failed-auth rate limiting before returning a 401 for unknown credentials.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns 401 or 429 response
- */
 export async function unauthorizedResponse(
   ctx: ActionCtx,
   req: Request,
@@ -387,14 +367,8 @@ export async function unauthorizedResponse(
   );
 }
 
-/**
- * Write one audit event through the internal mutation exposed for HTTP actions.
- * The config write has already committed by the time this runs, so audit
- * failures are logged and swallowed. They must not turn a committed change
- * into a 500 (a client retry of a POST would then duplicate the resource).
- * @param ctx Convex action context
- * @param event sanitized event metadata
- */
+// The config write has already committed: a failed audit write is logged, never a 500
+// that a client retry of the POST would turn into a duplicate resource.
 export async function writeAudit(
   ctx: ActionCtx,
   event: {
@@ -428,33 +402,58 @@ export async function writeAudit(
   }
 }
 
-/**
- * Build the failed-auth limiter key from rightmost XFF and token hash prefix.
- * @param req incoming HTTP request
- * @returns limiter key
- */
-async function authFailureKey(req: Request): Promise<string> {
+// Keyed by source, never the bearer the caller picks. Through Traefik the rightmost XFF hop
+// is the client; a caller on the site port can spoof it, so sources land in a bounded set of
+// buckets under an HMAC: nobody can pick addresses that share a victim's bucket.
+export async function authFailureKey(req: Request): Promise<string> {
+  const secret = process.env.SERVICE_AUTH_SECRET;
+  if (!secret) {
+    throw new Error("SERVICE_AUTH_SECRET is required to count failed logins");
+  }
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const ip =
     forwarded
       .split(",")
       .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() ?? "unknown";
-  const token = bearerToken(req);
-  const tokenHashPrefix = token
-    ? (await sha256Hex(token)).slice(0, 8)
-    : "missing";
+      .findLast(Boolean) ?? "unknown";
+  const encoder = new TextEncoder();
+  const algorithm = { name: "HMAC", hash: "SHA-256" };
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    algorithm,
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    algorithm,
+    key,
+    encoder.encode(sourcePrefix(ip)),
+  );
 
-  return `${ip}:${tokenHashPrefix}`;
+  return `source:${new DataView(mac).getUint32(0) % AUTH_FAILURE_BUCKETS}`;
 }
 
-/**
- * Compare two already-hashed secrets without comparing plaintext values.
- * @param left first hex digest
- * @param right second hex digest
- * @returns true when digests are equal
- */
+// An IPv6 client usually holds a whole /64, so the /64 counts as one source.
+function sourcePrefix(ip: string): string {
+  if (!ip.includes(":") || ip.includes(".")) return ip;
+  const [head = "", tail = ""] = ip.split("::");
+  const headGroups = head ? head.split(":") : [];
+  const tailGroups = tail ? tail.split(":") : [];
+  const zeros = Math.max(0, 8 - headGroups.length - tailGroups.length);
+  const groups = [
+    ...headGroups,
+    ...Array<string>(zeros).fill("0"),
+    ...tailGroups,
+  ];
+
+  return `${groups
+    .slice(0, 4)
+    .map((group) => parseInt(group, 16).toString(16))
+    .join(":")}::/64`;
+}
+
+// Constant time: no early exit on the first differing character.
 function digestEqual(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
   let diff = 0;
@@ -465,13 +464,6 @@ function digestEqual(left: string, right: string): boolean {
   return diff === 0;
 }
 
-/**
- * Resolve Bearer auth into admin, account, service-account, deployment, or
- * role-session auth.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns auth context or null for missing/unknown/disabled credentials
- */
 async function resolveBearerAuth(
   ctx: ActionCtx,
   req: Request,
@@ -508,37 +500,88 @@ async function resolveBearerAuth(
       : null;
   }
 
+  if (token.startsWith(CLI_TOKEN_PREFIX)) {
+    return await resolveCliLoginAuth(ctx, tokenHash);
+  }
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {
     const deployment: {
       accountId: Id<"accounts">;
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-    } | null = await ctx.runQuery(internal.agent.deployments.getByApiKeyHash, {
-      apiKeyHash: tokenHash,
-    });
+    } | null = await ctx.runQuery(
+      internal.runtimeLookups.deploymentByApiKeyHash,
+      {
+        apiKeyHash: tokenHash,
+      },
+    );
 
     return deployment ? { kind: "deployment" } : null;
   }
   if (!token.startsWith(ACCOUNT_KEY_PREFIX)) return null;
 
   const account: Doc<"accounts"> | null = await ctx.runQuery(
-    internal.account.accounts.getBySecretHash,
+    internal.runtimeLookups.accountBySecretHash,
     { secretHash: tokenHash },
   );
+  if (!account) return await resolveScopedKeyAuth(ctx, tokenHash);
 
-  return account && account.status === "active"
+  return account.status === "active"
     ? { kind: "account", account: account }
     : null;
 }
 
-/** Resolve a role session token hash to role auth on its active account. */
+async function resolveCliLoginAuth(
+  ctx: ActionCtx,
+  tokenHash: string,
+): Promise<ConfigAuth | null> {
+  const login: AccountLogin | null = await ctx.runMutation(
+    internal.cli.auth.resolveAccountLogin,
+    { tokenHash: tokenHash },
+  );
+
+  return login
+    ? {
+        kind: "account",
+        account: login.account,
+        cliLogin: { authId: login.authId, lentToAgent: login.lentToAgent },
+      }
+    : null;
+}
+
+async function resolveScopedKeyAuth(
+  ctx: ActionCtx,
+  keyHash: string,
+): Promise<ConfigAuth | null> {
+  const now = Date.now();
+  const key = await ctx.runQuery(internal.account.apiKeys.resolve, {
+    keyHash: keyHash,
+    now: now,
+  });
+  if (!key) return null;
+  if (key.stampDue) {
+    await ctx.scheduler
+      .runAfter(0, internal.account.apiKeys.touchLastUsed, {
+        keyId: key.keyId,
+        usedAt: now,
+      })
+      .catch((err: unknown) => console.warn("lastUsedAt stamp failed", err));
+  }
+
+  return {
+    kind: "role",
+    account: key.account,
+    role: key.principal,
+    keyId: key.keyId,
+  };
+}
+
 async function resolveRoleSessionAuth(
   ctx: ActionCtx,
   tokenHash: string,
 ): Promise<ConfigAuth | null> {
   const principal: RolePrincipal | null = await ctx.runQuery(
-    internal.account.roles.resolveSession,
+    internal.runtimeLookups.roleSessionByTokenHash,
     { tokenHash: tokenHash },
   );
   if (!principal) return null;
@@ -552,14 +595,8 @@ async function resolveRoleSessionAuth(
     : null;
 }
 
-/**
- * Cursors carry the collection they were issued for, so one handed out by
- * `agents` is refused by `roles` rather than walking the wrong table.
- *
- * Convex's cursor holds the index key it stopped at, which for most of these
- * collections is a name the account chose, so it can hold any code point.
- * `btoa` only takes Latin-1, hence the percent-encoding on the way in.
- */
+// A cursor names its collection, so one from `agents` cannot walk `roles`. It can hold any
+// code point (an index key the account chose) and `btoa` takes Latin-1: hence the %-encoding.
 function decodePageCursor(key: string, cursor: string): string | null {
   try {
     const decoded: unknown = JSON.parse(decodeURIComponent(atob(cursor)));
@@ -583,7 +620,6 @@ function encodePageCursor(key: string, cursor: string): string {
   return btoa(encodeURIComponent(JSON.stringify([key, cursor])));
 }
 
-/** Rejects hex, exponent and decimal forms that `Number` would accept. */
 function parsePageLimit(raw: string): number | null {
   if (!/^\d+$/.test(raw)) return null;
   const limit = Number(raw);
@@ -591,14 +627,8 @@ function parsePageLimit(raw: string): number | null {
   return limit >= 1 && limit <= MAX_PAGE_SIZE ? limit : null;
 }
 
-/**
- * Refuse a role's write that names an account env var as `${NAME}` the role
- * may not read. The config plane resolves those names into the stored config,
- * so naming one would hand its value to whatever the config sends it to. A
- * top-level section left exactly as it was keeps the names someone who could
- * read them put there; any change to a section could carry one somewhere new,
- * such as a prompt or a provider or MCP URL the role points at itself.
- */
+// `${NAME}` resolves into the stored config, so a role may only name env vars it can read.
+// An untouched top-level section keeps the names someone who could read them put there.
 export function assertRoleMayReadEnv(
   role: RolePrincipal | undefined,
   before: object | undefined,
@@ -623,10 +653,6 @@ export function assertRoleMayReadEnv(
   }
 }
 
-/**
- * Refuse a stage-pinned role's write that names a resource on another stage,
- * so a pinned session cannot wire its own resources to another stage's.
- */
 export async function assertRefsInPin(
   ctx: ActionCtx,
   accountId: Id<"accounts">,

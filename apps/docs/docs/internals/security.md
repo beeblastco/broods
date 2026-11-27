@@ -51,6 +51,7 @@ flowchart TD
 - The account key is returned once on create or rotation. Only `secretHash` is kept.
 - Provider credentials must be usable at runtime, so they are encrypted, not hashed.
 - The workspace, skills, tool-bundles and MicroVM artifact buckets block public access. `denyUnlessProjectPrincipal()` in `apps/core/sst.config.ts` denies `s3:*` to everyone but the stage's `sandbox-s3mount`, `microvm-build` and `microvm-execution` roles, the `core-runtime` user, the `convex-aws` role, the GitHub Actions deploy roles and the account root.
+- On production, when `RUNTIME_EGRESS_IPS` is set (the cluster's public address), the `core-runtime` and `convex-bootstrap` users deny every AWS call that does not come from it, so their static keys are useless off the cluster. Unset, those keys are not IP-restricted.
 
 ## Encryption at rest
 
@@ -79,7 +80,7 @@ sequenceDiagram
 ```
 
 - The additional data binds a blob to its tenant, table and column, and the `keyId` names the key that opens it.
-- Encrypted columns (`ENVELOPE_COLUMNS`): `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext`, `connections.ciphertext`, `auditSinks.encryptedSecret`.
+- Encrypted columns (`ENVELOPE_COLUMNS`): `agents.encryptedConfig` and `encryptedSourceConfig`, the same two on `sandboxConfigs`, `environmentVariables.ciphertext`, `accountEnvVars.ciphertext`, `agentRuntimeSecrets.ciphertext`, `agentDeployments.apiKeyCiphertext`, `channelEndpoints.tokenCiphertext`, `connections.ciphertext`, `mcp.connectionCiphertext`, `auditSinks.encryptedSecret`.
 - The CLI compares env values by plain SHA-256, which `listEnvBySecretHash` computes per request from the decrypted value. The stored digest is keyed, so a table dump cannot be brute-forced.
 - Convex runs the cipher on Web Crypto and builds the keyring per request (`model/accountKeys.ts`). Core runs it on `node:crypto` (`src/shared/node-aead.ts`) and caches unwrapped keys per account for 5 minutes (`src/shared/convex/account-keys.ts`), refreshing once when a row names an unknown key. The format is the same on both sides.
 
@@ -110,16 +111,18 @@ Reads redact secret-like field names (`token`, `secret`, `privateKey`, `apiKey`,
 
 ## Credentials
 
-| Prefix   | Credential           | Scope                                                                         |
-| -------- | -------------------- | ----------------------------------------------------------------------------- |
-| `bask_`  | Account key          | Whole tenant                                                                  |
-| `bcli_`  | CLI login token      | An org owner or admin, re-checked against membership on every request         |
-| `bsk_`   | Runtime key          | One account, project, stage and endpoint. Encrypted, recoverable by its owner |
-| `bpdk_`  | Project key          | One project and stage                                                         |
-| `brole_` | Role                 | Never used directly. Exchanged for a session                                  |
-| `bsts_`  | Role session         | The role's policy. Default 1 hour, max 12. Only the hash is stored            |
-| `bdts_`  | Stage session ticket | 15 minutes, signed by Convex with `STAGE_TICKET_SECRET`                       |
-| `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                      |
+| Prefix   | Credential           | Scope                                                                                                           |
+| -------- | -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `bask_`  | Account key          | Whole tenant                                                                                                    |
+| `bask_`  | Scoped account key   | Its own policy and optional stage pin, until `expiresAt`. Only the hash is stored                               |
+| `bcli_`  | CLI login token      | An org owner or admin, re-checked against membership on every request. Also the account API, never key rotation |
+| `bsk_`   | Runtime key          | One account, project, stage and endpoint. Encrypted, recoverable by its owner                                   |
+| `bpdk_`  | Project key          | One project and stage                                                                                           |
+| `brole_` | Role                 | Never used directly. Exchanged for a session                                                                    |
+| `bsts_`  | Role session         | The role's policy. Default 1 hour, max 12. Only the hash is stored                                              |
+| `bdts_`  | Stage session ticket | 15 minutes, signed by Convex with `STAGE_TICKET_SECRET`                                                         |
+| `bdob_`  | Logs ticket          | 5 minutes at most, never past its login. Reads one stage's logs and traces, nothing else                        |
+| `brt_`   | Run token            | Reads its own agent's runs. Signed by core, never stored                                                        |
 
 Every credential starts with `b`, and the `broods-credential` rule in `.gitleaks.toml` matches each full shape (`brole_` ids are not secrets). Core resolves a bearer in `resolveBearerAuth()` (`apps/core/src/shared/auth.ts`):
 
@@ -142,19 +145,56 @@ flowchart TD
   Bsk -->|yes| Key{"sha256 in agentDeployments?"}
   Key -->|yes| Deploy["runtime key<br/>kind: deployment"]
   Bsk -->|no| Deny["null, 401"]
-  Acct -->|no| Deny
+  Acct -->|no| Scoped{"keyHash in accountApiKeys,<br/>not expired?"}
+  Scoped -->|yes| ScopedCtx["the key's policy and pin<br/>kind: role"]
+  Scoped -->|no| Deny
   Key -->|no| Deny
 ```
 
-Every branch that names an account requires it `active`, except the account key on `DELETE /v1/account`, so an owner can retry a deletion. `bcli_` and `bpdk_` never reach core; the config plane checks them in `packages/convex/cli/http.ts`.
+Every branch that names an account requires it `active`, except the account key on `DELETE /v1/account`, so an owner can retry a deletion. `bcli_` and `bpdk_` never reach core; the config plane checks them in `packages/convex/cli/http.ts`, and `resolveBearerAuth` in `config/routes/shared.ts` takes a `bcli_` as account auth for `/v1/...` in one `cli/auth.resolveAccountLogin` call, audited as `cli` with the user's auth id, which outlives the pruned token row.
 
-| Credential           | Limits the code enforces                                                                                                                                                                                                                                        |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime key `bsk_`   | Own stage only (another stage's `agentId` answers `404`). Needs `publicAccess: true`. No `system` or `model` override without `allowRunOverrides` (`403 run_overrides_disabled`). `continue: true` only into direct-API conversations. No observability socket. |
-| Stage ticket `bdts_` | Every agent of its stage. `continue: true` re-enters channel sessions too.                                                                                                                                                                                      |
-| Project key `bpdk_`  | Syncs its own stage. Cannot replace a skill or hook another stage manages. Sets and lists env vars but never reads a value.                                                                                                                                     |
-| Role session `bsts_` | Cannot mint sessions, rotate the account key or touch `/v1/roles`. A pinned session's resource must resolve to its stage first (`authorize()` in `packages/convex/model/apiAuthorization.ts`). A disabled role kills every live session.                        |
-| Login `bcli_`        | `broods login` binds the one-time code with S256 PKCE. `broods env get` reveals are recorded in `environmentVariableReveals`.                                                                                                                                   |
+| Credential           | Limits the code enforces                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime key `bsk_`   | Own stage only (another stage's `agentId` answers `404`). Needs `publicAccess: true`. No `system` or `model` override without `allowRunOverrides` (`403 run_overrides_disabled`). `continue: true` only into direct-API conversations. With a user token, only that user's namespace; without one, no user's (see below). An agent with `requireUserToken` refuses it without a token. Opens its stage's agent WebSocket, where every frame passes these same checks; never the observability socket.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Stage ticket `bdts_` | Every agent of its stage. `continue: true` re-enters channel sessions too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Project key `bpdk_`  | Syncs its own stage. Cannot replace a skill or hook another stage manages. Sets and lists env vars but never reads a value. Rotates its stage's user token signing secret.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Role session `bsts_` | Cannot mint sessions, rotate the account key or touch `/v1/roles`. A pinned session's resource must resolve to its stage first (`authorize()` in `packages/convex/model/apiAuthorization.ts`). A disabled role kills every live session.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Scoped key `bask_`   | Every role session limit, on the key's own policy and pin. The config plane and core resolve it only after the account key misses, so the CLI plane, `assume-role`, connections and skill downloads, which look up the account key alone, answer `401`. Revoking deletes the row. The audit actor is `accountApiKey` with the key's id.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Login `bcli_`        | `broods login` is approved on a dashboard page that shows the code the terminal printed, and only the CLI holding the S256 PKCE verifier can collect it. A waiting CLI is handed a login only after the Approve click; opening the link alone records nothing. `broods env get` reveals are recorded in `environmentVariableReveals`. Refused for `POST /v1/account/rotate-secret`. The dashboard's agent dock mints one per session for an owner or admin only (the tiers that hold the whole account), expiring with its user token and marked `lentToAgent`. The CLI plane never resolves a lent login, and `managesCredentials` in `config/http.ts` refuses it (403) on role writes, `assume-role`, connection writes, `PATCH /v1/account`, audit writes and key rotation. `broods logout` revokes its own token (`DELETE /v1/account/auth/token`). `cli/auth.pruneExpiredTokens` deletes expired rows daily. |
+
+### End-user tokens
+
+The runtime key is embeddable, so it carries no end-user identity. A `buat_` user token rides beside it in `X-Broods-User-Token` (or the `broods.user.<token>` subprotocol on the agent socket, which the gateway forwards as that header on every core call).
+
+- **Format.** The same signed ticket as `bdts_` (`sealSignedTicket` in `packages/convex/model/stageSessionTicket.ts`): base64url JSON `{userId, conversations?, credentialSealed?, expiresAt}` and an HMAC-SHA256 over it, keyed by SHA-256 of `broods-user-token:` plus the stage's `bsig_` secret. The context string keeps it apart from every other ticket key. `openUserToken` (`packages/convex/model/userToken.ts`) verifies with WebCrypto, which compares in constant time, and refuses an `expiresAt` in the past or more than 60 minutes out.
+- **Secret.** One per stage on its `agentDeployments` row, sealed under the account DEK in `userTokenSecretCiphertext` (an `ENVELOPE_COLUMNS` entry, so key rotation rewrites it). `getByApiKeyHash` hands core the sealed blob with the deployment; core opens it with `decryptAccountBlob` only when a request carries a token. `rotateStageUserTokenSecret` (`agent/deployments.ts`) mints and audits it for both callers: the dashboard's `rotateUserTokenSecret` (`keys:write`), and the CLI route `POST /v1/account/projects/{project}/stages/{stage}/user-token-secret` through `cli/sync.rotateUserTokenSecretBySecretHash`, where an account or project key holds `keys:write` on its stage by issue and a `bcli_` login token is checked against its member's policies. Either shows it once; afterwards only its hint, which the manifest sync's `deployment.userTokenSecretHint` carries so the CLI can tell whether its `.env.local` copy is current. The CLI mints one only when the stage has none, and only warns when its copy is missing or stale, so a CI deploy or a second checkout never voids the secret a running backend signs with.
+- **Check.** `resolveRuntimeKeyAuth` (`apps/core/src/shared/auth.ts`) refuses the whole credential when a token does not open, so a forged token is a 401 and the gateway's auth-failure limiter counts it. A valid one lands on the `deployment` auth as `user`, and its `userId` heads the run's principal chain, so MCP servers see it in `X-Broods-Principal`.
+- **Namespace.** `parseDirectPayload` puts the conversation key and event id under `bsu:<userId>:` (`USER_CONVERSATION_PREFIX`, reserved for every other caller in `runtime-keys.ts`). A user id cannot contain `:`, so the split is unique. `embeddableKeyReaches` (`apps/core/src/harness/status-access.ts`) is the one rule for the runtime key: with a user only that user's keys, without one no key in any user namespace. `continue`, run reads and subagent reads through a parent all go through it; steering and answers go through `parseDirectPayload` with the namespaced key.
+- **Files.** `Session.userConversationKey` is set for a `bsu:` conversation (`isUserConversationKey`) and handed to its subagents. `isolatedWorkspaceNamespace` then mounts `users/<hash>` under whatever folder the workspace's isolation picks, and `reservedAgentSandbox` gives a persistent agent sandbox one reservation per user conversation unless `options.reservationKey` pins a shared one. Without this a public agent's end users would share the workspace root.
+- **Requirement.** `agents.requireUserToken`, a row field rather than config so no sync rewrites it. Both inserts (`agent/agents.create`, `ensureAgentsRowForConfig`) set it; older rows have none and answer without a token until the owner flips `agent/config.setRequireUserToken`. A token is honored either way.
+- **Socket.** The scope lookup returns `conversationPrefix` when a token rode the upgrade, and the gateway subscribes NATS on the namespaced key core publishes to.
+- **Credential.** An optional `credential` (printable ASCII, at most 512) is sealed into `credentialSealed`: AES-256-GCM, key HKDF-SHA-256 from the `bsig_` secret (info `broods-user-token-credential`), base64url of a random 12-byte IV then the ciphertext. A token whose credential does not decrypt does not open. Once opened it rides `DirectInboundEvent.userCredential` and the `Session`'s private field, never an ingress envelope, ledger row or log. `mcpConnection` adds it as `X-Broods-User-Credential` beside the principal headers, for `hosted` rows only, outside the tool-listing cache key. Subagents inherit it in memory; a rebuilt or queued run has none.
+- **Limits.** A token is a bearer until it expires: it is not bound to a client and can be replayed within its lifetime, which is why it is short. Rotating the secret voids every token at once.
+
+### Apply tickets
+
+The dashboard's Apply deploys approved files without handing a deploy key to anyone. `agentDock.apply` checks the member can write the stage, mints a `bdap_` ticket (`model/applyTicket.ts`: `{accountId, projectId, stageId, authId, expiresAt}`, 5 minutes, signed with `STAGE_TICKET_SECRET` under its own key context so it never opens as `bdts_`), and asks core's in-cluster `POST /v1/apply-runs` (service token; refused through the gateway) to run `bun install` and `broods deploy --prune` in the `APPLY_SANDBOX` sandbox with the ticket as `BROODS_TOKEN`.
+
+- The config plane takes a `bdap_` only on its own stage's `manifest`, `mcp-bundle-uploads` and `skill-uploads` routes, and re-checks the member's write access at each use (`resolveApplyTicketAuth`). It syncs fenced like a project key, and the audit row names the member.
+- Core runs no user code: the files run only in that sandbox, reserved per stage and `bun.lock` hash so two stages never share one. The dock agent's own sandbox never sees the ticket.
+- The ticket is a bearer for its 5 minutes: it reaches one stage's manifest, which the member could already deploy.
+
+### The dock agent reading logs
+
+Logs carry end users' chats, and the runtime key cannot open them. The dock agent reads them with a login lent by the signed-in owner or admin, under rules enforced in code, not in its prompt. `verification/Broods/LentObservability.lean` proves them over any sequence of steps.
+
+- **A separate ticket.** `POST /v1/account/observability-session` trades a login for a `bdob_` ticket (`model/observabilityTicket.ts`) under its own key context, for one stage. Core's auth resolves it to nothing, so every route refuses it except the log socket's scope check. It cannot start a run, reach a sandbox or touch the account.
+- **It dies with the login.** Its expiry is 5 minutes or the login's, whichever comes first, and the socket closes then.
+- **Reading makes the conversation read-only.** Text in logs may try to steer the agent, so the mint marks the login's conversation in the same mutation, before any ticket exists. From then on the config plane refuses every non-`GET` from any lent login of that conversation (`observedLoginRefusal`, code `read_only_after_logs`), including one re-minted later. A write already past that check when logs open can still land: the agent decided on it before it could see a log line. A lent login with no conversation cannot open logs at all. `dock__propose_changes` still works, since the signed-in user reviews and applies those.
+- **No way out for what it read.** The dock agent has no web tools, and its sandbox has no network and no credential.
+- **Audited.** A conversation's first opening of each stage writes an `observability.opened` event, and so does each mint by a person's own login.
+
+Not covered: the agent's answer text and links. A crafted log line can still try to mislead what it tells the user, which is why it must say what it read and treat logs as data.
 
 ## Hosted MCP servers
 
@@ -181,6 +221,8 @@ Inline [code hooks](../guides/hooks.md) run in a V8 `isolated-vm` isolate. Bun c
 - Pool of `ISOLATE_WORKER_POOL_SIZE` (4) warm workers, reaped after `ISOLATE_WORKER_IDLE_SECONDS` (120). `ISOLATE_POOL=0` spawns per call, at most `ISOLATE_RUNNER_CONCURRENCY` (8).
 - 128 MB and 30 s per isolate, 1 MiB output. A runner gets only `PATH` and the isolate settings from core's env.
 - No filesystem, no imports. Network only through `ctx.fetch` (`runner/pinned-fetch.mjs`): resolves, refuses private and metadata ranges, connects to the validated address, caps bodies at 5 MB and requests at 30 s.
+- A pooled runner that never says ready (missing addon, broken runner, or silent for 5 s) is spawned 3 times in all, 100 ms then 200 ms apart, then that hook is skipped. The next fire tries again. The 30 s run limit starts once the runner is ready. A one-shot runner (`ISOLATE_POOL=0`) has no ready step: its 30 s starts at spawn.
+- A bundle is read from S3 once per account, storage key and sha256 and reused across fire points, up to 8 MiB of encoded source, least recently used out first. Only bytes matching the sha256 are kept, and the runner checks it again.
 - A hook that throws or times out is skipped, so a hook deny is best effort. Anything that must hold belongs in an enforced policy.
 
 ## Sandboxes
@@ -225,13 +267,14 @@ flowchart LR
 
 Every run acts as one agent of one account. Core builds a `Principal` (`apps/core/src/shared/domain/principal.ts`), `{ kind: "agent", accountId, agentId, chain }`, where the chain records who asked, oldest first:
 
-| Run                                  | Chain                                                         |
-| ------------------------------------ | ------------------------------------------------------------- |
-| Channel turn                         | `[{ kind: "user", id, name?, channel }]`                      |
-| Direct API                           | `[{ kind: "api", keyKind: "account" \| "deployment" }]`       |
-| Cron firing                          | `[{ kind: "api", keyKind: "cron" }]`                          |
-| Subagent, or a session-messaging run | the parent's chain, then `{ kind: "agent", agentId: parent }` |
-| Requester not known                  | no chain                                                      |
+| Run                                  | Chain                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| Channel turn                         | `[{ kind: "user", id, name?, channel }]`                                 |
+| Direct API                           | `[{ kind: "api", keyKind: "account" \| "deployment" }]`                  |
+| Direct API with a user token         | `[{ kind: "user", id: userId }, { kind: "api", keyKind: "deployment" }]` |
+| Cron firing                          | `[{ kind: "api", keyKind: "cron" }]`                                     |
+| Subagent, or a session-messaging run | the parent's chain, then `{ kind: "agent", agentId: parent }`            |
+| Requester not known                  | no chain                                                                 |
 
 Core never guesses a link: a rebuilt queued envelope, an async-tool continuation or a channel re-entry without a stored sender runs with no chain, since the hash-chained ledger could never correct a guess. The link shape is `principalLinkValidator` in `packages/convex/model/principal.ts`. The principal reaches:
 

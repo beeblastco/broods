@@ -1,11 +1,5 @@
-/**
- * Loopback-only WebSocket bridge for AWS Lambda MicroVM application ports.
- *
- * Harness adapters accept only a URL and open their own bare WebSocket. Lambda
- * MicroVM ingress instead requires authentication and port metadata in WebSocket
- * subprotocols. This proxy keeps the AWS token server-side, forwards only the
- * bridge path/query to the guest, and exposes an unguessable localhost route.
- */
+// Harness adapters open a bare WebSocket to a URL, but MicroVM ingress wants the auth token
+// and port as subprotocols: this loopback proxy adds them so the token never enters a URL.
 
 import { randomBytes } from "node:crypto";
 
@@ -33,7 +27,6 @@ export interface MicrovmWebSocketProxyOptions {
   microvmId: string;
   allowedPorts: ReadonlyArray<number>;
   createAuthToken: (microvmId: string, port: number) => Promise<string>;
-  /** Test-only escape hatch for a loopback `ws://` upstream. */
   allowInsecureUpstream?: boolean;
 }
 
@@ -231,9 +224,7 @@ export class MicrovmWebSocketProxy {
     this.#connections.clear();
     const server = this.#server;
     this.#server = undefined;
-    // Bun 1.3 can leave the `stop(true)` promise pending after a server-initiated
-    // WebSocket close even though the listener has already stopped. Invoking the
-    // forced stop is sufficient; awaiting that promise would hang Harness cleanup.
+    // Not awaited: Bun 1.3 can leave stop(true) pending after a server-initiated WebSocket close.
     if (server) void server.stop(true);
   }
 }
@@ -288,6 +279,12 @@ async function sendUpstreamMessage(
   }
 }
 
+// 1005 and 1006 report a close without a frame; a WebSocket may not send them.
 function validCloseCode(code: number): number {
-  return code >= 1000 && code <= 4999 ? code : 1011;
+  if (code === 1005) return 1000;
+  const sendable =
+    (code >= 1000 && code <= 1014 && (code < 1004 || code > 1006)) ||
+    (code >= 3000 && code <= 4999);
+
+  return sendable ? code : 1011;
 }

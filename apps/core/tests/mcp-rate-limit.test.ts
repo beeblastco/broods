@@ -1,14 +1,11 @@
-/**
- * A remote MCP server's rate limit is waited out inside the tool call, so a
- * step's parallel searches do not each come back to the model as failures.
- */
-
 import { afterEach, expect, it } from "bun:test";
+import type { Tool } from "ai";
 import {
   callMcpTool,
   mcpConnection,
   setMcpForTests,
 } from "../src/harness/mcp/client.ts";
+import { mcpTools } from "../src/harness/mcp/mcp.tool.ts";
 import type { McpRecord } from "../src/shared/domain/mcp.ts";
 
 const RATE_LIMITED =
@@ -29,7 +26,7 @@ const record: McpRecord = {
 
 afterEach(() => setMcpForTests(null));
 
-it("waits the asked time and retries a rate-limited call", async () => {
+it("reports each wait against the tool call, for its span", async () => {
   let calls = 0;
   setMcpForTests({
     callTool: async () => {
@@ -40,13 +37,29 @@ it("waits the asked time and retries a rate-limited call", async () => {
         : { content: [{ type: "text", text: "found" }] };
     },
   });
+  const retries: Array<[string, number]> = [];
+  const tools = mcpTools(
+    mcpConnection(record, undefined),
+    [{ name: "search", inputSchema: { type: "object" } }],
+    undefined,
+    (toolCallId, waitMs): void => {
+      retries.push([toolCallId, waitMs]);
+    },
+  );
 
-  const result = await callMcpTool(mcpConnection(record, undefined), "search", {
-    q: "x",
-  });
+  const search: Tool<Record<string, unknown>> | undefined =
+    tools.firecrawl__search;
+
+  const result = await search?.execute?.(
+    { q: "x" },
+    { toolCallId: "call-1", messages: [], context: {} },
+  );
 
   expect(result).toBe("found");
-  expect(calls).toBe(3);
+  expect(retries).toEqual([
+    ["call-1", 10],
+    ["call-1", 10],
+  ]);
 });
 
 it("reads a wait given in words", async () => {

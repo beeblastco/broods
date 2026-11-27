@@ -3,19 +3,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-/**
- * Renames ship no compatibility shim. A project still carrying `--env` or
- * BROODS_ENVIRONMENT used to resolve to Development and act on a stage the user
- * never named, which is the one failure the hard break exists to prevent; a
- * dropped command name has to say where it went rather than land on the
- * unknown-command page.
- */
-
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
 
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
@@ -53,7 +45,7 @@ async function runCli(
   return { exitCode: exitCode, stderr: stderr };
 }
 
-test("rejects the pre-rename status command", async () => {
+test("rejects the pre-rename status command", async (): Promise<void> => {
   const cwd = await projectDir(['BROODS_PROJECT="demo-app"']);
 
   const result = await runCli(cwd, ["status"]);
@@ -62,7 +54,7 @@ test("rejects the pre-rename status command", async () => {
   expect(result.stderr).toContain("status was renamed to whoami");
 });
 
-test("rejects the pre-rename --env flag", async () => {
+test("rejects the pre-rename --env flag", async (): Promise<void> => {
   const cwd = await projectDir(['BROODS_PROJECT="demo-app"']);
 
   const result = await runCli(cwd, ["dev", "--env", "production"]);
@@ -71,7 +63,7 @@ test("rejects the pre-rename --env flag", async () => {
   expect(result.stderr).toContain("--env was renamed to --stage");
 });
 
-test("rejects a project still carrying BROODS_ENVIRONMENT", async () => {
+test("rejects a project still carrying BROODS_ENVIRONMENT", async (): Promise<void> => {
   const cwd = await projectDir([
     'BROODS_PROJECT="demo-app"',
     'BROODS_ENVIRONMENT="production"',
@@ -84,9 +76,7 @@ test("rejects a project still carrying BROODS_ENVIRONMENT", async () => {
   expect(result.stderr).toContain("production");
 });
 
-// BROODS_STAGE is the whole migration, so a project that has already been
-// migrated must not trip the guard just because the old key lingers.
-test("allows BROODS_ENVIRONMENT alongside an explicit BROODS_STAGE", async () => {
+test("allows BROODS_ENVIRONMENT alongside an explicit BROODS_STAGE", async (): Promise<void> => {
   const cwd = await projectDir([
     'BROODS_PROJECT="demo-app"',
     'BROODS_ENVIRONMENT="production"',

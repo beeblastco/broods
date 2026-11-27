@@ -1,11 +1,3 @@
-/**
- * What the signed-in member may do in the dashboard for the active org:
- * everything by tier for owners and admins, and for a member what their
- * custom role's policies allow, org-wide or in one project. `can` is false
- * while loading, so a gated control never flashes for someone who may not
- * use it.
- */
-
 import { useSignedIn } from "@/app/hooks/useSignedIn";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";

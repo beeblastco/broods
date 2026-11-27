@@ -1,18 +1,15 @@
-/**
- * CLI manifest sync passes for the stage-scoped resource families: workspaces,
- * sandboxes, policies, and agents, plus the prune and single-delete paths.
- * Rename detection matches an unclaimed CLI-managed row whose content snapshot
- * is identical to the desired resource.
- */
-
+import type { GenericValidator } from "convex/values";
+import { validate, ValidationError } from "convex-helpers/validators";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { assertSnapshotInScope } from "../sandbox/snapshots";
 import { accountCipherForWrite } from "./accountKeys";
 import { normalizePolicyDocument } from "./policyRules";
 import {
   collectEnvPlaceholderNames,
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
+  type FlatPatch,
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import {
@@ -27,6 +24,7 @@ import {
 } from "./agentSync";
 import {
   asObject,
+  assertBrowserSandboxes,
   assertEnvRefsResolved,
   assertNoAccountScopedResourceConflict,
   assertSupportedWorkspaceSandboxMounts,
@@ -34,6 +32,7 @@ import {
   authIdForAccount,
   decryptSandboxConfig,
   placeholderIds,
+  prunes,
   renameComparableAgent,
   renameComparableResource,
   resourceName,
@@ -42,7 +41,13 @@ import {
   type CliResource,
 } from "./cliSync";
 import { normalizeChannelRecordResource } from "./cliSyncChannels";
-import { isPlainObject, stableJson } from "./objects";
+import {
+  agentExtraConfigColumn,
+  agentOutputFormatColumn,
+} from "./agentConfigColumns";
+import { storedRefList } from "./agentRules";
+import { parseOr } from "./storedJson";
+import { stableJson } from "./objects";
 import {
   assertPolicyUnreferenced,
   loadPolicyReferenceRows,
@@ -58,15 +63,10 @@ import {
 } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
-/** What a reserved instance belongs to: its sandbox config, or the workspace namespace keying it. */
 export type ReservationHolder =
   | { sandboxConfigId: Id<"sandboxConfigs"> }
   | { namespace: string };
 
-/**
- * Deletes a CLI-managed agent, and its `agents` row with that row's crons when
- * `accountId` owns it.
- */
 export async function deleteAgentResource(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -92,10 +92,7 @@ export async function deleteAgentResource(
   await deleteAgentConfig(ctx, config._id);
 }
 
-/**
- * Deletes a CLI-managed sandbox config, unless it still holds a reserved
- * instance. Returns whether it was kept for that reason.
- */
+// True when a reserved instance keeps the sandbox config alive.
 export async function deleteSandboxResource(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -115,10 +112,7 @@ export async function deleteSandboxResource(
   return false;
 }
 
-/**
- * Deletes a CLI-managed workspace. The caller has already sent its reserved
- * instances a best-effort terminate, which never needs the workspace row.
- */
+// Callers terminate its reserved instances first, which never needs this row.
 export async function deleteWorkspaceResource(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -135,16 +129,13 @@ export async function deleteWorkspaceResource(
   await ctx.db.delete(workspace._id);
 }
 
-/**
- * Prunes undeclared CLI agents, and their `agents` rows with those rows' crons
- * when `accountId` owns them.
- */
 export async function pruneAgents(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   projectId: Id<"projects">,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   const declared = new Set(
     resources
@@ -158,7 +149,12 @@ export async function pruneAgents(
     )
     .collect();
   for (const config of existing) {
-    if (config.managedBy !== "cli" || declared.has(config.name)) continue;
+    if (
+      config.managedBy !== "cli" ||
+      declared.has(config.name) ||
+      !prunes(pruneOnly, "agent", config.name)
+    )
+      continue;
     if (config.agentId) await deleteOwnedAgent(ctx, accountId, config.agentId);
     await deleteAgentConfig(ctx, config._id);
   }
@@ -168,6 +164,7 @@ export async function prunePolicyResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   const declared = new Set(
     resources
@@ -180,10 +177,13 @@ export async function prunePolicyResources(
       q.eq("stageId", stageId),
     )
     .collect();
-  // One read per account for the whole prune, not one per pruned policy.
   const rowsByAccount = new Map<Id<"accounts">, PolicyReferenceRows>();
   for (const policy of existing) {
-    if (policy.managedBy === "cli" && !declared.has(policy.name)) {
+    if (
+      policy.managedBy === "cli" &&
+      !declared.has(policy.name) &&
+      prunes(pruneOnly, "policy", policy.name)
+    ) {
       const rows =
         rowsByAccount.get(policy.accountId) ??
         (await loadPolicyReferenceRows(ctx, policy.accountId));
@@ -198,20 +198,18 @@ export async function prunePolicyResources(
   }
 }
 
-/**
- * Deletes the stage's undeclared CLI sandbox configs, keeping any that still
- * hold a reserved instance. Returns the names kept.
- */
 export async function pruneSandboxResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<string[]> {
   const kept: string[] = [];
   for (const sandbox of await undeclaredSandboxConfigs(
     ctx,
     stageId,
     resources,
+    pruneOnly,
   )) {
     if (await hasReservation(ctx, sandbox._id)) {
       kept.push(sandbox.name);
@@ -223,25 +221,23 @@ export async function pruneSandboxResources(
   return kept;
 }
 
-/** Deletes the stage's undeclared CLI workspaces, like `deleteWorkspaceResource`. */
 export async function pruneWorkspaceResources(
   ctx: MutationCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<void> {
   for (const workspace of await undeclaredWorkspaceConfigs(
     ctx,
     stageId,
     resources,
+    pruneOnly,
   )) {
     await ctx.db.delete(workspace._id);
   }
 }
 
-/**
- * Whether an instance row belongs to `holder`. Core deletes the row once a
- * terminate succeeds, so a matching row means a machine may still be held.
- */
+// Core deletes the row once a terminate succeeds, so a match means a machine may still be held.
 export function reservedBy(
   instance: Doc<"sandboxInstances">,
   holder: ReservationHolder,
@@ -269,18 +265,25 @@ export async function sandboxConfigByName(
     .unique();
 }
 
-/**
- * The rules the sync passes below apply to a manifest's resources, run without
- * writing so a manifest they refuse is refused before anything of it is stored.
- * Rows the sync would create get placeholder ids. Checks against live rows
- * (name and place conflicts, policy references on prune) stay in the sync.
- */
+// A sync checks every agent before it writes one, so the caller gets the path, not a 500.
+export function assertStoredAgentConfig(flat: FlatPatch): void {
+  assertColumn(agentExtraConfigColumn, flat.extraConfig ?? {}, "config");
+  if (flat.outputFormat !== undefined)
+    assertColumn(
+      agentOutputFormatColumn,
+      flat.outputFormat,
+      "config.model.output",
+    );
+}
+
+// The sync's rules without writes, so a refused manifest stores nothing. Live-row checks stay.
 export function assertManifestResources(
   resources: CliResource[],
   envValues: Record<string, string>,
   mcpIds: Record<string, string>,
   stage: string,
 ): void {
+  assertBrowserSandboxes(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
   assertEnvRefsResolved(resources, envValues, stage);
   const ids = {
@@ -303,7 +306,9 @@ export function assertManifestResources(
       normalizePolicyDocument(resource.config);
     } else if (resource.kind === "agent") {
       const config = rewriteEnvRefs(asObject(resource.config), new Set());
-      fromNestedAgentConfig(rewriteResourceRefs(config, ids));
+      assertStoredAgentConfig(
+        fromNestedAgentConfig(rewriteResourceRefs(config, ids)),
+      );
     } else if (resource.kind === "channelRecord") {
       normalizeChannelRecordResource(resource, channelIds);
     }
@@ -338,8 +343,7 @@ export async function syncAgentResources(
     missingPolicies,
   } = options;
   const ids: Record<string, string> = {};
-  // Agents whose `subagent.allowed` references other agents by name. Resolved
-  // to deploy-time agent ids in a second pass, once every agent row exists.
+  // Resolved to agent ids in a second pass, once every agent row exists.
   const pendingSubagentRefs: Array<{
     configId: Id<"agentConfigs">;
     nested: Record<string, unknown>;
@@ -367,11 +371,8 @@ export async function syncAgentResources(
     const name = resourceName(resource.name);
     const envNames = new Set<string>();
     const withEnvRefs = rewriteEnvRefs(asObject(resource.config), envNames);
-    // MCP headers name their values as `${NAME}` strings, not env() refs.
     collectEnvPlaceholderNames(withEnvRefs.mcp, envNames);
-    // A policy ref that names no policy resource in this deploy stays a raw
-    // string. Unless it is an existing policy id, the runtime refuses every
-    // action for that agent, so the deploy warns about it.
+    // An unknown ref that is no policy id makes the runtime refuse every action, so warn.
     if (Array.isArray(withEnvRefs.policies)) {
       for (const entry of withEnvRefs.policies) {
         if (typeof entry === "string" && !policyIds[entry])
@@ -513,8 +514,7 @@ export async function syncPolicyResources(
 
   for (const resource of policies) {
     const name = resourceName(resource.name);
-    // Same validation gate as the CRUD mutations: a malformed manifest
-    // policy must fail the deploy, not reach OPA at runtime.
+    // A malformed policy must fail the deploy, not reach OPA at runtime.
     const document = normalizePolicyDocument(resource.config);
     const current = existing.find((entry) => entry.name === name);
     const target =
@@ -582,8 +582,6 @@ export async function syncSandboxResources(
   const sandboxes = resources.filter((entry) => entry.kind === "sandbox");
   if (sandboxes.length === 0) return ids;
 
-  // sandboxConfigs is a shared SaaS table owned by broods: the blob is
-  // stored encrypted at rest (envVars/options may carry provider secrets).
   const cipher = await accountCipherForWrite(ctx, accountId);
   const existing = await ctx.db
     .query("sandboxConfigs")
@@ -606,20 +604,14 @@ export async function syncSandboxResources(
 
   for (const resource of sandboxes) {
     const name = resourceName(resource.name);
-    // Core reads the sandbox blob verbatim, so `env("NAME")` resolves here.
-    // The rename comparison runs on the resolved form too.
     const envNames = new Set<string>();
-    // `sourceConfig` keeps `${NAME}` placeholders; `resolvedConfig` bakes in
-    // current values. We store both: resolved for core to read, source so
-    // `refreshSandboxConfigsForEnvironmentVariable` can re-resolve on a later
-    // env-var change without a CLI re-sync (parity with agent configs).
-    // Core never defaults the provider, so a config without one gets it here.
+    // Core reads the resolved config verbatim and never defaults the provider. The source keeps
+    // `${NAME}` refs so an env var change can re-resolve it without a CLI sync.
     const sourceConfig = rewriteEnvRefs(
       { provider: DEFAULT_SANDBOX_PROVIDER, ...asObject(resource.config) },
       envNames,
     );
-    // Same rules as the config API for a custom server, on the placeholder
-    // form its credential headers are written in.
+    // Validated on the source form, where custom-server credential headers are still refs.
     if (
       sourceConfig.provider === "custom" ||
       sourceConfig.fallbackProvider === "custom"
@@ -664,6 +656,18 @@ export async function syncSandboxResources(
       claimed.add(target._id);
       ids[name] = target._id;
       continue;
+    }
+    // A deploy key pins this sync to one stage, so another stage's snapshot is refused.
+    if (
+      !target ||
+      existingConfigs.get(target._id)?.snapshot !== resolvedConfig.snapshot
+    ) {
+      await assertSnapshotInScope(
+        ctx,
+        accountId,
+        { projectId: projectId, stageId: stageId },
+        resolvedConfig.snapshot,
+      );
     }
     const encrypted = await cipher.encrypt(
       "sandboxConfigs:encryptedConfig",
@@ -743,8 +747,7 @@ export async function syncWorkspaceResources(
   const claimed = new Set<Id<"workspaceConfigs">>();
   for (const resource of workspaceResources) {
     assertSupportedWorkspaceStorage(resource);
-    // Same rules as the config API: a sync never stores what it refuses.
-    // `env()` R2 keys are stored as `${NAME}` refs, resolved only at mint time.
+    // `env()` R2 keys stay `${NAME}` refs, resolved only when credentials are minted.
     const config = normalizeWorkspaceConfig(
       rewriteEnvRefs(resource.config, new Set()),
     );
@@ -801,11 +804,11 @@ export async function syncWorkspaceResources(
   return ids;
 }
 
-/** The stage's CLI-managed sandbox configs the manifest no longer declares. */
 export async function undeclaredSandboxConfigs(
   ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<Doc<"sandboxConfigs">[]> {
   const declared = new Set(
     resources
@@ -818,23 +821,24 @@ export async function undeclaredSandboxConfigs(
     .collect();
 
   return existing.filter(
-    (sandbox) => sandbox.managedBy === "cli" && !declared.has(sandbox.name),
+    (sandbox) =>
+      sandbox.managedBy === "cli" &&
+      !declared.has(sandbox.name) &&
+      prunes(pruneOnly, "sandbox", sandbox.name),
   );
 }
 
-/** The workspace counterpart of `undeclaredSandboxConfigs`. */
 export async function undeclaredWorkspaceConfigs(
   ctx: QueryCtx,
   stageId: Id<"stages">,
   resources: CliResource[],
+  pruneOnly?: readonly string[],
 ): Promise<Doc<"workspaceConfigs">[]> {
   const declared = new Set(
     resources
       .filter((entry) => entry.kind === "workspace")
       .map((entry) => resourceName(entry.name)),
   );
-  // Scope to this stage so prune never reaches across stages or touches
-  // account-scoped (stage-less) legacy / dashboard-shared rows.
   const existing = await ctx.db
     .query("workspaceConfigs")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
@@ -842,7 +846,9 @@ export async function undeclaredWorkspaceConfigs(
 
   return existing.filter(
     (workspace) =>
-      workspace.managedBy === "cli" && !declared.has(workspace.name),
+      workspace.managedBy === "cli" &&
+      !declared.has(workspace.name) &&
+      prunes(pruneOnly, "workspace", workspace.name),
   );
 }
 
@@ -859,7 +865,22 @@ export async function workspaceConfigByName(
     .unique();
 }
 
-/** Deletes the `agents` row a config links to, when `accountId` owns it. */
+function assertColumn(
+  column: GenericValidator,
+  value: unknown,
+  root: string,
+): void {
+  try {
+    validate(column, value, { throw: true });
+  } catch (error) {
+    if (!(error instanceof ValidationError)) throw error;
+
+    throw new ClientError(
+      `${root}${error.path ? `.${error.path}` : ""} must be ${error.expected}, got ${error.got}`,
+    );
+  }
+}
+
 async function deleteOwnedAgent(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -871,7 +892,6 @@ async function deleteOwnedAgent(
   if (agent?.accountId === accountId) await deleteAgentRow(ctx, agent);
 }
 
-/** Whether any instance row still references this sandbox config. */
 export async function hasReservation(
   ctx: QueryCtx,
   sandboxConfigId: Id<"sandboxConfigs">,
@@ -887,22 +907,11 @@ export async function hasReservation(
 }
 
 function hasSubagentAllowed(nested: Record<string, unknown>): boolean {
-  const subagent = nested.subagent;
+  const subagent = parseOr(storedRefList, nested.subagent);
 
-  return (
-    isPlainObject(subagent) &&
-    Array.isArray(subagent.allowed) &&
-    subagent.allowed.length > 0
-  );
+  return (subagent?.allowed.length ?? 0) > 0;
 }
 
-/**
- * Second pass over agents that reference other agents in `subagent.allowed`.
- * Rewrites declared agent names to their deploy-time agent ids (leaving any
- * non-declared string, e.g. a literal agent id, untouched) and re-pushes the
- * encrypted config so the runtime can dispatch the named subagents.
- */
-/** The names the sync keys a kind's ids by. */
 function namesOf(
   resources: CliResource[],
   kind: CliResource["kind"],

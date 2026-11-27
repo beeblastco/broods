@@ -1,48 +1,46 @@
-/**
- * The monthly resource caps, as core and the dashboard reach them: core reads
- * the closest cap's share at admission, records the usage only it sees
- * (hosted-MCP invokes, media egress, attachment ingress) and claims the 80%
- * warning; the dashboard reads amounts, caps and percentages.
- * Sandbox time is metered by the sandbox mirror itself; storage by the daily
- * snapshot in `aws/storageMeter.ts`. Math lives in `model/usageMeter.ts`.
- */
-
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 import { internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
-import { internalMutation, internalQuery, query } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type QueryCtx,
+} from "../_generated/server";
 import { authKit } from "../auth";
 import {
+  addProjectUsage,
   addUsage,
   budgetStatus,
   budgetUsage,
   claimBudgetWarning,
+  projectUsage,
   type BudgetStatus,
   type BudgetUsage,
 } from "../model/usageMeter";
-import { getActiveAccountForUser } from "../org/orgs";
+import { getActiveCaller } from "../model/activeCaller";
 import { planValidator, usageQuantityFields } from "../schema";
 
 // Core's retries end within a minute; a day of ids is ample.
 const USAGE_WRITE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const USAGE_WRITE_PRUNE_BATCH = 500;
 
-const budgetStatusValidator = v.object({
-  enforced: v.boolean(),
-  plan: planValidator,
-  month: v.string(),
-  usedPercent: v.number(),
-  runsPerMinute: v.number(),
-  warned: v.boolean(),
-});
-
-// Also the shape of each resource's share, keyed like its cap.
 const resourceCapsValidator = v.object({
   sandboxHours: v.number(),
   hostedMcpHours: v.number(),
   storageGb: v.number(),
   egressGb: v.number(),
+});
+
+const budgetStatusValidator = v.object({
+  enforced: v.boolean(),
+  plan: planValidator,
+  month: v.string(),
+  usedPercent: v.number(),
+  shares: resourceCapsValidator,
+  runsPerMinute: v.number(),
+  warned: v.boolean(),
 });
 
 const usageAmountsFields = {
@@ -53,6 +51,14 @@ const usageAmountsFields = {
   ingressGb: v.number(),
 };
 
+const usageAmountsValidator = v.object(usageAmountsFields);
+
+const poolUsageValidator = v.object({
+  orgs: v.optional(v.number()),
+  shared: v.boolean(),
+  totals: usageAmountsValidator,
+});
+
 const budgetUsageValidator = v.object({
   enforced: v.boolean(),
   plan: planValidator,
@@ -61,15 +67,29 @@ const budgetUsageValidator = v.object({
   usedPercent: v.union(v.number(), v.null()),
   caps: v.union(resourceCapsValidator, v.null()),
   shares: resourceCapsValidator,
+  orgShares: resourceCapsValidator,
   level: v.union(v.literal("ok"), v.literal("warning"), v.literal("exhausted")),
-  totals: v.object(usageAmountsFields),
+  totals: usageAmountsValidator,
   days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
+  projects: v.optional(
+    v.array(
+      v.object({
+        projectId: v.id("projects"),
+        name: v.string(),
+        totals: usageAmountsValidator,
+        days: v.array(v.object({ day: v.string(), ...usageAmountsFields })),
+      }),
+    ),
+  ),
+  pool: v.optional(poolUsageValidator),
 });
 
-/**
- * Claim this month's 80% warning.
- * @returns true for the one caller that should tell the user
- */
+const usageSourceValidator = v.object({
+  projectId: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+  workspaceId: v.optional(v.string()),
+});
+
 export const claimWarning = internalMutation({
   args: { accountId: v.string() },
   returns: v.boolean(),
@@ -82,7 +102,7 @@ export const claimWarning = internalMutation({
   },
 });
 
-/** Core's check at run admission and sandbox start. An unknown id reads as unlimited. */
+// Null (an unknown id) reads as unlimited at core's admission check.
 export const get = internalQuery({
   args: { accountId: v.string() },
   returns: v.union(budgetStatusValidator, v.null()),
@@ -93,30 +113,31 @@ export const get = internalQuery({
   },
 });
 
-/**
- * Dashboard allowance and billing plan: the active org's usage for `month`
- * ("YYYY-MM", one of the returned `months`; anything else reads the current
- * month) as amounts, days, caps and percentages. Euro figures never leave the
- * backend, so the plan budgets stay private.
- */
+// Euro figures never leave the backend. A non-owner learns the pool is shared, not by how
+// many of the owner's orgs.
 export const getForActiveOrg = query({
-  args: { month: v.optional(v.string()) },
+  args: {
+    month: v.optional(v.string()),
+    withProjects: v.optional(v.boolean()),
+  },
   returns: v.union(budgetUsageValidator, v.null()),
   handler: async (ctx, args): Promise<BudgetUsage | null> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
-    const account = await getActiveAccountForUser(ctx);
+    const active = await getActiveCaller(ctx);
+    if (!active) return null;
+    const account = active.account;
+    const usage = await budgetUsage(ctx, account._id, Date.now(), args.month);
+    if (usage.pool && active.role !== "owner") delete usage.pool.orgs;
 
-    return account
-      ? await budgetUsage(ctx, account._id, Date.now(), args.month)
-      : null;
+    return args.withProjects === true
+      ? { ...usage, projects: await projectUsage(ctx, account, usage) }
+      : usage;
   },
 });
 
-/** One page of account ids, for the storage snapshot. */
 export const listAccountIds = internalQuery({
   args: { paginationOpts: paginationOptsValidator },
   returns: v.object({
@@ -140,14 +161,18 @@ export const listAccountIds = internalQuery({
   },
 });
 
-/** The account's workspace ids, whose S3 namespaces the storage snapshot sums. */
-export const listWorkspaceIds = internalQuery({
+export const listWorkspaces = internalQuery({
   args: {
     accountId: v.id("accounts"),
     paginationOpts: paginationOptsValidator,
   },
   returns: v.object({
-    page: v.array(v.id("workspaceConfigs")),
+    page: v.array(
+      v.object({
+        workspaceId: v.id("workspaceConfigs"),
+        projectId: v.optional(v.id("projects")),
+      }),
+    ),
     isDone: v.boolean(),
     continueCursor: v.string(),
   }),
@@ -156,7 +181,10 @@ export const listWorkspaceIds = internalQuery({
     args,
   ): Promise<
     Pick<
-      PaginationResult<Id<"workspaceConfigs">>,
+      PaginationResult<{
+        workspaceId: Id<"workspaceConfigs">;
+        projectId?: Id<"projects">;
+      }>,
       "page" | "isDone" | "continueCursor"
     >
   > => {
@@ -168,36 +196,46 @@ export const listWorkspaceIds = internalQuery({
       .paginate(args.paginationOpts);
 
     return {
-      page: result.page.map((workspace) => workspace._id),
+      page: result.page.map((workspace) => ({
+        workspaceId: workspace._id,
+        ...(workspace.projectId ? { projectId: workspace.projectId } : {}),
+      })),
       isDone: result.isDone,
       continueCursor: result.continueCursor,
     };
   },
 });
 
-/**
- * Add usage core measured to the account's meter. Unknown ids and deleted
- * accounts are dropped, so a late write never re-creates purged rows.
- */
+// Unknown or deleted accounts drop the write, so a late one never re-creates purged rows.
 export const record = internalMutation({
   args: {
     accountId: v.string(),
     usage: v.object({
       hostedMcpGbSeconds: v.optional(usageQuantityFields.hostedMcpGbSeconds),
       hostedMcpRequests: v.optional(usageQuantityFields.hostedMcpRequests),
+      workerMs: v.optional(usageQuantityFields.workerMs),
+      workerRequests: v.optional(usageQuantityFields.workerRequests),
       storageGbMonths: v.optional(usageQuantityFields.storageGbMonths),
       egressGb: v.optional(usageQuantityFields.egressGb),
       ingressGb: v.optional(usageQuantityFields.ingressGb),
     }),
-    /** When the usage happened, if not now; picks the meter month. */
     at: v.optional(v.number()),
-    /** Same on every retry of one write, so a retry is applied once. */
     writeId: v.optional(v.string()),
+    source: v.optional(usageSourceValidator),
+    projectStorage: v.optional(
+      v.array(
+        v.object({
+          projectId: v.id("projects"),
+          storageGbMonths: v.number(),
+        }),
+      ),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const accountId = ctx.db.normalizeId("accounts", args.accountId);
-    if (!accountId || !(await ctx.db.get(accountId))) return null;
+    const account = accountId ? await ctx.db.get(accountId) : null;
+    if (!account) return null;
     const now = Date.now();
     if (args.writeId !== undefined) {
       const writeId = args.writeId;
@@ -208,13 +246,25 @@ export const record = internalMutation({
       if (applied) return null;
       await ctx.db.insert("usageWrites", { writeId: writeId, createdAt: now });
     }
-    await addUsage(ctx, accountId, args.usage, args.at ?? now);
+    const at = args.at ?? now;
+    const projectId = args.source
+      ? await usageProject(ctx, account, args.source)
+      : undefined;
+    await addUsage(ctx, account._id, args.usage, at, projectId);
+    for (const share of args.projectStorage ?? []) {
+      await addProjectUsage(
+        ctx,
+        account._id,
+        share.projectId,
+        { storageGbMonths: share.storageGbMonths },
+        at,
+      );
+    }
 
     return null;
   },
 });
 
-/** Daily cron: forget write ids older than a day, one bounded batch per run. */
 export const pruneUsageWrites = internalMutation({
   args: {},
   returns: v.null(),
@@ -239,3 +289,37 @@ export const pruneUsageWrites = internalMutation({
     return null;
   },
 });
+
+async function usageProject(
+  ctx: QueryCtx,
+  account: Doc<"accounts">,
+  source: Infer<typeof usageSourceValidator>,
+): Promise<Id<"projects"> | undefined> {
+  let projectId: Id<"projects"> | null | undefined;
+  if (source.projectId !== undefined) {
+    projectId = ctx.db.normalizeId("projects", source.projectId);
+  } else if (source.agentId !== undefined) {
+    const agentId = ctx.db.normalizeId("agents", source.agentId);
+    const agent = agentId ? await ctx.db.get(agentId) : null;
+    // Any of the agent's configs will do: all its stages sit in one project.
+    const config =
+      agent?.accountId === account._id
+        ? await ctx.db
+            .query("agentConfigs")
+            .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+            .first()
+        : null;
+    projectId = config?.projectId;
+  } else if (source.workspaceId !== undefined) {
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      source.workspaceId,
+    );
+    const workspace = workspaceId ? await ctx.db.get(workspaceId) : null;
+    projectId =
+      workspace?.accountId === account._id ? workspace.projectId : undefined;
+  }
+  const project = projectId ? await ctx.db.get(projectId) : null;
+
+  return project?.orgId === account.orgId ? project._id : undefined;
+}

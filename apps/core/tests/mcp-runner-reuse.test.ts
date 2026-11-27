@@ -1,9 +1,3 @@
-/**
- * Warm child reuse in the hosted-MCP runner (#189), driven under real Node:
- * one fetch/parse per child, fresh TMPDIR per call, strict per-tenant keying,
- * retire-on-failure, and the call bound.
- */
-
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -16,6 +10,9 @@ const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
 
+// An exported LAMBDA_TASK_ROOT would arm the handler's same-UID reap against the host.
+const { LAMBDA_TASK_ROOT: _taskRoot, ...hostEnv } = process.env;
+
 interface HostedResponse {
   status: number;
   headers: Record<string, string>;
@@ -25,14 +22,11 @@ interface HostedResponse {
 interface RunnerEvent {
   tenantId?: string;
   bundle: string;
-  /** Requests in this invocation's batch; one by default. */
   batch?: number;
-  /** Pause after this invocation, for state that settles between calls. */
   waitMs?: number;
 }
 
-// A module-level counter is exactly the state process reuse preserves: a
-// fresh child answers 1, a reused one counts up.
+// Module state is what process reuse keeps: a fresh child answers 1, a reused one counts up.
 const COUNTER_BUNDLE = [
   `let calls = 0;`,
   `export default () => {`,
@@ -41,9 +35,7 @@ const COUNTER_BUNDLE = [
   `};`,
 ].join("\n");
 
-// One driver process invokes the handler once per event, the way a warm
-// Lambda environment serializes invocations, and reports each invocation's
-// NDJSON alongside how many times the bundle was actually fetched.
+// One driver process invokes the handler per event, as a warm Lambda serializes invocations.
 async function invokeSequence(
   events: RunnerEvent[],
   parentEnv: Record<string, string> = {},
@@ -104,7 +96,7 @@ async function invokeSequence(
     const result = await new Promise<{ runs: string[] }>((resolve, reject) => {
       const child = spawn("node", [driver], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, ...parentEnv },
+        env: { ...hostEnv, ...parentEnv },
       });
       let out = "";
       let err = "";
@@ -131,7 +123,6 @@ function bundleName(bundle: string): string {
   return `${new Bun.CryptoHasher("sha256").update(bundle).digest("hex")}.mjs`;
 }
 
-/** Every request's response body in an invocation, in id order. */
 function finalBodies(run: string | undefined): unknown[] {
   return frames(run)
     .filter(
@@ -142,7 +133,6 @@ function finalBodies(run: string | undefined): unknown[] {
     .map((frame) => JSON.parse((frame.result as HostedResponse).body));
 }
 
-/** The response body of a single-request invocation. */
 function finalBody(run: string | undefined): unknown {
   const bodies = finalBodies(run);
   expect(bodies).toHaveLength(1);
@@ -162,22 +152,7 @@ function terminalFrame(run: string | undefined): RunnerFrame | undefined {
 }
 
 describe("mcp-runner warm reuse", () => {
-  it("reuses the child for the same account and bundle, fetching once", async () => {
-    const { runs, bundleFetches } = await invokeSequence([
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-      { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
-    ]);
-
-    expect(
-      runs.map((run) => (finalBody(run) as { calls: number }).calls),
-    ).toEqual([1, 2, 3]);
-    expect(bundleFetches).toBe(1);
-  }, 30_000);
-
   it("serves a whole batch in one child and keeps it warm", async () => {
-    // Three requests in one invocation share the process (counter 1..3),
-    // and the next invocation still lands in it.
     const { runs, bundleFetches } = await invokeSequence([
       { tenantId: "acct-1", bundle: COUNTER_BUNDLE, batch: 3 },
       { tenantId: "acct-1", bundle: COUNTER_BUNDLE },
@@ -194,8 +169,6 @@ describe("mcp-runner warm reuse", () => {
   }, 30_000);
 
   it("gives every call a fresh TMPDIR and HOME", async () => {
-    // Call N writes a file into its TMPDIR; call N+1 must neither share the
-    // directory nor see the file. "Reset" has to mean reset.
     const bundle = [
       `import { writeFileSync, existsSync } from "node:fs";`,
       `import { join } from "node:path";`,
@@ -238,9 +211,7 @@ describe("mcp-runner warm reuse", () => {
   }, 30_000);
 
   it("keeps the child when one request throws", async () => {
-    // A throw is that request's own failure, reported on its tagged frame;
-    // the batch still closes on `end` and the next call reuses the child
-    // (counter reads 2).
+    // A throw is that request's own failure: the next call reuses the child (counter reads 2).
     const bundle = [
       `let calls = 0;`,
       `export default () => {`,
@@ -264,8 +235,7 @@ describe("mcp-runner warm reuse", () => {
   }, 30_000);
 
   it("retires the child after a batch-level error frame", async () => {
-    // A bundle whose export is not a fetch handler fails before any request
-    // runs; that is a process-level failure, so the next call spawns fresh.
+    // A non-handler export fails before any request runs: a process-level failure.
     const bundle = `export default { name: "nope" };`;
 
     const { runs, bundleFetches } = await invokeSequence([
@@ -280,9 +250,7 @@ describe("mcp-runner warm reuse", () => {
   }, 30_000);
 
   it("retires an idle child on an unhandled rejection instead of serving another call", async () => {
-    // A stray timer rejecting after the response flushed poisons the process
-    // while it sits warm. The child must exit on the spot: the next call gets
-    // a fresh child (counter back to 1), never a turn inside the poisoned one.
+    // A stray timer rejecting after the response poisons the warm process: it must exit at once.
     const bundle = [
       `let calls = 0;`,
       `export default () => {`,

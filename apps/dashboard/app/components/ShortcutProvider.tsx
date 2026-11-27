@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * One keydown listener for the whole dashboard. Components claim a binding with
- * `useShortcut`, the dispatcher resolves a key event against `SHORTCUTS` and
- * calls whoever claimed it last, so a dialog on top of a page wins without the
- * page knowing the dialog exists.
- */
 import {
   activatesFocusedControl,
   isEditableTarget,
@@ -26,14 +20,9 @@ import {
 type ShortcutHandler = (event: KeyboardEvent) => void;
 
 interface ShortcutRegistry {
-  /** Ids with a handler right now. The `?` overlay dims the rest. */
   activeIds: ReadonlySet<string>;
   isMac: boolean;
   register: (id: ShortcutId, handler: ShortcutHandler) => () => void;
-  /**
-   * Run a binding without the key. The palette and the copilot go through this
-   * so a row does exactly what its shortcut does, down to the same handler.
-   */
   trigger: (id: ShortcutId) => void;
 }
 
@@ -46,8 +35,6 @@ export function ShortcutProvider({
 }): React.JSX.Element {
   const handlers = useRef(new Map<string, ShortcutHandler[]>());
   const [activeIds, setActiveIds] = useState<ReadonlySet<string>>(new Set());
-  // The server has no platform, so it renders the Ctrl glyphs and the client
-  // swaps them on hydration. The store never changes after that.
   const isMac = useSyncExternalStore(
     subscribeToPlatform,
     readIsMac,
@@ -78,22 +65,14 @@ export function ShortcutProvider({
     [],
   );
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- window keydown listener
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (event.repeat) return;
       const shortcut = matchShortcut(event, isMac);
       if (!shortcut) return;
 
-      // A press something on the page already handled, or one an input method
-      // is composing with, is not a command. A bare key is a command only
-      // outside text fields (except Escape, which types nothing), only outside
-      // an open dialog, menu or listbox, where the page underneath is not what
-      // you are driving (Escape there closes the popup, not the panel behind
-      // it), and only when it is not the press that activates whatever has
-      // focus.
-      //
-      // The modifiers say whether this is a chord. The combo text cannot: `+`
-      // is both the separator and the key `canvas.zoomIn` binds.
+      // Chord by modifiers, not combo text: `+` is both the separator and zoomIn's key.
       const isChord = event.metaKey || event.ctrlKey || event.altKey;
       if (event.defaultPrevented || event.isComposing) return;
       if (
@@ -104,6 +83,7 @@ export function ShortcutProvider({
         return;
       }
       if (!isChord && activatesFocusedControl(event)) return;
+      // Inside a popup, page keys belong to the popup: Escape closes it, not the panel.
       if (
         shortcut.scope !== "global" &&
         event.target instanceof HTMLElement &&
@@ -112,6 +92,7 @@ export function ShortcutProvider({
         return;
       }
 
+      // The last claim wins, so a dialog on top beats the page under it.
       const stack = handlers.current.get(shortcut.id);
       const handler = stack?.at(-1);
       if (!handler) return;
@@ -147,22 +128,19 @@ export function ShortcutProvider({
   );
 }
 
-/** Claim a binding while this component is mounted. */
 export function useShortcut(id: ShortcutId, handler: ShortcutHandler): void {
-  // `register` and nothing else. The context value changes on every
-  // registration, so depending on the whole registry would unregister and
-  // re-register this binding each time any other one appeared, forever.
+  // Depend on `register` alone: the registry value changes on every registration.
   const { register } = useShortcutRegistry();
   const latest = useRef(handler);
   latest.current = handler;
 
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- window keydown dispatcher
   useEffect(
     () => register(id, (event) => latest.current(event)),
     [id, register],
   );
 }
 
-/** Which bindings are live, and how to print them for this platform. */
 export function useShortcutRegistry(): ShortcutRegistry {
   const registry = useContext(ShortcutContext);
   if (!registry) {
@@ -176,7 +154,6 @@ function readIsMac(): boolean {
   return /mac/i.test(navigator.platform || navigator.userAgent);
 }
 
-/** The platform cannot change mid-session, so nothing ever notifies. */
 function subscribeToPlatform(): () => void {
   return () => {};
 }

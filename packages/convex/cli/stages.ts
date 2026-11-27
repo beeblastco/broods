@@ -1,15 +1,4 @@
-/**
- * Stage listing and creation for the `broods stage` commands, plus their HTTP
- * endpoint.
- *
- * Creation reuses the dashboard's `duplicateStageContents`, so a cloned
- * stage carries the same agent configs, MCP servers, canvas layout and
- * environment variables the dashboard duplicate button produces.
- *
- * Stage management spans every stage of a project, so the HTTP endpoint
- * authenticates with a `broods login` token rather than a stage-scoped
- * project key.
- */
+// Spans every stage of a project, so it takes a `broods login` token, not a stage-scoped key.
 
 import { v } from "convex/values";
 import {
@@ -21,17 +10,26 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { assertStageName } from "../lib/slug";
-import { cliLoginTokenHash } from "./auth";
+import { cliLoginTokenHash, resolveActiveCliToken } from "./auth";
 import { duplicateStageContents, kindForStageName } from "../stage";
 import { stageNameEquals, resolveProject } from "../model/projectScope";
+import { orgIdOf } from "../model/ownership/org";
 import { byDefaultThenName } from "../model/defaultStage";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
 import {
+  activeDeployment,
   mintStageSessionTicket,
   stageSessionValidator,
+  stageTicketSecret,
   type StageSession,
 } from "../agent/deployments";
+import { appendAuditEvent } from "../model/auditEvents";
+import {
+  observabilityTicketExpiry,
+  sealObservabilityTicket,
+} from "../model/observabilityTicket";
 import { ClientError, clientErrorResponse } from "../model/clientError";
+import { deploymentRegionValidator } from "../schema";
 
 const CANONICAL_NAMES = {
   development: "Development",
@@ -47,13 +45,7 @@ const stageValidator = v.object({
     v.literal("custom"),
   ),
   isDefault: v.boolean(),
-  deploymentRegion: v.optional(
-    v.union(
-      v.literal("ap-southeast-1"),
-      v.literal("eu-west-1"),
-      v.literal("us-east-1"),
-    ),
-  ),
+  deploymentRegion: v.optional(deploymentRegionValidator),
   agentCount: v.number(),
   variableCount: v.number(),
   updatedAt: v.number(),
@@ -107,8 +99,7 @@ export const createByAccount = internalMutation({
       );
     }
 
-    // A brand-new stage is never the default; `cliSync.ensureStage`
-    // repairs the Development-is-default invariant on the next sync.
+    // Never the default: cliSync.ensureStage repairs Development-is-default on the next sync.
     const now = Date.now();
     const stageId = await ctx.db.insert("stages", {
       authId: projectDoc.authId,
@@ -140,7 +131,6 @@ export const createByAccount = internalMutation({
   },
 });
 
-/** HTTP endpoint for `broods stage list` and `broods stage create`. */
 export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   try {
     const tokenHash = await cliLoginTokenHash(req);
@@ -211,10 +201,6 @@ export const httpHandle = httpAction(async (ctx, req): Promise<Response> => {
   }
 });
 
-/**
- * Mint a stage session ticket for the logged-in user's project stage. Null
- * when the project, the stage or its first deploy is missing.
- */
 export const mintSessionByAccount = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -238,18 +224,126 @@ export const mintSessionByAccount = internalMutation({
     );
     if (!stage) return null;
 
-    // A `broods login` token resolves only while its user is an org owner or
-    // admin, the role the dashboard requires to control sandboxes, so this
-    // ticket may claim the stage's machine sandboxes.
+    // A login token resolves only for an org owner or admin, so it may claim machine sandboxes.
     return await mintStageSessionTicket(ctx, projectDoc._id, stage._id, true);
   },
 });
 
-/**
- * HTTP endpoint for the CLI's logs, stream and machine commands. They trade
- * the `broods login` token for a 15-minute stage ticket instead of using the
- * runtime key, which is meant to sit in a frontend.
- */
+// A lent login must name its conversation, or reading logs could not make that conversation
+// read-only. Marked in the mint, so no ticket exists before the login stops writing.
+export const mintObservabilityByLogin = internalMutation({
+  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
+  returns: v.union(v.null(), stageSessionValidator),
+  handler: async (ctx, args): Promise<StageSession | null> => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
+    if (!resolved) return null;
+    const { account, token } = resolved;
+    const now = Date.now();
+    // Expiring this instant, it would mark and audit an opening whose ticket cannot open.
+    if (token.expiresAt !== undefined && token.expiresAt <= now) return null;
+    const conversation = token.lentConversation;
+    if (token.lentToAgent === true && conversation === undefined) return null;
+    const projectDoc = await projectForAccount(ctx, account._id, args.project);
+    if (!projectDoc) return null;
+    const stages = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+      .collect();
+    const stage = stages.find((entry) =>
+      stageNameEquals(entry.name, args.stage),
+    );
+    const deployment = stage
+      ? await activeDeployment(ctx, projectDoc._id, stage._id)
+      : null;
+    if (!deployment) return null;
+    // Each read mints a ticket, so a conversation audits its first opening of a stage, not every
+    // read: an agent debugging would otherwise push real events out of the audit log.
+    const marks =
+      token.lentToAgent === true && conversation !== undefined
+        ? await ctx.db
+            .query("observedConversations")
+            .withIndex("by_authId_and_conversationKey", (q) =>
+              q.eq("authId", token.authId).eq("conversationKey", conversation),
+            )
+            .collect()
+        : [];
+    const opened = marks.some((mark) => mark.stageId === deployment.stageId);
+    if (token.lentToAgent === true && conversation !== undefined && !opened)
+      await ctx.db.insert("observedConversations", {
+        authId: token.authId,
+        conversationKey: conversation,
+        stageId: deployment.stageId,
+        observedAt: now,
+      });
+    const expiresAt = observabilityTicketExpiry(now, token.expiresAt);
+    if (!opened)
+      await appendAuditEvent(ctx.db, {
+        accountId: account._id,
+        projectId: projectDoc._id,
+        stageId: deployment.stageId,
+        actor: { kind: "cli", id: token.authId },
+        action: "observability.opened",
+        resource: {
+          kind: "deployment",
+          id: deployment.endpointId,
+          name: `${deployment.projectSlug}/${deployment.stageSlug}`,
+        },
+        summary:
+          token.lentToAgent === true
+            ? "The dock agent opened this stage's logs"
+            : "A login opened this stage's logs",
+      });
+
+    return {
+      token: await sealObservabilityTicket(
+        {
+          accountId: deployment.accountId,
+          endpointId: deployment.endpointId,
+          projectSlug: deployment.projectSlug,
+          stageSlug: deployment.stageSlug,
+          expiresAt: expiresAt,
+        },
+        stageTicketSecret(),
+      ),
+      expiresAt: expiresAt,
+      projectSlug: deployment.projectSlug,
+      stageSlug: deployment.stageSlug,
+    };
+  },
+});
+
+export const observabilitySessionHttpHandle = httpAction(
+  async (ctx, req): Promise<Response> => {
+    try {
+      const tokenHash = await cliLoginTokenHash(req);
+      const body: { project?: unknown; stage?: unknown } | null =
+        await req.json();
+      if (typeof body?.project !== "string" || !body.project.trim())
+        return jsonError(400, "Request body must include a project");
+      if (typeof body.stage !== "string" || !body.stage.trim())
+        return jsonError(400, "Request body must include a stage");
+      const session = tokenHash
+        ? await ctx.runMutation(internal.cli.stages.mintObservabilityByLogin, {
+            tokenHash: tokenHash,
+            project: body.project,
+            stage: body.stage,
+          })
+        : null;
+
+      return session
+        ? json(session)
+        : jsonError(403, "This login cannot read that stage's logs");
+    } catch (error) {
+      if (error instanceof SyntaxError)
+        return jsonError(400, "Request body must be valid JSON");
+      console.error("Observability session failed", error);
+
+      return jsonError(500, "Observability session failed");
+    }
+  },
+);
+
+// Logs, stream and machine trade the login token for a stage ticket, not the frontend key.
 export const sessionHttpHandle = httpAction(
   async (ctx, req): Promise<Response> => {
     try {
@@ -330,7 +424,7 @@ async function projectForAccount(
   const account = await ctx.db.get(accountId);
   if (!account || account.status !== "active") return null;
 
-  return await resolveProject(ctx, account, project);
+  return await resolveProject(ctx, orgIdOf(ctx, account), project);
 }
 
 async function summarize(

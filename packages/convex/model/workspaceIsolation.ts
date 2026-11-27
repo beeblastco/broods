@@ -1,16 +1,8 @@
-/**
- * Workspace isolation levels, the one list the config plane, core, the
- * dashboard and the CLI read. No imports on purpose: the CLI bundles this file
- * without the Convex runtime behind workspaceRules (like modelProviders.ts).
- */
+// No imports: the CLI bundles this file without the Convex runtime behind workspaceRules.
 
 export const WORKSPACE_ISOLATION_LEVELS = ["conversation", "agent"] as const;
 
-/**
- * How a workspace splits its files. "conversation" mounts a folder per channel
- * partition, "agent" gives every attached agent its own folder. Unset shares
- * one root between every agent and conversation.
- */
+/** A folder per channel partition or per agent; unset shares one root. */
 export type WorkspaceIsolation = (typeof WORKSPACE_ISOLATION_LEVELS)[number];
 
 export function isWorkspaceIsolation(

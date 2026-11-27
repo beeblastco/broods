@@ -1,11 +1,5 @@
-/**
- * Shared cleanup helpers for persistent sandbox reservations. Account deletion,
- * workspace deletion, channel-scoped cleanup, and the sandbox sweeper all need the
- * same provider release path: the provider that reserved the machine, which may
- * no longer be what any config says.
- */
-
 import {
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
 } from "@broods/convex/model/sandboxRules";
@@ -13,13 +7,14 @@ import { providerExecutor } from "../harness/sandbox/index.ts";
 import {
   claimSandboxInstance,
   deleteSandboxInstance,
+  getSandboxExternalId,
   getSandboxReleaseTarget,
 } from "../harness/sandbox/instance-store.ts";
+import { queueMirrorRemove } from "../harness/sandbox/mirror-writes.ts";
 import type {
   ReservedSandbox,
   SandboxReleaseTarget,
 } from "../harness/sandbox/types.ts";
-import { removeSandboxInstance } from "./convex/sandbox-instances.ts";
 import { toErrorMessage } from "./errors.ts";
 import type {
   SandboxConfig,
@@ -30,21 +25,21 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { runsOnOwnCredentials } from "./workspaces.ts";
 
-// Every provider that reserves a machine Broods may have to tear down.
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] =
   SANDBOX_PROVIDERS.filter(
     (provider): boolean => !STATELESS_SANDBOX_PROVIDERS.has(provider),
   );
+// Convex's floor, under the sweep interval: the next sweep retries a failed teardown.
+const TEARDOWN_RETRY_SECONDS = 60;
 
-/**
- * Release the reservations the sweeper found expired. The row goes first, as a
- * compare-and-swap on the id and deadline the sweeper read: a run that reconnected
- * since the listing refreshed the deadline, and tearing the machine down under that
- * run would lose its sandbox. Only once the row is taken is the machine torn down,
- * by the id the sweeper holds. A failed teardown hands the row back, so the
- * sweeper's deferral spaces the retry out instead of the orphan listing offering
- * the same machine every pass.
- */
+interface ReleaseOutcome {
+  externalId: string;
+  released: boolean;
+}
+
+// Takes the row first, a CAS on the listed id and deadline: a run that reconnected since then
+// refreshed the deadline and keeps its machine. A failed teardown hands the row back, or else
+// leaves the machine to the sweeper.
 export async function releaseExpiredSandboxes(
   accountId: string,
   reservations: ReservedSandbox[],
@@ -55,6 +50,7 @@ export async function releaseExpiredSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   const released: ReservedSandbox[] = [];
+  const removals: Promise<void>[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
     const taken = await deleteSandboxInstance(
@@ -73,37 +69,39 @@ export async function releaseExpiredSandboxes(
       return false;
     });
     if (!taken) continue;
-    const done = await releaseOnProvider(
+    const outcome = await releaseOnProvider(
       accountId,
       reservation.provider,
       configs,
       key,
       reservation.externalId,
     );
-    if (!done) {
-      // The claim refuses if a run mapped the key meanwhile, which is right:
-      // that run's machine is not ours to defer.
-      await claimSandboxInstance(
+    if (!outcome?.released) {
+      const handedBack = await claimSandboxInstance(
         reservation.provider,
         key,
         reservation.externalId,
         accountId,
         reservation.ttlSeconds,
       ).catch(() => false);
+      if (!handedBack) {
+        await keepForSweep(
+          accountId,
+          reservation.provider,
+          key,
+          reservation.externalId,
+        );
+      }
       continue;
     }
     released.push(reservation);
-    await removeSandboxInstance(accountId, key, reservation.externalId);
+    removals.push(queueMirrorRemove(accountId, key, reservation.externalId));
   }
+  await Promise.all(removals);
 
   return released;
 }
 
-/**
- * Clean delete of reserved sandboxes for the given workspace namespaces. The caller is
- * discarding the namespace, so a row no config could release is dropped with it.
- * Idempotent: a namespace with no reserved sandbox is a cheap no-op.
- */
 export async function releaseReservedSandboxes(
   accountId: string,
   namespaces: string[],
@@ -114,29 +112,76 @@ export async function releaseReservedSandboxes(
   const configs = await sandboxConfigs(accountId);
 
   let released = 0;
+  const removals: Promise<void>[] = [];
   for (const namespace of namespaces) {
+    const machines: string[] = [];
+    let unreleased = false;
     for (const provider of RELEASABLE_PROVIDERS) {
-      if (await releaseOnProvider(accountId, provider, configs, namespace)) {
-        released++;
-      }
-      await deleteSandboxInstance(provider, namespace, accountId).catch(
-        () => {},
+      const outcome = await releaseOnProvider(
+        accountId,
+        provider,
+        configs,
+        namespace,
       );
+      // Unknown machine: its reservation stays for the expiry sweep.
+      if (outcome === null) {
+        unreleased = true;
+        continue;
+      }
+      if (outcome?.released) machines.push(outcome.externalId);
+      else if (outcome) unreleased = true;
+      // Refused for an account being deleted: its row then still names the machine.
+      const dropped = await deleteSandboxInstance(
+        provider,
+        namespace,
+        accountId,
+      ).catch(() => false);
+      if (dropped && outcome && !outcome.released) {
+        await keepForSweep(accountId, provider, namespace, outcome.externalId);
+      }
     }
-    await removeSandboxInstance(accountId, namespace);
+    released += machines.length;
+    // The machines it released, so a run that reserved the key since keeps its row and an
+    // unreleased machine stays listed for the orphan sweep; with no machine, whatever row is left.
+    const fences = machines.length > 0 || unreleased ? machines : [undefined];
+    for (const machine of fences) {
+      removals.push(queueMirrorRemove(accountId, namespace, machine));
+    }
   }
+  await Promise.all(removals);
 
   return released;
 }
 
-/**
- * The configs to release through, limited to the account that owns the machine:
- * a release reads a 404 as "already gone", so credentials for another account
- * would drop a live machine's rows. A tenant-owned machine goes through the
- * config that reserved it; a platform-owned one through the platform's
- * credentials. With no instance row to say, only a MicroVM, which always runs
- * on the platform's, gets them.
- */
+// Reserves the machine under a key no run uses, so only the sweeper reaches it again.
+async function keepForSweep(
+  accountId: string,
+  provider: SandboxProvider,
+  key: string,
+  externalId: string,
+): Promise<void> {
+  try {
+    // A hand-back that threw may still have landed, and then a run can reconnect to the machine.
+    if ((await getSandboxExternalId(provider, key)) === externalId) return;
+    await claimSandboxInstance(
+      provider,
+      `teardown:${externalId}`,
+      externalId,
+      accountId,
+      TEARDOWN_RETRY_SECONDS,
+    );
+  } catch (error) {
+    logWarn("Unreleased sandbox left without a reservation", {
+      provider: provider,
+      namespace: key,
+      externalId: externalId,
+      error: toErrorMessage(error),
+    });
+  }
+}
+
+// Only the owning account's credentials: a release reads 404 as "already gone", so another
+// account's would drop a live machine's rows.
 function releaseCandidates(
   provider: SandboxProvider,
   records: SandboxConfigRecord[],
@@ -163,22 +208,21 @@ function releaseCandidates(
     ];
   }
 
-  return provider === "lambda" ? [platform] : configs;
+  return provider === "lambda" ||
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)
+    ? [platform]
+    : configs;
 }
 
-/**
- * Tears down the machine `provider` reserved under `namespace`, through the
- * provider recorded on the reservation: switching provider or turning
- * `persistent` off leaves the machine where it was.
- * @returns whether the machine is gone; false when nothing was reserved
- */
+// Via the reservation's provider, which may differ from every config's now. Undefined when no
+// machine was found, null when the lookup failed.
 async function releaseOnProvider(
   accountId: string,
   provider: SandboxProvider,
   records: SandboxConfigRecord[],
   namespace: string,
   expectedExternalId?: string,
-): Promise<boolean> {
+): Promise<ReleaseOutcome | undefined | null> {
   const target = await getSandboxReleaseTarget(
     accountId,
     provider,
@@ -193,12 +237,12 @@ async function releaseOnProvider(
 
     return null;
   });
-  if (!target?.externalId) {
-    return false;
+  if (!target) return null;
+  if (!target.externalId) {
+    return undefined;
   }
   for (const config of releaseCandidates(provider, records, target.instance)) {
     try {
-      // The candidates come from a reserving provider, so every executor releases.
       const executor = providerExecutor(config);
       if (!executor.release) continue;
       await executor.release({
@@ -206,7 +250,7 @@ async function releaseOnProvider(
         expectedExternalId: target.externalId,
       });
 
-      return true;
+      return { externalId: target.externalId, released: true };
     } catch (error) {
       logWarn("Reserved sandbox release failed", {
         provider: provider,
@@ -216,10 +260,9 @@ async function releaseOnProvider(
     }
   }
 
-  return false;
+  return { externalId: target.externalId, released: false };
 }
 
-/** Every sandbox config of the account; a failed list leaves only the platform's credentials. */
 async function sandboxConfigs(
   accountId: string,
 ): Promise<SandboxConfigRecord[]> {

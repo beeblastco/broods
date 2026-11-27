@@ -1,12 +1,5 @@
-/**
- * The one rule for which config field, header or env names hold a secret.
- * Convex config redaction, MCP header refs, and core's log and policy
- * redaction all call it, so a name is secret everywhere or nowhere. Leaf
- * module, safe for the default Convex runtime and for core.
- */
+// Leaf module shared with core's log redaction: a name is secret everywhere or nowhere.
 
-// Make a name secret wherever they appear, run together or not:
-// secretAccessKey, dbPassword, PGPASSWORD, secretkey.
 const ALWAYS_SECRET_PARTS = [
   "secret",
   "password",
@@ -14,8 +7,6 @@ const ALWAYS_SECRET_PARTS = [
   "passphrase",
   "kubeconfig",
 ];
-// Words that make a name secret when they end it: tokenSecret, x-api-key,
-// refreshTokens, Proxy-Auth. As a qualifier they do not: tokenUrl, cookieDomain.
 const SECRET_LAST_WORDS = new Set([
   "secret",
   "secrets",
@@ -39,7 +30,6 @@ const SECRET_LAST_WORDS = new Set([
   "accesskey",
   "privatekey",
 ]);
-// A key named for a row, an object or the public half of a pair, not a credential.
 const IDENTIFIER_KEY_QUALIFIERS = new Set([
   "cache",
   "conversation",
@@ -59,7 +49,6 @@ const IDENTIFIER_KEY_QUALIFIERS = new Set([
   "storage",
   "unscoped",
 ]);
-// Numbers that end in "tokens".
 const TOKEN_COUNT_NAMES = new Set([
   "cachecreationinputtokens",
   "cachedinputtokens",
@@ -75,8 +64,7 @@ const TOKEN_COUNT_NAMES = new Set([
   "totaltokens",
 ]);
 
-// Endings that make a run-together last word secret: accesstoken, x-authtoken.
-// Not "key" or "auth": monkey, oauth.
+// Not "key" or "auth": they would match monkey and oauth.
 const SECRET_WORD_ENDINGS = [
   "apikey",
   "accesskey",
@@ -85,17 +73,9 @@ const SECRET_WORD_ENDINGS = [
   "privatekey",
   "token",
 ];
-// Log redaction asks for every key of every line, so each name is judged once.
 const MAX_CACHED_NAMES = 4096;
 const cachedNames = new Map<string, boolean>();
 
-/**
- * Whether a name holds a secret. The name is split into words (camelCase,
- * acronyms, "-", "_", "." and spaces) and judged by its last word, so
- * `tokenSecret`, `APIToken` and `X-App-Key` are secret while `tokenUrl` and
- * `inputTokens` are not.
- * @param name a config field, header or env var name
- */
 export function isSecretName(name: string): boolean {
   let secret = cachedNames.get(name);
   if (secret === undefined) {

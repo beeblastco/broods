@@ -1,12 +1,4 @@
-/**
- * Public config-plane HTTP surface: agents, skills, mcp, hooks, workspace
- * files, crons, workspaces, sandboxes, policies, and roles served straight
- * from Convex. Traefik routes these paths here (`apps/edge`); response shapes match
- * the retired core handlers so the public API contract is unchanged. Auth is
- * the account key, or a bsts_ role session checked against its
- * role's policy at this funnel. This file is the router; each resource
- * family's handlers live in `config/routes/`.
- */
+// Traefik (apps/edge) sends the public config-plane paths here; handlers live in config/routes/.
 
 import { httpAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
@@ -32,6 +24,7 @@ import {
   parseAuditRoute,
   type AuditLeaf,
 } from "./routes/audit";
+import { handleUsageRoute } from "./routes/usage";
 import {
   handleAgentChannelDirectoryRoute,
   handleAgentConfigRoute,
@@ -51,6 +44,8 @@ import { handleSandboxConfigRoute } from "./routes/sandboxes";
 import {
   auditActorForAuth,
   jsonError,
+  lentLoginRefusal,
+  observedLoginRefusal,
   requireAccount,
   runTokenRefusal,
 } from "./routes/shared";
@@ -79,6 +74,7 @@ type ConfigRoute =
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
   | { kind: "env"; name?: string }
   | { kind: "audit"; leaf: AuditLeaf }
+  | { kind: "usage" }
   | { kind: "roles"; roleId?: string };
 
 type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
@@ -94,17 +90,19 @@ async function handleConfigRequest(
   ctx: ActionCtx,
   req: Request,
 ): Promise<Response> {
-  // Only a role is scoped below the account, so every other caller already
-  // reads the resources a policy refusal would name.
   let readsPolicyReferences = true;
   try {
     const pathname = new URL(req.url).pathname;
 
-    const refusal = runTokenRefusal(req);
+    const refusal =
+      runTokenRefusal(req) ??
+      (managesCredentials(req.method, pathname)
+        ? await lentLoginRefusal(ctx, req)
+        : null) ??
+      (await observedLoginRefusal(ctx, req));
     if (refusal) return refusal;
 
-    // The exchange authenticates its own caller kinds (account key, CLI
-    // token, runtime key), so it runs before the shared bearer funnel.
+    // Authenticates its own caller kinds, so it runs before the shared bearer funnel.
     if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
     }
@@ -118,8 +116,7 @@ async function handleConfigRequest(
     const accountRoute = parseAccountRoute(pathname);
     if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
 
-    // Redeeming a download token carries no Authorization header: the token in
-    // the path is the whole credential, so it runs before requireAccount.
+    // No Authorization header: the token in the path is the whole credential.
     const downloadToken = parseDownloadRoute(pathname);
     if (downloadToken)
       return await handleDownloadRedeemRoute(ctx, req, downloadToken);
@@ -131,8 +128,7 @@ async function handleConfigRequest(
     const route = parseRoute(pathname);
     if (!route) return jsonError(404, "Not found");
 
-    // Role management stays with the master credential: a session that could
-    // edit roles could grant itself anything.
+    // A session that could edit roles could grant itself anything.
     if (route.kind === "roles") {
       if (accountAuth.kind !== "account") {
         return jsonError(403, "Role management requires the account key");
@@ -173,9 +169,7 @@ async function handleConfigRequest(
   } catch (err) {
     const clientError = clientErrorData(err);
     if (clientError) {
-      // The policy refusal names the agents and channel records that still
-      // list the policy. A role holding only policies:write may not read
-      // either, so it gets the refusal without the names.
+      // A role that cannot read agents or channels gets the refusal without their names.
       const message =
         !readsPolicyReferences &&
         clientError.message.startsWith(POLICY_STILL_REFERENCED)
@@ -191,7 +185,6 @@ async function handleConfigRequest(
   }
 }
 
-/** Build an `authorize()` resource, dropping an absent id. */
 function apiResource(
   type: ApiResource["type"],
   id: string | undefined,
@@ -199,11 +192,6 @@ function apiResource(
   return { type: type, ...(id !== undefined ? { id: id } : {}) };
 }
 
-/**
- * Map a parsed route onto the config-plane resource it addresses, for the
- * role-session `authorize()` check. Workspace subresources authorize as their
- * workspace; the agent channel directory authorizes as its agent.
- */
 function apiResourceForRoute(route: ResourceRoute): ApiResource {
   switch (route.kind) {
     case "skills":
@@ -212,8 +200,7 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("hooks", route.hookId);
     case "mcp":
       return apiResource("mcp", route.serverId);
-    // Minting an upload URL authorizes like a collection-level MCP write, not
-    // like an operation on a server named "uploads".
+    // A collection-level MCP write, not an operation on a server named "uploads".
     case "mcpBundleUpload":
       return apiResource("mcp", undefined);
     case "workspaceFiles":
@@ -235,14 +222,12 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("env", route.name);
     case "audit":
       return apiResource("audit", undefined);
+    case "usage":
+      return apiResource("account", undefined);
   }
 }
 
-/**
- * Attach the addressed resource's stage when the role is pinned to one, so
- * `authorize()` can hold the request to the pin. Collections and
- * account-scoped resources stay unscoped, which a pinned role is refused.
- */
+// Collections and account-scoped resources stay unscoped, which a stage-pinned role is refused.
 async function withStageScope(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -387,10 +372,25 @@ async function dispatchResourceRoute(
       );
     case "audit":
       return await handleAuditRoute(ctx, req, accountId, actor, route.leaf);
+    case "usage":
+      return await handleUsageRoute(ctx, req, accountId);
   }
 }
 
-/** Match `/v1/agents/{id}/channels/{type}/directory` and `/v1/agents[/{id}]`. */
+// Mints a credential, changes who holds one, or changes the audit trail. Reads stay open.
+function managesCredentials(method: string, pathname: string): boolean {
+  return (
+    method !== "GET" &&
+    (pathname === "/v1/roles" ||
+      pathname.startsWith("/v1/roles/") ||
+      pathname === "/v1/account/assume-role" ||
+      pathname.startsWith("/v1/account/connections/") ||
+      pathname === "/v1/account" ||
+      pathname.startsWith("/v1/audit/") ||
+      pathname.endsWith("/rotate-secret"))
+  );
+}
+
 function parseAgentRoute(pathname: string): ConfigRoute | null {
   const channelDirectory = pathname.match(
     /^\/v1\/agents\/([^/]+)\/channels\/([^/]+)\/directory$/,
@@ -413,10 +413,10 @@ function parseAgentRoute(pathname: string): ConfigRoute | null {
   return null;
 }
 
-/** Match the flat collection-or-item routes with no nested subresources. */
 function parseCollectionRoute(pathname: string): ConfigRoute | null {
   const audit = parseAuditRoute(pathname);
   if (audit) return { kind: "audit", leaf: audit };
+  if (pathname === "/v1/usage") return { kind: "usage" };
 
   const env = pathname.match(/^\/v1\/env(?:\/([^/]+))?$/);
   if (env)
@@ -480,7 +480,6 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
   return null;
 }
 
-/** Match `/v1/crons/{id}/runs` and `/v1/crons[/{id}]`. */
 function parseCronRoute(pathname: string): ConfigRoute | null {
   const cronRuns = pathname.match(/^\/v1\/crons\/([^/]+)\/runs$/);
   if (cronRuns?.[1])
@@ -501,10 +500,6 @@ function parseCronRoute(pathname: string): ConfigRoute | null {
   return null;
 }
 
-/**
- * @param pathname the request pathname
- * @returns the parsed route, or null when the path is not a config route
- */
 function parseRoute(pathname: string): ConfigRoute | null {
   return (
     parseCollectionRoute(pathname) ??
@@ -514,7 +509,6 @@ function parseRoute(pathname: string): ConfigRoute | null {
   );
 }
 
-/** Match workspace files, download links, and the workspace collection/item. */
 function parseWorkspaceRoute(pathname: string): ConfigRoute | null {
   const files = pathname.match(/^\/v1\/workspaces\/([^/]+)\/files$/);
   if (files?.[1])

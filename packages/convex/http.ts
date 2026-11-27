@@ -1,15 +1,13 @@
-/**
- * HTTP route registration: AuthKit, the Stripe webhook, the CLI routes, and the
- * config-plane routes the gateway forwards here.
- */
-
 import { processEvent } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
 import Stripe from "stripe";
-import { components, internal } from "./_generated/api";
+import { components } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { exchange as cliAuthExchange } from "./cli/auth";
+import {
+  exchange as cliAuthExchange,
+  revoke as cliAuthRevoke,
+} from "./cli/auth";
 import { handle as cliHttp } from "./cli/http";
 import {
   httpHandle as cliProjectsHttp,
@@ -17,15 +15,17 @@ import {
 } from "./cli/projects";
 import {
   httpHandle as cliStagesHttp,
+  observabilitySessionHttpHandle as cliObservabilitySessionHttp,
   sessionHttpHandle as cliStageSessionHttp,
 } from "./cli/stages";
 import { handle as configHttp } from "./config/http";
+import { cli as githubCli, webhook as githubWebhook } from "./github";
 import { authProvider } from "./model/selfHostAuth";
+import { reconcileSubscription } from "./stripe";
 
 const http = httpRouter();
 
-// A self-hosted stack has no WorkOS, and its AuthKit holds a placeholder
-// webhook secret anyone could sign with, so the webhook is not mounted.
+// Self-hosted AuthKit holds a placeholder webhook secret anyone could sign with.
 if (authProvider() === "workos") authKit.registerRoutes(http);
 
 http.route({
@@ -33,6 +33,24 @@ http.route({
   method: "POST",
   handler: httpAction(handleStripeWebhook),
 });
+
+http.route({
+  path: "/github/webhook",
+  method: "POST",
+  handler: githubWebhook,
+});
+
+// `broods github`: GET status and repos, POST link and connect, DELETE link.
+for (const [path, methods] of [
+  ["/v1/account/github", ["GET"]],
+  ["/v1/account/github/repos", ["GET"]],
+  ["/v1/account/github/link", ["POST", "DELETE"]],
+  ["/v1/account/github/connect", ["POST"]],
+] as const) {
+  for (const method of methods) {
+    http.route({ path: path, method: method, handler: githubCli });
+  }
+}
 
 http.route({
   pathPrefix: "/v1/account/projects/",
@@ -47,6 +65,12 @@ http.route({
 });
 
 http.route({
+  path: "/v1/account/auth/token",
+  method: "DELETE",
+  handler: cliAuthRevoke,
+});
+
+http.route({
   path: "/v1/account/onboarding",
   method: "GET",
   handler: cliOnboardingHttp,
@@ -58,8 +82,6 @@ http.route({
   handler: cliOnboardingHttp,
 });
 
-// Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
-// below carry a project name and belong to the project-key handler.
 http.route({
   path: "/v1/account/projects",
   method: "GET",
@@ -91,6 +113,12 @@ http.route({
 });
 
 http.route({
+  path: "/v1/account/observability-session",
+  method: "POST",
+  handler: cliObservabilitySessionHttp,
+});
+
+http.route({
   pathPrefix: "/v1/account/projects/",
   method: "GET",
   handler: cliHttp,
@@ -108,9 +136,6 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface: account metadata/rotation, connections,
-// agents, skills, mcp, hooks, workspace files, crons, workspaces, sandbox configs,
-// and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });
 http.route({ path: "/v1/account", method: "PATCH", handler: configHttp });
 http.route({
@@ -141,6 +166,11 @@ http.route({
 http.route({
   path: "/v1/account/rotate-secret",
   method: "POST",
+  handler: configHttp,
+});
+http.route({
+  path: "/v1/account/storage-trust",
+  method: "GET",
   handler: configHttp,
 });
 http.route({
@@ -205,7 +235,6 @@ http.route({
 });
 http.route({ path: "/v1/mcp", method: "GET", handler: configHttp });
 http.route({ path: "/v1/mcp", method: "POST", handler: configHttp });
-// The POST prefix is what /v1/mcp/uploads matches; path: "/v1/mcp" does not.
 http.route({
   pathPrefix: "/v1/mcp/",
   method: "POST",
@@ -253,8 +282,7 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
-// Redeeming a workspace download link. GET only, and unauthenticated by design:
-// the token in the path is the credential. Convex serves HEAD off this route.
+// Unauthenticated by design: the path token is the credential. Convex serves HEAD here too.
 http.route({
   pathPrefix: "/v1/downloads/",
   method: "GET",
@@ -295,8 +323,8 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
-// The audit ledger: list, verify, and the one webhook sink per account.
 http.route({ path: "/v1/audit", method: "GET", handler: configHttp });
+http.route({ path: "/v1/usage", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "PUT", handler: configHttp });
 http.route({ pathPrefix: "/v1/audit/", method: "DELETE", handler: configHttp });
@@ -341,25 +369,17 @@ async function handleStripeWebhook(
     return Response.json({ received: true });
   }
 
+  // Every branch is idempotent, so redeliveries need no record of handled event ids.
   try {
-    await processEvent(ctx, components.stripe, event, stripe);
-
-    if (event.type === "checkout.session.completed") {
-      await linkCheckoutToUser(ctx, stripe, event.data.object);
-    }
-    // Plan sync needs no checkout case: Stripe also sends
-    // customer.subscription.created for the subscription a checkout starts.
+    // A checkout also sends customer.subscription.created, so it needs no case of its own.
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      const authId = event.data.object.metadata.userId;
-      if (authId) {
-        await ctx.runMutation(internal.stripe.syncPlanInternal, {
-          authId: authId,
-        });
-      }
+      await reconcileSubscription(ctx, stripe, event.data.object.id);
+    } else {
+      await processEvent(ctx, components.stripe, event, stripe);
     }
   } catch (error) {
     console.error("Stripe webhook processing failed", error);
@@ -368,57 +388,4 @@ async function handleStripeWebhook(
   }
 
   return Response.json({ received: true });
-}
-
-/**
- * Link a Payment Link checkout to the Broods user in `client_reference_id` by
- * stamping `metadata.userId` on its subscription and customer. The
- * customer.subscription.updated that follows files the subscription under the
- * user and syncs the plan. API checkouts set the metadata up front and carry
- * no `client_reference_id`, so they skip this.
- */
-async function linkCheckoutToUser(
-  ctx: ActionCtx,
-  stripe: Stripe,
-  session: Stripe.Checkout.Session,
-): Promise<void> {
-  const authId = session.client_reference_id;
-  const subscriptionId = stripeId(session.subscription);
-  const customerId = stripeId(session.customer);
-  if (session.mode !== "subscription" || !authId) return;
-  if (!subscriptionId || !customerId) return;
-
-  const liveIds = await ctx.runQuery(
-    internal.stripe.getLiveSubscriptionIdsInternal,
-    { authId: authId },
-  );
-  if (liveIds === null) {
-    console.warn(`Checkout ${session.id} names unknown user ${authId}`);
-
-    return;
-  }
-  const otherIds = liveIds.filter((id) => id !== subscriptionId);
-  if (otherIds.length > 0) {
-    console.warn(
-      `User ${authId} paid ${subscriptionId} while ${otherIds.join(", ")} is still live`,
-    );
-  }
-
-  await stripe.subscriptions.update(subscriptionId, {
-    metadata: { userId: authId },
-  });
-  await stripe.customers.update(customerId, { metadata: { userId: authId } });
-  // customer.updated does not copy `metadata.userId` onto the component's
-  // customer row (only customer.created does), so file it here. The portal
-  // finds the customer by that key.
-  await ctx.runMutation(components.stripe.public.createOrUpdateCustomer, {
-    stripeCustomerId: customerId,
-    email: session.customer_details?.email ?? undefined,
-    metadata: { userId: authId },
-  });
-}
-
-/** The id of an expandable Stripe field, whether or not it was expanded. */
-function stripeId(field: string | { id: string } | null): string | null {
-  return typeof field === "string" ? field : (field?.id ?? null);
 }

@@ -1,11 +1,7 @@
 "use client";
 
-/**
- * Skill card Details tab. A source picker (Files / GitHub / JSON) on first open,
- * then source-specific configuration. Agent skills config (enabled + allowed) is
- * always shown at the bottom once a source is chosen.
- */
 import { ToggleRow } from "@/app/components/side-panel/ConfigControls";
+import { SecretInput } from "@/app/components/SecretInput";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
@@ -25,16 +21,10 @@ import {
 } from "@/app/lib/skillsCredentials";
 import { api } from "@broods/convex/_generated/api";
 import { useAction } from "convex/react";
-import {
-  Eye,
-  EyeOff,
-  FolderOpen,
-  GitBranch,
-  RotateCcw,
-  Sparkles,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+import { FolderOpen, GitBranch, RotateCcw, Sparkles } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { toErrorMessage } from "@/app/lib/errors";
+import { isValidSkillName } from "@broods/convex/model/skillRules";
 
 type SkillSource = "files" | "github" | "json";
 
@@ -73,8 +63,7 @@ export function SkillDetailsTab({
   const skillSource = nodeConfig?.skillSource as SkillSource | undefined;
   const disabled = !agentConfig;
   const path = editName.trim();
-  // This skill is "active" only when the agent's skills master is on AND this path is allowed.
-  // That is the condition the canvas node badge renders, so the toggle and node stay in step.
+  // The canvas badge's condition too, so the toggle and the card never disagree.
   const isActive =
     skills.enabled === true &&
     path.length > 0 &&
@@ -88,11 +77,7 @@ export function SkillDetailsTab({
     onUpdateNodeConfig({ skillSource: undefined });
   }
 
-  /**
-   * Single per-skill activation toggle: enabling adds this path to `skills.allowed` and flips the
-   * `skills.enabled` master on in one write; disabling just removes the path. Writing the whole
-   * branch keeps the master and allow-list consistent so the node badge never lags the panel.
-   */
+  // One write for the master switch and the allow-list, so the card's badge never lags.
   function setActive(next: boolean): void {
     const allowedSet = new Set(
       next ? (skills.allowed ?? []) : withoutSkillRef(skills.allowed, path),
@@ -160,7 +145,6 @@ export function SkillDetailsTab({
 
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
-      {/* Source-specific configuration */}
       {skillSource === "files" && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -203,7 +187,8 @@ export function SkillDetailsTab({
                 placeholder="acct_abc/support-flow"
                 onBlur={onSaveName}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") onSaveName();
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing)
+                    onSaveName();
                 }}
               />
             </>
@@ -264,7 +249,6 @@ export function SkillDetailsTab({
 
       <Separator />
 
-      {/* Agent skills config, common to all sources */}
       {disabled && (
         <p className="text-xs text-muted-foreground">
           Wire this skill to an agent to configure it.
@@ -317,6 +301,7 @@ function GithubForm({
         githubUrl: trimmedUrl,
       });
       onSuccess(result.path);
+      setStatus({ type: "idle" });
     } catch (err) {
       const msg = toErrorMessage(err);
       if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
@@ -352,11 +337,21 @@ function GithubForm({
           <code className="rounded bg-muted px-1">bask_</code>). Saved in
           session only.
         </p>
-        <TokenInput value={token} onChange={setToken} />
+        <SecretInput
+          noun="key"
+          aria-label="Account key"
+          value={token}
+          placeholder="bask_…"
+          className="h-7 flex-1 font-mono text-2xs"
+          onChange={(e) => setToken(e.target.value)}
+        />
       </div>
 
       {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive">
+        <p
+          role="alert"
+          className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive"
+        >
           {status.message}
         </p>
       )}
@@ -384,7 +379,9 @@ function JsonForm({
 }): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const createFromJson = useAction(api.skillsPublic.createFromJson);
-  const [name, setName] = useState("");
+  const existingName = existingPath?.split("/").pop() ?? "";
+  const published = isValidSkillName(existingName);
+  const [name, setName] = useState(published ? existingName : "");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
@@ -393,15 +390,16 @@ function JsonForm({
     message?: string;
   }>({ type: "idle" });
 
-  const nameValid =
-    /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
+  const nameValid = published || isValidSkillName(name);
+  const nameInvalid = name !== "" && !nameValid;
+  const nameErrorId = useId();
   const canSubmit =
     nameValid &&
     description.trim() &&
     content.trim() &&
     token.trim() &&
     status.type !== "busy";
-  const isUpdate = !!existingPath || status.type === "success";
+  const isUpdate = published || status.type === "success";
 
   async function handleSubmit(): Promise<void> {
     if (!canSubmit) return;
@@ -441,10 +439,13 @@ function JsonForm({
           className="h-8 font-mono text-xs"
           placeholder="support-flow"
           disabled={isUpdate}
+          aria-label="Skill name"
+          aria-invalid={nameInvalid}
+          aria-describedby={nameInvalid ? nameErrorId : undefined}
         />
-        {name && !nameValid && (
-          <p className="text-2xs text-destructive">
-            Must start and end with a letter or number.
+        {nameInvalid && (
+          <p id={nameErrorId} className="text-2xs text-destructive">
+            Max 64 characters, without the words claude or anthropic.
           </p>
         )}
         {isUpdate && (
@@ -483,11 +484,21 @@ function JsonForm({
         <p className="text-2xs text-muted-foreground">
           Your account key. Saved in session only.
         </p>
-        <TokenInput value={token} onChange={setToken} />
+        <SecretInput
+          noun="key"
+          aria-label="Account key"
+          value={token}
+          placeholder="bask_…"
+          className="h-7 flex-1 font-mono text-2xs"
+          onChange={(e) => setToken(e.target.value)}
+        />
       </div>
 
       {status.type === "error" && (
-        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive">
+        <p
+          role="alert"
+          className="rounded-md bg-destructive/10 px-2 py-1.5 text-2xs text-destructive"
+        >
           {status.message}
         </p>
       )}
@@ -538,37 +549,5 @@ function SourceCard({
       </div>
       <p className="text-2xs text-muted-foreground">{description}</p>
     </button>
-  );
-}
-
-function TokenInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}): React.JSX.Element {
-  const [show, setShow] = useState(false);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type={show ? "text" : "password"}
-        value={value}
-        placeholder="bask_…"
-        className="h-7 flex-1 font-mono text-2xs"
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        className="cursor-pointer"
-        type="button"
-        onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide key" : "Show key"}
-      >
-        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </Button>
-    </div>
   );
 }

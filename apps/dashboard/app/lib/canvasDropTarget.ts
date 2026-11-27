@@ -1,20 +1,3 @@
-/**
- * Where a dragged card would land if it were let go now, and the sentence that
- * says why a group will not take it.
- *
- * Membership is derived, so a drop invents none of it. It writes only what the
- * derivation reads: an edge to each agent that owns the group, the `ungrouped`
- * flag the card was pulled out with, and the slot the chips sit in. A group that
- * orders itself keeps its own order, so the slot on offer there is the one the
- * rules give rather than the one under the cursor: see `ordersItself`.
- *
- * A drop is refused for anything the layout write would refuse it for, so that a
- * card never lands and then springs back when the save runs.
- *
- * Pure and exported on purpose, like `canvasConnections.ts`: the `/ui-gallery`
- * drag fixture drives these functions, so a spec exercises the rules themselves
- * rather than a copy of them.
- */
 import {
   connectionEdge,
   isCodeManagedOwner,
@@ -53,72 +36,44 @@ import {
 } from "@broods/convex/model/canvasLayout";
 import type { Edge, Node } from "@xyflow/react";
 
-/** How near a card's box must come to a group's, in flow pixels, to be offered it. */
 const DROP_RANGE = 40;
 
-/** How a refusal names the group a card is over. */
 const KIND_NOUN: Record<FrameKind, string> = {
   mcp: "MCP",
   sandbox: "sandbox",
   workspace: "workspace",
 };
 
-/** How a refusal names the card being dragged. */
 const KIND_SUBJECT: Record<FrameKind, string> = {
   mcp: "An MCP server",
   sandbox: "A sandbox",
   workspace: "A workspace",
 };
 
-/** Where a dragged card would land, and what stands in the way of it landing. */
 export type CanvasDrop = {
-  /** The frame it would join, or null while its group is still one loose card. */
   frameId: string | null;
-  /**
-   * The id of the group it lands in, which a stored slot names so that it stops
-   * counting if the card is later wired somewhere else. Empty while the drop is
-   * only being tried out, before that group is known.
-   */
+  /** Empty while the drop is only tried out, before its group is known. */
   groupId: string;
-  /** What splits groups of this kind: where a sandbox runs, an MCP transport. */
   key: string;
-  /** Which of the three framed kinds the group holds. */
   kind: FrameKind;
-  /** The group's name, as the preview box and the refusal say it. */
   label: string;
-  /** The members it would sit among, in slot order, itself left out. */
+  /** In slot order, the dragged card left out. */
   memberIds: string[];
-  /** The card being dragged. */
   nodeId: string;
-  /** Every agent the group answers to, which the drop wires the card to. */
   ownerIds: string[];
-  /** Why the canvas will not take it, or null when it will. */
   refusal: string | null;
-  /** Its place among the members, 0 first. */
   slot: number;
 };
 
-/** A group a dragged card came near: a drawn frame, or a card that is a group on its own. */
 type DropCandidate = Omit<
   CanvasDrop,
   "groupId" | "nodeId" | "refusal" | "slot"
 > & {
-  /** Collapsed to one card, so it shows no slots to choose between. */
   collapsed: boolean;
-  /** The box on screen the card is measured against. */
   rect: LayoutRect;
 };
 
-/**
- * The graph after the drop: the card wired to every agent the group answers to,
- * back in its group, and in the slot it was dropped on. Only for a drop whose
- * `refusal` is null. It writes what the drop says without judging it again, and
- * leaves a sandbox order code owns alone.
- *
- * With an empty `groupId` it writes no cosmetic slot, which is how the rules try
- * a drop out before they know which group it lands in. Membership is the same
- * either way: a slot only sorts a group, it never decides who is in it.
- */
+// Only for an unrefused drop. An empty groupId (a trial) writes no cosmetic slot.
 export function applyCanvasDrop(
   graph: FlatGraph,
   drop: CanvasDrop,
@@ -151,20 +106,11 @@ export function applyCanvasDrop(
   return { edges: edges, nodes: orderedNodes(joined, edges, drop, order) };
 }
 
-/**
- * The group the dragged card would join at this position, or null when none is
- * near enough to reach for it. A drawn frame that will not take the card says so;
- * two loose cards that do not belong together stay quiet, because cards pass each
- * other all the time and only a frame is aimed at.
- */
 export function canvasDropTarget(params: {
-  /** Frames drawn as one card, by id, which take a card but offer it no slot. */
   collapsedFrames: ReadonlySet<string>;
-  /** The chip drawn as a card, which moves the slots under it down. */
   expandedMemberId: string | null;
   graph: FlatGraph;
   nodeId: string;
-  /** Where the card is now, mid-drag, not where it was stored. */
   position: LayoutPosition;
 }): CanvasDrop | null {
   const { collapsedFrames, expandedMemberId, graph, nodeId, position } = params;
@@ -189,10 +135,8 @@ export function canvasDropTarget(params: {
       }),
     );
 
-  // The nearest group that will take the card wins, so a card it overlaps but
-  // has nothing to do with cannot talk over the frame behind it. When none will,
-  // a frame still answers: it is a box you aim at. Two cards drifting past each
-  // other are not a gesture, so a drop that cannot happen says nothing.
+  // The nearest group that takes the card wins; failing that, a refusing frame answers.
+  // Loose cards drifting past each other are not a gesture, so they stay quiet.
   return (
     offers.find((offer) => offer.refusal === null) ??
     offers.find((offer) => offer.frameId !== null) ??
@@ -200,18 +144,12 @@ export function canvasDropTarget(params: {
   );
 }
 
-/**
- * The slot the drawn graph should open for this drop, or null when none does.
- * Only a frame opens one, and only for a drop it will take: a refused drop is
- * outlined instead, and two loose cards have no frame to grow yet.
- */
 export function pendingDropOf(drop: CanvasDrop | null): PendingDrop | null {
   return drop !== null && drop.refusal === null && drop.frameId !== null
     ? { frameId: drop.frameId, slot: drop.slot }
     : null;
 }
 
-/** Whether two drop offers say the same thing, so the canvas can keep the first. */
 export function sameCanvasDrop(
   a: CanvasDrop | null,
   b: CanvasDrop | null,
@@ -228,7 +166,6 @@ export function sameCanvasDrop(
   );
 }
 
-/** Why the group will not take the card, before its effect is worked out, or null. */
 function blockingReason(
   graph: FlatGraph,
   dragged: Node,
@@ -263,7 +200,6 @@ function blockingReason(
   );
 }
 
-/** Every group on screen a card could be dropped on, with the box it is drawn in. */
 function candidatesFor(
   graph: FlatGraph,
   nodeId: string,
@@ -275,8 +211,7 @@ function candidatesFor(
   const frames = framedGroups(graph, graph.nodes);
   const framed = new Set(frames.flatMap((frame) => frame.memberIds));
   const drawn = new Set(frames.map((frame) => frame.id));
-  // Groups as they would be with nothing pulled out, so a card holding the flag
-  // still says which group it came from.
+  // Derived as if nothing were pulled out, so an ungrouped card still knows its home.
   const homes = deriveGroups(
     setUngrouped(
       graph.nodes,
@@ -307,7 +242,6 @@ function candidatesFor(
           ownerIds: [...frame.ownerIds],
           rect: {
             ...frameOriginOf(positions),
-            // Measured by the box it draws, which while collapsed is one card.
             ...(collapsed
               ? { height: COLLAPSED_FRAME_HEIGHT, width: NODE_WIDTH }
               : frameSize(frame, expandedMemberId ?? undefined)),
@@ -319,9 +253,8 @@ function candidatesFor(
       const group = frameGroupOf(node, servers);
       if (!group) return [];
       const home = homes.find((item) => item.memberIds.includes(node.id));
-      // A card pulled out of a frame that is still drawn rejoins through the
-      // frame, not through the card: dropping onto the card would pull it back
-      // in as well, which is not the two-card group the preview would promise.
+      // A card pulled out of a drawn frame rejoins through the frame: dropping onto
+      // it would pull it back in too, not the two-card group the preview promises.
       if (home && drawn.has(home.id)) return [];
 
       return [
@@ -342,10 +275,6 @@ function candidatesFor(
   ];
 }
 
-/**
- * The group a node lands in once the drop is applied. Re-derived rather than
- * read off the drop, because working that group out is the point of the call.
- */
 function groupOf(
   after: { edges: Edge[]; nodes: Node[] },
   mcpServers: FlatGraph["mcpServers"],
@@ -358,7 +287,6 @@ function groupOf(
   );
 }
 
-/** What one group near the card offers it: the slot it opens, or the reason it will not. */
 function offerOf(
   graph: FlatGraph,
   dragged: Node,
@@ -377,7 +305,6 @@ function offerOf(
   );
   const drop: CanvasDrop = {
     frameId: target.frameId,
-    // Not known until the drop has been tried: see `applyCanvasDrop`.
     groupId: "",
     key: target.key,
     kind: target.kind,
@@ -391,15 +318,12 @@ function offerOf(
   const blocked = blockingReason(graph, dragged, target, context.group);
   const after = blocked === null ? applyCanvasDrop(graph, drop) : null;
   const landed = after ? groupOf(after, graph.mcpServers, dragged.id) : null;
-  // Exactly this group, plus the card. A bigger one means the drop would move
-  // members the preview never named, so it is not the drop that was offered.
+  // Exactly this group plus the card: a bigger one moves members the preview never named.
   const joined =
     landed !== null &&
     landed.memberIds.length === target.memberIds.length + 1 &&
     target.memberIds.every((id) => landed.memberIds.includes(id));
-  // The layout write refuses a graph that breaks a runtime rule, so a drop that
-  // would break one is refused here rather than saved and rolled back. Reordering
-  // an agent's sandboxes can break one, since only its first backs a workspace.
+  // Refuse what the layout write would, so a card never lands and then springs back.
   const problem =
     after !== null && joined
       ? introducedRuntimeRefsProblem(
@@ -415,8 +339,6 @@ function offerOf(
       blocked ??
       (problem !== null ? runtimeRefsProblemText(problem) : null) ??
       (after !== null && !joined ? splitReason(graph, dragged, target) : null),
-    // The slot shown is the one the card really takes. A group that orders itself
-    // keeps the place its own rules give; every other group takes the cursor's.
     slot:
       ordersItself(target) && landed !== null
         ? landed.memberIds.indexOf(dragged.id)
@@ -424,12 +346,6 @@ function offerOf(
   };
 }
 
-/**
- * Nodes with the drop's order written where the derivation reads it: a sandbox
- * group rewrites its agents' `sandboxes`, and every group whose order is only
- * cosmetic writes each member's own slot. A group that orders itself stores
- * nothing, and an agent code manages keeps the order its project gives it.
- */
 function orderedNodes(
   nodes: readonly Node[],
   edges: readonly Edge[],
@@ -477,12 +393,8 @@ function orderedNodes(
   });
 }
 
-/**
- * Whether the group's own order means more than looks, so a drop stores no slot
- * for it: a sandbox group is its agents' `sandboxes`, which the drop rewrites
- * instead, and a machine MCP group follows the computers its servers run on, so
- * that its runs-on edges never cross.
- */
+// No cosmetic slot: a sandbox group's order is its agents' `sandboxOrder`, and a
+// machine MCP group follows its servers' computers so runs-on edges never cross.
 function ordersItself(group: Pick<CanvasDrop, "key" | "kind">): boolean {
   return (
     group.kind === "sandbox" ||
@@ -490,7 +402,6 @@ function ordersItself(group: Pick<CanvasDrop, "key" | "kind">): boolean {
   );
 }
 
-/** Gap between two boxes, 0 where they overlap. */
 function rectGap(a: LayoutRect, b: LayoutRect): number {
   const x = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width), 0);
   const y = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height), 0);
@@ -498,7 +409,6 @@ function rectGap(a: LayoutRect, b: LayoutRect): number {
   return Math.hypot(x, y);
 }
 
-/** The slot under the cursor: one per member whose middle the card has passed. */
 function slotFor(
   graph: FlatGraph,
   target: DropCandidate,
@@ -510,7 +420,6 @@ function slotFor(
 
     return centerY < (partner?.position.y ?? 0) + CARD_SIZE.height / 2 ? 0 : 1;
   }
-  // No chips on screen to aim between, so it joins at the end.
   if (target.collapsed) return target.memberIds.length;
   const expanded = expandedMemberId ?? undefined;
   const positions = frameMemberPositions(
@@ -524,7 +433,6 @@ function slotFor(
   ).length;
 }
 
-/** Why the card would group on its own instead of joining the one it was dropped on. */
 function splitReason(
   graph: FlatGraph,
   dragged: Node,
@@ -551,7 +459,6 @@ function splitReason(
   return `${cardLabel(dragged)} answers to ${named} as well, so it groups on its own.`;
 }
 
-/** The agents a node already has an edge to, whichever end of it the node is. */
 function wiredAgents(edges: readonly Edge[], nodeId: string): Set<string> {
   return new Set(
     edges.flatMap((edge) =>

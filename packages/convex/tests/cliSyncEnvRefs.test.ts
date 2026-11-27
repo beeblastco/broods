@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** An `env("NAME")` with no stored value must fail the sync, not warn. */
 
 import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
@@ -30,7 +29,6 @@ const agentResource = {
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -103,6 +101,8 @@ const sync = (tt: T): Promise<unknown> => syncResources(tt, [agentResource]);
 const setEnv = (tt: T, value: string): Promise<null> =>
   tt.mutation(internal.cli.sync.setEnvBySecretHash, {
     secretHash: SECRET_HASH,
+    actorKind: "cli",
+    actorId: "auth_test",
     project: PROJECT,
     stage: STAGE,
     name: ENV_NAME,
@@ -112,6 +112,8 @@ const setEnv = (tt: T, value: string): Promise<null> =>
 const removeEnv = (tt: T): Promise<{ removed: boolean }> =>
   tt.mutation(internal.cli.sync.removeEnvBySecretHash, {
     secretHash: SECRET_HASH,
+    actorKind: "cli",
+    actorId: "auth_test",
     project: PROJECT,
     stage: STAGE,
     name: ENV_NAME,
@@ -123,8 +125,7 @@ const storedEnvCount = (tt: T): Promise<number> =>
       (await ctx.db.query("environmentVariables").collect()).length,
   );
 
-/** What the harness actually receives: the config keeps `${NAME}`, the value
- * rides along in the agent's encrypted runtime variables. */
+// The config keeps `${NAME}`; the value rides in the agent's encrypted runtime variables.
 const runtimeValue = (tt: T): Promise<string | undefined> =>
   tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
@@ -143,7 +144,6 @@ const rowCounts = async (
   }));
 
 describe("cli sync rejects env() refs with no stored value", () => {
-  // Agent config is written encrypted; the sync throws without a secret.
   beforeEach(() => {
     vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
   });
@@ -157,8 +157,7 @@ describe("cli sync rejects env() refs with no stored value", () => {
 
     await expect(sync(tt)).rejects.toThrow(ENV_NAME);
 
-    // The check runs before the first write and the mutation rolls back, so a
-    // rejected sync leaves no project, stage or agent behind.
+    // The check runs before any write and the mutation rolls back.
     expect(await rowCounts(tt)).toEqual({ projects: 0, stages: 0, agents: 0 });
   });
 
@@ -246,8 +245,7 @@ describe("removing an env var a synced resource still reads", () => {
     await setEnv(tt, "sk-live-1");
     await sync(tt);
 
-    // Without this the delete strips the value and leaves the agent config
-    // holding a `${NAME}` nothing can resolve, the state sync now rejects.
+    // Else the agent config keeps a `${NAME}` nothing resolves, which a sync rejects.
     await expect(removeEnv(tt)).rejects.toThrow(
       `still referenced by agent "${agentResource.name}"`,
     );
@@ -287,8 +285,7 @@ describe("the value digest env list returns", () => {
     vi.unstubAllEnvs();
   });
 
-  // `broods env sync` compares this against its own sha256 of the `.env.local`
-  // value, so the two have to be the same function over the same bytes.
+  // `broods env sync` compares this with its own sha256 of the `.env.local` value.
   test("is the plain sha256 of the stored value", async () => {
     const tt = t();
     await seedAccount(tt);
@@ -318,8 +315,7 @@ describe("an unchanged re-sync", () => {
     vi.unstubAllEnvs();
   });
 
-  // Every write here re-runs the dashboard subscriptions that read the row, and
-  // `broods dev` syncs on every file save.
+  // Each write re-runs the dashboard subscriptions, and `broods dev` syncs on every save.
   test("rewrites no row, not even a fresh IV", async () => {
     const tt = t();
     await seedAccount(tt);
@@ -390,6 +386,8 @@ describe("a stage env var name", () => {
     await expect(
       tt.mutation(internal.cli.sync.setEnvBySecretHash, {
         secretHash: SECRET_HASH,
+        actorKind: "cli",
+        actorId: "auth_test",
         project: PROJECT,
         stage: STAGE,
         name: "api_key",

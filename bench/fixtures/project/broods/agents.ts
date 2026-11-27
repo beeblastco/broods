@@ -1,6 +1,5 @@
 import { defineAgent, env } from "broods";
 
-// The onboarding shape: one agent on a custom provider, secrets by env ref.
 export const search = defineAgent({
   name: "search",
   provider: {
@@ -19,8 +18,6 @@ export const search = defineAgent({
   publicAccess: true,
 });
 
-// A second agent so the compile walks more than one resource, with a session
-// policy and a channel the way a deployed project carries them.
 export const oncall = defineAgent({
   name: "oncall",
   provider: {

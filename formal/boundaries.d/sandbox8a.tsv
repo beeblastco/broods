@@ -1,0 +1,4 @@
+kind	name	reason
+external	^this\.#client\.sandboxes\.create$	Workdir SDK call over the network; the trace checks the exact create options the twin builds.
+external	^sandbox\.resume$	Workdir SDK call over the network; the twin reads nothing from its answer.
+external	^created\.delete$	Workdir SDK call over the network; the trace checks it runs when a claim is lost or rejected.

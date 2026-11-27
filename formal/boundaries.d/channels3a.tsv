@@ -1,0 +1,23 @@
+kind	name	reason
+external	^new ThreadDirectory$	Constructor only stores the token; the twin checks the token passed.
+external	^this\.createSocket$	Injected socket factory; the twin checks the token, budget, config and callback handed over.
+external	^socket\.start$	Starts the injected socket; the twin checks it runs after registration and logging.
+external	^entry\.socket\.stop$	Stops an injected socket; the twin checks one call per managed entry.
+external	^transport\.rehydrateAttachment$	Chat SDK adapter builds the fetchable attachment; the twin checks the attachment description it is given.
+opaque	TelegramFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	DiscordFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	GitHubFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	LinearFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	MessengerFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	InstagramFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	TwilioFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	WhatsAppFormatConverter	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	AsyncLocalStorage	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	LinearGraphQLClient	Formatting or context object held by an adapter; the twin never reads it, and any value it passes on is compared by identity of the recorded tag.
+opaque	Forwarder	The supervisor under test; twins read only its recorded $fields.
+opaque	StubSocket	Test socket; twins read only its recorded state and botIdentity fields.
+external	^new ClientError$	Constructs the ConvexError the function throws; the twin checks the message.
+external	^formatter\.formatToParts$	Intl renders the wall-clock parts for the zone; the twin computes the offset from them.
+opaque	ZodMiniOptional	Zod schema passed unchanged to parseInput; the twin never inspects it.
+opaque	ZodMiniNullable	Zod schema passed unchanged to parseInput; the twin never inspects it.
+opaque	ZodMiniDiscriminatedUnion	Zod schema passed unchanged to parseInput; the twin never inspects it.

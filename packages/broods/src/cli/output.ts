@@ -1,7 +1,3 @@
-/**
- * Minimal terminal formatting for the CLI.
- */
-
 import type { DiffEntry } from "../sync.ts";
 
 const RESET = "\x1b[0m";
@@ -18,7 +14,7 @@ const LABEL_BG_YELLOW = "\x1b[43m\x1b[30m\x1b[1m";
 export interface FormatOptions {
   color?: boolean;
   now?: Date;
-  /** Stream the text is written to, which decides whether it is a terminal. */
+  /** The stream whose TTY decides color. */
   stream?: "stdout" | "stderr";
 }
 
@@ -28,26 +24,16 @@ export interface DeploymentTarget {
   dashboardUrl: string;
 }
 
-/**
- * Where the next command acts, read from `.env.local`, the shell and the stored
- * login only. Help prints it, so it must never cost a network call.
- */
+// Local state only: help prints it, so it must never cost a network call.
 export interface HelpContext {
   loggedIn: boolean;
-  /** Org name stored with the login; unknown for a BROODS_TOKEN login. */
   org?: string;
-  /** Unset until `broods dev` or `--project` picks one. */
   project?: string;
-  /** Folder name `broods dev` would suggest when no project is set. */
   projectGuess: string;
   server: string;
   stage: string;
 }
 
-/**
- * One row of a picker or listing, marked with `*` and highlighted when it is the
- * entry already in use, the one an empty answer keeps.
- */
 export function formatChoiceRow(
   text: string,
   current: boolean,
@@ -58,7 +44,6 @@ export function formatChoiceRow(
   return current ? paint(row, `${BOLD}${CYAN}`, shouldUseColor(options)) : row;
 }
 
-/** The `org / project / stage / server` block at the top of bare `broods`. */
 export function formatContext(
   context: HelpContext,
   options: FormatOptions = {},
@@ -85,9 +70,7 @@ export function formatDeploymentTarget(
   options: FormatOptions = {},
 ): string {
   const color = shouldUseColor(options);
-  // `dev` syncs whatever stage BROODS_STAGE/--stage resolves to, so the banner
-  // has to name that stage. A green badge is reserved for Development; anything
-  // else gets a yellow one so syncing Production never looks routine.
+  // Green only for Development, so syncing Production never looks routine.
   const stageLabel = stageDisplayName(target.stage);
   const development = stageLabel === "Development";
   const bar = paint("▌", development ? GREEN : YELLOW, color);
@@ -113,7 +96,7 @@ export function formatDiffEntries(
 ): string[] {
   const color = shouldUseColor(options);
 
-  return entries.map((entry) => {
+  return entries.map((entry): string => {
     const marker = formatDiffMarker(entry.operation, color);
     if (entry.operation === "rename" && entry.previousName) {
       return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
@@ -123,10 +106,6 @@ export function formatDiffEntries(
   });
 }
 
-/**
- * One-line summary of the env vars `dev` pushed from `.env.local` to the cloud
- * stage, e.g. `▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, …`.
- */
 export function formatEnvSync(
   names: string[],
   options: FormatOptions = {},
@@ -138,7 +117,6 @@ export function formatEnvSync(
   return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
 }
 
-/** `✖ message`, red mark on the first line only so a trailing help page stays plain. */
 export function formatError(
   message: string,
   options: FormatOptions = {},
@@ -146,16 +124,16 @@ export function formatError(
   return `${paint("✖", RED, shouldUseColor(options))} ${message}`;
 }
 
-/** Suggested commands, name then a dimmed reason, aligned in one column. */
 export function formatNext(
   entries: readonly (readonly [string, string])[],
   options: FormatOptions = {},
 ): string[] {
   const color = shouldUseColor(options);
-  const width = Math.max(...entries.map(([command]) => command.length)) + 2;
+  const width =
+    Math.max(...entries.map(([command]): number => command.length)) + 2;
 
   return entries.map(
-    ([command, reason]) =>
+    ([command, reason]): string =>
       `  ${command.padEnd(width)}${paint(reason, DIM, color)}`,
   );
 }
@@ -176,10 +154,6 @@ export function formatSuccess(
   return `${paint("✔", GREEN, shouldUseColor(options))} ${message}`;
 }
 
-/**
- * What a command page acts on right now, e.g. `now  my-app → production`.
- * `options.note` explains a target that differs from the selected stage.
- */
 export function formatTarget(
   project: string,
   stage: string,
@@ -239,7 +213,7 @@ function formatDiffMarker(
   return `[${paint("-", RED, color)}]`;
 }
 
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
 
   return `${Math.max(ms, 0).toFixed(1)}ms`;
@@ -249,7 +223,6 @@ function paint(value: string, style: string, color: boolean): string {
   return color ? `${style}${value}${RESET}` : value;
 }
 
-// Green for development, yellow for anything else, matching the dev banner.
 function paintStage(stage: string, color: boolean): string {
   const development = stageDisplayName(stage) === "Development";
 
@@ -266,10 +239,7 @@ function shouldUseColor(options: FormatOptions): boolean {
   return stream.isTTY && process.env.TERM !== "dumb";
 }
 
-/**
- * The stage name as the backend stores it: `development` and `production` are
- * reserved and always canonicalize, every other name is kept verbatim.
- */
+// The backend canonicalizes the reserved `development` and `production`; others stay verbatim.
 function stageDisplayName(stage: string): string {
   const normalized = stage.trim().toLowerCase();
   if (normalized === "development") return "Development";

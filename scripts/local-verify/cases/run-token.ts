@@ -1,17 +1,11 @@
 import { sealRunToken } from "../../../apps/core/src/shared/run-token.ts";
-import { assertStep, type VerifyContext } from "../harness.ts";
+import { OK_AGENT, assertStep, type VerifyContext } from "../harness.ts";
 
 interface Answer {
   status: number;
   body: string;
 }
 
-/**
- * A run token (`brt_`) is a core credential for one agent run. The config
- * plane refuses the prefix outright and core refuses one it did not sign. A
- * genuine one reads its own agent's run, and is refused another agent's run
- * and starting a run of its own.
- */
 export async function runToken(context: VerifyContext): Promise<void> {
   const send = async (
     method: string,
@@ -53,7 +47,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
   const name = `run-token-${context.runId}`;
   const agentConfig = {
     ...context.model,
-    instructions: "Reply with the single word OK.",
+    agent: OK_AGENT,
   };
   const [{ accountId }, own, other] = await Promise.all([
     context.account.getAccount(),
@@ -73,7 +67,7 @@ export async function runToken(context: VerifyContext): Promise<void> {
     startRun(own.agentId),
     startRun(other.agentId),
   ]);
-  // Core's own signer, on the secret this stack's core derives its key from.
+  // sealRunToken derives its key from STAGE_TICKET_SECRET, as this stack's core does.
   process.env.STAGE_TICKET_SECRET = context.stageTicketSecret;
   const token = sealRunToken({ accountId: accountId, agentId: own.agentId });
 

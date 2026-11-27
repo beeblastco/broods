@@ -1,14 +1,12 @@
 import type { AccountWorkspace } from "../../../packages/broods/src/account.ts";
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  assertStep,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
 
-/**
- * Workspace isolation levels through the config plane and core: a level is
- * stored as sent, a boolean is refused, and a direct run on an agent-isolated
- * workspace resolves its namespace from the run's own agent. The local stack
- * has no bucket, so that run ends at the mount, past the namespace it had to
- * resolve first.
- */
 export async function workspaceIsolation(
   context: VerifyContext,
 ): Promise<void> {
@@ -27,7 +25,7 @@ export async function workspaceIsolation(
     perAgent?.config.isolation === "agent",
     JSON.stringify(perAgent),
   );
-  // A raw request, since the SDK type no longer lets a boolean through.
+  // A raw request: the SDK type does not let a boolean through.
   const boolean = await fetch(`${context.edgeUrl}/v1/workspaces`, {
     method: "POST",
     headers: {
@@ -50,12 +48,13 @@ export async function workspaceIsolation(
     name: key,
     config: {
       ...context.model,
-      instructions: "Reply with the single word OK.",
+      agent: OK_AGENT,
       workspaces: [
         { name: "scratch", workspaceId: created.workspaceId, sandbox: null },
       ],
     },
   });
+  // The local stack has no bucket, so the run fails at the mount, after namespace resolution.
   const status = await context.measure(
     "agent-isolated workspace run",
     (): Promise<AsyncStatus> =>

@@ -1,8 +1,3 @@
-/**
- * Model-facing chat channel tools.
- * Keep provider credentials and routing out of model input.
- */
-
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import type { Attachment } from "chat";
 import {
@@ -14,9 +9,10 @@ import {
 import { logWarn } from "../../shared/log.ts";
 import { contentTypeForPath } from "../../shared/media-types.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type {
-  RunSessionMessageDispatch,
-  SessionMessageInput,
+import {
+  CHANNEL_SESSION_KEY_FORMAT,
+  type RunSessionMessageDispatch,
+  type SessionMessageInput,
 } from "../ingress.ts";
 import {
   resolveWorkspace,
@@ -25,21 +21,16 @@ import {
   workspaceMediaUrl,
   workspaceParamSchema,
 } from "./filesystem-utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
-// Every provider that takes a batch has its own ceiling, Telegram ten per
-// album and Discord ten files a message. When a provider uploads, the bytes of
-// every file in one call are resident at once. So the cap is a memory ceiling as
-// much as a protocol one.
+// Telegram and Discord take ten per batch, and an upload holds every file in memory at once.
 const MAX_ATTACHMENTS_PER_CALL = 10;
 
 export interface ChannelToolContext {
   actions: ChannelActions;
   channelName: string;
   transformText(text: string): Promise<string | null>;
-  // Attached workspaces, so send-images and send-files can take a workspace
-  // file instead of a public URL. Sealing that link needs the owning account,
-  // so both arrive together or not at all.
+  // Sealing a workspace file's link needs the owning account: both arrive or neither does.
   workspaces?: ResolvedWorkspace[];
   accountId?: string;
 }
@@ -69,18 +60,11 @@ interface SendUpdateInput {
   message: string;
 }
 
-// Two deliveries behind one tool: a provider with a document API gets the files
-// themselves, one without gets their sealed URLs as text. The model names
-// workspace paths and the channel decides, so a prompt written for one channel
-// keeps working on the next.
 export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
-  // A workspace file can only leave as a media link, and sealing one needs the
-  // owning account. Without workspaces there is nothing this tool could send.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
   if (workspaces.length === 0) {
-    // Without this the drop is invisible in the trace.
     logWarn(
       "send-files not registered: sending files needs an attached workspace",
       {
@@ -119,7 +103,7 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
-          return toolText("Files blocked by the outbound message hook.");
+          return "Files blocked by the outbound message hook.";
         }
 
         return await deliverFiles(context, files, transformed);
@@ -128,19 +112,11 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   };
 }
 
-// A picture is a different message from a file: the recipient sees it without
-// opening anything, so it gets its own tool and its own provider endpoint. It
-// degrades rather than fails, falling through to `send-files` when a channel has
-// no picture endpoint or rejects the batch.
 export function sendImagesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
-  // With neither endpoint a picture can only go out as a bare link, which is
-  // what `send-files` is already for.
   if (!actions.sendImages && !actions.sendFiles) {
     return {};
   }
-  // Sealing a workspace file into a media link needs the owning account; without
-  // one the tool stays URL-only. `sendFilesTool` already warns for that cause.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 
@@ -162,18 +138,14 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
-          return toolText("Images blocked by the outbound message hook.");
+          return "Images blocked by the outbound message hook.";
         }
         if (actions.sendImages) {
           try {
             await actions.sendImages(images, transformed || undefined);
 
-            return toolText(
-              `${images.length} image(s) sent to the current ${channelName} conversation.`,
-            );
+            return `${images.length} image(s) sent to the current ${channelName} conversation.`;
           } catch (error) {
-            // The reason belongs in the log, not the conversation: the recipient
-            // gets the pictures by the next route down rather than an error.
             logWarn("Channel rejected an image batch, falling back to files", {
               channel: channelName,
               count: images.length,
@@ -196,14 +168,14 @@ export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
   return {
     "send-message": tool({
       description:
-        "Sends a message to another conversation session. The target agent processes it as a follow-up and replies in that conversation.",
+        "Sends a message to another channel conversation of this agent, a chat that has messaged it before. The agent processes it there as a follow-up and replies in that chat. Subagent conversations are not reachable here.",
       inputSchema: jsonSchema<SessionMessageInput>({
         type: "object",
         properties: {
           conversationKey: {
             type: "string",
             minLength: 1,
-            description: "Conversation key of the target agent session.",
+            description: `Key of the target channel conversation: ${CHANNEL_SESSION_KEY_FORMAT}.`,
           },
           message: {
             type: "string",
@@ -217,9 +189,7 @@ export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
       execute: async function (input): Promise<string> {
         const result = await dispatch(input);
 
-        return toolText(
-          `Message ${result.status} for conversation ${result.conversationKey}.`,
-        );
+        return `Message ${result.status} for conversation ${result.conversationKey}.`;
       },
     }),
   };
@@ -249,9 +219,7 @@ export function sendReactionsTool(context: ChannelToolContext): ToolSet {
         const { emoji } = input;
         await actions.reactToMessage(emoji);
 
-        return toolText(
-          `Reaction added to the inbound ${channelName} message.`,
-        );
+        return `Reaction added to the inbound ${channelName} message.`;
       },
     }),
   };
@@ -273,7 +241,7 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
           sticker: {
             type: "string",
             description:
-              "Provider-native sticker identifier, file identifier, name, or public URL.",
+              "Provider-native sticker id or name, or a public URL. Not a workspace file path.",
           },
         },
         required: ["sticker"],
@@ -283,17 +251,12 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
         const { sticker } = input;
         await sendSticker(sticker);
 
-        return toolText(
-          `Sticker sent to the current ${channelName} conversation.`,
-        );
+        return `Sticker sent to the current ${channelName} conversation.`;
       },
     }),
   };
 }
 
-// A progress note while the turn is still running, so a long tool run does not
-// read as a dead bot. It carries none of the answer and is not a delivery tool:
-// the turn still owes a final reply after it.
 export function sendUpdateTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
 
@@ -316,20 +279,16 @@ export function sendUpdateTool(context: ChannelToolContext): ToolSet {
       execute: async function (input): Promise<string> {
         const transformed = await context.transformText(input.message);
         if (transformed === null) {
-          return toolText("Update blocked by the outbound message hook.");
+          return "Update blocked by the outbound message hook.";
         }
         await actions.sendText(transformed);
 
-        return toolText(
-          `Update sent to the current ${channelName} conversation. The final reply is still owed.`,
-        );
+        return `Update sent to the current ${channelName} conversation. The final reply is still owed.`;
       },
     }),
   };
 }
 
-// The last two rungs both tools share. The result names which one happened so
-// the model does not send the files a second time.
 async function deliverFiles(
   context: ChannelToolContext,
   files: ChannelFile[],
@@ -340,13 +299,9 @@ async function deliverFiles(
     try {
       await actions.sendFiles(files, caption || undefined);
 
-      return toolText(
-        `${files.length} file(s) sent to the current ${channelName} conversation.`,
-      );
+      return `${files.length} file(s) sent to the current ${channelName} conversation.`;
     } catch (error) {
-      // Uploading fails on the provider's terms: Discord caps a free guild at
-      // 10 MB, Slack needs files:write on the token. The link below needs
-      // neither, so it is worth trying first.
+      // Discord caps a free guild at 10 MB, Slack needs files:write; a link needs neither.
       logWarn("Channel rejected a file upload, falling back to links", {
         channel: channelName,
         count: files.length,
@@ -359,22 +314,15 @@ async function deliverFiles(
     caption ? `${caption}\n${lines.join("\n")}` : lines.join("\n"),
   );
 
-  return toolText(
-    `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
-  );
+  return `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`;
 }
 
-// A workspace file has no address of its own, so it is handed over as a durable
-// media link. Every provider fetches the picture itself rather than accepting
-// an upload, and Zalo re-fetches it long after the message was sent.
 async function resolveImages(
   source: { workspaces: ResolvedWorkspace[]; accountId?: string },
   urls: string[] | undefined,
   filePaths: string[] | undefined,
   workspace: string | undefined,
 ): Promise<ChannelImage[]> {
-  // Picking one of two given sources silently would send something the caller
-  // did not ask for, so refuse and let the model choose.
   if (filePaths?.length && urls?.length) {
     return toolError("Error: send-images takes file_paths or urls, not both");
   }
@@ -501,9 +449,6 @@ function toChannelFile(image: ChannelImage): ChannelFile {
   return { ...image, type: "file" };
 }
 
-// Addressed both ways a provider might want it: the sealed link for the ones
-// that fetch, a lazy reader for the ones that upload. The reader stays uncalled
-// unless asked, which keeps the bytes off the wire for Telegram and Zalo.
 async function workspaceAttachment<T extends "file" | "image">(
   type: T,
   ws: ResolvedWorkspace,

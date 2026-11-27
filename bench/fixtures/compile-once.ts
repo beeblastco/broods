@@ -1,9 +1,3 @@
-/**
- * One cold `compileProject` of the fixture project in a fresh process, which
- * is what every `broods dev`, `deploy` and `run` pays before it talks to the
- * stage. Spawned by bench/cases/cli.ts; prints nothing on success.
- */
-
 import { compileProject } from "../../packages/broods/src/manifest.ts";
 
 const compiled = await compileProject({

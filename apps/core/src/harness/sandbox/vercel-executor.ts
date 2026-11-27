@@ -1,23 +1,18 @@
-/**
- * Vercel Sandbox executor.
- * Keep @vercel/sandbox adaptation here. Persistent mode reserves one named
- * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
- * `config.snapshot` names the image or snapshot it boots, and the Snapshot
- * action captures a reserved sandbox into a new snapshot.
- */
-
+import { ClientError } from "@broods/convex/model/clientError";
 import { randomUUID } from "node:crypto";
 import type {
   CommandFinished,
   NetworkPolicy,
   Sandbox as VercelSandbox,
 } from "@vercel/sandbox";
-import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
-import { isPlainObject } from "../../shared/object.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
+import { logWarn } from "../../shared/log.ts";
 import type { SandboxSpecs } from "../../shared/sandbox-sizes.ts";
 import {
   MAX_CONCURRENT_BACKGROUND_JOBS,
+  type ResolvedSandboxLifecycle,
+  outlivedMaxLifetime,
   resolveSandboxLifecycle,
 } from "../../shared/sandbox.ts";
 import {
@@ -28,14 +23,22 @@ import {
 } from "./instance-store.ts";
 import {
   callbackEnv,
-  generateJobId,
   launchScript,
   logsScript,
   parseJobStatus,
   statusScript,
   stopScript,
 } from "./jobs.ts";
+import {
+  type ResolvedS3Mount,
+  type S3MountIdentity,
+  executorS3Context,
+  freshMountScript,
+  resolveS3Mount,
+  resolveS3MountIdentity,
+} from "./s3-mount.ts";
 import type {
+  SandboxBackgroundRequest,
   SandboxExecutor,
   SandboxExecutorConfig,
   SandboxJobHandle,
@@ -48,7 +51,9 @@ import type {
   SandboxRunResult,
   SandboxSnapshotResult,
 } from "./types.ts";
+import { queueMirrorUpsert } from "./mirror-writes.ts";
 import {
+  assertSnapshotBootable,
   configString,
   isSandboxGoneError,
   mergeSandboxEnv,
@@ -56,13 +61,17 @@ import {
   sandboxNamePrefix,
   sandboxReservationKey,
   shellQuote,
-  stringRecord,
   truncateText,
   workspacePath,
 } from "./utils.ts";
 
 const GENERATION_LENGTH = 8;
-// Vercel snapshot ids carry this prefix. Any other `snapshot` names a VCR image.
+const KEEP_ALIVE_SLACK_MS = 60_000;
+const EPHEMERAL_SETUP_SECONDS = 5 * 60;
+const MOUNT_LOCK = "/tmp/.fp-s3-mount.lock";
+// Vercel images lack mount-s3; fetching it needs egress to this host and the apt mirrors.
+const MOUNT_S3_PACKAGE =
+  "https://s3.amazonaws.com/mountpoint-s3-release/latest/${arch}/mount-s3.deb";
 const SNAPSHOT_ID_PREFIX = "snap_";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
@@ -72,10 +81,12 @@ type VercelCreateOptions = NonNullable<
 
 export class VercelSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
+  readonly #lifecycle: ResolvedSandboxLifecycle;
   #sandboxClass?: Promise<VercelSandboxClass>;
 
   constructor(config: SandboxExecutorConfig) {
     this.#config = config;
+    this.#lifecycle = resolveSandboxLifecycle(config.lifecycle);
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -96,21 +107,23 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       : workspacePath(request);
 
     try {
+      await this.#ensureS3Mount(sandbox, request);
       if (cwd) {
         await this.#shell(sandbox, `mkdir -p ${shellQuote(cwd)}`, { cwd: "/" });
       }
       if (persistent && cwd) {
-        await this.#runLifecycle(sandbox, cwd);
+        // Around the hooks: they cannot outlast the session, and the command keeps its window.
+        await this.#keepAlive(sandbox, request.timeoutSeconds);
+        await this.#runLifecycle(sandbox, sandboxReservationKey(request)!);
+        await this.#keepAlive(sandbox, request.timeoutSeconds);
       }
       const result = await sandbox.runCommand({
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd: cwd } : {}),
-        env: mergeSandboxEnv(
-          this.#config.envVars,
-          request.envVars,
-          request.principal,
-        ),
+        env: mergeSandboxEnv(this.#config.envVars, {
+          principal: request.principal,
+        }),
         timeoutMs: request.timeoutSeconds * 1000,
       });
 
@@ -125,26 +138,18 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
   }
 
-  async prewarm(request: {
-    namespace?: string;
-    reservationKey?: string;
-  }): Promise<void> {
-    if (!this.#persistent(request)) return;
-    await this.#acquire({
-      code: "",
-      ...request,
-      timeoutSeconds: 30,
-      outputLimitBytes: 1024,
-    });
-  }
-
-  async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
+  async runBackground(
+    request: SandboxBackgroundRequest,
+  ): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     const workDir = this.#workDir(ns);
+    await this.#ensureS3Mount(sandbox, request);
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
-    const jobId = request.jobId ?? generateJobId();
-    await this.#runLifecycle(sandbox, workDir);
+    const jobId = request.jobId;
+    await this.#keepAlive(sandbox, request.timeoutSeconds);
+    await this.#runLifecycle(sandbox, ns);
+    await this.#keepAlive(sandbox, request.timeoutSeconds);
     const script = launchScript(
       this.#jobsDir(ns),
       jobId,
@@ -159,7 +164,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       cmd: "bash",
       args: ["-lc", script],
       env: {
-        ...stringRecord(this.#config.envVars),
+        ...mergeSandboxEnv(this.#config.envVars),
         ...callbackEnv(request.callback),
       },
       timeoutMs: request.timeoutSeconds * 1000,
@@ -215,9 +220,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
-      // The SDK sends no `resume` of its own, leaving the choice to the API. Say it
-      // here: a teardown never needs a running VM, and booting one to delete it costs
-      // compute and widens the window a concurrent acquire can slip into.
+      // The SDK leaves `resume` to the API; booting a VM to delete it widens the acquire race.
       const sandbox = await Sandbox.get({
         name: name,
         resume: false,
@@ -235,11 +238,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     ).catch(() => {});
   }
 
-  /**
-   * Captures the reserved sandbox as a Vercel snapshot, which any vercel
-   * sandbox of the account can then boot through `config.snapshot`. Vercel stops
-   * the sandbox to capture it; its next call resumes it.
-   */
   async snapshot(
     request: SandboxReservationRef,
   ): Promise<SandboxSnapshotResult> {
@@ -248,7 +246,6 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       // Vercel expires a snapshot after 30 days by default; a pinned one must not.
       const snapshot = await sandbox.snapshot({ expiration: 0 });
 
-      // The SDK answers a capture that failed with a failed snapshot, not a throw.
       if (snapshot.status !== "created") {
         throw new Error(
           `Vercel snapshot ${snapshot.snapshotId} ended ${snapshot.status}`,
@@ -259,6 +256,66 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     } catch (err) {
       throw classifyVercelError(err);
     }
+  }
+
+  // A resumed session loses its FUSE mount, and mount-s3 reads credentials only at start.
+  async #ensureS3Mount(
+    sandbox: VercelSandbox,
+    request: SandboxRunRequest,
+  ): Promise<void> {
+    if (!mountsWorkspace(request)) return;
+    const mountPath = workspacePath(request, this.#workspaceRoot())!;
+    const now = Math.floor(Date.now() / 1000);
+    const check = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", freshMountScript(mountPath, now)],
+    });
+    if (check.exitCode === 0) return;
+    const mount = await resolveS3Mount(
+      executorS3Context(this.#config, request),
+    );
+    if (!mount.credentials) {
+      throw new Error(
+        "vercel S3 workspace mounts need SANDBOX_MOUNT_ROLE_ARN in the harness runtime, or a workspace bucket with assumeRole or R2 auth",
+      );
+    }
+    if (this.#persistent(request)) {
+      await this.#keepAlive(sandbox, request.timeoutSeconds);
+    }
+    await this.#shell(sandbox, mountScript(mount, mountPath, now), {
+      cwd: "/",
+      env: {
+        ...mount.credentials,
+        AWS_EC2_METADATA_DISABLED: "true",
+        ...(mount.region
+          ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
+          : {}),
+      },
+    });
+  }
+
+  // Vercel's timeout is a hard cap, not an idle timer; past the plan's cap a refusal only logs.
+  async #keepAlive(sandbox: VercelSandbox, callSeconds: number): Promise<void> {
+    const expiresAt = sandbox.expiresAt?.getTime();
+    if (expiresAt === undefined) return;
+    const shortMs =
+      Date.now() +
+      (this.#lifecycle.idleTimeoutSeconds + callSeconds) * 1000 -
+      expiresAt;
+    if (shortMs <= 0) return;
+    const extendMs = Math.ceil(shortMs) + KEEP_ALIVE_SLACK_MS;
+    await sandbox.extendTimeout(extendMs).catch((err: unknown): void => {
+      logWarn("vercel sandbox session extension refused", {
+        sandbox: sandbox.name,
+        error: toErrorMessage(err),
+      });
+    });
+  }
+
+  async #moveNetwork(sandbox: VercelSandbox): Promise<void> {
+    const networkId = configString(this.#config.options?.networkId);
+    if (sandbox.networkId === networkId) return;
+    await sandbox.update({ networkId: networkId ?? null });
   }
 
   #persistent(request: {
@@ -282,9 +339,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options)
-      ? this.#config.options
-      : {};
+    const options = this.#config.options ?? {};
 
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
@@ -296,8 +351,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${namespace}`;
   }
 
+  // Off the S3 mount: no append there, and a marker in it would skip a new sandbox's onCreate.
   #jobsDir(namespace: string): string {
-    return `${this.#workDir(namespace)}/.fp-jobs`;
+    return `${this.#workspaceRoot()}/.fp-jobs/${namespace}`;
   }
 
   async #acquire(request: SandboxRunRequest): Promise<VercelSandbox> {
@@ -311,6 +367,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #acquireSandbox(request: SandboxRunRequest): Promise<VercelSandbox> {
     const Sandbox = await this.#Sandbox();
     if (!this.#persistent(request)) {
+      await assertSnapshotBootable(
+        this.#config.controlPlane,
+        this.#config.snapshot,
+      );
+
       return Sandbox.create(vercelCreateOptions(this.#config, request, false));
     }
 
@@ -322,26 +383,37 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        await saveSandboxInstance(
-          "vercel",
-          key,
-          storedName,
-          this.#config.controlPlane?.accountId,
-        ).catch(() => {});
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "vercel",
-          key,
-          storedName,
-          request.metadata,
-          { specs: vercelSpecs(sandbox) },
-        );
+        if (
+          !outlivedMaxLifetime(this.#lifecycle, sandbox.createdAt.getTime())
+        ) {
+          await this.#moveNetwork(sandbox);
+          await saveSandboxInstance(
+            "vercel",
+            key,
+            storedName,
+            this.#config.controlPlane?.accountId,
+          ).catch(() => {});
+          void queueMirrorUpsert({
+            controlPlane: this.#config.controlPlane,
+            provider: "vercel",
+            reservationKey: key,
+            externalId: storedName,
+            metadata: request.metadata,
+            options: { specs: vercelSpecs(sandbox) },
+          });
 
-        return sandbox;
+          return sandbox;
+        }
+        // Retired at acquire, never on a timer, so it never cuts a running command.
+        await sandbox.delete();
+        await deleteSandboxInstance(
+          "vercel",
+          key,
+          this.#config.controlPlane?.accountId,
+          storedName,
+        ).catch(() => {});
       } catch (error) {
-        // Recreate only when the sandbox is really gone; a transient error must
-        // propagate or the still-live sandbox is orphaned at the provider. The
-        // conditional delete keeps a row a concurrent call already re-claimed.
+        // Only a gone sandbox is recreated; on a transient error the live one would be orphaned.
         if (!isSandboxGoneError(error)) throw error;
         await deleteSandboxInstance(
           "vercel",
@@ -352,10 +424,12 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       }
     }
 
-    // A fresh generation, so this machine is ours alone. `getOrCreate` on a name
-    // derived from the key would hand back whatever machine already answers to
-    // it, including one a sweeper has taken the row for and is about to delete.
+    // Fresh name: `getOrCreate` on a key-derived one could hand back a machine being swept.
     const name = vercelSandboxName(key);
+    await assertSnapshotBootable(
+      this.#config.controlPlane,
+      this.#config.snapshot,
+    );
     const sandbox = await Sandbox.create({
       ...vercelCreateOptions(this.#config, request, true),
       name: name,
@@ -369,21 +443,19 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           this.#config.controlPlane?.accountId,
         )
       ) {
-        await upsertSandboxInstance(
-          this.#config.controlPlane,
-          "vercel",
-          key,
-          name,
-          request.metadata,
-          { specs: vercelSpecs(sandbox) },
-        );
+        void queueMirrorUpsert({
+          controlPlane: this.#config.controlPlane,
+          provider: "vercel",
+          reservationKey: key,
+          externalId: name,
+          metadata: request.metadata,
+          options: { specs: vercelSpecs(sandbox) },
+        });
 
         return sandbox;
       }
     } catch (error) {
-      // The claim may already have committed even when its caller rejects. Drop the
-      // row while it still names this machine, then the machine itself; passing the
-      // name keeps a concurrent winner's row and machine intact.
+      // The claim may have committed even though it rejected.
       await deleteSandboxInstance(
         "vercel",
         key,
@@ -395,22 +467,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     }
 
     const winner = await getSandboxExternalId("vercel", key);
-    if (!winner) {
-      // The row went away between the refused claim and this read. Nothing maps
-      // the key to this machine, so record it in the mirror and let the sweeper's
-      // orphan adoption be what reaches it again.
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "vercel",
-        key,
-        name,
-        request.metadata,
-        { specs: vercelSpecs(sandbox) },
-      );
-
-      return sandbox;
-    }
     await sandbox.delete().catch(() => {});
+    if (!winner)
+      throw new Error("failed to reserve vercel sandbox (lost create race)");
 
     return Sandbox.get({
       name: winner,
@@ -418,21 +477,24 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     });
   }
 
-  // The reserved sandbox, for background jobs and the Snapshot action.
   async #reserved(
     request: SandboxReservationRef,
   ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
     if (!key)
-      throw new Error("a persistent sandbox reservation key is required");
+      throw new ClientError("a persistent sandbox reservation key is required");
     const name = await getSandboxExternalId("vercel", key);
     if (!name)
-      throw new Error("no reserved vercel sandbox for this reservation");
+      throw new ClientError(
+        "no reserved vercel sandbox for this reservation",
+        "not_found",
+      );
     const Sandbox = await this.#Sandbox();
     const sandbox = await Sandbox.get({
       name: name,
       ...vercelAuthOptions(this.#config),
     });
+    await this.#keepAlive(sandbox, 0);
 
     return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
   }
@@ -440,13 +502,13 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async #shell(
     sandbox: VercelSandbox,
     code: string,
-    opts: { cwd?: string } = {},
+    opts: { cwd?: string; env?: Record<string, string> } = {},
   ): Promise<string> {
     const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", code],
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: { ...stringRecord(this.#config.envVars) },
+      env: { ...mergeSandboxEnv(this.#config.envVars), ...opts.env },
     });
     if (result.exitCode !== 0) {
       throw new Error(
@@ -457,22 +519,29 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return await result.stdout();
   }
 
-  async #runLifecycle(sandbox: VercelSandbox, workDir: string): Promise<void> {
+  async #runLifecycle(sandbox: VercelSandbox, key: string): Promise<void> {
     if (!this.#config.onCreate?.length && !this.#config.onResume?.length)
       return;
-    const marker = `${workDir}/.fp-lifecycle-created`;
+    const workDir = this.#workDir(key);
+    const jobsDir = this.#jobsDir(key);
+    const marker = `${jobsDir}/.fp-lifecycle-created`;
     const createCommands = this.#config.onCreate ?? [];
     const resumeCommands = this.#config.onResume ?? [];
     const script = [
       "set -e",
-      `mkdir -p ${shellQuote(workDir)}`,
+      `mkdir -p ${shellQuote(workDir)} ${shellQuote(jobsDir)}`,
+      `exec 9>${shellQuote(`${jobsDir}/.fp-lifecycle.lock`)}`,
+      "flock 9",
       `cd ${shellQuote(workDir)}`,
+      // Hooks run without fd 9, so a process they leave behind cannot hold the lock.
+      "{",
       `if [ ! -f ${shellQuote(marker)} ]; then`,
       ...createCommands.map((cmd) => `  ${cmd}`),
       `  touch ${shellQuote(marker)}`,
       "else",
       ...resumeCommands.map((cmd) => `  ${cmd}`),
       "fi",
+      "} 9>&-",
     ].join("\n");
     await this.#shell(sandbox, script, { cwd: "/" });
   }
@@ -491,7 +560,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
     return {
       ok: result.exitCode === 0,
-      runtime: request.runtime ?? "bash",
+      runtime: "bash",
       exitCode: result.exitCode,
       stdout: stdout.value,
       stderr: stderr.value,
@@ -508,8 +577,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   }
 }
 
-// The @vercel/sandbox SDK surfaces auth failures as a bare "Status code 403 is not
-// ok". Translate 401/403 into an actionable message so the agent sees what to fix.
+// A Secure Compute network the team cannot use also answers 401, so keep the API's reason.
 export function classifyVercelError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   const numericStatus = [
@@ -517,15 +585,15 @@ export function classifyVercelError(err: unknown): Error {
     (err as { statusCode?: unknown })?.statusCode,
     (err as { response?: { status?: unknown } })?.response?.status,
   ].find((value): value is number => typeof value === "number");
-  // Fall back to the SDK's documented auth-failure phrasing ("Status code 403 is not
-  // ok") rather than scanning for any 401/403 substring, which could match unrelated
-  // numbers (ids, timestamps) in some other error message.
   const matched = /status code (401|403)\b/i.exec(message);
   const status = numericStatus ?? (matched ? Number(matched[1]) : undefined);
   if (status === 401 || status === 403) {
+    const reason = /status code \d+ is not ok:\s*(.+)/is.exec(message)?.[1];
+
     return new Error(
-      `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
-        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
+      `Vercel Sandbox rejected the request (HTTP ${status}): ` +
+        `${reason ?? "the VERCEL_TOKEN is invalid or lacks access to the configured team/project."} ` +
+        "Verify VERCEL_TOKEN, VERCEL_TEAM_ID, VERCEL_PROJECT_ID, and options.networkId when set.",
     );
   }
 
@@ -544,12 +612,65 @@ async function commandError(
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
+// The daemon holds the credentials and the agent has sudo, so they are prefix-scoped for an hour.
+function mountScript(
+  mount: ResolvedS3Mount,
+  mountPath: string,
+  now: number,
+): string {
+  const quotedPath = shellQuote(mountPath);
+  const mountArgs = [
+    "--allow-delete",
+    "--allow-overwrite",
+    "--allow-other",
+    ...(mount.prefix ? ["--prefix", mount.prefix] : []),
+    ...(mount.region ? ["--region", mount.region] : []),
+    ...(mount.endpoint ? ["--endpoint-url", mount.endpoint] : []),
+    mount.bucket,
+    mountPath,
+  ]
+    .map(shellQuote)
+    .join(" ");
+
+  return [
+    "set -e",
+    `exec 9>${MOUNT_LOCK}`,
+    "flock 9",
+    "if ! command -v mount-s3 >/dev/null; then",
+    '  arch="$(dpkg --print-architecture | sed s/amd64/x86_64/)"',
+    `  curl -fsSL -o /tmp/mount-s3.deb "${MOUNT_S3_PACKAGE}" || { echo "mount-s3 is not installed and could not be fetched; boot a snapshot that has it, or allow egress to s3.amazonaws.com and the Ubuntu mirrors" >&2; exit 1; }`,
+    "  sudo apt-get update -qq",
+    "  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/mount-s3.deb",
+    "  rm -f /tmp/mount-s3.deb",
+    "fi",
+    `if ! { ${freshMountScript(mountPath, now)}; }; then`,
+    `  sudo umount -l ${quotedPath} 2>/dev/null || true`,
+    `  sudo mkdir -p ${quotedPath}`,
+    `  sudo chown "$(id -u)":"$(id -g)" ${quotedPath}`,
+    `  sudo -E mount-s3 --uid "$(id -u)" --gid "$(id -g)" ${mountArgs}`,
+    `  echo ${now} | sudo tee "$stamp_file" >/dev/null`,
+    "fi",
+  ].join("\n");
+}
+
+function mountsWorkspace(request: { namespace?: string }): boolean {
+  return !!request.namespace;
+}
+
+function s3Hosts(mount: S3MountIdentity): string[] {
+  const host = mount.endpoint
+    ? new URL(mount.endpoint).hostname
+    : `s3.${mount.region ? `${mount.region}.` : ""}amazonaws.com`;
+
+  return [host, `${mount.bucket}.${host}`];
+}
+
 function vercelAuthOptions(config: SandboxExecutorConfig): {
   token: string;
   teamId: string;
   projectId: string;
 } {
-  const options = isPlainObject(config.options) ? config.options : {};
+  const options = config.options ?? {};
   const token = configString(options.token) ?? optionalEnv("VERCEL_TOKEN");
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
   const projectId =
@@ -572,7 +693,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
 
 function vercelCreateOptions(
   config: SandboxExecutorConfig,
-  request: { envVars?: Record<string, string>; timeoutSeconds: number },
+  request: SandboxRunRequest,
   persistent: boolean,
 ): VercelCreateOptions {
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
@@ -582,45 +703,48 @@ function vercelCreateOptions(
     : snapshot
       ? { image: snapshot }
       : {};
+  const networkId = configString(config.options?.networkId);
 
   return {
     ...vercelAuthOptions(config),
     ...source,
+    ...(networkId ? { networkId: networkId } : {}),
     persistent: persistent,
     timeout:
-      (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
-      1000,
-    networkPolicy: vercelNetworkPolicy(config),
-    // No run identity here: a sandbox outlives the run that created it, and
-    // every exec lays its own over this env.
-    env: mergeSandboxEnv(config.envVars, request.envVars),
+      (persistent
+        ? lifecycle.idleTimeoutSeconds
+        : request.timeoutSeconds + EPHEMERAL_SETUP_SECONDS) * 1000,
+    networkPolicy: vercelNetworkPolicy(config, request),
+    // No run identity: the sandbox outlives its run, and each exec lays its own on top.
+    env: mergeSandboxEnv(config.envVars),
     tags: { app: "broods", provider: "vercel" },
   };
 }
 
-function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
+function vercelNetworkPolicy(
+  config: SandboxExecutorConfig,
+  request: SandboxRunRequest,
+): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
-  if (network.mode === "deny-all") return "deny-all";
+  const mountHosts = mountsWorkspace(request)
+    ? s3Hosts(resolveS3MountIdentity(executorS3Context(config, request)))
+    : [];
+  if (network.mode === "deny-all" && mountHosts.length === 0) return "deny-all";
+  const allow = [...(network.allowDomains ?? []), ...mountHosts];
 
   return {
-    ...(network.allowDomains?.length ? { allow: network.allowDomains } : {}),
+    ...(allow.length ? { allow: allow } : {}),
     ...(network.allowCidrs?.length
       ? { subnets: { allow: network.allowCidrs } }
       : {}),
   };
 }
 
-// A prefix that reads back to the reservation key, plus a generation nothing can
-// derive from that key. The generation is what makes `externalId` identify a machine,
-// so the conditional writes guarding a reservation refuse a machine some other caller
-// created under the same key.
 function vercelSandboxName(reservationKey: string): string {
   return `${sandboxNamePrefix(reservationKey)}-${randomUUID().slice(0, GENERATION_LENGTH)}`;
 }
 
-// The vCPUs and memory Vercel gave the sandbox. Vercel reports no disk size, and
-// an older session may report neither, which leaves the config's size in place.
 function vercelSpecs(sandbox: VercelSandbox): SandboxSpecs | undefined {
   const { vcpus, memory } = sandbox;
   if (vcpus === undefined || memory === undefined) return undefined;

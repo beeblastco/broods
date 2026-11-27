@@ -11,26 +11,35 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Label } from "@/app/components/ui/label";
 import { Separator } from "@/app/components/ui/separator";
+import { useOpenBilling } from "@/app/hooks/useOrgSeats";
 import { toErrorMessage } from "@/app/lib/errors";
-import type { PlanTier } from "@/app/lib/pricing";
-import { DEFAULT_PLAN, isMaxPlan, PLAN_CONFIGS } from "@/app/lib/pricing";
+import { PLAN_CONFIGS, PRO_OFFER } from "@/app/lib/pricing";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import { useSession } from "@/app/lib/session";
-import { useAction, useMutation, useQuery } from "convex/react";
-import { ArrowUpRight, Moon, Sun } from "lucide-react";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowRight, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
+
+const THEMES = [
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
+  { value: "system", label: "System", Icon: Monitor },
+];
+
+interface Profile {
+  name: string;
+  accountHandle: string;
+}
 
 export function AccountPanel(): React.JSX.Element {
   const { theme, setTheme } = useTheme();
   const { user: authUser } = useSession();
 
   const currentUser = useQuery(api.user.getCurrent);
-  const billingInfo = useQuery(api.stripe.getBillingInfo);
-  const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const updateProfile = useMutation(
     api.user.updateProfile,
   ).withOptimisticUpdate((localStore, args) => {
@@ -56,66 +65,43 @@ export function AccountPanel(): React.JSX.Element {
     (`${authFirstName} ${authLastName}`.trim() || authUser?.email) ?? "User";
   const claimEmail = authUser?.email ?? "Not available";
   const claimAvatar = authUser?.profilePictureUrl ?? null;
-  const claimNameRef = useRef(claimName);
 
-  // Keep the latest claim name in a ref for the sync effect below without
-  // re-triggering it (refs must not be written during render).
-  useEffect(() => {
-    claimNameRef.current = claimName;
-  }, [claimName]);
-
-  const [name, setName] = useState("");
-  const [accountHandle, setAccountHandle] = useState("");
-  const [savedProfile, setSavedProfile] = useState<{
-    name: string;
-    accountHandle: string;
-  } | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
+  const [draft, setDraft] = useState<Profile | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
-  const [upgradeLoading, setUpgradeLoading] = useState(false);
-  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [handleTouched, setHandleTouched] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const handleInput = useRef<HTMLInputElement>(null);
+  const handleHintId = useId();
 
-  useEffect(() => {
-    if (currentUser === undefined || isDirty) return;
-    const nextName = currentUser?.name ?? claimNameRef.current;
-    const nextHandle = currentUser?.accountHandle ?? "";
-    setName(nextName);
-    setAccountHandle(nextHandle);
-    setSavedProfile({
-      name: nextName.trim(),
-      accountHandle: nextHandle.trim().toLowerCase(),
-    });
-  }, [currentUser, isDirty]);
-
+  const savedName = currentUser?.name ?? claimName;
+  const savedHandle = currentUser?.accountHandle ?? "";
+  const name = draft?.name ?? savedName;
+  const accountHandle = draft?.accountHandle ?? savedHandle;
   const normalizedHandle = accountHandle.trim().toLowerCase();
   const hasHandleError =
     normalizedHandle.length > 0 && !HANDLE_REGEX.test(normalizedHandle);
+  const showHandleError = handleTouched && hasHandleError;
   const hasProfileChanges =
-    savedProfile !== null &&
-    (name.trim() !== savedProfile.name ||
-      normalizedHandle !== savedProfile.accountHandle);
+    name.trim() !== savedName.trim() ||
+    normalizedHandle !== savedHandle.trim().toLowerCase();
   const avatarUrl = currentUser?.avatarUrl ?? claimAvatar;
   const accountId = currentUser?._id ?? authUser?.id ?? "";
   const email = currentUser?.email ?? claimEmail;
-  const userPlan: PlanTier = currentUser?.plan ?? DEFAULT_PLAN;
-  const planConfig = PLAN_CONFIGS[userPlan];
-  // Same rule as BillingPanel: any subscription that has not ended goes
-  // through the portal, and `undefined` is still loading.
-  const showUpgrade = billingInfo === null && !isMaxPlan(userPlan);
 
   async function handleSaveProfile(): Promise<void> {
+    if (isSavingProfile || !hasProfileChanges) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setSaveError("Display name is required.");
+      nameInput.current?.focus();
 
       return;
     }
     if (hasHandleError) {
-      setSaveError(
-        "Account handle must be 3-32 chars and use a-z, 0-9, '_' or '-'.",
-      );
+      setHandleTouched(true);
+      handleInput.current?.focus();
 
       return;
     }
@@ -127,31 +113,12 @@ export function AccountPanel(): React.JSX.Element {
         name: trimmedName,
         accountHandle: normalizedHandle || undefined,
       });
-      setName(trimmedName);
-      setAccountHandle(normalizedHandle);
-      setSavedProfile({ name: trimmedName, accountHandle: normalizedHandle });
-      setIsDirty(false);
+      setDraft(null);
       setSaveNotice("Changes saved.");
     } catch (error) {
       setSaveError(toErrorMessage(error));
     } finally {
       setIsSavingProfile(false);
-    }
-  }
-
-  async function handleUpgrade(): Promise<void> {
-    setUpgradeLoading(true);
-    setUpgradeError(null);
-    try {
-      const returnUrl = window.location.href;
-      const { url } = await createCheckoutSession({
-        successUrl: returnUrl,
-        cancelUrl: returnUrl,
-      });
-      window.location.href = url;
-    } catch (err) {
-      setUpgradeError(toErrorMessage(err));
-      setUpgradeLoading(false);
     }
   }
 
@@ -169,15 +136,30 @@ export function AccountPanel(): React.JSX.Element {
         title="Profile"
         description="Editable attributes for your account."
       >
-        <div className="grid gap-4">
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSaveProfile();
+          }}
+        >
           <div className="grid gap-2">
-            <Label htmlFor="account-display-name">Display name</Label>
+            <Label htmlFor="account-display-name">
+              Display name{" "}
+              <span aria-hidden="true" className="text-destructive">
+                *
+              </span>
+            </Label>
             <Input
+              ref={nameInput}
               id="account-display-name"
+              required={true}
               value={name}
               onChange={(event) => {
-                setName(event.target.value);
-                setIsDirty(true);
+                setDraft({
+                  name: event.target.value,
+                  accountHandle: accountHandle,
+                });
                 setSaveError(null);
                 setSaveNotice(null);
               }}
@@ -187,23 +169,30 @@ export function AccountPanel(): React.JSX.Element {
           <div className="grid gap-2">
             <Label htmlFor="account-handle">Account handle</Label>
             <Input
+              ref={handleInput}
               id="account-handle"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+              aria-invalid={showHandleError}
+              aria-describedby={handleHintId}
+              onBlur={() => setHandleTouched(true)}
               value={accountHandle}
               onChange={(event) => {
-                setAccountHandle(event.target.value);
-                setIsDirty(true);
+                setDraft({ name: name, accountHandle: event.target.value });
                 setSaveError(null);
                 setSaveNotice(null);
               }}
               placeholder="your_handle"
             />
             <p
+              id={handleHintId}
               className={cn(
                 "text-xs",
-                hasHandleError ? "text-destructive" : "text-muted-foreground",
+                showHandleError ? "text-destructive" : "text-muted-foreground",
               )}
             >
-              {hasHandleError
+              {showHandleError
                 ? "Use 3-32 chars: lowercase letters, numbers, '_' or '-'."
                 : "Public identifier shown as @handle."}
             </p>
@@ -215,21 +204,22 @@ export function AccountPanel(): React.JSX.Element {
                 : (saveNotice ?? "All changes saved.")}
             </p>
             <Button
+              type="submit"
               size="sm"
-              className="cursor-pointer"
-              onClick={handleSaveProfile}
-              disabled={
-                !hasProfileChanges ||
-                hasHandleError ||
-                !name.trim() ||
-                isSavingProfile
+              className={
+                isSavingProfile ? "cursor-not-allowed" : "cursor-pointer"
               }
+              disabled={isSavingProfile}
             >
               {isSavingProfile ? "Saving..." : "Save changes"}
             </Button>
           </div>
-          {saveError && <p className="text-sm text-destructive">{saveError}</p>}
-        </div>
+          {saveError && (
+            <p role="alert" className="text-sm text-destructive">
+              {saveError}
+            </p>
+          )}
+        </form>
       </Section>
 
       <Separator />
@@ -270,41 +260,16 @@ export function AccountPanel(): React.JSX.Element {
             <span className="text-xs text-muted-foreground">Email</span>
             <span className="text-sm text-foreground">{email}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between px-4 py-3">
             <span className="text-xs text-muted-foreground">Account ID</span>
             <span className="font-mono text-xs text-muted-foreground">
               {accountId}
             </span>
           </div>
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <span className="text-xs text-muted-foreground">Auth provider</span>
-            <span className="text-sm text-foreground">Google</span>
-          </div>
-          <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-xs text-muted-foreground">Plan</span>
-            <div className="flex items-center gap-2">
-              <Badge variant={planConfig.badgeVariant}>
-                {planConfig.label}
-              </Badge>
-              {showUpgrade && (
-                <Button
-                  size="xs"
-                  className="cursor-pointer"
-                  aria-label="Upgrade plan"
-                  onClick={handleUpgrade}
-                  disabled={upgradeLoading}
-                >
-                  Upgrade
-                  <ArrowUpRight className="size-3" />
-                </Button>
-              )}
-            </div>
-          </div>
         </div>
-        {upgradeError && (
-          <p className="text-sm text-destructive">{upgradeError}</p>
-        )}
       </Section>
+
+      <OwnedOrgsBilling />
 
       <Separator />
 
@@ -315,27 +280,73 @@ export function AccountPanel(): React.JSX.Element {
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="mb-3 text-sm font-medium text-foreground">Theme</p>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              className="cursor-pointer"
-              variant={theme === "light" ? "default" : "outline"}
-              onClick={() => setTheme("light")}
-            >
-              <Sun className="size-4 mr-1" />
-              Light
-            </Button>
-            <Button
-              size="sm"
-              className="cursor-pointer"
-              variant={theme === "dark" ? "default" : "outline"}
-              onClick={() => setTheme("dark")}
-            >
-              <Moon className="size-4 mr-1" />
-              Dark
-            </Button>
+            {THEMES.map(({ value, label, Icon }) => (
+              <Button
+                key={value}
+                size="sm"
+                className="cursor-pointer"
+                variant={theme === value ? "default" : "outline"}
+                aria-pressed={theme === value}
+                onClick={() => setTheme(value)}
+              >
+                <Icon className="size-4 mr-1" />
+                {label}
+              </Button>
+            ))}
           </div>
         </div>
       </Section>
     </div>
+  );
+}
+
+// A self-hosted install has no plans, so no enforced budget.
+function OwnedOrgsBilling(): React.JSX.Element | null {
+  const owned = useQuery(api.stripe.listOwnedOrgs, {});
+  const budget = useQuery(api.account.budget.getForActiveOrg, {});
+  const openBilling = useOpenBilling();
+  if (!owned || budget?.enforced !== true) return null;
+
+  return (
+    <>
+      <Separator />
+      <Section
+        title="Billing"
+        description={`Your plan covers every organization you own. ${PRO_OFFER} You own:`}
+      >
+        <div className="rounded-lg border border-border bg-card">
+          {owned.length === 0 && (
+            <p className="px-4 py-3 text-xs text-muted-foreground">
+              No organization yet.
+            </p>
+          )}
+          {owned.map((org) => (
+            <div
+              key={org.orgId}
+              className="grid grid-cols-3 items-center gap-4 border-b border-border px-4 py-3 last:border-b-0"
+            >
+              <span className="truncate text-sm text-foreground">
+                {org.name}
+              </span>
+              <Badge
+                variant={org.plan === "pro" ? "success" : "secondary"}
+                className="justify-self-start"
+              >
+                {PLAN_CONFIGS[org.plan].label}
+              </Badge>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="cursor-pointer justify-self-end"
+                onClick={() => void openBilling(org.orgId)}
+              >
+                Billing
+                <ArrowRight data-icon="inline-end" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </Section>
+    </>
   );
 }

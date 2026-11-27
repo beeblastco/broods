@@ -40,7 +40,6 @@ async function seedOrg(t: T): Promise<{
   });
 }
 
-/** An org member with the given role, visible to `getProjectForRole`. */
 async function seedMember(
   t: T,
   orgId: Id<"orgs">,
@@ -63,7 +62,7 @@ async function seedMember(
   });
 }
 
-/** A project with one stage, one agent config and one env var. The slug is kept distinct from the name. */
+// Slug and name differ so a test can tell which one a route matched.
 async function seedProject(
   t: T,
   orgId: Id<"orgs">,
@@ -108,7 +107,6 @@ async function seedProject(
   });
 }
 
-/** A project row with no stage under it, which is what cleanup targets. */
 async function seedEmptyProject(
   t: T,
   orgId: Id<"orgs">,
@@ -129,7 +127,7 @@ describe("cliProjects.listByAccount", () => {
   test("reports what each project holds and sorts empty ones last", async () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
-    await seedProject(t, orgId, "tracy");
+    await seedProject(t, orgId, "support");
     await seedEmptyProject(t, orgId, "abandoned-e2e");
 
     const projects = await t.query(internal.cli.projects.listByAccount, {
@@ -137,7 +135,7 @@ describe("cliProjects.listByAccount", () => {
     });
 
     expect(projects?.map((project) => project.name)).toEqual([
-      "tracy",
+      "support",
       "abandoned-e2e",
     ]);
     expect(projects?.[0]).toMatchObject({
@@ -203,7 +201,7 @@ describe("cliProjects.removeByAccount", () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
     const doomed = await seedProject(t, orgId, "abandoned-e2e");
-    const keeper = await seedProject(t, orgId, "tracy");
+    const keeper = await seedProject(t, orgId, "support");
 
     const deleted = await t.mutation(internal.cli.projects.removeByAccount, {
       accountId: accountId,
@@ -248,7 +246,7 @@ describe("cliProjects.removeByAccount", () => {
   test("answers forbidden for a caller without an admin role", async () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
-    const target = await seedProject(t, orgId, "tracy", "auth_creator");
+    const target = await seedProject(t, orgId, "support", "auth_creator");
     await seedMember(t, orgId, "auth_demoted", "member");
 
     expect(
@@ -266,7 +264,7 @@ describe("cliProjects.removeByAccount", () => {
   test("lets a non-creator org admin delete", async () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
-    const target = await seedProject(t, orgId, "tracy", "auth_creator");
+    const target = await seedProject(t, orgId, "support", "auth_creator");
     await seedMember(t, orgId, "auth_admin", "admin");
 
     const deleted = await t.mutation(internal.cli.projects.removeByAccount, {
@@ -275,13 +273,13 @@ describe("cliProjects.removeByAccount", () => {
       projectId: target,
     });
 
-    expect(deleted).toMatchObject({ name: "tracy" });
+    expect(deleted).toMatchObject({ name: "support" });
   });
 
   test("returns null for an unknown project instead of deleting anything", async () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
-    const keeper = await seedProject(t, orgId, "tracy");
+    const keeper = await seedProject(t, orgId, "support");
 
     expect(
       await t.mutation(internal.cli.projects.removeByAccount, {

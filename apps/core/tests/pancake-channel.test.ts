@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { InboundMessage } from "../src/shared/channels.ts";
-import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
+import {
+  createPancakeActions,
+  createPancakeChannel,
+} from "../src/shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -55,7 +58,7 @@ describe("pancake channel adapter", () => {
 
     expect(parsed.ack).toEqual({ statusCode: 200 });
     expect(parsed.message.eventId).toBe(
-      `pancake:page-1:message-1:${hashText("hello pancake")}`,
+      `pancake:page-1:message-1:${hashText("")}`,
     );
     expect(parsed.message.conversationKey).toBe(
       "pancake:page-1:conversation-1",
@@ -166,6 +169,16 @@ describe("pancake channel adapter", () => {
         ),
       ),
     ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_hidden: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createPancakeRequest(validPayload({ message: { is_removed: true } })),
+      ),
+    ).toEqual({ kind: "ignore" });
   });
 
   it("surfaces conversation tag ids on the parsed source so hooks can filter", async () => {
@@ -255,7 +268,6 @@ describe("pancake channel adapter", () => {
           type: "video",
           video_data: { url: "https://content.pancake.vn/1/clip.mp4" },
         },
-        // A share card arrives in the same array with nothing behind it.
         { id: "att-3", type: "share", url: "https://example.com/article" },
       ],
     });
@@ -266,8 +278,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("gives two captionless photos different event ids", async () => {
-    // The message id repeats across edits, so the event id folds in the content.
-    // Without the attachments in it the second photo dedupes away as a replay.
+    // Message ids repeat across edits, so the event id must fold in the attachments.
     const first = await parsePancakeMedia({
       message: "",
       attachments: [
@@ -284,19 +295,42 @@ describe("pancake channel adapter", () => {
     expect(first.eventId).not.toBe(second.eventId);
   });
 
-  it("still ignores a message with neither text nor attachments", async () => {
-    const adapter = createPancakeChannel(
-      "page-1",
-      "page-token",
-      "secret",
-      null,
-      null,
-    );
-    const parsed = await adapter.parse(
-      createPancakeRequest(validPayload({ message: { message: "" } })),
-    );
+  it("gives an edit of a message the same event id, so it never runs twice", async () => {
+    const original = await parsePancakeMedia({ message: "see you at 5" });
+    const edited = await parsePancakeMedia({ message: "see you at 6" });
 
-    expect(parsed.kind).toBe("ignore");
+    expect(edited.eventId).toBe(original.eventId);
+  });
+
+  it("bounds every Pancake API call with a timeout", async () => {
+    const signals: unknown[] = [];
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      signals.push(init?.signal);
+
+      return Response.json({ id: "content-1", success: true });
+    }) as typeof fetch;
+    const actions = createPancakeActions("page-token", {
+      pageId: "page-1",
+      conversationId: "conv-1",
+      messageId: "msg-1",
+      messageType: "INBOX",
+    });
+
+    await actions.sendText("hi");
+    await actions.sendFiles?.([
+      {
+        type: "file",
+        url: "https://example.test/a.txt",
+        name: "a.txt",
+        fetchData: async (): Promise<Buffer> => Buffer.from("a"),
+      },
+    ]);
+
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
   });
 });
 

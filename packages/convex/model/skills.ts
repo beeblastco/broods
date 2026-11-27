@@ -1,10 +1,3 @@
-/**
- * Skill bundle validation and S3 storage for the Convex config plane. The
- * validation rules mirror core's `src/shared/skills.ts` so bundles written
- * here are readable by core's harness skill loader. Node-runtime only,
- * import exclusively from `"use node"` actions.
- */
-
 import {
   contentTypeForSkillPath,
   normalizeBundlePath,
@@ -12,23 +5,22 @@ import {
   parseSkillMarkdown,
   validateSkillDescription,
   validateSkillName,
+  MAX_SKILL_METADATA_BYTES,
   SKILL_FILE,
 } from "./skillRules";
 import {
+  deleteS3Object,
   deleteS3Prefix,
+  headS3Object,
   listS3Prefix,
-  readS3Bytes,
   readS3Text,
   writeS3Object,
 } from "./s3";
 import { ClientError } from "./clientError";
+import { MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_FILE_BYTES } from "./skillLimits";
 
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
-
-// A tarball larger than this can never yield a valid bundle, so it is refused
-// before decompression instead of being materialized in memory.
 const MAX_SKILL_ARCHIVE_BYTES = 2 * MAX_SKILL_BUNDLE_BYTES;
+const CONTENT_HASH_KEY = "content-sha256";
 
 const TEXT_EXTENSIONS = new Set([
   ".css",
@@ -57,9 +49,6 @@ export interface SkillBundleFile {
   contentType?: string;
 }
 
-/**
- * Skill identity parsed from SKILL.md plus its S3 path.
- */
 export interface SkillMetadata {
   name: string;
   description: string;
@@ -73,15 +62,9 @@ export interface StoredSkill extends SkillMetadata {
 export interface ValidatedSkillBundle {
   metadata: Omit<SkillMetadata, "path">;
   files: SkillBundleFile[];
+  skillFile: SkillBundleFile;
 }
 
-/**
- * Build a JSON-source skill bundle: a single generated SKILL.md.
- * @param name skill name
- * @param description skill description
- * @param content markdown skill instructions
- * @returns the single-file bundle
- */
 export function createJsonSkillFiles(
   name: string,
   description: string,
@@ -100,32 +83,33 @@ export function createJsonSkillFiles(
   ];
 }
 
-/**
- * Validate a skill bundle and write it to S3, replacing any existing skill of
- * the same name.
- * @param accountId account id owning the skill (the S3 key prefix)
- * @param input bundle files to validate and store
- * @returns the stored skill's metadata and manifest
- * @throws when the bundle violates a validation rule
- */
+// SKILL.md holds `contentHash`: deleted first, written last, so a failed replace is never held.
 export async function createOrReplaceSkill(
   accountId: string,
   input: SkillBundleFile[],
+  contentHash?: string,
 ): Promise<StoredSkill> {
-  const { metadata, files } = validateSkillBundle(input);
+  const { metadata, files, skillFile } = validateSkillBundle(input);
   const skillPath = `${accountId}/${metadata.name}`;
+  const write = async (file: SkillBundleFile, hash?: string): Promise<number> =>
+    await writeS3Object(
+      skillsBucketName(),
+      `${skillPath}/${file.path}`,
+      file.bytes,
+      {
+        contentType: file.contentType ?? contentTypeForSkillPath(file.path),
+        ...(hash !== undefined
+          ? { metadata: { [CONTENT_HASH_KEY]: hash } }
+          : {}),
+      },
+    );
 
+  await deleteS3Object(skillsBucketName(), `${skillPath}/${SKILL_FILE}`);
   await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
   await Promise.all(
-    files.map((file) =>
-      writeS3Object(
-        skillsBucketName(),
-        `${skillPath}/${file.path}`,
-        file.bytes,
-        { contentType: file.contentType ?? contentTypeForSkillPath(file.path) },
-      ),
-    ),
+    files.filter((file) => file !== skillFile).map((file) => write(file)),
   );
+  await write(skillFile, contentHash);
 
   return {
     ...metadata,
@@ -137,11 +121,6 @@ export async function createOrReplaceSkill(
   };
 }
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name
- * @returns the number of objects deleted
- */
 export async function deleteSkill(
   accountId: string,
   skillName: string,
@@ -151,13 +130,6 @@ export async function deleteSkill(
   return deleteS3Prefix(skillsBucketName(), `${accountId}/${skillName}/`);
 }
 
-/**
- * Download a GitHub tree URL's tarball and return the skill files under its
- * subdirectory. Runs fully in memory (gunzip + tar walk, no tmpdir).
- * @param url GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
- * @returns the bundle files found under the URL's subdirectory
- * @throws when the download fails or the archive holds no files there
- */
 export async function fetchGitHubSkillFiles(
   url: unknown,
 ): Promise<SkillBundleFile[]> {
@@ -184,8 +156,7 @@ export async function fetchGitHubSkillFiles(
     );
   }
 
-  // Web-standard gunzip: Convex's bundler rejects node builtins (node:zlib)
-  // outside "use node" entry files, and this model must stay importable.
+  // Not node:zlib: Convex's bundler rejects node builtins outside "use node" entry files.
   const decompressed = response.body.pipeThrough(
     new DecompressionStream("gzip"),
   );
@@ -214,11 +185,6 @@ export async function fetchGitHubSkillFiles(
   return files;
 }
 
-/**
- * @param accountId account id owning the skill
- * @param skillName the skill name (without the account prefix)
- * @returns the stored skill, or null when it does not exist
- */
 export async function getSkill(
   accountId: string,
   skillName: string,
@@ -236,10 +202,6 @@ export async function getSkill(
   };
 }
 
-/**
- * @param accountId account id owning the skills
- * @returns name/description/path for every readable skill
- */
 export async function listAccountSkills(
   accountId: string,
 ): Promise<SkillMetadata[]> {
@@ -261,10 +223,6 @@ export async function listAccountSkills(
   return skills.filter((skill): skill is SkillMetadata => skill !== null);
 }
 
-/**
- * Buffer a stream, refusing it once it grows past `maxBytes` so a high-ratio
- * archive is cut off instead of exhausting memory.
- */
 export async function readCapped(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
@@ -278,9 +236,7 @@ export async function readCapped(
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        throw new ClientError(
-          `GitHub archive exceeds the ${maxBytes} byte limit`,
-        );
+        throw new ClientError(`Download exceeds the ${maxBytes} byte limit`);
       }
       chunks.push(value);
     }
@@ -297,25 +253,6 @@ export async function readCapped(
   return bytes;
 }
 
-/**
- * @param skillPath the `${accountId}/${skillName}` prefix
- * @param filePath the file path inside the skill
- * @returns the file contents
- */
-export async function readSkillFileBytes(
-  skillPath: string,
-  filePath: string,
-): Promise<Uint8Array> {
-  return readS3Bytes(
-    skillsBucketName(),
-    `${skillPath}/${normalizeBundlePath(filePath)}`,
-  );
-}
-
-/**
- * @returns the bucket name
- * @throws when SKILLS_BUCKET_NAME is not configured
- */
 export function skillsBucketName(): string {
   const bucket = process.env.SKILLS_BUCKET_NAME;
   if (!bucket) {
@@ -325,13 +262,19 @@ export function skillsBucketName(): string {
   return bucket;
 }
 
-/**
- * Validate bundle paths, sizes, and text-file rules, and parse SKILL.md.
- * Mirrors core's `validateSkillBundle`.
- * @param input bundle files
- * @returns parsed metadata and normalized files
- * @throws when a rule is violated or SKILL.md is missing
- */
+export async function storedSkillHash(
+  accountId: string,
+  skillName: string,
+): Promise<string | null> {
+  validateSkillName(skillName);
+  const head = await headS3Object(
+    skillsBucketName(),
+    `${accountId}/${skillName}/${SKILL_FILE}`,
+  );
+
+  return head?.Metadata?.[CONTENT_HASH_KEY] ?? null;
+}
+
 export function validateSkillBundle(
   input: SkillBundleFile[],
 ): ValidatedSkillBundle {
@@ -357,7 +300,7 @@ export function validateSkillBundle(
     }
   }
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new ClientError("Skill bundle exceeds 30 MB");
+    throw new ClientError("Skill bundle exceeds 30 MiB");
   }
 
   const skillFile = files.find((file) => file.path === SKILL_FILE);
@@ -366,17 +309,17 @@ export function validateSkillBundle(
   }
 
   return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    // Parsed from the head core reads, so a skill that uploads also lists.
+    metadata: parseSkillMarkdown(
+      new TextDecoder().decode(
+        skillFile.bytes.subarray(0, MAX_SKILL_METADATA_BYTES),
+      ),
+    ),
     files: files,
+    skillFile: skillFile,
   };
 }
 
-/**
- * Load only SKILL.md metadata for list endpoints.
- * @param accountId account id owning the skill
- * @param skillName the skill name (without account prefix)
- * @returns metadata, or null when SKILL.md is missing or malformed
- */
 async function getSkillMetadata(
   accountId: string,
   skillName: string,
@@ -393,12 +336,6 @@ async function getSkillMetadata(
   return { ...metadata, path: skillPath };
 }
 
-/**
- * Check a bundle file is an allowed text type with no NUL bytes.
- * @param filePath the bundle-relative path
- * @param bytes the file contents
- * @returns true when the file is acceptable
- */
 function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   const dot = filePath.lastIndexOf(".");
   const extension = dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
@@ -409,11 +346,6 @@ function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   return !bytes.includes(0);
 }
 
-/**
- * Pull the `path` record out of a pax extended header body.
- * @param content the decoded pax header body ("len key=value\n" records)
- * @returns the path override, or null when the header has none
- */
 function parsePaxPath(content: string): string | null {
   let rest = content;
   while (rest.length > 0) {
@@ -436,12 +368,7 @@ function parsePaxPath(content: string): string | null {
   return null;
 }
 
-/**
- * Extract the regular files from an uncompressed tar archive, handling ustar
- * prefixes, pax `path` overrides, and GNU longname entries.
- * @param archive the uncompressed tar bytes
- * @returns the file entries with their full archive paths
- */
+// Tar typeflag "x" is a pax header whose `path` renames the next entry; "L" a GNU long name.
 function parseTarFiles(
   archive: Uint8Array,
 ): Array<{ path: string; bytes: Uint8Array }> {
@@ -478,14 +405,6 @@ function parseTarFiles(
   return entries;
 }
 
-/**
- * Decode a NUL-terminated fixed-width tar header field.
- * @param decoder shared text decoder
- * @param bytes the header (or body) bytes
- * @param start field offset
- * @param length field width
- * @returns the decoded string up to the first NUL
- */
 function readTarString(
   decoder: TextDecoder,
   bytes: Uint8Array,

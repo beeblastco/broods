@@ -19,12 +19,12 @@ flowchart TB
     direction LR
     Clients["SDK, CLI, dashboard,<br/>broods machine daemon"]
     Hooks["Chat webhooks<br/>Slack, Telegram, GitHub, ..."]
-    Socks["Discord Gateway,<br/>Matrix homeservers"]
+    Socks["Discord Gateway"]
   end
   subgraph Door["Front door"]
     direction LR
     Edge["Traefik<br/>apps/edge"]
-    Fwd["discord-forwarder,<br/>matrix-forwarder"]
+    Fwd["discord-forwarder"]
   end
   subgraph Services
     direction LR
@@ -59,22 +59,23 @@ flowchart TB
   Core --> Compute
 ```
 
-| Path                      | Package                      | Job                                                                                   |
-| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| `apps/edge`               | `@broods/edge`               | Route table that generates the Traefik config: path split, per-address limits, CORS   |
-| `apps/gateway`            | `@broods/gateway`            | Agent, observability, terminal and machine WebSockets                                 |
-| `apps/core`               | `@broods/core`               | Agent harness: runs, channel webhooks, crons, tools, sandboxes. Holds `sst.config.ts` |
-| `packages/convex`         | `@broods/convex`             | Config plane, CLI sync, every table, the crons component                              |
-| `apps/dashboard`          | `@broods/dashboard`          | Next.js UI on Convex, as a WorkOS user                                                |
-| `packages/broods`         | `broods`                     | Published CLI and TypeScript SDK                                                      |
-| `apps/discord-forwarder`  | `@broods/discord-forwarder`  | One Discord Gateway socket per bot token, single replica                              |
-| `apps/matrix-forwarder`   | `@broods/matrix-forwarder`   | Matrix `/sync` long-polls and E2EE keys, single replica, persistent volume            |
-| `apps/lambda`             | none, plain `.mjs`           | Hosted MCP runner and the sandbox log forwarder                                       |
-| `apps/cloudflare-mcp`     | `@broods/cloudflare-mcp`     | Hosted MCP runtime on Workers, same contract as the Lambda runner                     |
-| `apps/cloudflare-sandbox` | `@broods/cloudflare-sandbox` | Bridge Worker behind the `cloudflare` sandbox provider                                |
-| `apps/docs`               | `@broods/docs`               | This site and `docs/api-reference/openapi.yaml`                                       |
-| `packages/demos`          | not a workspace              | Runnable demos against a deployed core                                                |
-| `verification`            | not a workspace              | Lean 4 models of routing, the run lifecycle and CLI sync                              |
+| Path                      | Package                      | Job                                                                                        |
+| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/edge`               | `@broods/edge`               | Route table that generates the Traefik config: path split, per-address limits, CORS        |
+| `apps/gateway`            | `@broods/gateway`            | Agent, observability, terminal and machine WebSockets                                      |
+| `apps/core`               | `@broods/core`               | Agent harness: runs, channel webhooks, crons, tools, sandboxes. Holds `sst.config.ts`      |
+| `packages/convex`         | `@broods/convex`             | Config plane, CLI sync, every table, the crons component                                   |
+| `apps/dashboard`          | `@broods/dashboard`          | Next.js UI on Convex, as a WorkOS user                                                     |
+| `packages/broods`         | `broods`                     | Published CLI and TypeScript SDK                                                           |
+| `packages/ai-sdk-sandbox` | `@broods/ai-sdk-sandbox`     | AI SDK Harness sandbox adapter: how an external harness runs its shell on a Broods sandbox |
+| `apps/discord-forwarder`  | `@broods/discord-forwarder`  | One Discord Gateway socket per bot token, single replica                                   |
+| `apps/lambda`             | none, plain `.mjs`           | Hosted MCP runner and the sandbox log forwarder                                            |
+| `apps/cloudflare-mcp`     | `@broods/cloudflare-mcp`     | Hosted MCP runtime on Workers, same contract as the Lambda runner                          |
+| `apps/cloudflare-sandbox` | `@broods/cloudflare-sandbox` | Bridge Worker behind the `cloudflare` sandbox provider                                     |
+| `apps/cloudflare-worker`  | `@broods/cloudflare-worker`  | Worker behind the `worker` sandbox provider: bash in a V8 isolate, files in R2             |
+| `apps/docs`               | `@broods/docs`               | This site and `docs/api-reference/openapi.yaml`                                            |
+| `packages/demos`          | not a workspace              | Runnable demos against a deployed core                                                     |
+| `verification`            | not a workspace              | Lean 4 models of routing, the run lifecycle and CLI sync                                   |
 
 Sibling repos next to the checkout: `../infra` (k8s cluster and VMs, keep `sst.config.ts` naming aligned with it) and `../lambda-sanbdox` (the Rust server in the MicroVM image behind the `lambda` provider).
 
@@ -85,7 +86,7 @@ flowchart LR
   Actions["GitHub Actions"]
   subgraph K3s["Hetzner k3s cluster"]
     direction TB
-    K1["Traefik, gateway, core,<br/>dashboard, forwarders, OPA"]
+    K1["Traefik, gateway, core,<br/>dashboard, discord-forwarder, OPA"]
     K2[("Convex backends,<br/>NATS JetStream,<br/>OTel, Loki, Tempo")]
   end
   subgraph AWS["AWS, one SST stage each"]
@@ -109,17 +110,18 @@ flowchart LR
   K1 -->|"tool calls, sandboxes"| CF
 ```
 
-| Where              | What runs there                                                                 | Shipped by                                             |
-| ------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Hetzner k3s        | Traefik, core, gateway, dashboard, forwarders, OPA, Convex, NATS, observability | Image build, then `rollout.yaml` into `../infra` Helm  |
-| Convex backends    | Schema and functions, prod and dev                                              | `deploy-convex.yaml` on push to `main` or `dev`        |
-| AWS, per SST stage | Buckets, mcp-runner, MicroVM roles and log forwarder, sandbox VPC, IAM          | `deploy.yaml`, `sst deploy`                            |
-| Cloudflare         | Hosted MCP Worker per non-production stage                                      | `deploy.yaml`, `wrangler deploy`                       |
-| Cloudflare         | Sandbox bridge Worker                                                           | No workflow; `wrangler` from `apps/cloudflare-sandbox` |
-| S3 + CloudFront    | This docs site                                                                  | `deploy-docs.yaml`                                     |
+| Where              | What runs there                                                                        | Shipped by                                            |
+| ------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Hetzner k3s        | Traefik, core, gateway, dashboard, discord-forwarder, OPA, Convex, NATS, observability | Image build, then `rollout.yaml` into `../infra` Helm |
+| Convex backends    | Schema and functions, prod and dev                                                     | `deploy-convex.yaml` on push to `main` or `dev`       |
+| AWS, per SST stage | Buckets, mcp-runner, MicroVM roles and log forwarder, sandbox VPC, IAM                 | `deploy.yaml`, `sst deploy`                           |
+| Cloudflare         | Hosted MCP Worker per stage, production included                                       | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| Cloudflare         | Sandbox bridge Worker per stage and its Container image                                | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| Cloudflare         | V8 Worker sandbox per stage and its R2 bucket                                          | `deploy.yaml`, `sst deploy` runs `wrangler`           |
+| S3 + CloudFront    | This docs site                                                                         | `deploy-docs.yaml`                                    |
 
-- Dev and production share the cluster as separate releases (`core-dev` next to `core`). The forwarders are one release each for both planes, because one bot token holds one socket.
-- Production hosted MCP stays on Lambda; only non-production stages get the Workers runtime.
+- Dev and production share the cluster as separate releases (`core-dev` next to `core`). The discord-forwarder is one release for both planes, because one bot token holds one socket.
+- Every stage, production included, gets the hosted MCP Workers runtime. Core sends a Workers-safe bundle there once infra sets that stage's `CLOUDFLARE_MCP_URL` and `CLOUDFLARE_MCP_API_KEY`; other bundles stay on Lambda.
 - MicroVM images are built by `../lambda-sanbdox` CI, not SST.
 
 Pods, namespaces and replicas: [Operations](operations.md#runtime-topology). How a commit reaches each box: [CI/CD](ci-cd.md). Running the same shape yourself: [self-hosting](self-hosting.md).
@@ -143,7 +145,7 @@ Each workspace has its own `AGENTS.md` with the gotchas for that folder. Read it
 
 - `bun install` at the root. Scripts live in each `package.json`.
 - Before calling a change done: the workspace's `bun run check` (types, plus lint for the dashboard) and the root `bun run format` (oxfmt). Never raw `tsc`.
-- Lint is oxlint, one `.oxlintrc.json` at the root. `bun run lint:types` has a backlog; add no new findings.
+- Lint is oxlint, one `.oxlintrc.json` at the root. Root `bun run check` runs the type-aware `bun run lint:types`, and any lint error fails CI.
 - Convex schema or function change: `bun run --filter @broods/convex codegen` and commit the generated diff.
 - End to end without cloud: `bun run local:up`, then `bun run local:verify`.
 - React is pinned per app package, never at the root.
@@ -159,6 +161,6 @@ Each workspace has its own `AGENTS.md` with the gotchas for that folder. Read it
 
 Core handles chat commands such as `/new`, `/compact` and `/queue` before the agent sees the message.
 
-1. Add an entry to `commands` in `apps/core/src/shared/commands.ts` with `aliases`, a `description` and an `execute` that returns the reply text. Optional: `discord` metadata to register a slash command, `showInHelp: false` to hide it from `/help`.
+1. Add an entry to `commands` in `apps/core/src/shared/commands.ts` with `aliases`, a `description` and an `execute` that returns the reply text. Optional: `discord.names`, the Discord slash command names that run it.
 2. Use only the channel-agnostic `ChannelActions` interface. No channel-specific imports.
 3. A command that touches history must hold the conversation lease. `/new` takes it and is refused while busy. `/compact` sets `queued: true`, so the drain loop runs it under the lease after the current turn. See [queue and steer](queue-and-steer.md).

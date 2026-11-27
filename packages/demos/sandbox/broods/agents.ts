@@ -1,7 +1,6 @@
 import { defineAgent, defineSandbox, env } from "broods";
 
-// A stateless, bash-only self-hosted sandbox (workdir `sandbox` provider): a fresh
-// ephemeral container per call, with internet egress and a config env var injected.
+// The self-hosted workdir provider: a fresh ephemeral container per call.
 export const statelessSandbox = defineSandbox({
   name: "stateless-sandbox",
   provider: "sandbox",

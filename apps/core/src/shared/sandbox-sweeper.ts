@@ -1,9 +1,4 @@
-/**
- * Periodic release of reserved sandboxes whose conversation never came back.
- * `lifecycle.maxLifetimeSeconds` only ever runs on acquire, so it bounds the sandboxes
- * that return and nothing else. Lives here, not in a Convex cron, because deleting a
- * sandbox means calling the in-cluster workdir control plane.
- */
+// Not a Convex cron: releasing a sandbox calls the in-cluster workdir control plane.
 
 import type { ReservedSandbox } from "../harness/sandbox/types.ts";
 import { runtime } from "./convex/runtime.ts";
@@ -22,31 +17,32 @@ interface SandboxReservationSummary extends ReservedSandbox {
   accountId: string;
 }
 
+interface OrphanedSandboxPage {
+  page: SandboxReservationSummary[];
+  cursor: string | null;
+  isDone: boolean;
+}
+
 let firstSweep: ReturnType<typeof setTimeout> | undefined;
 let sweeper: ReturnType<typeof setInterval> | undefined;
 let sweeping = false;
 
-/** Starts the periodic sweep. No-op when it is already running. */
 export function startSandboxSweeper(): void {
   if (sweeper) return;
   const intervalSeconds = positiveIntegerEnv(
     "SANDBOX_SWEEP_INTERVAL_SECONDS",
     DEFAULT_SWEEP_INTERVAL_SECONDS,
   );
-  // A pod that restarts more often than the interval would otherwise never sweep
-  // once, and rollouts are more frequent than an hour. Jittered so replicas coming
-  // up together do not all reach for the same account lease.
+  // Rollouts outpace the interval, so sweep soon after boot; jitter spreads the replicas' leases.
   firstSweep = setTimeout(
     runSweep,
     Math.floor(Math.random() * FIRST_SWEEP_JITTER_MS),
   );
   firstSweep.unref();
   sweeper = setInterval(runSweep, intervalSeconds * 1000);
-  // A pending sweep must not hold the process open past SIGTERM.
   sweeper.unref();
 }
 
-/** Stops the periodic sweep. The timers outlive requests, so shutdown clears them. */
 export function stopSandboxSweeper(): void {
   if (firstSweep) {
     clearTimeout(firstSweep);
@@ -57,21 +53,10 @@ export function stopSandboxSweeper(): void {
   sweeper = undefined;
 }
 
-/**
- * One sweep pass, bounded to a page so a backlog drains over several runs. Mirror
- * rows no reservation names any more (a teardown that failed, or the old prune)
- * ride the same pass: the id they still hold is all the teardown needs.
- * @returns the number of sandboxes released at their provider
- */
 export async function sweepExpiredSandboxes(): Promise<number> {
   const [expired, orphaned] = await Promise.all([
-    runtime.query<SandboxReservationSummary[]>(
-      "listExpiredSandboxReservations",
-      { limit: SWEEP_PAGE_SIZE },
-    ),
-    runtime.query<SandboxReservationSummary[]>("listOrphanedSandboxInstances", {
-      limit: SWEEP_PAGE_SIZE,
-    }),
+    runtime.query("listExpiredSandboxReservations", { limit: SWEEP_PAGE_SIZE }),
+    listOrphanedSandboxes(),
   ]);
   const byAccount = new Map<string, SandboxReservationSummary[]>();
   for (const reservation of [...expired, ...orphaned]) {
@@ -96,12 +81,27 @@ export async function sweepExpiredSandboxes(): Promise<number> {
   return released;
 }
 
+// Pages past empty pages: deferred mirrors keep their age and can fill the oldest page
+// forever, hiding every orphan behind them.
+async function listOrphanedSandboxes(): Promise<SandboxReservationSummary[]> {
+  const orphaned: SandboxReservationSummary[] = [];
+  let cursor: string | null = null;
+  do {
+    const result: OrphanedSandboxPage = await runtime.query(
+      "listOrphanedSandboxInstances",
+      { cursor: cursor, limit: SWEEP_PAGE_SIZE },
+    );
+    orphaned.push(...result.page);
+    cursor = result.isDone ? null : result.cursor;
+  } while (cursor !== null && orphaned.length < SWEEP_PAGE_SIZE);
+
+  return orphaned;
+}
+
 async function deferAttempted(
   accountId: string,
   reservations: SandboxReservationSummary[],
 ): Promise<void> {
-  // A pass that released everything has nothing left to hold off, and the mutation
-  // would be one round-trip per account per hour saying so.
   if (reservations.length === 0) {
     return;
   }
@@ -121,11 +121,6 @@ async function deferAttempted(
     });
 }
 
-/**
- * One pass, guarded so a slow one cannot stack. The lease already stops two
- * replicas duplicating an account; this stops one replica racing itself when a
- * pass outlives the interval.
- */
 function runSweep(): void {
   if (sweeping) return;
   sweeping = true;
@@ -138,24 +133,20 @@ function runSweep(): void {
     });
 }
 
-/**
- * Sweeps one account under a lease. Whatever this touches ends the pass released or
- * deferred, so a row that can never be cleared cannot hold the head of the expiry page.
- */
+// Every row touched ends released or deferred, so an unclearable row cannot pin the expiry page.
 async function sweepAccount(
   accountId: string,
   reservations: SandboxReservationSummary[],
 ): Promise<number> {
   let leased = false;
   try {
-    leased = await runtime.mutate<boolean>("claimEvent", {
+    leased = await runtime.mutate("claimEvent", {
       accountId: accountId,
       key: SWEEP_LEASE_KEY,
       ttlSeconds: SWEEP_LEASE_SECONDS,
     });
   } catch (error) {
-    // The lease requires an active account, so this one is suspended or deleted.
-    // Expected, and it would otherwise warn once an hour forever.
+    // claimEvent refuses an inactive account: expected, so debug rather than an hourly warning.
     logDebug("Sandbox sweep skipped an inactive account", {
       accountId: accountId,
       error: toErrorMessage(error),
@@ -164,11 +155,8 @@ async function sweepAccount(
 
     return 0;
   }
-  // Another replica owns this account's sweep; it defers whatever it misses.
   if (!leased) return 0;
 
-  // Deferring what was just released would push its expiry forward and hide it
-  // from the next pass, so only what survived the pass is deferred.
   let pending = reservations;
   try {
     const released = await releaseExpiredSandboxes(accountId, reservations);
@@ -178,10 +166,6 @@ async function sweepAccount(
     pending = reservations.filter(
       (one) => !done.has(`${one.provider}:${one.reservationKey}`),
     );
-    // Every release path that returns false has already said why, except a machine
-    // no config can safely reach: its reserving config lost the tenant's
-    // credentials, or no instance row says whose they are. Name what is left either
-    // way, or an hourly "released: 0" is the only trace of a sandbox that never dies.
     if (pending.length > 0) {
       logWarn("Sandbox sweep left expired reservations unreleased", {
         accountId: accountId,
@@ -194,8 +178,6 @@ async function sweepAccount(
     return released.length;
   } finally {
     await deferAttempted(accountId, pending);
-    // Freed here rather than left to lapse, so a replica that comes up after this
-    // one died mid-pass is not parked for the rest of the lease.
     await runtime
       .mutate("releaseClaim", { accountId: accountId, key: SWEEP_LEASE_KEY })
       .catch((error: unknown) => {

@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { openGallery } from "../lib/gallery";
 
-// Opening the Architecture tab used to leave the graph at half size, so the
-// architecture has to own most of the frame it is fitted into.
 const MIN_FRAME_SHARE = 0.85;
 
 test("the canvas opens with the architecture filling the frame", async ({

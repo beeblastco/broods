@@ -1,13 +1,10 @@
-/**
- * Shared primitives for CLI manifest sync: account/project/stage resolution,
- * manifest validation, env-ref and resource-ref rewriting, sandbox config
- * decryption, and the rename-comparison snapshots the sync passes use.
- * The registered Convex functions live in `cli/sync.ts`.
- */
-
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { CliManifestResource } from "../cli/types";
+import {
+  LIVE_DEPLOYMENT_REGIONS,
+  type CliManifestResource,
+  type DeploymentRegion,
+} from "../cli/types";
 import { assertStageName, uniqueProjectSlug } from "../lib/slug";
 import { kindForStageName } from "../stage";
 import {
@@ -17,19 +14,26 @@ import {
 } from "./agentConfigCodec";
 import type { AccountCipher } from "./envelope";
 import { defaultSandboxOf } from "./agentRules";
-import { isPlainObject, remapKeys } from "./objects";
-import { stageNameEquals } from "./projectScope";
-import { DEFAULT_SANDBOX_PROVIDER } from "./sandboxRules";
+import { parseInput } from "./inputSchema";
+import { configObject, parseOr } from "./storedJson";
+import { remapKeys } from "./objects";
+import { resolveProject, stageNameEquals } from "./projectScope";
+import {
+  DISK_WORKSPACE_HINT,
+  S3_MOUNT_PROVIDER_HINT,
+  sandboxHoldsWorkspace,
+  supportsS3WorkspaceMount,
+} from "./sandboxProviders";
+import {
+  browserSandboxRefusal,
+  DEFAULT_SANDBOX_PROVIDER,
+} from "./sandboxRules";
 import { ClientError } from "./clientError";
 
 // Exceeds Convex's 30-minute HTTP action limit plus a 10-minute child Node action.
 const MANIFEST_SYNC_TIMEOUT_MS = 45 * 60_000;
 
-/**
- * Resource kinds owned by the account service and snapshotted per stage in
- * `cliExternalResources`. The one list behind every "is this external" filter
- * and the per-kind id lookups, so adding a kind cannot half-land.
- */
+// Kinds the account service owns, snapshotted per stage in `cliExternalResources`.
 export const EXTERNAL_RESOURCE_KINDS = ["skill", "hook", "mcp"] as const;
 
 export type CliResource = CliManifestResource;
@@ -50,28 +54,44 @@ export async function accountFromSecretHash(
 }
 
 export function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value))
-    throw new ClientError("Resource config must be an object");
-
-  return value;
+  return parseInput(configObject, value, "Resource config");
 }
 
-/**
- * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
- * which would otherwise reach the runtime as a literal `${NAME}`. `stage` names
- * the stage in the suggested commands.
- */
+export function assertBrowserSandboxes(resources: CliResource[]): void {
+  const sandboxes = new Map(
+    resources
+      .filter((entry) => entry.kind === "sandbox")
+      .map((entry) => [entry.name, entry]),
+  );
+  for (const agent of resources.filter((entry) => entry.kind === "agent")) {
+    const config = plainRecord(agent.config);
+    if (plainRecord(config.browser).enabled !== true) continue;
+    const name = defaultSandboxOf(config);
+    const sandbox = name === undefined ? undefined : sandboxes.get(name);
+    // Core checks a sandbox this manifest does not declare at run start.
+    if (name !== undefined && sandbox === undefined) continue;
+    const sandboxConfig = plainRecord(sandbox?.config);
+    const problem = browserSandboxRefusal(
+      sandbox && {
+        provider: sandboxProvider(sandbox),
+        image: sandboxConfig.image,
+        network: plainRecord(sandboxConfig.network),
+      },
+    );
+    if (problem) throw new ClientError(`Agent "${agent.name}": ${problem}`);
+  }
+}
+
 export function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
   stage: string,
 ): void {
-  // Reuses the rewrite walker so collection cannot drift from substitution.
+  // The rewrite walker collects, so collection cannot drift from substitution.
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
-    // MCP headers and oauth, and a workspace's R2 keys, name their values as
-    // `${NAME}` strings, not env() refs.
+    // MCP headers and oauth and a workspace's R2 keys hold `${NAME}` strings, not env() refs.
     const config = asObject(resource.config);
     if (resource.kind === "agent") {
       collectEnvPlaceholderNames(config.mcp, referenced);
@@ -90,7 +110,7 @@ export function assertEnvRefsResolved(
     .filter((name) => envValues[name] === undefined)
     .sort();
   if (missing.length === 0) return;
-  // `broods env` defaults to the dev stage, so the commands must name this one.
+  // `broods env` defaults to the dev stage.
   const flag = `--stage ${stage}`;
 
   throw new ClientError(
@@ -99,11 +119,6 @@ export function assertEnvRefsResolved(
   );
 }
 
-/**
- * Refuse a stage-scoped workspace or sandbox whose name an account-scoped row
- * (created through the REST API, no stage) already holds, rather than silently
- * creating a second row with the same name and a different runtime id.
- */
 export async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
   options: {
@@ -136,6 +151,11 @@ export function assertSupportedWorkspaceSandboxMounts(
       .filter((entry) => entry.kind === "sandbox")
       .map((entry) => [entry.name, entry]),
   );
+  const workspaceResources = new Map(
+    resources
+      .filter((entry) => entry.kind === "workspace")
+      .map((entry) => [entry.name, entry]),
+  );
   for (const agent of resources.filter((entry) => entry.kind === "agent")) {
     const config = plainRecord(agent.config);
     const workspaces = config.workspaces;
@@ -149,9 +169,37 @@ export function assertSupportedWorkspaceSandboxMounts(
           : typeof workspace.sandbox === "string"
             ? workspace.sandbox
             : defaultSandbox;
+      const sandbox = sandboxName ? sandboxes.get(sandboxName) : undefined;
+      const storage = plainRecord(
+        plainRecord(
+          workspaceResources.get(
+            String(workspace.workspaceId ?? workspace.name),
+          )?.config,
+        ).storage,
+      ).provider;
+      if (storage === "disk") {
+        const sandboxConfig = plainRecord(sandbox?.config);
+        if (
+          sandbox &&
+          sandboxHoldsWorkspace("disk", {
+            provider: sandboxProvider(sandbox),
+            persistent: sandboxConfig.persistent,
+          })
+        )
+          continue;
+        throw new ClientError(
+          `Agent "${agent.name}" workspace "${String(workspace.name ?? workspace.workspaceId)}": ${DISK_WORKSPACE_HINT}.`,
+        );
+      }
       if (!sandboxName) continue;
-      const sandbox = sandboxes.get(sandboxName);
-      if (!sandbox || supportsS3WorkspaceMount(sandbox)) continue;
+      if (
+        !sandbox ||
+        supportsS3WorkspaceMount(
+          sandboxProvider(sandbox),
+          plainRecord(plainRecord(sandbox.config).options),
+        )
+      )
+        continue;
       const workspaceName =
         typeof workspace.name === "string"
           ? workspace.name
@@ -160,8 +208,8 @@ export function assertSupportedWorkspaceSandboxMounts(
             : "<unknown>";
       throw new ClientError(
         `Agent "${agent.name}" workspace "${workspaceName}" uses sandbox "${sandbox.name}" ` +
-          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use lambda/sandbox, or daytona with ` +
-          `options.mountAwsS3Buckets: true, or set this workspace ref to sandbox: null for read-only S3 access.`,
+          `(${sandboxProvider(sandbox)}) which does not support S3 workspace mounts. Use ${S3_MOUNT_PROVIDER_HINT}, ` +
+          `or set this workspace ref to sandbox: null for read-only S3 access.`,
       );
     }
   }
@@ -171,7 +219,8 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
   const config = plainRecord(resource.config);
   const storage = plainRecord(config.storage);
   const provider = storage.provider;
-  if (provider === undefined || provider === "s3") return;
+  if (provider === undefined || provider === "s3" || provider === "disk")
+    return;
   if (provider === "vercel") {
     throw new ClientError(
       `Workspace "${resource.name}" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet. ` +
@@ -179,7 +228,7 @@ export function assertSupportedWorkspaceStorage(resource: CliResource): void {
     );
   }
   throw new ClientError(
-    `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
+    `Workspace "${resource.name}" config.storage.provider must be one of: s3, disk`,
   );
 }
 
@@ -194,12 +243,6 @@ export async function authIdForAccount(
   return org?.ownerAuthId ?? null;
 }
 
-/**
- * Claims the stage's next manifest revision for a sync. A sync that sends the
- * revision it read is refused when another sync claimed one since; one that
- * sends none claims only after the previous sync has finished.
- * @returns the revision this sync writes
- */
 export async function claimManifestRevision(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -296,14 +339,8 @@ export async function ensureProject(
   const org = await ctx.db.get(orgId);
   if (!org) throw new Error("Account org not found");
 
-  const existing = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId_and_slug", (q) => q.eq("orgId", orgId))
-    .collect();
   const name = resourceName(project);
-  const projectDoc = existing.find(
-    (entry) => entry.name === name || entry.slug === name,
-  );
+  const projectDoc = await resolveProject(ctx, orgId, name);
   if (projectDoc) return projectDoc;
 
   const now = Date.now();
@@ -317,8 +354,7 @@ export async function ensureProject(
   const created = await ctx.db.get(projectId);
   if (!created) throw new Error("Failed to create project");
 
-  // Seed a Development default so the dashboard lands on Development even when
-  // the first CLI command deploys straight to Production.
+  // Seeded so the dashboard lands on Development even when the first deploy is Production.
   await ctx.db.insert("stages", {
     authId: org.ownerAuthId,
     projectId: projectId,
@@ -344,13 +380,13 @@ export async function ensureStage(
   const existing = stages.find((entry) => stageNameEquals(entry.name, name));
   const kind = kindForStageName(name);
   if (existing) {
-    if (existing.kind !== kind || existing.name !== displayStageName(name)) {
-      await ctx.db.patch(existing._id, {
-        name: displayStageName(name),
-        kind: kind,
-        isDefault: kind === "development" ? true : existing.isDefault,
-        updatedAt: Date.now(),
-      });
+    const fixed = {
+      name: displayStageName(name),
+      kind: kind,
+      isDefault: kind === "development" ? true : existing.isDefault,
+    };
+    if (existing.kind !== kind || existing.name !== fixed.name) {
+      await ctx.db.patch(existing._id, { ...fixed, updatedAt: Date.now() });
     }
     if (kind === "development") {
       for (const stage of stages.filter(
@@ -363,11 +399,11 @@ export async function ensureStage(
       }
     }
 
-    return existing;
+    return existing.kind !== kind || existing.name !== fixed.name
+      ? { ...existing, ...fixed }
+      : existing;
   }
 
-  // Only Development is ever the default; Production/custom stages are
-  // never auto-defaulted, even when created first.
   const stageId = await ctx.db.insert("stages", {
     authId: project.authId,
     projectId: project._id,
@@ -390,7 +426,37 @@ export async function ensureStage(
   return created;
 }
 
-/** A stage env var name from the CLI, trimmed and held to the one env name rule. */
+// Data stays where Production first deployed: another region is refused, never moved.
+export function deploymentRegionToPin(
+  stage: Doc<"stages">,
+  region: DeploymentRegion | undefined,
+): DeploymentRegion | undefined {
+  if (stage.kind !== "production") {
+    if (region) {
+      throw new ClientError("A region applies only to the production stage");
+    }
+
+    return undefined;
+  }
+  if (stage.deploymentRegion) {
+    if (region && region !== stage.deploymentRegion) {
+      throw new ClientError(
+        `${stage.name} already runs in ${stage.deploymentRegion} and cannot move to ${region}`,
+        "conflict",
+      );
+    }
+
+    return undefined;
+  }
+  if (region && !LIVE_DEPLOYMENT_REGIONS.includes(region)) {
+    throw new ClientError(
+      `Region ${region} is not available yet. Available: ${LIVE_DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
+
+  return region ?? LIVE_DEPLOYMENT_REGIONS[0];
+}
+
 export function envName(value: string): string {
   const trimmed = value.trim();
   assertEnvVarName(trimmed);
@@ -404,7 +470,6 @@ export function isExternalResourceKind(
   return (EXTERNAL_RESOURCE_KINDS as readonly string[]).includes(kind);
 }
 
-/** The stage's manifest revision: 0 until its first sync. */
 export async function manifestRevision(
   ctx: QueryCtx | MutationCtx,
   stageId: Id<"stages">,
@@ -421,26 +486,7 @@ export function plainRecord(value: unknown): Record<string, unknown> {
 export function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
   return renameComparableResource(
     agent.description,
-    toNestedAgentConfig({
-      name: agent.name,
-      description: agent.description,
-      provider: agent.provider,
-      modelId: agent.modelId,
-      systemPrompt: agent.systemPrompt,
-      maxTurns: agent.maxTurns,
-      outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
-      providerOptions: agent.providerOptions as
-        | Record<string, unknown>
-        | undefined,
-      temperature: agent.temperature,
-      maxTokens: agent.maxTokens,
-      memoryToolEnabled: agent.memoryToolEnabled,
-      searchToolEnabled: agent.searchToolEnabled,
-      searchToolConfig: agent.searchToolConfig as
-        | Record<string, unknown>
-        | undefined,
-      extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
-    }),
+    toNestedAgentConfig(agent),
   );
 }
 
@@ -454,7 +500,6 @@ export function renameComparableResource(
   };
 }
 
-/** Releases only this sync's claim, including when validation or an upload failed. */
 export async function releaseManifestSync(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -465,6 +510,15 @@ export async function releaseManifestSync(
     await ctx.db.patch(row._id, { activeUntil: undefined });
 }
 
+// `pruneOnly` holds the `kind:name` keys a dev prune chose; a deploy prune sends none.
+export function prunes(
+  pruneOnly: readonly string[] | undefined,
+  kind: CliResource["kind"],
+  name: string,
+): boolean {
+  return pruneOnly === undefined || pruneOnly.includes(`${kind}:${name}`);
+}
+
 export function resourceName(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new ClientError("Resource name is required");
@@ -472,10 +526,7 @@ export function resourceName(value: string): string {
   return trimmed;
 }
 
-/**
- * Stand-in ids, shaped like native Convex ids, for the named resources a sync
- * would create, so its id-keyed rules can run before any row exists.
- */
+// Shaped like Convex ids, so id-keyed rules can run before the sync creates any row.
 export function placeholderIds(names: string[]): Record<string, string> {
   return Object.fromEntries(
     names.map((name, index): [string, string] => [
@@ -519,61 +570,63 @@ export function rewriteIdsToNames(
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
-      if (!isPlainObject(entry)) return entry;
+      const ref = parseOr(configObject, entry);
+      if (!ref) return entry;
       const workspaceId =
-        typeof entry.workspaceId === "string" &&
-        workspaceNames[entry.workspaceId]
-          ? workspaceNames[entry.workspaceId]
-          : entry.workspaceId;
+        typeof ref.workspaceId === "string" && workspaceNames[ref.workspaceId]
+          ? workspaceNames[ref.workspaceId]
+          : ref.workspaceId;
       const sandbox =
-        typeof entry.sandbox === "string" && sandboxNames[entry.sandbox]
-          ? sandboxNames[entry.sandbox]
-          : entry.sandbox;
+        typeof ref.sandbox === "string" && sandboxNames[ref.sandbox]
+          ? sandboxNames[ref.sandbox]
+          : ref.sandbox;
 
       return {
-        ...entry,
+        ...ref,
         workspaceId: workspaceId,
-        ...(entry.sandbox !== undefined ? { sandbox: sandbox } : {}),
+        ...(ref.sandbox !== undefined ? { sandbox: sandbox } : {}),
       };
     });
   }
-  if (
-    isPlainObject(result.subagent) &&
-    Array.isArray(result.subagent.allowed)
-  ) {
+  const subagent = parseOr(configObject, result.subagent);
+  if (subagent && Array.isArray(subagent.allowed)) {
     result.subagent = {
-      ...result.subagent,
-      allowed: result.subagent.allowed.map((entry) =>
+      ...subagent,
+      allowed: subagent.allowed.map((entry) =>
         typeof entry === "string" && agentNames[entry]
           ? agentNames[entry]
           : entry,
       ),
     };
   }
-  if (isPlainObject(result.skills) && Array.isArray(result.skills.allowed)) {
+  const skills = parseOr(configObject, result.skills);
+  if (skills && Array.isArray(skills.allowed)) {
     result.skills = {
-      ...result.skills,
-      allowed: result.skills.allowed.map((entry) =>
+      ...skills,
+      allowed: skills.allowed.map((entry) =>
         typeof entry === "string" && skillNames[entry]
           ? skillNames[entry]
           : entry,
       ),
     };
   }
-  if (isPlainObject(result.mcp)) {
-    result.mcp = remapKeys(result.mcp, mcpNames);
+  const mcp = parseOr(configObject, result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, mcpNames);
   }
-  if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
+  const hooks = parseOr(configObject, result.hooks);
+  if (hooks && Array.isArray(hooks.code)) {
     result.hooks = {
-      ...result.hooks,
-      code: result.hooks.code.map((entry) => {
-        if (!isPlainObject(entry)) return entry;
+      ...hooks,
+      code: hooks.code.map((entry) => {
+        const hook = parseOr(configObject, entry);
+        if (!hook) return entry;
         const hookId =
-          typeof entry.hookId === "string" && hookNames[entry.hookId]
-            ? hookNames[entry.hookId]
-            : entry.hookId;
+          typeof hook.hookId === "string" && hookNames[hook.hookId]
+            ? hookNames[hook.hookId]
+            : hook.hookId;
 
-        return { ...entry, hookId: hookId };
+        return { ...hook, hookId: hookId };
       }),
     };
   }
@@ -605,7 +658,8 @@ export function rewriteResourceRefs(
   }
   if (Array.isArray(result.workspaces)) {
     result.workspaces = result.workspaces.map((entry) => {
-      if (!isPlainObject(entry)) return entry;
+      const ref = parseOr(configObject, entry);
+      if (!ref) return entry;
       const workspaceId =
         typeof entry.workspaceId === "string" && workspaceIds[entry.workspaceId]
           ? workspaceIds[entry.workspaceId]
@@ -625,10 +679,10 @@ export function rewriteResourceRefs(
   if (Array.isArray(result.policies)) {
     result.policies = rewriteRefList(result.policies, policyIds);
   }
-  // `config.mcp` keys must end up as mcp row ids; a name that fails to
-  // map fails normalizeMcpConfig loudly rather than being left behind.
-  if (isPlainObject(result.mcp)) {
-    result.mcp = remapKeys(result.mcp, mcpIds);
+  // A key that fails to map to an mcp row id fails normalizeMcpConfig loudly.
+  const mcp = parseOr(configObject, result.mcp);
+  if (mcp) {
+    result.mcp = remapKeys(mcp, mcpIds);
   }
 
   return result;
@@ -636,17 +690,24 @@ export function rewriteResourceRefs(
 
 export function snapshotExternalConfig(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(snapshotExternalConfig);
-  if (isPlainObject(value)) {
+  const object = parseOr(configObject, value);
+  if (object) {
     return Object.fromEntries(
-      Object.entries(value).flatMap(([key, entry]) => {
-        if (key === "contentBase64" || key === "bundle") return [];
+      Object.entries(object).flatMap(([key, entry]) => {
+        if (
+          key === "contentBase64" ||
+          key === "bundle" ||
+          key === "filesStorageId"
+        )
+          return [];
         if (key === "files" && Array.isArray(entry)) {
           return [
             [
               key,
               entry.map((file) => {
-                if (!isPlainObject(file)) return snapshotExternalConfig(file);
-                const { contentBase64: _contentBase64, ...rest } = file;
+                const fileObject = parseOr(configObject, file);
+                if (!fileObject) return snapshotExternalConfig(file);
+                const { contentBase64: _contentBase64, ...rest } = fileObject;
 
                 return snapshotExternalConfig(rest);
               }),
@@ -666,16 +727,17 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => rewriteEnvRefsValue(entry, envNames));
   }
-  if (isPlainObject(value)) {
-    if (value.__beeblastEnv === true && typeof value.name === "string") {
-      const name = envName(value.name);
+  const object = parseOr(configObject, value);
+  if (object) {
+    if (object.__beeblastEnv === true && typeof object.name === "string") {
+      const name = envName(object.name);
       envNames.add(name);
 
       return `\${${name}}`;
     }
 
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
+      Object.entries(object).map(([key, entry]) => [
         key,
         rewriteEnvRefsValue(entry, envNames),
       ]),
@@ -685,7 +747,6 @@ function rewriteEnvRefsValue(value: unknown, envNames: Set<string>): unknown {
   return value;
 }
 
-// Swap each string entry for its table value; anything else passes through.
 function rewriteRefList(
   entries: unknown[],
   table: Record<string, string>,
@@ -709,14 +770,4 @@ async function stageSyncRow(
     .query("stageSyncs")
     .withIndex("by_stageId", (q) => q.eq("stageId", stageId))
     .unique();
-}
-
-function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
-  const provider = sandboxProvider(sandbox);
-  if (provider === "lambda" || provider === "sandbox") return true;
-  if (provider !== "daytona") return false;
-
-  return (
-    plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true
-  );
 }

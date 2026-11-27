@@ -1,5 +1,3 @@
-/** Validation tests for the config-plane policy document rules. */
-
 import { describe, expect, it } from "vitest";
 import {
   normalizeCreatePolicyInput,
@@ -25,10 +23,7 @@ const policyWith = (
   },
 });
 
-// model/policyRules.ts is the single home of document validation (core
-// re-exports its types). A scalar value satisfies no rego in/notIn branch, so
-// the condition never fires and a deny silently does nothing. Refuse it at
-// write time.
+// A scalar satisfies no rego in/notIn branch, so the deny would silently never fire.
 describe("normalizeCreatePolicyInput", () => {
   it("rejects a scalar value for in and notIn", () => {
     expect(() =>

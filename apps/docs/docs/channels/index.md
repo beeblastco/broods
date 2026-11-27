@@ -4,7 +4,7 @@ title: Channels
 
 # Channels
 
-A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Matrix, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
+A channel puts your agent in Slack, Telegram, Discord, GitHub, Linear, Pancake, Zalo, WhatsApp, Microsoft Teams, Google Chat, Twilio SMS, Messenger or Instagram. Messages that arrive there become agent turns, and the answer goes back to the same place.
 
 - A connection is one app install and holds its credentials, such as a Slack bot token.
 - A channel names one room the connection answers in, such as `#product-eng`.
@@ -53,7 +53,6 @@ An agent can hold several connections of different providers. One connection bel
 | [Discord](discord.md)     | guild channels and threads             | `botToken`, `publicKey`                                    | yes      |
 | [GitHub](github.md)       | issues, pull requests, comment threads | `webhookSecret`, `appId`, `privateKey`                     | no       |
 | [Linear](linear.md)       | issue comments that mention the agent  | `apiKey`, `webhookSecret`, `userName`                      | no       |
-| [Matrix](matrix.md)       | rooms, including encrypted ones        | `apiUrl`, `botToken`                                       | yes      |
 | [Pancake](pancake.md)     | Pancake inbox messages and comments    | `pageId`, `pageAccessToken`, `webhookSecret`               | no       |
 | [Zalo](zalo.md)           | private chats and groups               | `botToken`, `webhookSecret`                                | yes      |
 | [WhatsApp](whatsapp.md)   | customer chats with a business number  | `accessToken`, `appSecret`, `phoneNumberId`, `verifyToken` | yes      |
@@ -97,7 +96,7 @@ A connection that declares no channel and no `allowedChannelIds` fails `broods d
 
 ## Chat commands
 
-Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
+Telegram, Slack, Discord, Zalo, WhatsApp, Teams, Google Chat, Twilio, Messenger and Instagram route these commands to Broods instead of the agent. GitHub, Linear and Pancake pass slash text to the agent as normal input.
 
 | Command                                   | Effect                                                                               |
 | ----------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -111,6 +110,17 @@ Telegram, Slack, Discord, Matrix, Zalo, WhatsApp, Teams, Google Chat, Twilio, Me
 
 An ordinary message sent while the agent is busy steers the running turn. See [Conversations](../guides/conversations.md).
 
+## When the deployment is full
+
+When every worker slot is busy and the run queue behind them is full, a new message is turned away before it is counted against the plan or recorded. Where the provider sends a delivery again after a server error, Broods answers `503` with `Retry-After`, and the message is admitted on the first retry that finds room; a retry that arrives while the queue is still full gets another `503`. Everywhere else the chat is told the agent is busy, so the sender can try again.
+
+| Provider                                                                                     | A message the full queue turns away           |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Telegram, Slack messages, WhatsApp, Messenger, Instagram, Linear                             | `503`, the provider sends it again            |
+| Discord, Slack slash commands and buttons, GitHub, Pancake, Zalo, Teams, Google Chat, Twilio | acked, and the chat is told the agent is busy |
+
+An account out of budget hears its plan refusal instead, full queue or not.
+
 ## Channel tools
 
 On a channel turn the agent gets these tools automatically. Do not add them to `config.tools`. Hide any of them per room with `denyTools` on a [channel record](channel-records.md).
@@ -118,7 +128,7 @@ On a channel turn the agent gets these tools automatically. Do not add them to `
 | Tool             | Use                                                         |
 | ---------------- | ----------------------------------------------------------- |
 | `send-update`    | post a progress note before the turn ends. Always available |
-| `send-message`   | message another conversation, which runs it as a follow-up  |
+| `send-message`   | message a chat that has messaged the agent, as a follow-up  |
 | `send-images`    | send pictures from workspace `file_paths` or from `urls`    |
 | `send-files`     | send workspace documents such as PDFs and spreadsheets      |
 | `send-sticker`   | send a sticker                                              |
@@ -133,7 +143,6 @@ Tools other than `send-update` appear only where the provider supports them. The
 | Telegram    | provider fetches URL              | provider fetches URL              | albums of 2 to 10       |
 | Slack       | image blocks                      | uploaded                          | one message, one upload |
 | Discord     | uploaded                          | uploaded                          | one multipart message   |
-| Matrix      | uploaded                          | uploaded                          | one per message         |
 | Pancake     | uploaded                          | uploaded                          | one per message         |
 | Zalo        | provider fetches URL              | sent as links                     | one per message         |
 | WhatsApp    | uploaded or linked                | uploaded or linked                | one per message         |
@@ -156,7 +165,6 @@ Media sent to the agent is read while the turn runs.
 | Telegram    | photos, video, audio, voice notes, documents, video notes, static stickers |
 | Slack       | every file on a message, including voice clips                             |
 | Discord     | uploads, voice messages, stickers                                          |
-| Matrix      | images, video, audio, files, including encrypted ones                      |
 | Pancake     | photos and videos                                                          |
 | Zalo        | photos, stickers, voice notes                                              |
 | WhatsApp    | pictures, documents, audio, voice notes, video, stickers                   |
@@ -176,23 +184,39 @@ With a workspace attached, each file is saved under `media/` in the default work
 
 ### Voice transcription
 
-Audio the model cannot hear is transcribed on the way in, with the account's own provider credentials. No configuration is needed.
+Audio the model cannot hear is transcribed on the way in. An agent whose chat provider ships speech-to-text needs no configuration. Any other agent names one in `transcription`, with that provider's key in `provider`:
+
+```ts
+export const support = defineAgent({
+  name: "support",
+  provider: {
+    anthropic: { apiKey: env("ANTHROPIC_API_KEY") },
+    openai: { apiKey: env("OPENAI_API_KEY") },
+  },
+  model: { provider: "anthropic", modelId: "claude-haiku-5-5" },
+  transcription: { provider: "openai" },
+});
+```
 
 | Provider       | Default model                                     |
 | -------------- | ------------------------------------------------- |
 | OpenAI         | `whisper-1`                                       |
 | Groq           | `whisper-large-v3-turbo`                          |
 | Mistral        | `voxtral-mini-latest`                             |
+| Fish Audio     | `transcribe-1`                                    |
 | Google, Vertex | none. The recording is sent to the model directly |
 
-Set `model.transcriptionModelId` to use another model on the same provider. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
+`transcription.provider` defaults to the chat provider, and `transcription.modelId` to the model in the table. The defaults accept ogg/opus, which Telegram, Discord and Zalo voice notes use. Cheaper models such as `gpt-4o-mini-transcribe` refuse ogg.
 
-A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, or no speech-to-text on the account.
+Fish Audio (`fishaudio`) only transcribes, so it is valid in `provider` and `transcription.provider` but not in `model.provider`.
+
+A failed transcription never drops the message. The note names the cause, such as a busy provider, a refused format, a missing key for the transcription provider, or a provider with no speech-to-text.
 
 ## Shared behavior
 
 - Typing and reactions. An accepted message triggers a typing indicator and a reaction where the provider supports them. Telegram and Slack reactions are configurable with `reactionEmoji`. GitHub and Linear react with eyes. Zalo, Teams, Messenger and Instagram show typing only. WhatsApp shows typing and reacts only when the agent calls `send-reactions`. Pancake, Google Chat and Twilio do neither.
-- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` Keep approval-gated tools off channel agents.
+- Edits. Editing a message never starts a run, on any channel. Send a new message to correct the agent.
+- Tool approval. Tools with `needsApproval` are denied on channel turns with `Tool approval is only supported through the direct API.` The model gets two more passes to answer without them; a third denial ends the turn with a message saying so. Keep approval-gated tools off channel agents.
 - Errors. If a turn fails, the room receives a short `⚠️` line with the error simplified, for example a quota or timeout message.
 - Deferred replies. When a turn finishes later, such as a background sandbox job, the result is pushed back into the same chat.
 - Trace links. Replies omit the dashboard trace link. Set `trace: "enabled"` on the connection to include it. Tracing itself is unaffected.

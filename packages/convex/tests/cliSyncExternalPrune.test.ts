@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A CLI prune removes the skills, hooks and MCP servers its own stage recorded,
- * even when the manifest now declares none, and never one another stage
- * records or the dashboard created. A pruned agent takes its crons along.
- */
 
 import cronsComponent from "@convex-dev/crons/test";
 import { convexTest, type TestConvex } from "convex-test";
@@ -187,6 +182,43 @@ describe("cli prune of external resources", () => {
     ).toEqual([expect.objectContaining({ path: "theirs/SKILL.md" })]);
   });
 
+  test("a prune list removes only the resources it names", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    await recordHook(tt, accountId, STAGE, "kept");
+    await recordHook(tt, accountId, STAGE, "chosen");
+    const agent = (
+      name: string,
+    ): { kind: string; name: string; config: unknown } => ({
+      kind: "agent",
+      name: name,
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Answer." },
+      },
+    });
+    await pruneAll(tt, [agent("kept-agent"), agent("chosen-agent")], false);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [
+        { kind: "agent", name: "chosen-agent" },
+        { kind: "hook", name: "chosen" },
+      ],
+    );
+
+    expect(response.status).toBe(200);
+    expect((await activeNames(tt)).hooks).toEqual(["kept"]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["kept-agent"]);
+  });
+
   test("a pruned agent's crons go with it", async () => {
     const tt = t();
     const accountId = await seedAccount(tt);
@@ -234,9 +266,148 @@ describe("cli prune of external resources", () => {
       await tt.run(async (ctx) => await ctx.db.query("crons").collect()),
     ).toEqual([]);
   });
+  test("a prune drops a cron code stopped declaring, never one an agent made", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const reporter = {
+      kind: "agent",
+      name: "reporter",
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        agent: { system: "Write the report." },
+      },
+    };
+    const declared = await pruneAll(tt, [
+      reporter,
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+    expect(declared.status).toBe(200);
+    const [nightly] = await tt.run(
+      async (ctx) => await ctx.db.query("crons").collect(),
+    );
+    if (!nightly) throw new Error("cron not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "agent-made",
+        agentId: nightly.agentId,
+        input: "check in",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+
+    expect((await pruneAll(tt, [reporter])).status).toBe(200);
+    expect(
+      (await tt.run(async (ctx) => await ctx.db.query("crons").collect())).map(
+        (job) => job.name,
+      ),
+    ).toEqual(["agent-made"]);
+  });
+  test("a confirmed cron delete goes through when its agent's delete was declined", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await pruneAll(tt, [
+      {
+        kind: "agent",
+        name: "reporter",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ]);
+
+    const response = await pruneAll(
+      tt,
+      [],
+      [{ kind: "cron", name: "nightly" }],
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      await tt.run(async (ctx) => await ctx.db.query("crons").collect()),
+    ).toEqual([]);
+    expect(
+      await tt.run(async (ctx) =>
+        (await ctx.db.query("agentConfigs").collect()).map(
+          (row): string => row.name,
+        ),
+      ),
+    ).toEqual(["reporter"]);
+  });
+  test("the manifest lists only crons code declared, so the next diff stays empty", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const resources = [
+      {
+        kind: "agent",
+        name: "reporter",
+        config: {
+          model: { provider: "custom", modelId: "Qwen3.6-27B" },
+          agent: { system: "Write the report." },
+        },
+      },
+      {
+        kind: "cron",
+        name: "nightly",
+        config: {
+          agentId: "reporter",
+          events: [{ role: "user", content: "Write the report." }],
+          scheduleExpression: "rate(1 day)",
+        },
+      },
+    ];
+    expect((await pruneAll(tt, resources)).status).toBe(200);
+    const [nightly] = await tt.run(
+      async (ctx) => await ctx.db.query("crons").collect(),
+    );
+    if (!nightly) throw new Error("cron not synced");
+    await tt.mutation(internal.agent.crons.create, {
+      accountId: accountId,
+      input: {
+        name: "agent-made",
+        agentId: nightly.agentId,
+        input: "check in",
+        scheduleExpression: "rate(1 hour)",
+      },
+    });
+
+    expect(await manifestCronNames(tt)).toEqual(["nightly"]);
+  });
 });
 
-/** Active hook and MCP names, and every recorded external resource by stage kind. */
+/** Cron names `GET /manifest` returns for the test stage, as `broods dev` reads them. */
+async function manifestCronNames(tt: T): Promise<string[]> {
+  const response = await tt.fetch(
+    `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
+    { headers: { Authorization: `Bearer ${SECRET}` } },
+  );
+  const body = (await response.json()) as {
+    manifest: { resources: Array<{ kind: string; name: string }> };
+  };
+
+  return body.manifest.resources
+    .filter((resource) => resource.kind === "cron")
+    .map((resource) => resource.name);
+}
+
 async function activeNames(
   tt: T,
 ): Promise<{ hooks: string[]; mcp: string[]; recorded: string[] }> {
@@ -268,7 +439,6 @@ async function activeNames(
   });
 }
 
-/** An active account hook, as the dashboard makes one. */
 async function insertHook(
   tt: T,
   accountId: Id<"accounts">,
@@ -290,7 +460,6 @@ async function insertHook(
   });
 }
 
-/** A stage MCP server nothing recorded, as the dashboard or config API makes one. */
 async function insertMcpServer(
   tt: T,
   accountId: Id<"accounts">,
@@ -315,10 +484,10 @@ async function insertMcpServer(
   });
 }
 
-/** `deploy --prune` to the development stage, of an empty manifest by default. */
 async function pruneAll(
   tt: T,
   resources: Array<{ kind: string; name: string; config: unknown }> = [],
+  prune: boolean | Array<{ kind: string; name: string }> = true,
 ): Promise<Response> {
   return await tt.fetch(
     `/v1/account/projects/${PROJECT}/stages/${STAGE}/manifest`,
@@ -335,13 +504,12 @@ async function pruneAll(
           stage: STAGE,
           resources: resources,
         },
-        prune: true,
+        prune: prune,
       }),
     },
   );
 }
 
-/** An account hook that `stage` recorded as CLI-managed. */
 async function recordHook(
   tt: T,
   accountId: Id<"accounts">,
@@ -360,7 +528,6 @@ async function recordHook(
   });
 }
 
-/** A stage MCP server that the development stage recorded as CLI-managed. */
 async function recordMcpServer(
   tt: T,
   accountId: Id<"accounts">,
@@ -382,7 +549,6 @@ async function recordMcpServer(
   });
 }
 
-/** A skill `stage` recorded as CLI-managed, with the file `syncSkillNodeFiles` mirrors. */
 async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   const secretHash = await sha256Hex(SECRET);
   const scope = await tt.mutation(internal.cli.sync.ensureScopeBySecretHash, {
@@ -415,7 +581,6 @@ async function recordSkill(tt: T, stage: string, name: string): Promise<void> {
   });
 }
 
-/** An org, its owner and an active account whose secret is `SECRET`. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   const secretHash = await sha256Hex(SECRET);
 

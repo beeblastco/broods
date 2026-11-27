@@ -4,6 +4,7 @@ import * as realNats from "nats";
 const MAX_PAYLOAD = 4096;
 const connections: FakeConnection[] = [];
 const originalNatsUrl = process.env.NATS_URL;
+const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
 
 interface FakeConnection {
   options: Record<string, unknown>;
@@ -11,7 +12,6 @@ interface FakeConnection {
   close: () => void;
 }
 
-// Only the dial is faked; the subject and stream helpers stay real.
 await mock.module("nats", (): Record<string, unknown> => ({
   ...realNats,
   connect: async (options: Record<string, unknown>): Promise<unknown> => {
@@ -48,11 +48,15 @@ const { LiveNatsPublisher } = await import("../src/harness/nats-publisher.ts");
 
 beforeEach((): void => {
   process.env.NATS_URL = "nats://nats.test:4222";
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
 });
 
 afterAll((): void => {
   if (originalNatsUrl === undefined) delete process.env.NATS_URL;
   else process.env.NATS_URL = originalNatsUrl;
+  if (originalEnvironment === undefined)
+    delete process.env.DEPLOYMENT_ENVIRONMENT;
+  else process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
 });
 
 describe("shared NATS connection", (): void => {
@@ -158,7 +162,6 @@ describe("LiveNatsPublisher", (): void => {
         // Structural: left alone even when it carries the value.
         toolCallId: "call-hdr-secret-abc123",
         toolName: "bash",
-        // Values are scrubbed, keys never: a token that is no secret stays.
         input: { command: "echo [redacted]", token: "t" },
       },
       {

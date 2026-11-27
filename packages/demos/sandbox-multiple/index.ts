@@ -1,13 +1,12 @@
-/**
- * Example: one agent with two entries in `sandboxes`. The first is the default;
- * the model picks the machine per bash call, so the same command runs with
- * internet egress on one and with egress blocked on the other.
- */
+// The model picks the machine per bash call: the same command runs with egress and without.
 
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient();
+// These agents need a signed user token; your backend signs one per signed-in user.
+const client = new BroodsClient({
+  userToken: () => signUserToken({ userId: "demo-user" }),
+});
 
 for await (const chunk of client.stream(api.agents.multiSandboxAgent, {
   input: [

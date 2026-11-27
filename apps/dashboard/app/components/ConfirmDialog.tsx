@@ -10,15 +10,11 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 
-/**
- * One question before an action that cannot be taken back without a cost:
- * rotate a key, suspend a sandbox. The verb is the button; a typed phrase is
- * `DeleteConfirmDialog`'s job.
- */
 export function ConfirmDialog({
   title,
   description,
   verb,
+  variant = "destructive",
   pending,
   error,
   onConfirm,
@@ -26,8 +22,8 @@ export function ConfirmDialog({
 }: {
   title: string;
   description: string;
-  /** The button's word, and with "…" the word while it runs. */
   verb: string;
+  variant?: "default" | "destructive";
   pending: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -40,7 +36,11 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
         <DialogFooter>
           <Button
             variant="ghost"
@@ -52,7 +52,7 @@ export function ConfirmDialog({
             Cancel
           </Button>
           <Button
-            variant="destructive"
+            variant={variant}
             size="sm"
             className="cursor-pointer"
             disabled={pending}

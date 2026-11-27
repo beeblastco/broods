@@ -1,6 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import type { ChannelAdapter, InboundMessage } from "../src/shared/channels.ts";
+import { MAX_ATTACHMENT_BYTES } from "../src/shared/media-types.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
+import { stubPublicDns } from "./helpers/http.ts";
+
+const ORIGINAL_FETCH = globalThis.fetch;
 
 const GROUP_CHAT = { id: 123, type: "supergroup" };
 
@@ -41,6 +45,38 @@ describe("telegram channel adapter", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  it("ties the turn to the bot that received it, so a record for another bot skips it", async (): Promise<void> => {
+    const adapter = createTelegramChannel(
+      "5550001:bot-secret",
+      "secret",
+      null,
+      null,
+      "👀",
+    );
+    const parsed = await adapter.parse(
+      createRequest({ update_id: 1, message: createMessage({ text: "hi" }) }),
+    );
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.identity?.workspaceRef).toBe("5550001");
+  });
+
+  it("takes no tie from a token whose part before ':' is not a bot id", async (): Promise<void> => {
+    const adapter = createTelegramChannel(
+      "sk_live_SECRETPART:rest",
+      "secret",
+      null,
+      null,
+      "👀",
+    );
+    const parsed = await adapter.parse(
+      createRequest({ update_id: 1, message: createMessage({ text: "hi" }) }),
+    );
+    if (parsed.kind !== "message") throw new Error("expected a message");
+
+    expect(parsed.message.identity?.workspaceRef).toBeUndefined();
   });
 
   it("ignores updates without text content", async () => {
@@ -153,7 +189,7 @@ describe("telegram channel adapter", () => {
     });
   });
 
-  it("uses edited_message when no main message is present", async () => {
+  it("ignores an edited message, so a correction never starts a second run", async () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
@@ -169,20 +205,7 @@ describe("telegram channel adapter", () => {
       }),
     );
 
-    expect(parsed.kind).toBe("message");
-    if (parsed.kind !== "message") {
-      throw new Error("Expected Telegram edited message to be accepted");
-    }
-
-    expect(parsed.message.eventId).toBe("tg:8");
-    expect(parsed.message.content).toBe("edited");
-    expect(parsed.message.source).toEqual({
-      chatId: 123,
-      messageId: "123:99",
-      threadId: "telegram:123",
-      fromUserId: 7,
-      fromUsername: "alice",
-    });
+    expect(parsed).toEqual({ kind: "ignore" });
   });
 
   it("stores untagged group chatter as context once botUsername is set", async () => {
@@ -222,7 +245,7 @@ describe("telegram channel adapter", () => {
 
   it("runs the agent when a group message mentions it", async () => {
     const adapter = createGatedAdapter();
-    const text = "@tracy_bot what is the one-off price";
+    const text = "@support_bot what is the one-off price";
 
     const parsed = await adapter.parse(
       createRequest({
@@ -230,7 +253,7 @@ describe("telegram channel adapter", () => {
         message: createMessage({
           text: text,
           chat: GROUP_CHAT,
-          entities: entityFor(text, "@tracy_bot", "mention"),
+          entities: entityFor(text, "@support_bot", "mention"),
         }),
       }),
     );
@@ -239,8 +262,8 @@ describe("telegram channel adapter", () => {
   });
 
   it("matches the mention whatever the case, with or without a leading @", async () => {
-    const adapter = createGatedAdapter("@Tracy_Bot");
-    const text = "hey @TRACY_BOT";
+    const adapter = createGatedAdapter("@Support_Bot");
+    const text = "hey @SUPPORT_BOT";
 
     const parsed = await adapter.parse(
       createRequest({
@@ -248,7 +271,7 @@ describe("telegram channel adapter", () => {
         message: createMessage({
           text: text,
           chat: GROUP_CHAT,
-          entities: entityFor(text, "@TRACY_BOT", "mention"),
+          entities: entityFor(text, "@SUPPORT_BOT", "mention"),
         }),
       }),
     );
@@ -270,8 +293,8 @@ describe("telegram channel adapter", () => {
             chat: GROUP_CHAT,
             from: {
               id: 99,
-              first_name: "Tracy",
-              username: "tracy_bot",
+              first_name: "Support",
+              username: "support_bot",
               is_bot: true,
             },
           }),
@@ -310,8 +333,8 @@ describe("telegram channel adapter", () => {
             chat: GROUP_CHAT,
             from: {
               id: 99,
-              first_name: "Tracy",
-              username: "tracy_bot",
+              first_name: "Support",
+              username: "support_bot",
               is_bot: true,
             },
           }),
@@ -323,7 +346,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected a reply to the bot to be accepted");
     }
     expect(reply.message.content).toBe(
-      '<replying-to from="Tracy">\nhere is the template\n</replying-to>\n\nand with margin?',
+      '<replying-to from="Support">\nhere is the template\n</replying-to>\n\nand with margin?',
     );
 
     const plain = await adapter.parse(
@@ -354,8 +377,8 @@ describe("telegram channel adapter", () => {
             chat: GROUP_CHAT,
             from: {
               id: 99,
-              first_name: "Tracy",
-              username: "tracy_bot",
+              first_name: "Support",
+              username: "support_bot",
               is_bot: true,
             },
           }),
@@ -367,7 +390,7 @@ describe("telegram channel adapter", () => {
       throw new Error("Expected a reply to the bot to be accepted");
     }
     expect(parsed.message.content).toBe(
-      `<replying-to from="Tracy">\n${"x".repeat(500)}...\n</replying-to>\n\nand with margin?`,
+      `<replying-to from="Support">\n${"x".repeat(500)}...\n</replying-to>\n\nand with margin?`,
     );
   });
 
@@ -390,11 +413,11 @@ describe("telegram channel adapter", () => {
       createRequest({
         update_id: 17,
         message: createMessage({
-          text: "/new@tracy_bot",
+          text: "/new@support_bot",
           chat: GROUP_CHAT,
           entities: entityFor(
-            "/new@tracy_bot",
-            "/new@tracy_bot",
+            "/new@support_bot",
+            "/new@support_bot",
             "bot_command",
           ),
         }),
@@ -406,11 +429,11 @@ describe("telegram channel adapter", () => {
       createRequest({
         update_id: 18,
         message: createMessage({
-          text: "/new@steve_bot",
+          text: "/new@other_bot",
           chat: GROUP_CHAT,
           entities: entityFor(
-            "/new@steve_bot",
-            "/new@steve_bot",
+            "/new@other_bot",
+            "/new@other_bot",
             "bot_command",
           ),
         }),
@@ -426,11 +449,11 @@ describe("telegram channel adapter", () => {
       createRequest({
         update_id: 24,
         message: createMessage({
-          text: "/clear@tracy_bot",
+          text: "/clear@support_bot",
           chat: GROUP_CHAT,
           entities: entityFor(
-            "/clear@tracy_bot",
-            "/clear@tracy_bot",
+            "/clear@support_bot",
+            "/clear@support_bot",
             "bot_command",
           ),
         }),
@@ -453,8 +476,8 @@ describe("telegram channel adapter", () => {
             chat: GROUP_CHAT,
             from: {
               id: 99,
-              first_name: "Tracy",
-              username: "tracy_bot",
+              first_name: "Support",
+              username: "support_bot",
               is_bot: true,
             },
           }),
@@ -505,7 +528,7 @@ describe("telegram channel adapter", () => {
 
   it("never runs for another bot, even when that bot tags it", async () => {
     const adapter = createGatedAdapter();
-    const text = "@tracy_bot take this";
+    const text = "@support_bot take this";
 
     const parsed = await adapter.parse(
       createRequest({
@@ -513,11 +536,11 @@ describe("telegram channel adapter", () => {
         message: createMessage({
           text: text,
           chat: GROUP_CHAT,
-          entities: entityFor(text, "@tracy_bot", "mention"),
+          entities: entityFor(text, "@support_bot", "mention"),
           from: {
             id: 55,
-            first_name: "Steve",
-            username: "beeblast_steve",
+            first_name: "Sam",
+            username: "sam_user",
             is_bot: true,
           },
         }),
@@ -539,7 +562,6 @@ describe("telegram channel adapter", () => {
       },
     });
 
-    // A captionless photo used to be dropped for having no text.
     expect(parsed.content).toBe("");
     // Telegram offers a photo at several sizes; the largest is the one to read.
     expect(parsed.attachments?.[0]).toMatchObject({
@@ -576,16 +598,15 @@ describe("telegram channel adapter", () => {
   });
 
   it("answers a caption that @-mentions the bot", async () => {
-    const caption = "@tracy_bot what is this?";
+    const caption = "@support_bot what is this?";
     const parsed = await createGatedAdapter().parse(
       createRequest({
         update_id: 32,
         message: {
           ...createMessage({ chat: GROUP_CHAT }),
           caption: caption,
-          // A caption's mentions are indexed against caption_entities, so a
-          // gate reading `entities` never sees them.
-          caption_entities: entityFor(caption, "@tracy_bot", "mention"),
+          // Caption mentions index caption_entities, so a gate reading `entities` misses them.
+          caption_entities: entityFor(caption, "@support_bot", "mention"),
           photo: [{ file_id: "p1", file_unique_id: "u1", width: 8, height: 8 }],
         },
       }),
@@ -610,9 +631,10 @@ describe("telegram channel adapter", () => {
         mimeType: "image/webp",
       }),
     ]);
+    // The file_id is what send-sticker takes to send the same sticker back.
+    expect(parsed.content).toBe("🎉 [sticker file_id: st-1]");
 
-    // A .tgs or .webm sticker is not a picture any model can read, and the
-    // emoji says more than a failed download would.
+    // A .tgs or .webm sticker is no picture a model can read; the emoji says more.
     const animated = await parseTelegram({
       update_id: 34,
       message: {
@@ -624,8 +646,6 @@ describe("telegram channel adapter", () => {
   });
 
   it("carries the emoji as the text of a caption-less animated sticker", async () => {
-    // With no attachment and no caption, the emoji is all the message has.
-    // Without it the turn would arrive entirely empty.
     const parsed = await parseTelegram({
       update_id: 36,
       message: {
@@ -639,31 +659,106 @@ describe("telegram channel adapter", () => {
       },
     });
 
-    expect(parsed.content).toBe("😅");
+    expect(parsed.content).toBe("😅 [sticker file_id: st-3]");
     expect(parsed.attachments).toBeUndefined();
   });
 
-  it("still ignores a message carrying neither text nor media", async () => {
-    const adapter = createTelegramChannel(
-      "bot-token",
-      "secret",
-      null,
-      null,
-      "👀",
-    );
+  describe("a file from a tenant apiUrl", () => {
+    afterEach((): void => {
+      globalThis.fetch = ORIGINAL_FETCH;
+    });
 
-    expect(
-      (
-        await adapter.parse(
-          createRequest({ update_id: 35, message: createMessage({}) }),
-        )
-      ).kind,
-    ).toBe("ignore");
+    async function readTenantPhoto(file: () => Response): Promise<Buffer> {
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request): Promise<Response> => {
+          const url = new URL(input instanceof Request ? input.url : input);
+
+          return url.pathname.endsWith("/getFile")
+            ? Response.json({ ok: true, result: { file_path: "photos/p.jpg" } })
+            : file();
+        },
+        { preconnect: ORIGINAL_FETCH.preconnect },
+      );
+      const adapter = createTelegramChannel(
+        "bot-token",
+        "secret",
+        null,
+        null,
+        "👀",
+        "https://api.tenant.example",
+      );
+      const parsed = await adapter.parse(
+        createRequest({
+          update_id: 40,
+          message: {
+            ...createMessage({}),
+            photo: [
+              { file_id: "p1", file_unique_id: "u1", width: 8, height: 8 },
+            ],
+          },
+        }),
+      );
+      if (parsed.kind !== "message") throw new Error(parsed.kind);
+      const [photo] = parsed.message.attachments ?? [];
+      const bytes = await photo!.fetchData!();
+
+      return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+    }
+
+    it("reads a body within the attachment cap", async () => {
+      const restoreDns = stubPublicDns();
+      try {
+        const bytes = await readTenantPhoto(
+          () => new Response(new Uint8Array([1, 2, 3])),
+        );
+        expect([...bytes]).toEqual([1, 2, 3]);
+      } finally {
+        restoreDns();
+      }
+    });
+
+    it("refuses a declared length past the cap before reading it", async () => {
+      const restoreDns = stubPublicDns();
+      try {
+        await expect(
+          readTenantPhoto(
+            () =>
+              new Response("x", {
+                headers: { "content-length": String(MAX_ATTACHMENT_BYTES + 1) },
+              }),
+          ),
+        ).rejects.toThrow(/exceeds the download limit/);
+      } finally {
+        restoreDns();
+      }
+    });
+
+    it("stops a stream with no length once it passes the cap", async () => {
+      const restoreDns = stubPublicDns();
+      const chunk = new Uint8Array(1024 * 1024);
+      let sent = 0;
+      try {
+        await expect(
+          readTenantPhoto(
+            () =>
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  pull: function (controller): void {
+                    sent += chunk.byteLength;
+                    controller.enqueue(chunk);
+                  },
+                }),
+              ),
+          ),
+        ).rejects.toThrow(/exceeds the download limit/);
+      } finally {
+        restoreDns();
+      }
+      expect(sent).toBeLessThan(MAX_ATTACHMENT_BYTES + 4 * chunk.byteLength);
+    });
   });
 });
 
-// The normalized message a Telegram update produces, or a thrown error naming
-// why the update was refused.
 async function parseTelegram(
   payload: Record<string, unknown>,
 ): Promise<InboundMessage> {
@@ -684,7 +779,9 @@ async function parseTelegram(
   return parsed.message;
 }
 
-function createGatedAdapter(botUsername: string = "tracy_bot"): ChannelAdapter {
+function createGatedAdapter(
+  botUsername: string = "support_bot",
+): ChannelAdapter {
   return createTelegramChannel(
     "bot-token",
     "secret",
@@ -696,8 +793,7 @@ function createGatedAdapter(botUsername: string = "tracy_bot"): ChannelAdapter {
   );
 }
 
-// Telegram tags each `@name` and `/command` in the text with an entity, and the
-// mention gate reads those rather than searching the text.
+// The mention gate reads Telegram's per-token entities, not the text.
 function entityFor(
   text: string,
   token: string,

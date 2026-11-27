@@ -1,61 +1,78 @@
-/**
- * Transactional persistence for the core runtime.
- */
-
 import { getConvexSize, type Infer, v, type Value } from "convex/values";
 import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { sha256Hex } from "./model/accountSecrets";
 import {
+  asyncToolDeliveryValidator,
+  harnessSessionEntryFields,
   reservedSandboxValidator,
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
+  runtimeConversationEventsFields,
   sandboxProviderValidator,
+  sandboxSnapshotScopeValidator,
+  subagentTaskValidator,
 } from "./schema";
 import {
   accountIdFromKey,
   requireActiveAccount,
   requireActiveKeyAccount,
 } from "./model/activeAccount";
+import {
+  findHarnessEntry,
+  takeHarnessEntryBatch,
+} from "./model/harnessSessionEntries";
+import {
+  handbackMoveValidator,
+  parseHandbackDedupeKey,
+  sweptHandbackValidator,
+} from "./model/subagentResults";
 
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-// Bytes and not rows bound a page: the per-query read limit counts bytes, and
-// one tool result can weigh as much as a thousand text rows.
+// The per-query read limit counts bytes, and one tool result can outweigh 1000 text rows.
 const CONVERSATION_EVENT_PAGE_BYTES = 4 * 1_024 * 1_024;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const DAY_SECONDS = 24 * 60 * 60;
-
-// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
-// coordinates, never chat history. Keep adapter regressions out of Convex rows.
-const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
+// One recovery sweep's page of late subagent or async tool results.
+const OWED_RESULT_PAGE_SIZE = 100;
 
 const REPLACED_SANDBOX_ERROR =
   "Background job ran on a sandbox that has since been replaced";
 
 const RUNTIME_DELETE_BATCH_SIZE = 100;
 
-// Idle window a reservation survives, refreshed on every acquire. Only core's sandbox
-// sweeper may act on it: the row holds the sole copy of `externalId`, so deleting it
-// without deleting the sandbox first strands the machine.
+export const harnessSessionEntryValidator = v.object(harnessSessionEntryFields);
+
+// Only core's sandbox sweeper may expire a reservation: the row is the sole copy of
+// `externalId`, so deleting it before the sandbox strands the machine.
 export const SANDBOX_RESERVATION_TTL_SECONDS = 7 * DAY_SECONDS;
 
-/** A whole step's history rows in one write, in cursor order. */
 export const conversationEventsValidator = v.array(
-  v.object({ cursor: v.string(), event: v.any() }),
+  v.object({
+    cursor: v.string(),
+    dedupeKey: runtimeConversationEventsFields.dedupeKey,
+    event: v.any(),
+    toolResultIds: v.optional(v.array(v.string())),
+  }),
 );
+
+/** A late result a history write stored, by the field a resume envelope names it by. */
+export type ResultFence = { resultEventId: string } | { toolResultId: string };
 
 /** How an async run ended, or what it waits on, as its polling row records it. */
 export const asyncAgentOutcomeValidator = v.object({
   status: runtimeAsyncAgentResultsFields.status,
-  response: v.optional(v.any()),
-  error: v.optional(v.string()),
-  approvals: v.optional(v.array(v.any())),
-  questions: v.optional(v.array(v.any())),
+  response: runtimeAsyncAgentResultsFields.response,
+  error: runtimeAsyncAgentResultsFields.error,
+  approvals: runtimeAsyncAgentResultsFields.approvals,
+  questions: runtimeAsyncAgentResultsFields.questions,
+  question: runtimeAsyncAgentResultsFields.question,
 });
 
 const asyncAgentDoc = v.object({
@@ -98,15 +115,12 @@ interface SandboxReservationPage {
   isDone: boolean;
 }
 
-/**
- * Atomically claims a dedupe key until its expiry.
- * @returns whether this invocation acquired the claim
- */
 export const claimEvent = internalMutation({
   args: {
     accountId: v.id("accounts"),
     key: v.string(),
     ttlSeconds: v.number(),
+    limit: v.optional(v.number()),
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -121,7 +135,11 @@ export const claimEvent = internalMutation({
     }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-      return false;
+      const count = existing.count ?? 1;
+      if (count >= (args.limit ?? 1)) return false;
+      await ctx.db.patch(existing._id, { count: count + 1 });
+
+      return true;
     }
     if (existing) await ctx.db.delete(existing._id);
     await ctx.db.insert("runtimeClaims", {
@@ -135,10 +153,6 @@ export const claimEvent = internalMutation({
   },
 });
 
-/**
- * Releases an event claim when processing must be retried.
- * @returns null after the release attempt
- */
 export const releaseClaim = internalMutation({
   args: { accountId: v.id("accounts"), key: v.string() },
   returns: v.null(),
@@ -152,47 +166,105 @@ export const releaseClaim = internalMutation({
     if (row && row.accountId !== args.accountId) {
       throw new Error("Runtime claim does not belong to accountId");
     }
-    if (row?.kind === "event") await ctx.db.delete(row._id);
-
-    return null;
-  },
-});
-
-/**
- * @returns null after the events are persisted
- */
-export const appendConversationEvent = internalMutation({
-  args: { conversationKey: v.string(), events: conversationEventsValidator },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
-    for (const entry of args.events) {
-      await ctx.db.insert("runtimeConversationEvents", {
-        accountId: accountId,
-        conversationKey: args.conversationKey,
-        cursor: entry.cursor,
-        event: entry.event,
-      });
+    if (!row) return null;
+    // A claim taken up to a limit gives back one use.
+    const count = row.count ?? 1;
+    if (count > 1) {
+      await ctx.db.patch(row._id, { count: count - 1 });
+    } else {
+      await ctx.db.delete(row._id);
     }
 
     return null;
   },
 });
 
-/**
- * Forward from `afterCursor` by default. With `fromSystemPrefix`, it pages
- * backward instead, newest first from `beforeCursor`, and is done at the
- * latest system row whose text starts with that prefix (core's compaction
- * summary) or at the first row: a turn reads only the rows it projects. Each
- * page is in cursor order; `continueCursor` is the next `beforeCursor` then.
- * @returns page rows plus an exclusive cursor for the next page
- */
+export const appendConversationEvent = internalMutation({
+  args: { conversationKey: v.string(), events: conversationEventsValidator },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
+    await insertConversationEvents(
+      ctx,
+      accountId,
+      args.conversationKey,
+      args.events,
+    );
+
+    return null;
+  },
+});
+
+export async function insertConversationEvents(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  conversationKey: string,
+  events: Infer<typeof conversationEventsValidator>,
+): Promise<ResultFence[]> {
+  const stored: ResultFence[] = [];
+  for (const { toolResultIds, ...entry } of events) {
+    if (
+      entry.dedupeKey !== undefined &&
+      (await ctx.db
+        .query("runtimeConversationEvents")
+        .withIndex("by_conversationKey_and_dedupeKey", (q) =>
+          q
+            .eq("conversationKey", conversationKey)
+            .eq("dedupeKey", entry.dedupeKey),
+        )
+        .first())
+    ) {
+      continue;
+    }
+    await ctx.db.insert("runtimeConversationEvents", {
+      ...entry,
+      accountId: accountId,
+      conversationKey: conversationKey,
+    });
+    const handback =
+      entry.dedupeKey === undefined
+        ? undefined
+        : parseHandbackDedupeKey(entry.dedupeKey);
+    const rows = [
+      handback?.kind === "subagent"
+        ? await asyncAgentResultRow(ctx, handback.eventId)
+        : null,
+      await asyncToolResultRow(
+        ctx,
+        handback?.kind === "async-tool" ? handback.resultId : undefined,
+      ),
+      ...(await Promise.all(
+        (toolResultIds ?? []).map((resultId) =>
+          asyncToolResultRow(ctx, resultId),
+        ),
+      )),
+    ];
+    for (const row of rows) {
+      if (
+        row &&
+        (await markResultStored(ctx, accountId, conversationKey, row))
+      ) {
+        stored.push(
+          "resultId" in row
+            ? { toolResultId: row.resultId }
+            : { resultEventId: row.eventId },
+        );
+      }
+    }
+  }
+
+  return stored;
+}
+
 export const listConversationEvents = internalQuery({
   args: {
     conversationKey: v.string(),
     afterCursor: v.optional(v.string()),
     beforeCursor: v.optional(v.string()),
     fromSystemPrefix: v.optional(v.string()),
+    // Backward reads only: also stop at the newest row of this role, or read only that role.
+    stopAtRole: v.optional(v.union(v.literal("assistant"), v.literal("user"))),
+    role: v.optional(v.literal("system")),
   },
   returns: v.object({
     page: v.array(v.object({ cursor: v.string(), event: v.any() })),
@@ -201,20 +273,33 @@ export const listConversationEvents = internalQuery({
   }),
   handler: async (ctx, args) => {
     if (args.fromSystemPrefix !== undefined) {
+      // Backward to the newest system row with the prefix (core's compaction summary);
+      // `continueCursor` is then the next `beforeCursor`.
+      const { beforeCursor, conversationKey, role } = args;
       const prefix = args.fromSystemPrefix;
       const newest: { cursor: string; event: Value }[] = [];
       let newestBytes = 0;
       let isDone = true;
-      for await (const row of ctx.db
-        .query("runtimeConversationEvents")
-        .withIndex("by_conversationKey_and_cursor", (q) =>
-          args.beforeCursor
-            ? q
-                .eq("conversationKey", args.conversationKey)
-                .lt("cursor", args.beforeCursor)
-            : q.eq("conversationKey", args.conversationKey),
-        )
-        .order("desc")) {
+      const rows = role
+        ? ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_role_and_cursor", (q) => {
+              const ofRole = q
+                .eq("conversationKey", conversationKey)
+                .eq("event.message.role", role);
+
+              return beforeCursor ? ofRole.lt("cursor", beforeCursor) : ofRole;
+            })
+        : ctx.db
+            .query("runtimeConversationEvents")
+            .withIndex("by_conversationKey_and_cursor", (q) =>
+              beforeCursor
+                ? q
+                    .eq("conversationKey", conversationKey)
+                    .lt("cursor", beforeCursor)
+                : q.eq("conversationKey", conversationKey),
+            );
+      for await (const row of rows.order("desc")) {
         if (
           newest.length >= CONVERSATION_EVENT_PAGE_SIZE ||
           newestBytes >= CONVERSATION_EVENT_PAGE_BYTES
@@ -224,7 +309,7 @@ export const listConversationEvents = internalQuery({
         }
         newest.push({ cursor: row.cursor, event: row.event });
         newestBytes += getConvexSize(row.event);
-        if (isSystemTextWithPrefix(row.event, prefix)) break;
+        if (endsBackwardRead(row.event, prefix, args.stopAtRole)) break;
       }
 
       return {
@@ -246,8 +331,7 @@ export const listConversationEvents = internalQuery({
     let pageBytes = 0;
     let isDone = true;
     for await (const row of query) {
-      // The first row always lands, so a page is never empty and the cursor
-      // always moves, even past one row larger than the budget.
+      // Checked before the push, so a row over budget still lands and the cursor moves.
       if (
         page.length >= CONVERSATION_EVENT_PAGE_SIZE ||
         pageBytes >= CONVERSATION_EVENT_PAGE_BYTES
@@ -267,21 +351,25 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-/** Whether a stored event is a system message whose text starts with `prefix`. */
-function isSystemTextWithPrefix(event: unknown, prefix: string): boolean {
+function endsBackwardRead(
+  event: unknown,
+  prefix: string,
+  stopAtRole: string | undefined,
+): boolean {
   if (typeof event !== "object" || event === null || !("message" in event)) {
     return false;
   }
   const message = event.message;
+  if (typeof message !== "object" || message === null || !("role" in message)) {
+    return false;
+  }
 
   return (
-    typeof message === "object" &&
-    message !== null &&
-    "role" in message &&
-    message.role === "system" &&
-    "content" in message &&
-    typeof message.content === "string" &&
-    message.content.startsWith(prefix)
+    message.role === stopAtRole ||
+    (message.role === "system" &&
+      "content" in message &&
+      typeof message.content === "string" &&
+      message.content.startsWith(prefix))
   );
 }
 
@@ -327,64 +415,109 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-export const saveHarnessSession = internalMutation({
+// Pages through a session in append order, from where the leaf's model context starts to the leaf.
+export const readHarnessSessionEntries = internalQuery({
   args: {
     conversationKey: v.string(),
-    harnessType: v.union(
-      v.literal("claude-code"),
-      v.literal("codex"),
-      v.literal("deepagents"),
-      v.literal("opencode"),
-      v.literal("pi"),
-    ),
     sessionId: v.string(),
-    resumeState: v.any(),
-    reservationKey: v.optional(v.string()),
+    leafEntryId: v.optional(v.string()),
+    afterSequence: v.optional(v.number()),
   },
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
-    const serializedResumeState = JSON.stringify(args.resumeState);
-    if (serializedResumeState === undefined) {
-      throw new Error("Harness resume state must be JSON serializable");
-    }
-    const resumeStateBytes = new TextEncoder().encode(
-      serializedResumeState,
-    ).byteLength;
-    if (resumeStateBytes > MAX_HARNESS_RESUME_STATE_BYTES) {
+  returns: v.object({
+    entries: v.array(harnessSessionEntryValidator),
+    nextSequence: v.union(v.number(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const leaf =
+      args.leafEntryId === undefined
+        ? null
+        : await findHarnessEntry(ctx.db, args, args.leafEntryId);
+    const { batch, full } = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) => {
+          const session = q
+            .eq("conversationKey", args.conversationKey)
+            .eq("sessionId", args.sessionId);
+
+          const from =
+            args.afterSequence === undefined
+              ? session.gte("sequence", leaf?.contextStart ?? 0)
+              : session.gt("sequence", args.afterSequence);
+
+          return leaf ? from.lte("sequence", leaf.sequence) : from;
+        }),
+      {
+        bytes: CONVERSATION_EVENT_PAGE_BYTES,
+        rows: CONVERSATION_EVENT_PAGE_SIZE,
+      },
+    );
+    if (
+      batch.some(
+        (row): boolean =>
+          row.accountId !== accountIdFromKey(args.conversationKey),
+      )
+    ) {
       throw new Error(
-        `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
+        "Harness session entry does not belong to conversation account",
       );
     }
-    const existing = await ctx.db
+
+    return {
+      entries: batch.map((row): Infer<typeof harnessSessionEntryValidator> => ({
+        entryId: row.entryId,
+        parentEntryId: row.parentEntryId,
+        version: row.version,
+        entry: row.entry,
+      })),
+      nextSequence: full ? batch.at(-1)!.sequence : null,
+    };
+  },
+});
+
+// Deletes entries of every session but the one the checkpoint names when this runs.
+export const pruneHarnessSessionEntries = internalMutation({
+  args: { conversationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const current = await ctx.db
       .query("runtimeHarnessSessions")
       .withIndex("by_conversationKey", (q) =>
         q.eq("conversationKey", args.conversationKey),
       )
       .unique();
-    const value = {
-      accountId: accountId,
-      conversationKey: args.conversationKey,
-      harnessType: args.harnessType,
-      sessionId: args.sessionId,
-      resumeState: args.resumeState,
-      reservationKey: args.reservationKey,
-      updatedAt: Date.now(),
-    };
-    if (existing) {
-      await ctx.db.replace(existing._id, value);
-    } else {
-      await ctx.db.insert("runtimeHarnessSessions", value);
+    if (!current) return null;
+    let full = false;
+    for (const range of ["before", "after"] as const) {
+      const taken = await takeHarnessEntryBatch(
+        ctx.db
+          .query("runtimeHarnessSessionEntries")
+          .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+            range === "before"
+              ? q
+                  .eq("conversationKey", args.conversationKey)
+                  .lt("sessionId", current.sessionId)
+              : q
+                  .eq("conversationKey", args.conversationKey)
+                  .gt("sessionId", current.sessionId),
+          ),
+      );
+      for (const row of taken.batch) await ctx.db.delete(row._id);
+      full = taken.full;
+      if (full) break;
+    }
+    if (full) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.pruneHarnessSessionEntries,
+        args,
+      );
     }
 
     return null;
   },
 });
 
-/**
- * Clears one bounded batch of conversation events for the reset command.
- * @returns the deleted event count and whether more events remain
- */
 export const clearConversation = internalMutation({
   args: { conversationKey: v.string() },
   returns: v.object({
@@ -411,20 +544,24 @@ export const clearConversation = internalMutation({
       )
       .unique();
     if (harnessSession) await ctx.db.delete(harnessSession._id);
+    const entriesLeft = await deleteHarnessSessionEntries(
+      ctx,
+      args.conversationKey,
+    );
 
     return {
       deleted: batch.length,
-      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE,
+      hasMore: rows.length > CONVERSATION_CLEAR_BATCH_SIZE || entriesLeft,
     };
   },
 });
 
-/**
- * Creates an idempotent processing row for async agent polling.
- * @returns whether a new result row was created
- */
 export const createAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), conversationKey: v.string() },
+  args: {
+    eventId: v.string(),
+    conversationKey: v.string(),
+    subagent: v.optional(subagentTaskValidator),
+  },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
     const accountId = await requireActiveKeyAccount(ctx, args.conversationKey);
@@ -439,6 +576,8 @@ export const createAsyncAgentResult = internalMutation({
     await ctx.db.insert("runtimeAsyncAgentResults", {
       accountId: accountId,
       ...args,
+      // Pending from the start: a child orphaned before any detach still reaches the sweep.
+      ...(args.subagent ? { handback: "pending" as const } : {}),
       status: "processing",
       createdAt: now,
       updatedAt: now,
@@ -449,51 +588,164 @@ export const createAsyncAgentResult = internalMutation({
   },
 });
 
-/**
- * Looks up an async agent result by its globally scoped event ID.
- * @returns the result document or null when it does not exist
- */
 export const getAsyncAgentResult = internalQuery({
   args: { eventId: v.string() },
   returns: v.union(asyncAgentDoc, v.null()),
   handler: async (ctx, args): Promise<Doc<"runtimeAsyncAgentResults"> | null> =>
-    await ctx.db
-      .query("runtimeAsyncAgentResults")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique(),
+    await asyncAgentResultRow(ctx, args.eventId),
 });
 
-/**
- * Records an async run's outcome on its polling row. Used by subagents and by
- * async runs without a live ingress owner; `runtimeIngress.settle` writes the
- * same row in the envelope's transaction.
- * @returns null after the result is updated
- */
-export const updateAsyncAgentResult = internalMutation({
-  args: { eventId: v.string(), ...asyncAgentOutcomeValidator.fields },
+export const listOwedAsyncAgentResults = internalQuery({
+  args: {
+    handback: sweptHandbackValidator,
+    status: runtimeAsyncAgentResultsFields.status,
+    updatedAfter: v.string(),
+    updatedBefore: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.object({
+    page: v.array(asyncAgentDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Doc<"runtimeAsyncAgentResults">[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_handback_and_status_and_updatedAt", (q) =>
+        q
+          .eq("handback", args.handback)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
+    const page = await activeAccountRows(ctx, result.page);
+
+    return {
+      page: page,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
+// True when a queued resume already carries the result: the caller must not hand it over.
+export const markAsyncAgentHandback = internalMutation({
+  args: {
+    eventId: v.string(),
+    handback: handbackMoveValidator,
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    if (!(await writeAsyncAgentResult(ctx, args.eventId, args))) {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (
+      !row ||
+      row.handback === "stored" ||
+      (args.handback === "stored" && row.status === "processing")
+    ) {
+      return null;
+    }
+    await requireActiveAccount(ctx, row.accountId);
+    await ctx.db.patch(row._id, { handback: args.handback });
+
+    return null;
+  },
+});
+
+export const updateAsyncAgentResult = internalMutation({
+  args: {
+    eventId: v.string(),
+    ...asyncAgentOutcomeValidator.fields,
+    onlyWhileProcessing: v.optional(v.boolean()),
+    handback: v.optional(v.literal("detached")),
+    // The async tool results a run that saves no history read: its answer holds them.
+    toolResultIds: v.optional(v.array(v.string())),
+  },
+  returns: v.null(),
+  handler: async (
+    ctx,
+    { onlyWhileProcessing, handback, toolResultIds, ...args },
+  ): Promise<null> => {
+    const row = await asyncAgentResultRow(ctx, args.eventId);
+    if (onlyWhileProcessing && row?.status !== "processing") {
+      return null;
+    }
+    if (
+      !row ||
+      !(await writeAsyncAgentResult(ctx, args.eventId, args, handback))
+    ) {
       throw new Error("Async agent result not found");
+    }
+    for (const resultId of toolResultIds ?? []) {
+      await markResultStored(
+        ctx,
+        row.accountId,
+        row.conversationKey,
+        await asyncToolResultRow(ctx, resultId),
+      );
     }
 
     return null;
   },
 });
 
-/**
- * Patches the polling row for `eventId` with a run's outcome.
- * @returns false when the row no longer exists
- */
+export async function asyncAgentResultRow(
+  ctx: QueryCtx,
+  eventId: string | undefined,
+): Promise<Doc<"runtimeAsyncAgentResults"> | null> {
+  if (eventId === undefined) return null;
+
+  return await ctx.db
+    .query("runtimeAsyncAgentResults")
+    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
+    .unique();
+}
+
+// Call in the transaction that delivers the result, so row and flag never disagree.
+export async function markResultStored(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  conversationKey: string,
+  row: Doc<"runtimeAsyncAgentResults"> | Doc<"runtimeAsyncToolResults"> | null,
+): Promise<boolean> {
+  const told =
+    row !== null && "resultId" in row
+      ? row.conversationKey
+      : row?.subagent?.parentConversationKey;
+  if (row?.accountId !== accountId || told !== conversationKey) return false;
+  if (row.handback !== "stored") {
+    await ctx.db.patch(row._id, { handback: "stored" });
+  }
+
+  return true;
+}
+
+export async function asyncToolResultRow(
+  ctx: QueryCtx,
+  resultId: string | undefined,
+): Promise<Doc<"runtimeAsyncToolResults"> | null> {
+  if (resultId === undefined) return null;
+
+  return await ctx.db
+    .query("runtimeAsyncToolResults")
+    .withIndex("by_resultId", (q) => q.eq("resultId", resultId))
+    .unique();
+}
+
 export async function writeAsyncAgentResult(
   ctx: MutationCtx,
   eventId: string,
   outcome: Infer<typeof asyncAgentOutcomeValidator>,
+  handback?: "detached",
 ): Promise<boolean> {
-  const row = await ctx.db
-    .query("runtimeAsyncAgentResults")
-    .withIndex("by_eventId", (q) => q.eq("eventId", eventId))
-    .unique();
+  const row = await asyncAgentResultRow(ctx, eventId);
   if (!row) return false;
   await requireActiveAccount(ctx, row.accountId);
   await ctx.db.patch(row._id, {
@@ -502,6 +754,10 @@ export async function writeAsyncAgentResult(
     error: outcome.error,
     approvals: outcome.approvals,
     questions: outcome.questions,
+    question: outcome.question,
+    ...(handback === "detached" && row.handback !== "stored"
+      ? { handback: handback }
+      : {}),
     updatedAt: new Date().toISOString(),
     expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
   });
@@ -509,10 +765,6 @@ export async function writeAsyncAgentResult(
   return true;
 }
 
-/**
- * Creates an async tool row.
- * @returns whether a new result row was created
- */
 export const createAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -521,7 +773,7 @@ export const createAsyncToolResult = internalMutation({
     toolName: v.string(),
     toolCallId: v.string(),
     input: v.any(),
-    delivery: v.optional(v.any()),
+    delivery: v.optional(asyncToolDeliveryValidator),
     completionToken: v.optional(v.string()),
   },
   returns: v.boolean(),
@@ -552,11 +804,7 @@ export const createAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * Records the sandbox a detached job launched on. A row that already settled
- * did so before its fence existed and keeps that result.
- * @returns null after the patch attempt
- */
+// A row that settled before its sandbox fence existed keeps that result.
 export const bindAsyncToolResultSandbox = internalMutation({
   args: { resultId: v.string(), sandbox: reservedSandboxValidator },
   returns: v.null(),
@@ -573,10 +821,6 @@ export const bindAsyncToolResultSandbox = internalMutation({
   },
 });
 
-/**
- * Looks up an async tool result without exposing callback authorization.
- * @returns the public result document or null when it does not exist
- */
 export const getAsyncToolResult = internalQuery({
   args: { resultId: v.string() },
   returns: v.union(asyncToolDoc, v.null()),
@@ -590,10 +834,6 @@ export const getAsyncToolResult = internalQuery({
   },
 });
 
-/**
- * Verifies a supplied callback token without returning persisted authorization.
- * @returns whether the supplied token matches the persisted digest
- */
 export const getAsyncToolToken = internalQuery({
   args: { resultId: v.string(), completionToken: v.string() },
   returns: v.boolean(),
@@ -613,11 +853,6 @@ export const getAsyncToolToken = internalQuery({
   },
 });
 
-/**
- * Lists the still-processing rows one tool left on a conversation, oldest
- * first. The ask_questions intake reads this to find the prompt a reply answers.
- * @returns the public result documents still waiting to settle
- */
 export const listPendingAsyncToolResults = internalQuery({
   args: { conversationKey: v.string(), toolName: v.string() },
   returns: v.array(asyncToolDoc),
@@ -635,11 +870,49 @@ export const listPendingAsyncToolResults = internalQuery({
     ).map(hideCompletionTokenHash),
 });
 
-/**
- * Settles or observes an async tool row with optional processing-only CAS
- * semantics.
- * @returns the updated public row, or null when the conditional update is rejected
- */
+export const listOwedAsyncToolResults = internalQuery({
+  args: {
+    handback: sweptHandbackValidator,
+    status: runtimeAsyncToolResultsFields.status,
+    updatedAfter: v.string(),
+    updatedBefore: v.string(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  returns: v.object({
+    page: v.array(asyncToolDoc),
+    cursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    page: Infer<typeof asyncToolDoc>[];
+    cursor: string;
+    isDone: boolean;
+  }> => {
+    const result = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_handback_and_status_and_updatedAt", (q) =>
+        q
+          .eq("handback", args.handback)
+          .eq("status", args.status)
+          .gt("updatedAt", args.updatedAfter)
+          .lt("updatedAt", args.updatedBefore),
+      )
+      .paginate({ cursor: args.cursor, numItems: OWED_RESULT_PAGE_SIZE });
+    const page = (await activeAccountRows(ctx, result.page)).map(
+      hideCompletionTokenHash,
+    );
+
+    return {
+      page: page,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
+  },
+});
+
 export const updateAsyncToolResult = internalMutation({
   args: {
     resultId: v.string(),
@@ -650,16 +923,12 @@ export const updateAsyncToolResult = internalMutation({
   },
   returns: v.union(asyncToolDoc, v.null()),
   handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolResults")
-      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
-      .unique();
+    const row = await asyncToolResultRow(ctx, args.resultId);
     if (row) await requireActiveAccount(ctx, row.accountId);
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
       return null;
     }
-    // A job bound to a machine the reservation no longer names settles failed
-    // whatever it reported: its workspace writes are unowned.
+    // A job whose sandbox was since replaced fails whatever it reported: its writes are unowned.
     const outcome =
       row.status === "processing" &&
       row.sandbox !== undefined &&
@@ -672,6 +941,9 @@ export const updateAsyncToolResult = internalMutation({
         : { status: args.status, response: args.response, error: args.error };
     const patch = {
       ...outcome,
+      ...(outcome.status !== "processing" && row.handback === undefined
+        ? { handback: "pending" as const }
+        : {}),
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     };
@@ -681,23 +953,21 @@ export const updateAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * Marks a finished async tool row observed, so its result is not delivered
- * again. A row still running is left alone.
- * @returns null after the row is marked or skipped
- */
-export const observeAsyncToolResult = internalMutation({
-  args: { resultId: v.string() },
+// True when a queued continuation already carries the result: the caller must not hand it over.
+export const markAsyncToolHandback = internalMutation({
+  args: {
+    resultId: v.string(),
+    handback: handbackMoveValidator,
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db
-      .query("runtimeAsyncToolResults")
-      .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
-      .unique();
-    if (!row || row.status === "processing") return null;
+    const row = await asyncToolResultRow(ctx, args.resultId);
+    if (!row || row.status === "processing" || row.handback === "stored") {
+      return null;
+    }
     await requireActiveAccount(ctx, row.accountId);
     await ctx.db.patch(row._id, {
-      observed: true,
+      handback: args.handback,
       updatedAt: new Date().toISOString(),
       expiresAt: Math.floor(Date.now() / 1000) + 7 * DAY_SECONDS,
     });
@@ -706,9 +976,6 @@ export const observeAsyncToolResult = internalMutation({
   },
 });
 
-/**
- * @returns the provider ID or null when the reservation is absent
- */
 export const getSandboxReservation = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(v.string(), v.null()),
@@ -725,14 +992,7 @@ export const getSandboxReservation = internalQuery({
     )?.externalId ?? null,
 });
 
-/**
- * What a release needs to pick credentials: the reserved machine, and the
- * instance row's record of whose credentials it runs on and which config
- * reserved it. The row is a best-effort mirror, so it is returned only while
- * it still names `externalId`, or the reserved machine when none is given.
- * With no reservation, the mirror row's own machine is the target.
- * @returns the reserved provider id, or null, and the matching instance row, or null
- */
+// `sandboxInstances` is a best-effort mirror: its row counts only while it names the target.
 export const getSandboxReleaseTarget = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -769,7 +1029,18 @@ export const getSandboxReleaseTarget = internalQuery({
         : instances[0]?.externalId) ??
       null;
     if (!externalId) return { externalId: null, instance: null };
-    const instance = instances.find((row) => row.externalId === externalId);
+    // A machine kept for the sweeper under another key keeps the row it was started under.
+    const instance =
+      instances.find((row) => row.externalId === externalId) ??
+      (
+        await ctx.db
+          .query("sandboxInstances")
+          .withIndex("by_externalId", (q) => q.eq("externalId", externalId))
+          .collect()
+      ).find(
+        (row) =>
+          row.accountId === args.accountId && row.provider === args.provider,
+      );
 
     return {
       externalId: externalId,
@@ -783,16 +1054,6 @@ export const getSandboxReleaseTarget = internalQuery({
   },
 });
 
-/**
- * The reservation's sandbox and when it was claimed, for the executors that enforce
- * `lifecycle.maxLifetimeSeconds` themselves and would otherwise read the same row
- * twice. A reconnect only patches the row, so `claimedAt` stays the creation time of
- * the machine the key points at; replacing the sandbox deletes and re-inserts the
- * row, which restarts the clock. `expiresAt` is the idle deadline the sweeper
- * releases it at.
- * @returns the sandbox id, claim time and idle deadline, or null when the
- * reservation is absent
- */
 export const getSandboxReservationRecord = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(
@@ -823,16 +1084,13 @@ export const getSandboxReservationRecord = internalQuery({
 
     return {
       externalId: reservation.externalId,
+      // A reconnect only patches the row and a replacement re-inserts it: this is machine age.
       claimedAt: reservation._creationTime,
       expiresAt: reservation.expiresAt,
     };
   },
 });
 
-/**
- * One page of reservations whose idle window has lapsed, oldest first.
- * @returns the expired reservations, up to `limit`
- */
 export const listExpiredSandboxReservations = internalQuery({
   args: { limit: v.number() },
   returns: v.array(sandboxReservationSummary),
@@ -856,17 +1114,13 @@ export const listExpiredSandboxReservations = internalQuery({
   },
 });
 
-/**
- * Every snapshot image still building, for core's build watcher to finish once
- * the provider reports the build done. Builds last minutes, so the set stays small,
- * and a capped page would let builds stuck on failing checks starve the rest.
- * @returns the building snapshots
- */
+// Uncapped: builds last minutes, and a capped page would let stuck builds starve the rest.
 export const listBuildingSandboxSnapshots = internalQuery({
   args: {},
   returns: v.array(
     v.object({
       accountId: v.id("accounts"),
+      scope: sandboxSnapshotScopeValidator,
       name: v.string(),
       provider: sandboxProviderValidator,
       baseImage: v.string(),
@@ -877,9 +1131,16 @@ export const listBuildingSandboxSnapshots = internalQuery({
     ctx,
   ): Promise<
     Array<
-      Pick<
-        Doc<"sandboxSnapshots">,
-        "accountId" | "name" | "provider" | "baseImage" | "externalImageId"
+      Required<
+        Pick<
+          Doc<"sandboxSnapshots">,
+          | "accountId"
+          | "scope"
+          | "name"
+          | "provider"
+          | "baseImage"
+          | "externalImageId"
+        >
       >
     >
   > => {
@@ -888,22 +1149,23 @@ export const listBuildingSandboxSnapshots = internalQuery({
       .withIndex("by_status", (q) => q.eq("status", "building"))
       .collect();
 
-    return rows.map((row) => ({
-      accountId: row.accountId,
-      name: row.name,
-      provider: row.provider,
-      baseImage: row.baseImage,
-      externalImageId: row.externalImageId,
-    }));
+    return rows.flatMap((row) =>
+      row.scope
+        ? [
+            {
+              accountId: row.accountId,
+              scope: row.scope,
+              name: row.name,
+              provider: row.provider,
+              baseImage: row.baseImage,
+              externalImageId: row.externalImageId,
+            },
+          ]
+        : [],
+    );
   },
 });
 
-/**
- * Every reservation an account holds, whatever key shape reserved it, so a
- * deletion sweep releases each machine before the cascade drops the rows. Paged
- * because one account can hold more rows than a single query may read.
- * @returns one page of the account's reservations, and the cursor for the next
- */
 export const listAccountSandboxReservations = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -933,31 +1195,33 @@ export const listAccountSandboxReservations = internalQuery({
   },
 });
 
-/**
- * Mirror rows no reservation names any more (a teardown that failed, or the old
- * prune), still carrying the provider id the sweeper needs to tear them down. Bounded to rows idle longer than a whole
- * reservation TTL so a live sandbox is never mistaken for one. `ephemeral` rows are
- * left out by the index, so they never fill the page: their key is a provider id, not
- * a reconnect key, and the hourly accrual deletes them.
- * @returns the orphaned mirror rows, up to `limit`
- */
+// Paged since deferred reservations keep their age and can fill any prefix; the idle cut is
+// per row so one pass's cursor fits the next. Ephemeral rows are skipped: no reservation
+// names them and the hourly accrual deletes them.
 export const listOrphanedSandboxInstances = internalQuery({
-  args: { limit: v.number() },
-  returns: v.array(sandboxReservationSummary),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<Infer<typeof sandboxReservationSummary>[]> => {
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    limit: v.number(),
+  },
+  returns: v.object({
+    page: v.array(sandboxReservationSummary),
+    cursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<SandboxReservationPage> => {
     const idleBefore = Date.now() - SANDBOX_RESERVATION_TTL_SECONDS * 1000;
-    const rows = await ctx.db
+    const result = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_ephemeral_and_lastUsedAt", (q) =>
-        q.eq("ephemeral", undefined).lt("lastUsedAt", idleBefore),
+        q.eq("ephemeral", undefined),
       )
-      .take(args.limit);
+      .paginate({ cursor: args.cursor, numItems: args.limit });
 
     const orphans: Infer<typeof sandboxReservationSummary>[] = [];
-    for (const row of rows) {
+    for (const row of result.page) {
+      if (row.lastUsedAt >= idleBefore) {
+        return { page: orphans, cursor: null, isDone: true };
+      }
       const reservation = await ctx.db
         .query("sandboxReservations")
         .withIndex("by_provider_and_reservationKey", (q) =>
@@ -975,7 +1239,11 @@ export const listOrphanedSandboxInstances = internalQuery({
       });
     }
 
-    return orphans;
+    return {
+      page: orphans,
+      cursor: result.continueCursor,
+      isDone: result.isDone,
+    };
   },
 });
 
@@ -993,8 +1261,7 @@ export const claimSandboxReservation = internalMutation({
   },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
-    // The reservation key is a hashed workspace namespace, so the owning account
-    // can't be parsed from it. Core passes accountId explicitly.
+    // The key is a hashed workspace namespace, so the account can't be parsed from it.
     await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
@@ -1020,12 +1287,6 @@ export const claimSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Refreshes the idle deadline of a reservation that still names this sandbox
- * and belongs to this account. Never inserts or repoints: a released or
- * replaced key is a no-op.
- * @returns null after the patch attempt
- */
 export const saveSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -1060,13 +1321,8 @@ export const saveSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Pushes the deadline out on reservations the sweeper could not clear, so one it can
- * never clear stops holding the head of the `by_expiresAt` page. Patches only, so a
- * released row stays gone. Bypasses the active-account guard: a suspended account's
- * rows are exactly the ones that would otherwise block the page forever.
- * @returns the number of rows whose deadline moved
- */
+// Unclearable rows must not hold the head of the `by_expiresAt` page. No active-account
+// guard: a suspended account's rows are exactly the ones that would block it forever.
 export const deferSandboxReservations = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -1100,15 +1356,7 @@ export const deferSandboxReservations = internalMutation({
   },
 });
 
-/**
- * Deletes a reservation while it still names `expectedExternalId` (when given)
- * and, with `onlyExpired`, only once its deadline has lapsed: the sweeper takes
- * a row this way before the provider teardown, so a run that refreshed the
- * deadline or replaced the machine in between keeps its row. A key no row names
- * is the caller's to tear down as well, since no run can reach a machine
- * without a reservation naming it.
- * @returns whether the caller now owns the teardown of that machine
- */
+// True hands the caller the machine's teardown; a key no row names is unreachable by any run.
 export const deleteSandboxReservation = internalMutation({
   args: {
     provider: sandboxProviderValidator,
@@ -1144,21 +1392,7 @@ export const deleteSandboxReservation = internalMutation({
   },
 });
 
-/**
- * Deletes one bounded batch of the runtime rows owned by a single agent, so a
- * deleted agent does not leave its conversations, queued work and status rows
- * behind for the account-wide purge that may never run.
- *
- * Every table reached here is keyed by the account-and-agent scoped
- * conversation key, which lets each read be a prefix range over that key rather
- * than a scan of the account's rows. Tables with no conversation key
- * (`runtimeClaims`, sandbox reservations) stay with
- * `deleteAccountRuntimeData`: they carry no agent, so no prefix identifies them.
- *
- * Like the account purge, this accepts an agent that is already gone: the caller
- * deletes the row and drains the rows afterwards.
- * @returns per-table deletion counts and their total
- */
+// Claims and sandbox reservations carry no agent, so only deleteAccountRuntimeData drops them.
 export const deleteAgentRuntimeData = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -1176,8 +1410,6 @@ export const deleteAgentRuntimeData = internalMutation({
   }),
   handler: async (ctx, args) => {
     const prefix = `acct:${args.accountId}:agent:${args.agentId}:`;
-    // Every key under this agent sorts between the prefix and the prefix plus
-    // the highest code point, which is what makes each read a range, not a scan.
     const prefixEnd = `${prefix}\uffff`;
     const conversationRows = await ctx.db
       .query("runtimeConversationEvents")
@@ -1209,6 +1441,14 @@ export const deleteAgentRuntimeData = internalMutation({
         q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
       )
       .take(RUNTIME_DELETE_BATCH_SIZE);
+    const harnessEntries = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+          q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+        ),
+    );
+    const harnessEntryRows = harnessEntries.batch;
     const asyncAgentRows = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_conversationKey", (q) =>
@@ -1227,12 +1467,11 @@ export const deleteAgentRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...asyncAgentRows,
       ...asyncToolRows,
     ])
       await ctx.db.delete(row._id);
-    // A full batch means the table had more than one pass can hold, so keep
-    // going. The caller fires this once and never has to loop.
     if (
       [
         conversationRows,
@@ -1242,7 +1481,8 @@ export const deleteAgentRuntimeData = internalMutation({
         harnessSessionRows,
         asyncAgentRows,
         asyncToolRows,
-      ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE)
+      ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE) ||
+      harnessEntries.full
     ) {
       await ctx.scheduler.runAfter(
         0,
@@ -1256,7 +1496,8 @@ export const deleteAgentRuntimeData = internalMutation({
       coordinatorDeleted: coordinatorRows.length,
       ingressDeleted: ingressRows.length,
       applicationDeleted: applicationRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       asyncAgentResultDeleted: asyncAgentRows.length,
       asyncToolResultDeleted: asyncToolRows.length,
       totalDeleted:
@@ -1265,17 +1506,14 @@ export const deleteAgentRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         asyncAgentRows.length +
         asyncToolRows.length,
     };
   },
 });
 
-/**
- * Deletes one bounded batch of every runtime row owned by an account. This
- * cleanup path intentionally accepts disabled or already-removed accounts.
- * @returns per-table deletion counts and their total
- */
+// No active-account guard: disabled and already-removed accounts are purged too.
 export const deleteAccountRuntimeData = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.object({
@@ -1318,6 +1556,11 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeHarnessSessions")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
+    const { batch: harnessEntryRows } = await takeHarnessEntryBatch(
+      ctx.db
+        .query("runtimeHarnessSessionEntries")
+        .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId)),
+    );
     const toolRows = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -1333,6 +1576,7 @@ export const deleteAccountRuntimeData = internalMutation({
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
+      ...harnessEntryRows,
       ...agentRows,
       ...toolRows,
       ...reservationRows,
@@ -1348,7 +1592,8 @@ export const deleteAccountRuntimeData = internalMutation({
         applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
-      harnessSessionDeleted: harnessSessionRows.length,
+      harnessSessionDeleted:
+        harnessSessionRows.length + harnessEntryRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
         conversationRows.length +
@@ -1357,6 +1602,7 @@ export const deleteAccountRuntimeData = internalMutation({
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
+        harnessEntryRows.length +
         agentRows.length +
         toolRows.length +
         reservationRows.length,
@@ -1364,13 +1610,7 @@ export const deleteAccountRuntimeData = internalMutation({
   },
 });
 
-/**
- * Deletes expired operational rows in bounded batches and schedules
- * continuation when needed. This maintenance path intentionally bypasses the
- * active-account guard. `sandboxReservations` is deliberately absent. Core's
- * sandbox sweeper expires that table instead, provider first and row second.
- * @returns the number of rows deleted in this batch
- */
+// No active-account guard. `sandboxReservations` is core's sweeper's: provider first, row second.
 export const pruneExpired = internalMutation({
   args: {},
   returns: v.number(),
@@ -1400,12 +1640,23 @@ export const pruneExpired = internalMutation({
   },
 });
 
-/**
- * @param accountId owning account ID
- * @param key scoped or integration-provided claim key
- * @returns account-scoped claim key
- * @throws when an already-scoped key belongs to another account
- */
+// Deletes one batch of a conversation's harness entries; true when more may remain.
+export async function deleteHarnessSessionEntries(
+  ctx: MutationCtx,
+  conversationKey: string,
+): Promise<boolean> {
+  const { batch, full } = await takeHarnessEntryBatch(
+    ctx.db
+      .query("runtimeHarnessSessionEntries")
+      .withIndex("by_conversationKey_and_sessionId_and_sequence", (q) =>
+        q.eq("conversationKey", conversationKey),
+      ),
+  );
+  for (const row of batch) await ctx.db.delete(row._id);
+
+  return full;
+}
+
 function claimKeyForAccount(accountId: string, key: string): string {
   if (!key.startsWith("acct:")) {
     return `acct:${accountId}:claim:${key}`;
@@ -1417,7 +1668,6 @@ function claimKeyForAccount(accountId: string, key: string): string {
   return key;
 }
 
-/** Compares fixed-length hexadecimal digests without content-dependent exits. */
 function constantTimeDigestEqual(actual: string, expected: string): boolean {
   let difference = actual.length ^ expected.length;
   for (let index = 0; index < expected.length; index += 1) {
@@ -1427,7 +1677,6 @@ function constantTimeDigestEqual(actual: string, expected: string): boolean {
   return difference === 0;
 }
 
-/** Removes callback authorization from general async-tool result reads. */
 function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   row: T,
 ): Omit<T, "completionTokenHash"> {
@@ -1436,10 +1685,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   return publicRow;
 }
 
-/**
- * The idle deadline a claim or refresh writes. Core passes a shorter window for a
- * sandbox only one conversation uses; it never extends past the default.
- */
 function reservationExpiresAt(ttlSeconds: number | undefined): number {
   const ttl = Math.min(
     Math.max(ttlSeconds ?? SANDBOX_RESERVATION_TTL_SECONDS, 60),
@@ -1449,13 +1694,7 @@ function reservationExpiresAt(ttlSeconds: number | undefined): number {
   return Math.floor(Date.now() / 1000) + ttl;
 }
 
-/**
- * Requires an account to exist and remain active in the runtime-write transaction.
- * @param ctx Convex mutation context
- * @param accountId account ID embedded in the runtime row or key
- * @throws when the account is missing, disabled, or malformed
- */
-async function sandboxStillReserved(
+export async function sandboxStillReserved(
   ctx: MutationCtx,
   sandbox: Infer<typeof reservedSandboxValidator>,
 ): Promise<boolean> {
@@ -1469,4 +1708,19 @@ async function sandboxStillReserved(
     .unique();
 
   return row?.externalId === sandbox.externalId;
+}
+
+// No resume of an inactive account can be admitted, so recovery sweeps skip its rows.
+async function activeAccountRows<T extends { accountId: Id<"accounts"> }>(
+  ctx: QueryCtx,
+  rows: T[],
+): Promise<T[]> {
+  const page: T[] = [];
+  for (const row of rows) {
+    if ((await ctx.db.get(row.accountId))?.status === "active") {
+      page.push(row);
+    }
+  }
+
+  return page;
 }

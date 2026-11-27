@@ -9,7 +9,6 @@ interface Props {
   onGenerate: () => void;
 }
 
-/** Shown on the Monitoring/Tracing tabs when a stage has no runtime key yet. */
 export function ObservabilityKeyPrompt({
   generating,
   error,
@@ -37,7 +36,9 @@ export function ObservabilityKeyPrompt({
       </Button>
 
       {error ? (
-        <p className="max-w-sm text-xs text-destructive">{error}</p>
+        <p role="alert" className="max-w-sm text-xs text-destructive">
+          {error}
+        </p>
       ) : null}
     </div>
   );

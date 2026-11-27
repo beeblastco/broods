@@ -10,7 +10,6 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
 interface Props {
   projectId: Id<"projects">;
@@ -19,8 +18,10 @@ interface Props {
 
 export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
-  const project = useQuery(api.project.getById, { projectId: projectId });
-  const stages = useQuery(api.stage.list, {
+  const project = useQuery(api.dashboardReads.projectById, {
+    projectId: projectId,
+  });
+  const stages = useQuery(api.dashboardReads.stages, {
     projectId: projectId,
   }) as Doc<"stages">[] | undefined;
   const removeProject = useMutation(api.project.remove);
@@ -30,41 +31,34 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
 
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [isDeletingProject, setIsDeletingProject] = useState(false);
-  const [projectDeleteError, setProjectDeleteError] = useState<string | null>(
-    null,
-  );
 
   const [stageDialogOpen, setStageDialogOpen] = useState(false);
   const [isDeletingStage, setIsDeletingStage] = useState(false);
-  const [stageDeleteError, setStageDeleteError] = useState<string | null>(null);
 
   const activeStage = stages?.find((stage) => stage._id === stageId) ?? null;
   const defaultStage = stages?.find((stage) => stage.isDefault) ?? null;
   const canDeleteStage = Boolean(activeStage && !activeStage.isDefault);
 
+  // Both rethrow: DeleteConfirmDialog shows the error inside the open modal.
   async function handleDeleteProject(): Promise<void> {
     setIsDeletingProject(true);
-    setProjectDeleteError(null);
     try {
       await removeProject({ projectId: projectId });
       setProjectDialogOpen(false);
       router.replace("/projects");
     } catch (err) {
-      setProjectDeleteError(toErrorMessage(err));
       setIsDeletingProject(false);
+      throw err;
     }
   }
 
   async function handleDeleteStage(): Promise<void> {
     if (!activeStage) return;
     setIsDeletingStage(true);
-    setStageDeleteError(null);
     try {
       await removeStage({ stageId: activeStage._id });
       setStageId(defaultStage ? defaultStage._id : null);
       setStageDialogOpen(false);
-    } catch (err) {
-      setStageDeleteError(toErrorMessage(err));
     } finally {
       setIsDeletingStage(false);
     }
@@ -95,18 +89,12 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                 size="sm"
                 className="shrink-0 cursor-pointer"
                 disabled={!canDeleteStage}
-                onClick={() => {
-                  setStageDeleteError(null);
-                  setStageDialogOpen(true);
-                }}
+                onClick={() => setStageDialogOpen(true)}
               >
                 Delete stage
               </Button>
             )}
           </div>
-          {stageDeleteError && (
-            <p className="text-sm text-destructive">{stageDeleteError}</p>
-          )}
         </Section>
 
         <Section
@@ -129,18 +117,12 @@ export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
                 variant="destructive"
                 size="sm"
                 className="shrink-0 cursor-pointer"
-                onClick={() => {
-                  setProjectDeleteError(null);
-                  setProjectDialogOpen(true);
-                }}
+                onClick={() => setProjectDialogOpen(true)}
               >
                 Delete project
               </Button>
             )}
           </div>
-          {projectDeleteError && (
-            <p className="text-sm text-destructive">{projectDeleteError}</p>
-          )}
         </Section>
       </div>
 

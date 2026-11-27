@@ -1,14 +1,3 @@
-/**
- * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), assume-role session (bsts_), stage session ticket
- * (bdts_), run token (brt_, minted by core for one agent run), runtime key
- * (bsk_, whose lastUsedAt is written here, throttled), and account-key hash
- * lookup (bask_). Each prefix goes straight to its one lookup; any other
- * token is refused without one.
- * Persistence is reached via `getStorage()` so the auth path is identical
- * through the Convex-backed store.
- */
-
 import {
   ACCOUNT_KEY_PREFIX,
   RUNTIME_KEY_PREFIX,
@@ -17,11 +6,18 @@ import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { RUN_TOKEN_PREFIX } from "@broods/convex/model/principal";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { VIA_GATEWAY_HEADER } from "@broods/convex/model/serviceBridge";
+import { OBSERVABILITY_TICKET_PREFIX } from "@broods/convex/model/observabilityTicket";
 import {
   openStageSessionTicket,
   STAGE_SESSION_TICKET_PREFIX,
 } from "@broods/convex/model/stageSessionTicket";
+import {
+  openUserToken,
+  USER_TOKEN_HEADER,
+  type UserToken,
+} from "@broods/convex/model/userToken";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { decryptAccountBlob } from "./convex/account-keys.ts";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv, requireEnv } from "./env.ts";
 import { waitUntil } from "./in-flight.ts";
@@ -30,53 +26,43 @@ import { getStorage } from "./storage.ts";
 
 const KEY_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
-// Last lastUsedAt write per runtime key hash. Core runs single replica, so
-// this in-process map is the whole throttle.
+// Core runs single replica, so this in-process map is the whole lastUsedAt throttle.
 const keyLastUsedWrites = new Map<string, number>();
 
 export type AuthContext =
   | { kind: "admin" }
   | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean }
   | {
-      // Project + stage scoped runtime key. It does not bind to a single
-      // agent. The agent is chosen per request by id and loaded against this
-      // account, so any deployed agent in the stage is reachable.
       kind: "deployment";
       account: AccountRecord;
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
-      // Set for a member-minted bdts_ ticket, unset for the embeddable key.
+      // Set for a member's bdts_ ticket, which the embeddable-key limits skip.
       stageTicket?: StageTicketScope;
+      // Every conversation the request touches lives under this user's namespace.
+      user?: UserToken;
     }
   | {
-      // Short-lived assume-role session minted by the config plane. What it
-      // may do is decided per request by `authorize()` over `role.policy`.
+      // A bsts_ session or scoped bask_ key; `authorize()` checks each request.
       kind: "role";
       account: AccountRecord;
       role: RolePrincipal;
     }
   | {
-      // One agent run, from the brt_ token core handed its sandbox. It may
-      // only read its own agent's runs; integrations.ts refuses the rest.
+      // A brt_ run token: integrations.ts refuses all but its own agent's runs.
       kind: "agent";
       account: AccountRecord;
       agentId: string;
     };
 
-/** What a member's bdts_ ticket carries beyond the slugs every stage key has. */
 export interface StageTicketScope {
   projectId: string;
   stageId: string;
-  /** The minter may write the stage's sandboxes, so may claim a machine. */
   sandboxWrite: boolean;
+  expiresAt: number;
 }
 
-/**
- * Whether a runtime key's lastUsedAt write is due, recording `now` when it
- * is. `resolveBearerAuth` calls it so a key costs one Convex write per
- * interval instead of one per request.
- */
 export function claimLastUsedWrite(
   writes: Map<string, number>,
   apiKeyHash: string,
@@ -85,8 +71,6 @@ export function claimLastUsedWrite(
 ): boolean {
   const last = writes.get(apiKeyHash);
   if (last !== undefined && now - last < intervalMs) return false;
-  // Expired entries would be claimed again anyway, so drop them to keep the
-  // map to keys used within the last interval.
   for (const [hash, at] of writes) {
     if (now - at >= intervalMs) writes.delete(hash);
   }
@@ -132,15 +116,15 @@ export async function resolveBearerAuth(
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
 
-  // bsts_ is prefix-routed: a role session resolves as a role or not at all.
+  // A prefixed token resolves through its own lookup or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
     return await resolveRoleSessionAuth(token);
   }
-  // bdts_ likewise: a dashboard stage session is a deployment or nothing.
   if (token.startsWith(STAGE_SESSION_TICKET_PREFIX)) {
     return await resolveStageSessionAuth(token);
   }
-  // brt_ likewise: a run token is its agent or nothing.
+  // Opens the log socket's scope and nothing else: that check reads the ticket itself.
+  if (token.startsWith(OBSERVABILITY_TICKET_PREFIX)) return null;
   if (token.startsWith(RUN_TOKEN_PREFIX)) {
     return await resolveRunTokenAuth(token);
   }
@@ -150,9 +134,6 @@ export async function resolveBearerAuth(
     return { kind: "admin" };
   }
 
-  // Service-token branch: used by cherry-coke server-side actions. Must
-  // accompany an X-Account-Id header. The token is shared between all
-  // SaaS callers; the account scope comes from the header.
   if (isServiceToken(headers, token)) {
     const accountId = headers["x-account-id"] ?? headers["X-Account-Id"];
     if (!accountId) return null;
@@ -166,7 +147,7 @@ export async function resolveBearerAuth(
     return await resolveAccountSecretAuth(token, options);
   }
   if (token.startsWith(RUNTIME_KEY_PREFIX)) {
-    return await resolveRuntimeKeyAuth(token);
+    return await resolveRuntimeKeyAuth(token, headers[USER_TOKEN_HEADER]);
   }
 
   return null;
@@ -183,24 +164,35 @@ export function timingSafeStringEqual(
   return timingSafeEqual(actualDigest, expectedDigest);
 }
 
-/** Resolve an account key to its account; a disabled one only when the caller allows it. */
 async function resolveAccountSecretAuth(
   token: string,
   options: { allowDisabledAccountSecret?: boolean },
 ): Promise<AuthContext | null> {
-  const account = await getStorage().accounts.getBySecretHash(
-    hashAccountSecret(token),
-  );
+  const keyHash = hashAccountSecret(token);
+  const account = await getStorage().accounts.getBySecretHash(keyHash);
+  if (!account) return await resolveScopedKeyAuth(keyHash);
   if (
-    !account ||
-    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+    account.status !== "active" &&
+    options.allowDisabledAccountSecret !== true
   )
     return null;
 
   return { kind: "account", account: account };
 }
 
-/** Resolve a brt_ token to the agent it was minted for. */
+async function resolveScopedKeyAuth(
+  keyHash: string,
+): Promise<AuthContext | null> {
+  const key = await getStorage().accountApiKeys.resolveByKeyHash(keyHash);
+  if (!key) return null;
+  const now = Date.now();
+  if (key.stampDue && claimLastUsedWrite(keyLastUsedWrites, keyHash, now)) {
+    waitUntil(getStorage().accountApiKeys.touchLastUsed(key.keyId, now));
+  }
+
+  return { kind: "role", account: key.account, role: key.principal };
+}
+
 async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
   const subject = openRunToken(token);
   if (!subject) return null;
@@ -210,7 +202,6 @@ async function resolveRunTokenAuth(token: string): Promise<AuthContext | null> {
   return { kind: "agent", account: account, agentId: subject.agentId };
 }
 
-/** Resolve a bsts_ token to role auth via the config-plane session store. */
 async function resolveRoleSessionAuth(
   token: string,
 ): Promise<AuthContext | null> {
@@ -224,14 +215,33 @@ async function resolveRoleSessionAuth(
   return { kind: "role", account: account, role: principal };
 }
 
-/** Resolve a runtime key in one lookup, stamping its lastUsedAt (throttled). */
 async function resolveRuntimeKeyAuth(
   token: string,
+  userTokenHeader: string | undefined,
 ): Promise<AuthContext | null> {
   const apiKeyHash = sha256Hex(token);
   const deployment =
     await getStorage().agentDeployments.getByApiKeyHash(apiKeyHash);
   if (!deployment || deployment.account.status !== "active") return null;
+  let user: UserToken | undefined;
+  // A forged or expired user token refuses the whole credential, key included.
+  if (userTokenHeader !== undefined) {
+    const secret = deployment.userTokenSecret
+      ? (
+          await decryptAccountBlob(
+            deployment.accountId,
+            "agentDeployments:userTokenSecretCiphertext",
+            deployment.userTokenSecret,
+          )
+        ).value
+      : undefined;
+    const opened =
+      typeof secret === "string"
+        ? await openUserToken(userTokenHeader.trim(), secret)
+        : null;
+    if (!opened) return null;
+    user = opened;
+  }
   const now = Date.now();
   if (claimLastUsedWrite(keyLastUsedWrites, apiKeyHash, now)) {
     waitUntil(getStorage().agentDeployments.touchLastUsed(apiKeyHash, now));
@@ -243,15 +253,10 @@ async function resolveRuntimeKeyAuth(
     endpointId: deployment.endpointId,
     projectSlug: deployment.projectSlug,
     stageSlug: deployment.stageSlug,
+    ...(user ? { user: user } : {}),
   };
 }
 
-/**
- * Resolve a bdts_ ticket the config plane minted for an org member. It is
- * the stage's deployment credential for its lifetime, so it lands on the same
- * `deployment` branch a runtime key does, marked so the embeddable-key limits
- * skip it.
- */
 async function resolveStageSessionAuth(
   token: string,
 ): Promise<AuthContext | null> {
@@ -273,6 +278,7 @@ async function resolveStageSessionAuth(
       projectId: ticket.projectId,
       stageId: ticket.stageId,
       sandboxWrite: ticket.sandboxWrite === true,
+      expiresAt: ticket.expiresAt,
     },
   };
 }

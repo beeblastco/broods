@@ -3,11 +3,6 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * `publish-npm.yaml` ships whatever this script prints, so each case runs the
- * real script in a throwaway repo with its own `broods-v*` tag.
- */
-
 const SCRIPT = join(import.meta.dir, "../scripts/next-version.ts");
 
 let repo: string | undefined;
@@ -36,10 +31,6 @@ test("a declared version ahead of the last stable tag is released as is", async 
   });
 });
 
-// The 1.0.0 cut, rehearsed end to end: rc.1 ships to `next`, rc.2 follows,
-// the stable declaration lands, and the first breaking change after it is a
-// real major. Prerelease tags never become the anchor, so each step still
-// compares against the last stable release.
 test("release candidates ship as declared and lead to the stable cut", async (): Promise<void> => {
   repo = await releasedRepo("0.43.0");
 
@@ -50,8 +41,7 @@ test("release candidates ship as declared and lead to the stable cut", async ():
   });
   git(repo, ["tag", "broods-v1.0.0-rc.1"]);
 
-  // Re-running on the same commit derives the same version, so the workflow
-  // skips the publish instead of bumping.
+  // The same commit derives the same version, so the workflow skips the publish.
   expect(await run(repo)).toMatchObject({
     bump: "declared",
     next: "1.0.0-rc.1",
@@ -70,6 +60,17 @@ test("release candidates ship as declared and lead to the stable cut", async ():
 
   await commit(repo, "1.0.0", "feat(broods)!: drop the deprecated flag");
   expect(await run(repo)).toMatchObject({ bump: "major", next: "2.0.0" });
+});
+
+test("a change to core code bundled into the package bumps it", async (): Promise<void> => {
+  repo = await releasedRepo("0.40.0");
+  const domain = join(repo, "apps/core/src/shared/domain");
+  await mkdir(domain, { recursive: true });
+  await writeFile(join(domain, "agent-config.ts"), "export type A = 1;\n");
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "feat(core): add an agent config field"]);
+
+  expect(await run(repo)).toMatchObject({ bump: "minor", next: "0.41.0" });
 });
 
 test("a stale declared version behind the tag is ignored", async (): Promise<void> => {
@@ -115,7 +116,6 @@ function git(dir: string, args: string[]): void {
   if (result.exitCode !== 0) throw new Error(result.stderr.toString());
 }
 
-// A repo whose last release is `broods-v<version>`, with package.json at it.
 async function releasedRepo(version: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "next-version-"));
   git(dir, ["init", "-q"]);

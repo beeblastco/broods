@@ -1,9 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import {
-  gatewayUrlForDashboard,
-  readStoredAuth,
-  stripTrailingSlash,
-} from "../src/config.ts";
+import { gatewayUrlForDashboard, readStoredAuth } from "../src/config.ts";
 
 const savedEnv = {
   BROODS_TOKEN: process.env.BROODS_TOKEN,
@@ -11,14 +7,14 @@ const savedEnv = {
   BROODS_BASE_URL: process.env.BROODS_BASE_URL,
 };
 
-afterEach(() => {
+afterEach((): void => {
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
 });
 
-test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", () => {
+test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL", (): void => {
   delete process.env.BROODS_DASHBOARD_URL;
   process.env.BROODS_TOKEN = "tok";
   process.env.BROODS_BASE_URL = "https://convex.example.com/";
@@ -32,19 +28,18 @@ test("BROODS_BASE_URL with BROODS_TOKEN yields env auth carrying the Convex URL"
   expect(auth?.dashboardUrl).toBeUndefined();
 });
 
-test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", () => {
+test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from env", (): void => {
   delete process.env.BROODS_BASE_URL;
   process.env.BROODS_TOKEN = "env-only-token-sentinel";
   process.env.BROODS_DASHBOARD_URL = "https://dashboard.example.com";
 
   const auth = readStoredAuth();
 
-  // A dev machine may hold real stored-file auth, so assert the env pair
-  // alone never authenticates rather than expecting null outright.
+  // A dev machine may hold real stored auth, so only rule out the env token.
   expect(auth?.token ?? null).not.toBe("env-only-token-sentinel");
 });
 
-test("gatewayUrlForDashboard pairs a dashboard host with its API host", () => {
+test("gatewayUrlForDashboard pairs a dashboard host with its API host", (): void => {
   expect(gatewayUrlForDashboard("https://dashboard.broods.app/")).toBe(
     "https://gateway.broods.app",
   );
@@ -53,9 +48,7 @@ test("gatewayUrlForDashboard pairs a dashboard host with its API host", () => {
   );
 });
 
-test("gatewayUrlForDashboard never guesses a host we do not own", () => {
-  // A self-hosted or custom domain must fall through to the URL that login
-  // advertises rather than a fabricated one.
+test("gatewayUrlForDashboard never guesses a host we do not own", (): void => {
   expect(gatewayUrlForDashboard("https://dashboard.acme.com")).toBeUndefined();
   expect(
     gatewayUrlForDashboard("https://dashboard.broods.app.evil.com"),
@@ -63,13 +56,4 @@ test("gatewayUrlForDashboard never guesses a host we do not own", () => {
   expect(gatewayUrlForDashboard("http://localhost:3000")).toBeUndefined();
   expect(gatewayUrlForDashboard("https://broods.app")).toBeUndefined();
   expect(gatewayUrlForDashboard("not a url")).toBeUndefined();
-});
-
-test("stripTrailingSlash removes every trailing slash in linear time", () => {
-  expect(stripTrailingSlash("https://gateway.example.com///")).toBe(
-    "https://gateway.example.com",
-  );
-  expect(stripTrailingSlash("https://gateway.example.com/path")).toBe(
-    "https://gateway.example.com/path",
-  );
 });

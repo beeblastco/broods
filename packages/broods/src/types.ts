@@ -1,9 +1,4 @@
-/**
- * Wire types for the public account-manage and harness APIs. These mirror
- * the deployed API contract (docs/api-reference/openapi.yaml is the source
- * of truth); they are intentionally independent of the runtime internals so
- * the SDK keeps working when the runtime is ported.
- */
+// Mirrors apps/docs/docs/api-reference/openapi.yaml; never import core's runtime types.
 
 import type { ModelMessage } from "ai";
 import type { CronLastStatus, CronStatus } from "./contracts.ts";
@@ -25,13 +20,24 @@ export interface Agent {
 
 export interface AsyncRequestAccepted {
   statusUrl: string;
-  /** Account-unique id for this run; what the status URL names. */
   runId: string;
-  /** The eventId sent with the request, echoed back. */
   eventId: string;
   agentId: string;
   status?: "accepted" | "queued" | "applied" | "processing";
   requestedMode?: "reject" | "followup" | "collect" | "steer";
+}
+
+/** The 202 for `answer`. When the conversation resumed, `eventId` and `runId` name that turn. */
+export interface AnswersAccepted {
+  status: "accepted";
+  resultId: string;
+  eventId?: string;
+  /** For `waitForAsyncStatus`. Set only when a turn started or queued: the last such turn. */
+  runId?: string;
+  statusUrl?: string;
+  invoked?: boolean;
+  /** `statusId`s already answered, skipped because another answer landed. */
+  alreadyAnswered?: string[];
 }
 
 export interface AsyncStatus {
@@ -46,10 +52,9 @@ export interface AsyncStatus {
     | "failed"
     | "expired"
     | "not_found";
-  /** Set on every core answer. Absent only on the `not_found` the SDK returns for a 404. */
+  /** Absent only on the `not_found` the SDK returns for a 404. */
   runId?: string;
   eventId?: string;
-  /** The agent that owns the run. A subagent run names the child agent. */
   agentId?: string;
   conversationKey?: string;
   requestedMode?: "reject" | "followup" | "collect" | "steer";
@@ -58,10 +63,13 @@ export interface AsyncStatus {
   result?: unknown;
   response?: unknown;
   error?: string;
-  /** True when `failed` was a deliberate /stop, not a fault. */
   stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
   questions?: PendingQuestion[];
+  /** ISO 8601 time the run was accepted. */
+  createdAt?: string;
+  /** ISO 8601 time the run's status last moved. */
+  lastUpdatedAt?: string;
 }
 
 export interface Cron {
@@ -110,7 +118,6 @@ export interface Skill {
   }>;
 }
 
-/** A tool call held for user approval by an `ask`-mode sandbox. */
 export interface ToolApprovalSummary {
   approvalId: string;
   toolCallId: string;

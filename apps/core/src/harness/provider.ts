@@ -1,8 +1,3 @@
-/**
- * Agent-configured provider resolution for harness-processing.
- * Keep provider construction and AI SDK setting projection here.
- */
-
 import { createHash } from "node:crypto";
 import { createAlibaba } from "@ai-sdk/alibaba";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
@@ -14,6 +9,7 @@ import { createCohere } from "@ai-sdk/cohere";
 import { createDeepInfra } from "@ai-sdk/deepinfra";
 import { createDeepSeek } from "@ai-sdk/deepseek";
 import { createFireworks } from "@ai-sdk/fireworks";
+import { createFishAudio } from "@ai-sdk/fish-audio";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
 import { createGoogleVertex } from "@ai-sdk/google-vertex";
@@ -28,10 +24,12 @@ import { createPerplexity } from "@ai-sdk/perplexity";
 import {
   APICallError,
   UnsupportedFunctionalityError,
+  type JSONValue,
   type LanguageModelV4CallOptions,
   type LanguageModelV4FilePart,
   type LanguageModelV4Message,
   type LanguageModelV4StreamPart,
+  type LanguageModelV4ToolResultOutput,
   type SharedV4ProviderOptions,
 } from "@ai-sdk/provider";
 import { createTogetherAI } from "@ai-sdk/togetherai";
@@ -50,10 +48,15 @@ import {
 } from "ai";
 import { createOllama, type OllamaProviderSettings } from "ai-sdk-ollama";
 import { createWorkersAI } from "workers-ai-provider";
+import { isContextLengthError, toErrorMessage } from "../shared/errors.ts";
 import { publicHostFetch } from "../shared/http.ts";
 import {
   PROVIDER_ENDPOINT_SETTING,
+  TRANSCRIPTION_MODELS,
+  isTranscriptionProviderName,
   type AccountModelProviderName,
+  type AgentProviderName,
+  type TranscriptionProviderName,
 } from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
@@ -61,69 +64,55 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
-import { logInfo } from "../shared/log.ts";
+import { logInfo, logWarn } from "../shared/log.ts";
 import { unreadableMediaNote } from "../shared/media-types.ts";
 import { chatgptFetch, chatgptMiddleware } from "./chatgpt.ts";
 
-// Providers that answer on OpenAI's Responses API, where a replayed assistant
-// message is a reference to the item the provider still holds rather than the
-// content itself. That reference is only valid while the item resolves and
-// still carries the reasoning item it was produced with, which is why these
-// providers keep reasoning in context and get the retry below.
+// Responses API: a replayed assistant message references the item the provider holds, valid
+// only while it resolves with its reasoning item, so these keep reasoning in context.
 export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
   new Set(["azure", "openai"]);
 
-// Model retries when the agent sets none. The AI SDK's 2 retry for about 6s,
-// shorter than a tokens-per-minute window, so one 429 failed the whole run.
+// The AI SDK's default 2 retries span ~6s, shorter than a tokens-per-minute window.
 const DEFAULT_MODEL_MAX_RETRIES = 5;
 
-// Cloudflare AI Gateway's base URL.
 const CLOUDFLARE_GATEWAY_BASE_URL = "https://gateway.ai.cloudflare.com/v1";
 
 // Ollama's own default is 127.0.0.1, which from core is the container itself.
 const OLLAMA_CLOUD_BASE_URL = "https://ollama.com";
 
-// Longest retry-after-ms the AI SDK honours; it falls back to its own backoff above.
+const GPT_VERSION_PATTERN = /^(?:ft:)?gpt-(\d+)(?:\.(\d+))?(?:[-:]|$)/i;
+
+const CLAUDE_MODEL_PATTERN = /(?:^|\.)claude-/i;
+
+// These options ride the message or part, never the body: where Claude proxies read them.
+const CUSTOM_CACHE_PROVIDER = "openaiCompatible";
+const CUSTOM_CACHE_FIELD = "cache_control";
+
+// The AI SDK ignores a retry header of 60s or more.
 const MAX_RETRY_HEADER_MS = 59_999;
 
-// The wait a 429 body asks for, like OpenAI's "Please try again in 5.248s" or
-// Gemini's RetryInfo `"retryDelay": "35s"`.
 const RATE_LIMIT_WAIT_PATTERN =
   /(?:try again in |"retryDelay":\s*")(\d+(?:\.\d+)?)\s*(ms|s)\b/i;
 
-/**
- * How inbound audio is read, per provider: the factory that ships speech-to-text
- * and the model to ask it for when the account names none. Providers absent
- * here have none, and `config.model.transcriptionModelId` overrides the id.
- *
- * Defaults pick the widest container support, not the cheapest model:
- * `whisper-1` reads the ogg/opus every voice-note channel sends and
- * `gpt-4o-mini-transcribe` does not.
- *
- * Keyed to the factory rather than to an already-built provider so the compiler
- * checks the method still exists: openai and groq declare `transcription` but
- * not `transcriptionModel`, and a rename would otherwise fail in silence.
- */
-const PROVIDER_TRANSCRIPTION: Partial<
-  Record<AccountModelProviderName, TranscriptionSource>
+const TRANSCRIPTION_FACTORIES: Record<
+  TranscriptionProviderName,
+  TranscriptionFactory
 > = {
-  groq: { factory: createGroq, modelId: "whisper-large-v3-turbo" },
-  mistral: { factory: createMistral, modelId: "voxtral-mini-latest" },
-  openai: { factory: createOpenAI, modelId: "whisper-1" },
+  fishaudio: createFishAudio,
+  groq: createGroq,
+  mistral: createMistral,
+  openai: createOpenAI,
 };
 
-// How OpenAI names a reference it cannot honour: the item aged out of its 30-day
-// window, it lost the reasoning item it was paired with, or its reasoning was
-// encrypted for a different model.
+// A stored item past its 30-day window, without its reasoning, or encrypted for another model.
 const STALE_STORED_ITEM_PATTERN =
   /without its required (?:'reasoning' item|following item)|Item with id .{0,80}not found|encrypted[_ ]content/i;
 
-// What every AI SDK provider factory has in common: settings in, callable
-// provider out. The settings each one accepts are read off it, never restated.
+const toolImageRefusals = new Set<string>();
+
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
-// Workers AI REST credentials, plus the AI Gateway that carries every request
-// once it is named.
 type CloudflareProviderSettings = Extract<
   Parameters<typeof createWorkersAI>[0],
   { accountId: string }
@@ -132,24 +121,22 @@ type CloudflareProviderSettings = Extract<
   headers?: Record<string, string>;
 };
 
+type UserPromptPart = Extract<
+  LanguageModelV4Message,
+  { role: "user" }
+>["content"][number];
+
 interface ModelProviderInstance {
-  // Never the string form of `LanguageModel`: a constructed provider hands back
-  // a model instance, which is what middleware can wrap.
   (modelId: string): Exclude<LanguageModel, string>;
 }
 
-interface TranscriptionSource {
-  factory: (settings: never) => {
-    transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
-  };
-  modelId: string;
-}
+type TranscriptionFactory = (settings: never) => {
+  transcription: (modelId: string) => Exclude<TranscriptionModel, string>;
+};
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
   provider: ModelProviderInstance;
-  // Never the string form: every resolver returns a constructed instance, so
-  // callers can wrap it in middleware.
   model: Exclude<LanguageModel, string>;
 }
 
@@ -159,10 +146,8 @@ export type ModelOutputSpec =
   | ReturnType<typeof Output.choice>
   | ReturnType<typeof Output.json>;
 
-// Name → AI SDK factory; the return type fails the build if a name has no
-// factory. Built per call so each is read off its live binding, keeping it
-// mockable.
-export function modelProviderFactories(): Record<
+// Built per call so each factory is read off its live binding, keeping it mockable.
+function modelProviderFactories(): Record<
   Exclude<AccountModelProviderName, "chatgpt">,
   ModelProviderFactory
 > {
@@ -203,10 +188,6 @@ export function modelProviderFactories(): Record<
   };
 }
 
-/**
- * The agent's model, ready to wrap. `accountId` is only read by `chatgpt`,
- * whose credential is the account's `chatgpt` connection, not a config setting.
- */
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
   accountId?: string,
@@ -221,9 +202,6 @@ export function resolveConfiguredModel(
     return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
   }
 
-  // The registry's value type is a union of factories, so its parameter narrows
-  // to an intersection no single provider's settings satisfy. Settings are
-  // validated by `normalizeProviderSettings` and passed through verbatim.
   const createProvider = modelProviderFactories()[providerName] as (
     settings: AgentProviderSettings & { fetch?: typeof fetch },
   ) => ModelProviderInstance;
@@ -245,35 +223,32 @@ export function resolveConfiguredModel(
   };
 }
 
-/**
- * The speech-to-text model to read inbound audio with, or undefined when this
- * account's provider ships none or its config cannot build one. Undefined
- * rather than a throw: a half-configured account should lose its transcript and
- * keep the message it arrived on.
- */
+// Speech-to-text on `config.transcription` or the agent's own provider, or why there is none.
 export function resolveTranscriptionModel(
   agentConfig: AgentConfig,
-): Exclude<TranscriptionModel, string> | undefined {
-  const providerName = agentConfig.model?.provider;
-  if (!providerName) {
-    return undefined;
-  }
-  const source = PROVIDER_TRANSCRIPTION[providerName];
-  if (!source) {
-    return undefined;
+): { model: Exclude<TranscriptionModel, string> } | { reason: string } {
+  const providerName =
+    agentConfig.transcription?.provider ?? agentConfig.model?.provider;
+  if (!providerName || !isTranscriptionProviderName(providerName)) {
+    return {
+      reason: `${providerName ?? "this provider"} has no transcription model`,
+    };
   }
   try {
-    const provider = source.factory(
+    const provider = TRANSCRIPTION_FACTORIES[providerName](
       withModelFetch(
         requireProviderSettings(agentConfig, providerName),
       ) as never,
     );
 
-    return provider.transcription(
-      agentConfig.model?.transcriptionModelId ?? source.modelId,
-    );
-  } catch {
-    return undefined;
+    return {
+      model: provider.transcription(
+        agentConfig.transcription?.modelId ??
+          TRANSCRIPTION_MODELS[providerName],
+      ),
+    };
+  } catch (error) {
+    return { reason: toErrorMessage(error) };
   }
 }
 
@@ -283,7 +258,6 @@ export function modelSettingsFromModelConfig(
   const {
     provider: _provider,
     modelId: _modelId,
-    transcriptionModelId: _transcriptionModelId,
     providerOptions: _providerOptions,
     output: _output,
     ...settings
@@ -292,15 +266,7 @@ export function modelSettingsFromModelConfig(
   return { maxRetries: DEFAULT_MODEL_MAX_RETRIES, ...settings };
 }
 
-/**
- * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
- * cacheControl (caching there is opt-in per request), OpenAI (and ChatGPT,
- * where a cached prefix spends less of the plan) a promptCacheKey
- * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
- * A call without a conversation, like compaction, gets neither: a one-shot
- * request pays the cache write and never reads it back. Explicit account
- * config wins over both defaults.
- */
+// A one-shot call like compaction gets no cache defaults: it pays the write, never reads.
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
   conversationKey?: string,
@@ -311,44 +277,64 @@ export function providerOptionsFromModelConfig(
     return configured;
   }
   if (providerName === "anthropic") {
-    if (configured?.anthropic?.cacheControl !== undefined) {
-      return configured;
-    }
-
-    return {
-      ...configured,
-      anthropic: {
-        ...configured?.anthropic,
-        cacheControl: { type: "ephemeral" },
-      },
-    };
+    return withDefaultOption(configured, "anthropic", "cacheControl", {
+      type: "ephemeral",
+    });
+  }
+  if (providerName === "custom") {
+    return customCacheOptions(agentConfig, conversationKey);
   }
   if (!STORED_ITEM_PROVIDERS.has(providerName) && providerName !== "chatgpt") {
     return configured;
   }
 
-  const openaiOptions = configured?.openai;
-  if (openaiOptions?.promptCacheKey !== undefined) {
-    return configured;
-  }
-
-  return {
-    ...configured,
-    openai: {
-      ...openaiOptions,
-      promptCacheKey: createHash("sha256")
-        .update(conversationKey)
-        .digest("hex")
-        .slice(0, 32),
-    },
-  };
+  return withDefaultOption(
+    configured,
+    "openai",
+    "promptCacheKey",
+    promptCacheKey(conversationKey),
+  );
 }
 
-/**
- * Which model an agent is configured on right now, as a value that can be
- * stored beside a message and compared later. Undefined only when the config is
- * incomplete, which `resolveConfiguredModel` refuses anyway.
- */
+// OpenAI's own breakpoint ends after the live environment no later run resends. Not Azure:
+// it reads options under its own name; nor ChatGPT, whose plan documents no such field.
+export function cacheBreakpointFromProviderOptions(
+  agentConfig: AgentConfig,
+  providerOptions: AgentModelProviderOptions | undefined,
+): AgentModelProviderOptions | undefined {
+  const customCacheControl =
+    providerOptions?.[CUSTOM_CACHE_PROVIDER]?.[CUSTOM_CACHE_FIELD];
+  if (
+    agentConfig.model?.provider === "custom" &&
+    customCacheControl !== undefined
+  ) {
+    return customCacheBreakpoint(customCacheControl);
+  }
+  if (
+    agentConfig.model?.provider === "openai" &&
+    providerOptions?.openai?.promptCacheKey !== undefined &&
+    takesPromptCacheBreakpoints(agentConfig.model.modelId)
+  ) {
+    return { openai: { promptCacheBreakpoint: { mode: "explicit" } } };
+  }
+  const cacheControl = providerOptions?.anthropic?.cacheControl;
+
+  return cacheControl === undefined
+    ? undefined
+    : { anthropic: { cacheControl: cacheControl } };
+}
+
+function takesPromptCacheBreakpoints(modelId: string | undefined): boolean {
+  const version = GPT_VERSION_PATTERN.exec(modelId ?? "");
+  if (!version) {
+    return false;
+  }
+  const major = Number(version[1]);
+  const minor = Number(version[2] ?? 0);
+
+  return major > 5 || (major === 5 && minor >= 6);
+}
+
 export function modelIdentityFromModelConfig(
   agentConfig: AgentConfig,
 ): string | undefined {
@@ -372,40 +358,81 @@ export function modelOutputFromModelConfig(
   return createModelOutput(output);
 }
 
-// vLLM-style chat templates often accept only a single system message, and
-// OVH's Qwen endpoints fail SOFT on extras: HTTP 200 with an immediately-empty
-// stream (`data: [DONE]`), which surfaces as "Model returned empty response".
-// The harness legitimately sends two (the base prompt + the dynamic context
-// snapshot), so fold every system message into one before the request leaves.
+// vLLM-style templates take one system message; OVH's Qwen answers more with an empty 200.
+// A cache mark keeps the run's own system text separate so the stored prefix still caches.
 export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
-  transformParams: async ({ params }) => {
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
     const systems = params.prompt.filter(
       (message) => message.role === "system",
     );
     if (systems.length <= 1) return params;
+    const storedEnd =
+      systems.findLastIndex(
+        (message) => message.providerOptions !== undefined,
+      ) + 1;
+    const groups =
+      storedEnd > 0 && storedEnd < systems.length
+        ? [systems.slice(0, storedEnd), systems.slice(storedEnd)]
+        : [systems];
 
     return {
       ...params,
       prompt: [
-        {
-          role: "system",
-          content: systems.map((message) => message.content).join("\n\n"),
-        },
+        ...groups.map(mergedSystemMessage),
         ...params.prompt.filter((message) => message.role !== "system"),
       ],
     };
   },
 };
 
-// The same endpoints have two streaming quirks the custom-provider path must
-// absorb. First, `reasoning`/`reasoning_content` chunks may carry a growing
-// snapshot of the whole reasoning text instead of an increment, which every
-// downstream consumer (Slack Thinking card, chat SDK streams, persisted
-// messages) doubles by appending. Second, usage omits
-// `completion_tokens_details.reasoning_tokens`, so reasoning tokens read as 0
-// even when most of the output was thinking. Rewrite snapshot deltas to their
-// new suffix, and when the endpoint reports no reasoning-token split, estimate
-// it from the reasoning/text character share of the reported output total.
+// Claude behind a proxy caches only marked blocks, and nothing marks the latest one for it.
+export const cacheLatestMessageMiddleware: LanguageModelMiddleware = {
+  transformParams: async ({ params }): Promise<LanguageModelV4CallOptions> => {
+    const cacheControl =
+      params.providerOptions?.[CUSTOM_CACHE_PROVIDER]?.[CUSTOM_CACHE_FIELD];
+    const latest = params.prompt.at(-1);
+    if (cacheControl === undefined || latest === undefined) {
+      return params;
+    }
+
+    return {
+      ...params,
+      prompt: params.prompt.with(
+        -1,
+        withLatestPartMarked(latest, customCacheBreakpoint(cacheControl)),
+      ),
+    };
+  },
+};
+
+export function markedForCache<
+  T extends { providerOptions?: SharedV4ProviderOptions },
+>(item: T, breakpoint: SharedV4ProviderOptions): T {
+  const providerOptions = { ...item.providerOptions };
+  for (const [provider, options] of Object.entries(breakpoint)) {
+    providerOptions[provider] = { ...providerOptions[provider], ...options };
+  }
+
+  return { ...item, providerOptions: providerOptions };
+}
+
+export function withCacheBreakpoint<
+  T extends { providerOptions?: SharedV4ProviderOptions },
+>(
+  items: T[],
+  breakpoint: SharedV4ProviderOptions | undefined,
+  index: number = items.length - 1,
+): T[] {
+  const item = items[index];
+  if (breakpoint === undefined || item === undefined) {
+    return items;
+  }
+
+  return items.with(index, markedForCache(item, breakpoint));
+}
+
+// vLLM-style endpoints may stream growing snapshots instead of deltas, and report no
+// `reasoning_tokens`: estimate the split from the reasoning/text character share.
 export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
   wrapStream: async ({ doStream }) => {
     const { stream, ...rest } = await doStream();
@@ -471,8 +498,6 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
 
 export type ModelAttempt = { startedAt: number; error?: string };
 
-// One entry per doStream call. The SDK's retry loop re-invokes doStream, so
-// the recorded attempts split retry waste from server wait on the step span.
 export function attemptRecordingMiddleware(
   record: (attempt: ModelAttempt) => void,
   describeError: (error: unknown) => string,
@@ -491,27 +516,45 @@ export function attemptRecordingMiddleware(
   };
 }
 
-// A file part the provider's converter refuses fails the turn during prompt
-// conversion, before any request is sent, so dropping the part and running
-// again costs a local re-convert and no tokens. That is what makes a wrong
-// entry in `PROVIDER_NATIVE_MEDIA` cost one attachment instead of the turn.
+// A refused file part fails prompt conversion before any request, so a retry costs no tokens.
 export const dropUnsupportedMediaMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutUnsupportedMedia);
 
-// Stored-item references are the provider's own state, so they can go stale for
-// reasons no amount of care on our side prevents: the 30-day window closes, or
-// the agent's model changes and the old reasoning can no longer be decrypted.
-// Retry once with that state dropped. The turn then costs a full re-upload of
-// its history and nothing else, instead of failing in the user's chat.
+// A text-only model behind a custom endpoint answers a picture with a 400.
+export const dropRefusedImagesMiddleware: LanguageModelMiddleware =
+  retryingMiddleware(withoutRefusedImages);
+
 export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware =
   retryingMiddleware(withoutStaleStoredItems);
 
-/**
- * Strips the id an assistant part is replayed by, leaving the part to be sent
- * as content. Only ever correct alongside dropping the reasoning parts of the
- * same message: an id without its reasoning is the reference the provider
- * refuses.
- */
+// OpenAI's chat API 400s on an image in a tool message, where vLLM-style servers read it.
+export function moveRefusedToolImagesMiddleware(
+  endpoint: string,
+): LanguageModelMiddleware {
+  // Also remembered when the move is refused: a model taking no images then pays one retry.
+  const retrying = retryingMiddleware(
+    withToolImagesMoved,
+    (retryError): void => {
+      if (retryError === undefined || isRefusedRequest(retryError)) {
+        toolImageRefusals.add(endpoint);
+      }
+    },
+  );
+
+  return {
+    ...retrying,
+    transformParams: async ({
+      params,
+    }): Promise<LanguageModelV4CallOptions> => ({
+      ...params,
+      prompt: toolImageRefusals.has(endpoint)
+        ? toolImagesAsUserMessages(params.prompt)
+        : withTextToolResultsAsText(params.prompt),
+    }),
+  };
+}
+
+// Only correct with the message's reasoning parts dropped: an id without its reasoning is refused.
 export function withoutStoredItemId<
   TPart extends { type: string; providerOptions?: SharedV4ProviderOptions },
 >(part: TPart): TPart {
@@ -527,16 +570,12 @@ export function withoutStoredItemId<
   };
 }
 
-/**
- * A middleware that runs the call again when `recover` recognises the failure
- * and can say what to send instead. `recover` returning undefined rethrows, so
- * a failure it does not know about is never paid for twice.
- */
 function retryingMiddleware(
   recover: (
     error: unknown,
     params: LanguageModelV4CallOptions,
   ) => LanguageModelV4CallOptions | undefined,
+  retried?: (retryError: unknown) => void,
 ): LanguageModelMiddleware {
   return {
     wrapGenerate: async ({ doGenerate, model, params }) => {
@@ -547,8 +586,15 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        try {
+          const result = await model.doGenerate(retry);
+          retried?.(undefined);
 
-        return await model.doGenerate(retry);
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
     wrapStream: async ({ doStream, model, params }) => {
@@ -559,26 +605,27 @@ function retryingMiddleware(
         if (!retry) {
           throw error;
         }
+        try {
+          const result = await model.doStream(retry);
+          retried?.(undefined);
 
-        return await model.doStream(retry);
+          return result;
+        } catch (retryError) {
+          retried?.(retryError);
+          throw retryError;
+        }
       }
     },
   };
 }
 
-// The same call with every non-image file part replaced by a line naming it,
-// or undefined when this error is not a refused part or there was nothing to
-// drop.
 function withoutUnsupportedMedia(
   error: unknown,
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions | undefined {
   if (
     !UnsupportedFunctionalityError.isInstance(error) ||
-    !params.prompt.some(
-      (message) =>
-        message.role === "user" && message.content.some(isDroppableMedia),
-    )
+    !carriesUserMedia(params, isDroppableMedia)
   ) {
     return undefined;
   }
@@ -586,6 +633,156 @@ function withoutUnsupportedMedia(
     error: error.message,
   });
 
+  return withoutUserMedia(params, isDroppableMedia);
+}
+
+function withoutRefusedImages(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!isRefusedRequest(error)) {
+    return undefined;
+  }
+  const moved = { ...params, prompt: toolImagesAsUserMessages(params.prompt) };
+  if (!carriesUserMedia(moved, isImage)) {
+    return undefined;
+  }
+  logWarn("Retrying model call without images the provider refused", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return withoutUserMedia(moved, isImage);
+}
+
+function withToolImagesMoved(
+  error: unknown,
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions | undefined {
+  if (!isRefusedRequest(error)) {
+    return undefined;
+  }
+  const prompt = toolImagesAsUserMessages(params.prompt);
+  if (prompt.length === params.prompt.length) {
+    return undefined;
+  }
+  logWarn("Retrying model call with tool images in a user message", {
+    url: error.url,
+    error: error.message,
+  });
+
+  return { ...params, prompt: prompt };
+}
+
+function carriesUserMedia(
+  params: LanguageModelV4CallOptions,
+  matches: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): boolean {
+  return params.prompt.some(
+    (message) => message.role === "user" && message.content.some(matches),
+  );
+}
+
+function isDroppableMedia(
+  part: UserPromptPart,
+): part is LanguageModelV4FilePart {
+  return part.type === "file" && !part.mediaType.startsWith("image/");
+}
+
+function isImage(part: UserPromptPart): part is LanguageModelV4FilePart {
+  return part.type === "file" && part.mediaType.startsWith("image/");
+}
+
+function isMovableImage(
+  item: Extract<
+    LanguageModelV4ToolResultOutput,
+    { type: "content" }
+  >["value"][number],
+): item is LanguageModelV4FilePart {
+  return (
+    item.type === "file" &&
+    item.mediaType.startsWith("image/") &&
+    (item.data.type === "data" || item.data.type === "url")
+  );
+}
+
+// A context overflow is a 400 too, and must reach compaction.
+function isRefusedRequest(error: unknown): error is APICallError {
+  return (
+    APICallError.isInstance(error) &&
+    error.statusCode === 400 &&
+    !isContextLengthError(error.message)
+  );
+}
+
+function toolImagesAsUserMessages(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.flatMap((message): LanguageModelV4Message[] => {
+    if (message.role !== "tool") return [message];
+    const images: LanguageModelV4FilePart[] = [];
+    const content = message.content.map((part) => {
+      if (part.type !== "tool-result" || part.output.type !== "content") {
+        return part;
+      }
+      const value = part.output.value.map((item) => {
+        if (!isMovableImage(item)) return item;
+        images.push(item);
+
+        return {
+          type: "text" as const,
+          text: `[image ${images.length} is in the next message]`,
+        };
+      });
+
+      return { ...part, output: { ...part.output, value: value } };
+    });
+    if (images.length === 0) return withTextToolResultsAsText([message]);
+
+    return [
+      ...withTextToolResultsAsText([{ ...message, content: content }]),
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Images from the tool results above:" },
+          ...images,
+        ],
+      },
+    ];
+  });
+}
+
+// Some endpoints take nothing but a string in a tool message.
+function withTextToolResultsAsText(
+  prompt: LanguageModelV4Message[],
+): LanguageModelV4Message[] {
+  return prompt.map((message): LanguageModelV4Message => {
+    if (message.role !== "tool") return message;
+
+    return {
+      ...message,
+      content: message.content.map((part) => {
+        if (
+          part.type !== "tool-result" ||
+          part.output.type !== "content" ||
+          !part.output.value.every((item) => item.type === "text")
+        ) {
+          return part;
+        }
+        const text = part.output.value
+          .map((item) => (item.type === "text" ? item.text : ""))
+          .join("\n");
+
+        return { ...part, output: { type: "text", value: text } };
+      }),
+    };
+  });
+}
+
+function withoutUserMedia(
+  params: LanguageModelV4CallOptions,
+  drop: (part: UserPromptPart) => part is LanguageModelV4FilePart,
+): LanguageModelV4CallOptions {
   return {
     ...params,
     prompt: params.prompt.map((message) =>
@@ -594,7 +791,7 @@ function withoutUnsupportedMedia(
         : {
             ...message,
             content: message.content.map((part) =>
-              isDroppableMedia(part)
+              drop(part)
                 ? {
                     type: "text" as const,
                     text: unreadableMediaNote(part.filename, part.mediaType),
@@ -604,14 +801,6 @@ function withoutUnsupportedMedia(
           },
     ),
   };
-}
-
-// Images are the one media kind every provider reads, so a converter that
-// refused something refused something else.
-function isDroppableMedia(
-  part: Extract<LanguageModelV4Message, { role: "user" }>["content"][number],
-): part is LanguageModelV4FilePart {
-  return part.type === "file" && !part.mediaType.startsWith("image/");
 }
 
 function withoutStaleStoredItems(
@@ -633,11 +822,6 @@ function withoutStaleStoredItems(
   return withoutStoredItemState(params);
 }
 
-/**
- * OpenAI on the account's ChatGPT plan. The API key is a placeholder the fetch
- * replaces with the connection's access token on every request; the endpoint is
- * OpenAI's own, so no tenant setting reaches it.
- */
 function resolveChatGPTModel(
   modelId: string,
   accountId: string | undefined,
@@ -664,16 +848,13 @@ function resolveOpenAICompatibleModel(
 ): ResolvedModelProvider {
   const { base_url: _baseUrl, ...openAIConfig } =
     withModelFetch(providerConfig);
-  // @ai-sdk/openai-compatible instead of @ai-sdk/openai: vLLM-style endpoints
-  // return thinking text in `reasoning`/`reasoning_content` fields, which only
-  // the compatible provider parses into reasoning parts (#115).
+  // Not @ai-sdk/openai: only this one parses vLLM's `reasoning`/`reasoning_content` fields.
+  const baseURL = customProviderBaseURL(providerConfig) ?? "";
   const provider = createOpenAICompatible({
+    supportsMultiPartToolContent: true,
     ...openAIConfig,
-    baseURL: customProviderBaseURL(providerConfig) ?? "",
-    name:
-      typeof providerConfig.name === "string"
-        ? providerConfig.name
-        : providerName,
+    baseURL: baseURL,
+    name: customProviderName(providerConfig),
     includeUsage: true,
   });
 
@@ -682,22 +863,20 @@ function resolveOpenAICompatibleModel(
     provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
+      // Each wraps those after it: a 400 tries the tool image move before the drop, and the
+      // cache mark is last so a retry marks its own latest message.
       middleware: [
         mergeSystemMessagesMiddleware,
         normalizeStreamDeltasMiddleware,
+        dropRefusedImagesMiddleware,
+        moveRefusedToolImagesMiddleware(`${baseURL} ${modelId}`),
         dropUnsupportedMediaMiddleware,
+        cacheLatestMessageMiddleware,
       ],
     }),
   };
 }
 
-/**
- * The `cloudflare` provider: Workers AI over REST, through AI Gateway once
- * `gatewayId` is set (`apiKey` rides `cf-aig-authorization`). Workers AI
- * models (`@cf/`, `@hf/`) keep the Workers AI provider; other ids use the
- * gateway's OpenAI-compatible endpoint, where `headers.Authorization` carries an
- * upstream key.
- */
 function createCloudflare({
   gatewayId,
   headers,
@@ -733,16 +912,11 @@ function createCloudflare({
   };
 }
 
-// The gateway names Workers AI models `workers-ai/@cf/...`; Workers AI itself takes `@cf/...`.
 function workersAIModelId(modelId: string): string {
   return modelId.replace(/^workers-ai\//, "");
 }
 
-/**
- * A 429 whose wait is only in its body gets it as `retry-after-ms`, the header
- * the AI SDK's retry already honours. Without it the SDK retries on its own
- * shorter backoff and burns the attempts before the window resets.
- */
+// A 429 body's wait as `retry-after-ms`, else the SDK burns its retries before the window resets.
 async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   if (
     response.status !== 429 ||
@@ -756,8 +930,6 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   const headers = new Headers(response.headers);
   if (amount !== undefined && unit !== undefined) {
     const waitMs = Number(amount) * (unit.toLowerCase() === "s" ? 1000 : 1);
-    // The SDK ignores a retry header of 60s or more, so a longer wait is
-    // spread over the retries at the longest delay it honours.
     headers.set(
       "retry-after-ms",
       String(Math.min(Math.ceil(waitMs), MAX_RETRY_HEADER_MS)),
@@ -771,14 +943,8 @@ async function withRateLimitRetryHeader(response: Response): Promise<Response> {
   });
 }
 
-/**
- * Every model request goes out with Bun's socket idle timeout off. Bun drops a
- * connection that stays silent for 300s, and a busy provider can hold a stream
- * that long, so a model call ends on the provider's own error or the run's
- * abort signal, which `watchModelStream` in harness.ts fires on a silent
- * stream. A provider with any tenant-supplied endpoint also gets the
- * resolve-then-connect `fetch`.
- */
+// Bun drops a socket silent for 300s, which a busy provider's stream can be; a silent stream
+// is aborted by `watchModelStream` instead. A tenant endpoint gets the resolve-then-connect fetch.
 function withModelFetch<T extends AgentProviderSettings>(
   settings: T,
 ): T & { fetch: typeof fetch } {
@@ -822,7 +988,7 @@ function requireModelId(agentConfig: AgentConfig): string {
 
 function requireProviderSettings(
   agentConfig: AgentConfig,
-  providerName: AccountModelProviderName,
+  providerName: AgentProviderName,
 ): AgentProviderSettings {
   const providerConfig = agentConfig.provider?.[providerName];
   if (!providerConfig) {
@@ -842,6 +1008,39 @@ function requireProviderSettings(
   return providerConfig;
 }
 
+function customCacheBreakpoint(
+  cacheControl: JSONValue,
+): SharedV4ProviderOptions {
+  return { [CUSTOM_CACHE_PROVIDER]: { [CUSTOM_CACHE_FIELD]: cacheControl } };
+}
+
+// Any other model gets no cache option: a strict endpoint refuses a field it does not know.
+function customCacheOptions(
+  agentConfig: AgentConfig,
+  conversationKey: string,
+): AgentModelProviderOptions | undefined {
+  const configured = agentConfig.model?.providerOptions;
+  const modelId = servedModelId(agentConfig.model?.modelId);
+  if (GPT_VERSION_PATTERN.test(modelId)) {
+    return withDefaultOption(
+      configured,
+      customProviderName(agentConfig.provider?.custom),
+      "prompt_cache_key",
+      promptCacheKey(conversationKey),
+    );
+  }
+  if (CLAUDE_MODEL_PATTERN.test(modelId)) {
+    return withDefaultOption(
+      configured,
+      CUSTOM_CACHE_PROVIDER,
+      CUSTOM_CACHE_FIELD,
+      { type: "ephemeral" },
+    );
+  }
+
+  return configured;
+}
+
 function customProviderBaseURL(
   providerConfig: AgentProviderSettings,
 ): string | undefined {
@@ -855,6 +1054,77 @@ function customProviderBaseURL(
   const trimmed = raw.trim();
 
   return trimmed || undefined;
+}
+
+function customProviderName(
+  providerConfig: AgentProviderSettings | undefined,
+): string {
+  return typeof providerConfig?.name === "string"
+    ? providerConfig.name
+    : "custom";
+}
+
+function mergedSystemMessage(
+  systems: Extract<LanguageModelV4Message, { role: "system" }>[],
+): LanguageModelV4Message {
+  const providerOptions = systems.at(-1)?.providerOptions;
+
+  return {
+    role: "system",
+    content: systems.map((message) => message.content).join("\n\n"),
+    ...(providerOptions ? { providerOptions: providerOptions } : {}),
+  };
+}
+
+function promptCacheKey(conversationKey: string): string {
+  return createHash("sha256")
+    .update(conversationKey)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function servedModelId(modelId: string | undefined): string {
+  return modelId?.split("/").at(-1) ?? "";
+}
+
+function withDefaultOption(
+  configured: AgentModelProviderOptions | undefined,
+  provider: string,
+  field: string,
+  value: JSONValue,
+): AgentModelProviderOptions {
+  if (configured?.[provider]?.[field] !== undefined) {
+    return configured;
+  }
+
+  return {
+    ...configured,
+    [provider]: { ...configured?.[provider], [field]: value },
+  };
+}
+
+function withLatestPartMarked(
+  message: LanguageModelV4Message,
+  breakpoint: SharedV4ProviderOptions,
+): LanguageModelV4Message {
+  if (message.role === "user") {
+    return {
+      ...message,
+      content: withCacheBreakpoint(message.content, breakpoint),
+    };
+  }
+  if (message.role === "tool") {
+    return {
+      ...message,
+      content: withCacheBreakpoint(
+        message.content,
+        breakpoint,
+        message.content.findLastIndex((part) => part.type === "tool-result"),
+      ),
+    };
+  }
+
+  return markedForCache(message, breakpoint);
 }
 
 function createModelOutput(
@@ -887,11 +1157,7 @@ function createModelOutput(
   }
 }
 
-// Everything the request says about items the provider is holding: the ids an
-// assistant part is replayed by, the reasoning parts they must be paired with,
-// and any response chain the account pinned through `providerOptions`. They go
-// together. A surviving `previousResponseId` makes the provider skip the very
-// history this retry exists to send in full.
+// A surviving `previousResponseId` would skip the very history this retry sends in full.
 function withoutStoredItemState(
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions {

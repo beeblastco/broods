@@ -1,0 +1,11 @@
+kind	name	reason
+external	^computerInput\.extend$	zod builds the extended object schema; the twin checks the added sandbox property and passes the schema on unchanged.
+external	^onUsage$	A callback the caller hands in to record usage elsewhere; the twin checks the parsed usage it passes.
+external	^session\.runCommand$	Runs the usage probe in the provider sandbox: the sandbox decides stdout and exit code, outside the runtime.
+external	^new Bash$	Constructs the just-bash interpreter library; the twin checks the options it is built with.
+external	^bash \.exec$	The just-bash library runs the script on its in-memory disk; its output is not runtime logic.
+external	^fs\.mkdir$	The just-bash in-memory filesystem creates the directory; the twin checks the path and options.
+opaque	MicrovmWebSocketProxy	The receiver of its own methods: the twin reads its private fields from the snapshot and states each change with setState.
+external	^server\.stop$	Bun stops its own listening server; the twin only starts it without awaiting, as the code does.
+external	^socket\.data\.upstream\?\.close$	The WebSocket client closes the upstream bridge connection; the code and reason are checked.
+external	^executor\.jobLogs$	Reads a background job's log tail from the sandbox provider; the provider decides it, the twin checks the job id, namespace and limit.

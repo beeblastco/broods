@@ -7,30 +7,20 @@ import { Search, X } from "lucide-react";
 import { useId, useRef } from "react";
 
 interface Props {
-  /** The whole query, chips included; the panels parse this one string. */
   value: string;
   onChange: (value: string) => void;
-  /** Field names a `field:value` token may use; anything else stays free text. */
   fields: readonly string[];
   placeholder: string;
-  className?: string;
 }
 
-/**
- * The toolbar's search box. A finished `field:value` token becomes a chip in
- * front of the text once a space follows it; Backspace on empty text pulls the
- * last chip back for editing, Escape clears everything, `/` focuses.
- */
 export function SearchInput({
   value,
   onChange,
   fields,
   placeholder,
-  className,
 }: Props): React.JSX.Element {
   const input = useRef<HTMLInputElement>(null);
-  // The label names the field by id: without it a chip's remove button, a
-  // labelable element too, would be what a click on the box activates.
+  // Without htmlFor, a click on the box would activate a chip's remove button, also labelable.
   const inputId = useId();
   const { chips, text } = splitQueryChips(value, fields);
 
@@ -65,12 +55,12 @@ export function SearchInput({
       className={cn(
         "flex h-8 min-w-50 flex-1 cursor-text items-center gap-1 overflow-x-auto rounded-md border border-input bg-transparent px-2 text-xs dark:bg-input/30",
         "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
-        className,
       )}
     >
       <Search className="size-3.5 shrink-0 text-muted-foreground" />
       {chips.map((chip, index) => (
         <span
+          // oxlint-disable-next-line react/no-array-index-key -- chips may repeat in a query
           key={`${chip}-${index}`}
           className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 font-mono text-2xs text-foreground"
         >
@@ -88,13 +78,15 @@ export function SearchInput({
       <input
         ref={input}
         id={inputId}
-        type="text"
+        type="search"
+        enterKeyHint="search"
+        spellCheck={false}
         value={text}
         onChange={(event) => emit(chips, event.target.value)}
         onKeyDown={onKeyDown}
         placeholder={chips.length === 0 ? placeholder : ""}
         aria-label="Search"
-        className="min-w-16 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+        className="min-w-16 flex-1 bg-transparent text-foreground focus-visible:outline-hidden placeholder:text-muted-foreground"
       />
     </label>
   );

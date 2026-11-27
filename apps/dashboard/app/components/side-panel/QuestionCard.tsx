@@ -15,11 +15,6 @@ type Choice =
   | { kind: "option"; label: string }
   | { kind: "text"; text: string };
 
-/**
- * The open `ask_questions` prompts at the end of a chat turn. One option row
- * per choice, a text field when the question allows it, one Answer button for
- * every question. Submits `answers` keyed by prompt statusId.
- */
 export function QuestionCard({
   prompts,
   onAnswer,

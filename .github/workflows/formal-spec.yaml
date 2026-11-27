@@ -1,0 +1,87 @@
+name: Formal spec
+
+# Records the runtime's calls under the repo's tests, compares every Lean twin in `formal/` with
+# them, runs the audit and replay, and shows the twins can fail. About an hour, so it runs nightly
+# on dev and on PRs that touch `formal/`: a source change that breaks a twin shows up the next night.
+on:
+  pull_request:
+    paths:
+      - "formal/**"
+      - ".github/workflows/formal-spec.yaml"
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: formal-spec-${{ github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  formal-spec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Generate the core prompt
+        working-directory: apps/core
+        run: bun run scripts/compaction-prompt.ts
+
+      - name: Restore the Lean toolchain and build
+        # Recordings under formal/.lake/conform are made fresh each run and stay out of the cache.
+        id: lean-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.elan
+            formal/.lake/build
+            formal/.lake/packages
+          key: formal-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/lake-manifest.json') }}-${{ hashFiles('formal/**/*.lean', 'formal/lakefile.toml') }}
+          restore-keys: |
+            formal-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/lake-manifest.json') }}-
+            formal-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-
+
+      # elan reads formal/lean-toolchain and installs that exact Lean. The installer is pinned to
+      # the v4.2.4 release commit.
+      - name: Install elan
+        run: |
+          if [[ ! -x "$HOME/.elan/bin/elan" ]]; then
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
+              | sh -s -- -y --default-toolchain none
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Record calls and compare every twin
+        run: bun formal/scripts/conform.ts --all
+
+      - name: Audit, replay and coverage
+        run: |
+          set -o pipefail
+          bun formal/scripts/check.ts | tee check.log
+          {
+            echo '```'
+            grep -A12 '^subsystem' check.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show the twins can fail
+        run: bun formal/scripts/twin-controls.ts
+
+      # Saved even when a twin fails, so the night a source change breaks one keeps its Lean build.
+      - name: Save the Lean toolchain and build
+        if: always() && steps.lean-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.elan
+            formal/.lake/build
+            formal/.lake/packages
+          key: ${{ steps.lean-cache.outputs.cache-primary-key }}

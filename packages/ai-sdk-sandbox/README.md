@@ -24,8 +24,9 @@ import {
   type BroodsSandboxDriver,
 } from "@broods/ai-sdk-sandbox";
 
-const driver: BroodsSandboxDriver =
-  createCoreHarnessDriver(/* runtime context */);
+const driver: BroodsSandboxDriver = createCoreHarnessDriver(
+  /* runtime context */
+);
 const sandbox = createBroodsSandbox({ driver });
 
 // Core passes `sandbox` to the selected AI SDK Harness adapter.
@@ -64,10 +65,7 @@ alone.
 
 The live Workdir integration test creates real Firecracker guests, exercises the
 driver lifecycle, and bootstraps upstream bridges through Workdir's authenticated
-WebSocket proxy. The current Claude Code and Codex adapters append their bridge
-token with a literal `?`; Broods carries a narrow patch for the latest adapter
-versions so provider URLs that already contain Workdir's authentication query
-parameter are merged with `&`.
+WebSocket proxy.
 
 ## Lambda MicroVM bridge
 
@@ -79,7 +77,7 @@ owns a loopback-only WebSocket proxy:
 
 ```mermaid
 flowchart LR
-  Adapter["Claude Code / Codex adapter"] -->|"ws://127.0.0.1/bridge/&lt;opaque&gt;<br/>agent_bridge_token query"| Proxy["Broods core proxy"]
+  Adapter["Claude Code / Codex adapter"] -->|"ws://127.0.0.1/bridge/&lt;opaque&gt;"| Proxy["Broods core proxy"]
   Proxy -->|"wss + lambda-microvms<br/>authentication + port subprotocols"| AWS["AWS MicroVM ingress"]
   AWS --> Bridge["Harness bridge in guest"]
 ```
@@ -91,8 +89,8 @@ flowchart LR
   returns generic connection errors.
 - A fresh port-scoped AWS token is minted inside core when the adapter connects,
   passed only as an upstream WebSocket subprotocol, and never logged.
-- The adapter's own `agent_bridge_token` query is forwarded to the guest bridge;
-  it is distinct from the AWS ingress credential.
+- The adapter authenticates to the guest bridge with its own Ed25519
+  challenge-response, distinct from the AWS ingress credential.
 
 `sandbox-microvm-harness.integration.test.ts` is opt-in because it creates real
 synthetic MicroVMs. With isolated AWS test credentials and image configuration,

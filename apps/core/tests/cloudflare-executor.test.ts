@@ -1,9 +1,4 @@
-/**
- * The cloudflare executor against a mocked bridge Worker: what it sends, when
- * it reserves, reuses and destroys a Container, and which instance rows it
- * mirrors for metering. The bridge itself needs workerd and Docker, so it is
- * not run here.
- */
+// The bridge Worker is mocked: running it needs workerd and Docker.
 
 import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { drainInFlight } from "../src/shared/in-flight.ts";
@@ -15,7 +10,6 @@ import {
 } from "../src/harness/sandbox/cloudflare-executor.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
 
-// A successful bridge exec answer, in the shared exec contract's shape.
 const EXEC_OK = {
   ok: true,
   exit_code: 0,
@@ -105,8 +99,10 @@ beforeEach((): void => {
     sandboxInstances,
     "upsertSandboxInstance",
   ).mockImplementation(
-    async (_plane, _provider, key, _id, _meta, options): Promise<void> => {
+    async (_plane, _provider, key, _id, _meta, options): Promise<boolean> => {
       mirrored.push(`upsert ${key} ${options?.ephemeral === true}`);
+
+      return true;
     },
   );
   const removeSpy = spyOn(
@@ -136,8 +132,6 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
     code: "echo ok",
     timeoutSeconds: 10,
     outputLimitBytes: 1024,
-    envVars: { PATH: "/evil", CALL_VAR: "b" },
-    args: ["one"],
     principal: { accountId: "acct", agentId: "agent", runToken: "tok" },
   });
   await drainInFlight();
@@ -153,7 +147,7 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   );
   expect(exec?.authorization).toBe("Bearer bridge-key");
   expect(exec?.body).toMatchObject({
-    env: { ACCOUNT_VAR: "a", CALL_VAR: "b", BROODS_AGENT_ID: "agent" },
+    env: { ACCOUNT_VAR: "a", BROODS_AGENT_ID: "agent" },
     timeoutMs: 10_000,
     idleTimeoutSeconds: 70,
     enableInternet: false,
@@ -161,7 +155,7 @@ it("runs an ephemeral command on the bridge, meters it and destroys its containe
   });
   const argv = exec?.body?.argv;
   if (!Array.isArray(argv)) throw new Error("exec body has no argv");
-  expect(argv.slice(-3)).toEqual(["/workspace", "echo ok", "one"]);
+  expect(argv.slice(-3)).toEqual(["bash", "/workspace", "echo ok"]);
   expect(destroy?.method).toBe("DELETE");
   expect(destroy?.url).toBe(exec?.url.replace(/\/exec$/, ""));
   const id = exec?.url.split("/").at(-2);
@@ -180,10 +174,8 @@ it("reserves one persistent container, keeps it across runs and mirrors it", asy
   expect(calls.map((call): string => call.method)).toEqual(["POST", "POST"]);
   expect(calls[0]?.url).toBe(calls[1]?.url);
   expect(calls[0]?.url).toContain(`/v1/sandboxes/${stored}/exec`);
-  expect(mirrored).toEqual([
-    "upsert acct:workspace false",
-    "upsert acct:workspace false",
-  ]);
+  // The second run's refresh is unchanged and inside the minute, so it is not sent.
+  expect(mirrored).toEqual(["upsert acct:workspace false"]);
 });
 
 it("never mirrors a reservation whose first start failed, so it is not billed", async (): Promise<void> => {
@@ -270,7 +262,6 @@ it("refuses a plain-HTTP bridge outside loopback, since every call carries the k
   expect(cloudflareConnection().baseURL).toBe("http://127.0.0.1:8795");
 });
 
-// Lets the queued mirror writes, which run off the command's path, settle.
 async function settled(): Promise<void> {
   await new Promise((resolve): void => {
     setTimeout(resolve, 0);

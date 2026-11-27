@@ -1,21 +1,20 @@
 import type { AsyncStatus } from "../../../packages/broods/src/types.ts";
 import type { ConnectionStartResult } from "../../../packages/convex/model/connections.ts";
-import { assertStep, runToTerminal, type VerifyContext } from "../harness.ts";
+import {
+  OK_AGENT,
+  assertStep,
+  runToTerminal,
+  type VerifyContext,
+} from "../harness.ts";
 
-/**
- * Connections end to end, short of the providers: a `chatgpt` run with no
- * connection fails asking for one (core reads it through Convex), `start`
- * answers ChatGPT's consent screen through the gateway, and a disconnect
- * with nothing connected answers false. Signing in needs a real browser and account, so
- * the code exchange is covered by the Convex tests against a stub.
- */
+// Signing in needs a real browser and account; Convex tests cover the code exchange on a stub.
 export async function connections(context: VerifyContext): Promise<void> {
   const key = `connections-${context.runId}`;
   const { agentId } = await context.account.createAgent({
     name: key,
     config: {
       model: { provider: "chatgpt", modelId: "gpt-5.5" },
-      instructions: "Reply with the single word OK.",
+      agent: OK_AGENT,
     },
   });
   const unsigned = await context.measure(

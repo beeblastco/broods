@@ -1,16 +1,8 @@
-/**
- * Dashboard-facing sandbox lifecycle actions. The dashboard reads instances via
- * `sandboxInstances.listForActiveOrg` (live) and drives suspend/resume/terminate
- * plus bounded terminal commands here. Each action proxies to broods's account-
- * manage service endpoint with the shared service-auth secret; broods owns the
- * provider credentials + lifecycle and writes the resulting status back into Convex.
- * Mirrors `agent/cronsPublic.ts`.
- */
-
 import { v } from "convex/values";
 import { action, type ActionCtx } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { authKit } from "../auth";
+import { ClientError } from "../model/clientError";
 import { serviceEnv, serviceHeaders } from "../model/serviceBridge";
 
 export const createSnapshot = action({
@@ -29,11 +21,6 @@ export const createSnapshot = action({
   },
 });
 
-/**
- * Mints a short-lived sealed ticket for a live PTY terminal on a reserved
- * sandbox instance. The browser passes the opaque token to the public gateway's
- * terminal WebSocket; broods resumes a suspended instance first when needed.
- */
 export const openTerminal = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.object({
@@ -150,11 +137,7 @@ export const runSandboxCommand = action({
   },
 });
 
-/**
- * Suspends a reserved sandbox instance, preserving disk+memory while freeing
- * compute. The row parks in `suspending` for the duration so the dashboard can lock
- * the toggle; broods writes `suspended`, and a failed suspend rolls back to running.
- */
+// `suspending` locks the dashboard toggle until core writes `suspended`.
 export const suspendSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
@@ -171,7 +154,6 @@ export const suspendSandbox = action({
   },
 });
 
-/** Terminates a sandbox instance and drops its reservation + registry row. */
 export const terminateSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
@@ -182,11 +164,6 @@ export const terminateSandbox = action({
   },
 });
 
-/**
- * Actor metadata carried through the service-auth hop for lifecycle audit rows.
- * @param ctx the action context.
- * @returns the current dashboard user, or an unknown dashboard actor.
- */
 async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
   const user = await authKit.getAuthUser(ctx);
   if (!user) {
@@ -201,15 +178,6 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
   };
 }
 
-/**
- * Resolves the caller's active account and POSTs a sandbox lifecycle action to
- * broods. broods runs the provider call then writes the new status into Convex.
- * @param ctx the action context.
- * @param sandboxId the sandbox config the instance belongs to.
- * @param reservationKey the broods reconnection key identifying the instance.
- * @param op the lifecycle verb (suspend|resume|terminate|snapshot|refresh|exec|terminal).
- * @throws when no account resolves or broods returns a non-2xx response.
- */
 async function callLifecycle(
   ctx: ActionCtx,
   sandboxId: string,
@@ -225,11 +193,14 @@ async function callLifecycle(
   extra?: Record<string, unknown>,
 ): Promise<unknown> {
   // Sandbox control runs commands and destroys state: admin only.
-  const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+  const account = await ctx.runQuery(api.dashboardReads.activeAccount, {
     requiredRole: "admin",
   });
   if (!account) {
-    throw new Error("Sandboxes can only be controlled by an org admin.");
+    throw new ClientError(
+      "Sandboxes can only be controlled by an org admin.",
+      "forbidden",
+    );
   }
   const controllable = await ctx.runQuery(
     internal.sandbox.instances.isControllable,
@@ -257,9 +228,7 @@ async function callLifecycle(
     },
   );
   if (res.status === 404 && op === "refresh") {
-    // The sandbox config behind this instance row was deleted, so broods can
-    // no longer act on it. Drop the orphaned mirror row so the dashboard
-    // heals on refresh instead of erroring forever.
+    // The config behind this row is gone: drop the orphan so the dashboard heals.
     await ctx.runMutation(internal.sandbox.instances.remove, {
       accountId: account.accountId as never,
       reservationKey: reservationKey,
@@ -279,16 +248,15 @@ async function callLifecycle(
   return JSON.parse(text);
 }
 
-// Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
-// Never throws: `callLifecycle` is what enforces access and reports failures, so a
-// marker write must not fail a request nor mask the error it is rolling back from.
+// Never throws: `callLifecycle` enforces access and reports failures, so a marker
+// write must not fail a request nor mask the error it is rolling back from.
 async function markInstance(
   ctx: ActionCtx,
   reservationKey: string,
   status: "running" | "suspending",
 ): Promise<void> {
   try {
-    const account = await ctx.runQuery(api.org.orgs.getActiveAccount, {
+    const account = await ctx.runQuery(api.dashboardReads.activeAccount, {
       requiredRole: "admin",
     });
     if (!account) return;
@@ -297,6 +265,9 @@ async function markInstance(
       accountId: account.accountId as never,
       reservationKey: reservationKey,
       status: status,
+      // A rollback undoes only its own marker: a lost reply can follow core's `suspended` write.
+      onlyFrom: status === "running" ? "suspending" : "running",
+      observed: status === "running",
     });
   } catch (err) {
     console.warn("sandbox instance status marker failed", err);

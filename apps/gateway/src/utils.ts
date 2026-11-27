@@ -6,6 +6,7 @@ export {
   withRequestId,
 } from "../../../packages/convex/model/requestId.ts";
 export {
+  json,
   jsonError,
   rateLimitHeaders,
 } from "../../../packages/convex/model/httpJson.ts";
@@ -19,29 +20,17 @@ export type GatewayLimits = {
 };
 
 export const decoder = new TextDecoder();
-/** Subprotocol the gateway selects so a token-bearing handshake completes. */
 const WEBSOCKET_SUBPROTOCOL = "broods.v1";
-/** `Sec-WebSocket-Protocol` entry prefix that carries the credential. */
 const WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX = "broods.token.";
+// Mirrors convex/model/userToken (a test holds them equal) so the image needs no file from it.
+export const USER_TOKEN_HEADER = "x-broods-user-token";
+const USER_TOKEN_SUBPROTOCOL_PREFIX = "broods.user.";
 const maxBunIdleTimeoutSeconds = 255;
 
-/** The message from either shape core puts in `error`: envelope or plain text. */
 export function errorText(
   error: string | ApiError | undefined,
 ): string | undefined {
   return typeof error === "string" ? error : error?.message;
-}
-
-export function json(payload: unknown, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
-
-  return new Response(JSON.stringify(payload), {
-    ...init,
-    headers: headers,
-  });
 }
 
 export function parseJson(value: string): unknown {
@@ -65,12 +54,7 @@ export function normalizeBaseUrl(value: string): string {
     : `https://${trimmed}`;
 }
 
-/**
- * WebSocket credential: the Authorization header, else the token carried as a
- * `broods.token.<token>` entry in `Sec-WebSocket-Protocol` (browsers cannot
- * set headers on an upgrade). A `?token=` query parameter is ignored, with a
- * warning: query strings end up in access logs.
- */
+// Browsers cannot set upgrade headers, hence the subprotocol; ?token= would land in access logs.
 export function websocketToken(request: Request): string {
   const token = (
     bearerToken(request.headers.get("authorization")) ??
@@ -87,12 +71,18 @@ export function websocketToken(request: Request): string {
   return token;
 }
 
-/**
- * Response headers for an upgrade. A client that offered subprotocols fails
- * the handshake unless the server selects one, so `broods.v1` is echoed back;
- * the token entry is never echoed. Undefined, never `{}`, when `broods.v1`
- * was not offered: Bun's `server.upgrade` throws on an empty headers object.
- */
+export function websocketUserToken(request: Request): string | undefined {
+  const token = (
+    request.headers.get(USER_TOKEN_HEADER) ??
+    subprotocolToken(request, USER_TOKEN_SUBPROTOCOL_PREFIX) ??
+    ""
+  ).trim();
+
+  return token || undefined;
+}
+
+// A client that offered subprotocols fails the handshake unless one is selected; never the token.
+// undefined, never `{}`: Bun's `server.upgrade` throws on an empty headers object.
 export function websocketUpgradeHeaders(
   request: Request,
 ): HeadersInit | undefined {
@@ -138,12 +128,8 @@ export function isOriginAllowed(
   });
 }
 
-/**
- * Rate-limit key for a request. Trusts the rightmost forwarded address added by
- * the ingress, never client input: an inbound `X-Real-Ip`, or a hop the caller
- * prepended to `X-Forwarded-For`, would otherwise let one attacker mint a fresh
- * limiter bucket per request. Matches `apps/core/src/server.ts`.
- */
+// Only the ingress's rightmost hop: X-Real-Ip or a prepended hop would let one attacker mint a
+// fresh limiter bucket per request. Matches `apps/core/src/server.ts`.
 export function clientIp(
   request: Request,
   fallback: string | undefined,
@@ -154,8 +140,7 @@ export function clientIp(
     forwarded
       ?.split(",")
       .map((entry) => entry.trim())
-      .filter(Boolean)
-      .pop() ||
+      .findLast(Boolean) ||
     fallback ||
     "unknown"
   );
@@ -228,10 +213,13 @@ function positiveInt(value: string | undefined, fallback: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function subprotocolToken(request: Request): string | null {
+function subprotocolToken(
+  request: Request,
+  prefix: string = WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX,
+): string | null {
   const entry = offeredSubprotocols(request).find((candidate) =>
-    candidate.startsWith(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX),
+    candidate.startsWith(prefix),
   );
 
-  return entry ? entry.slice(WEBSOCKET_TOKEN_SUBPROTOCOL_PREFIX.length) : null;
+  return entry ? entry.slice(prefix.length) : null;
 }

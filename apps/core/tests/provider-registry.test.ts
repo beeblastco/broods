@@ -1,13 +1,6 @@
-/**
- * The provider registry is the one place a model provider is declared. These
- * tests pin it to the shared name list and check that every entry really
- * resolves to a Vercel AI SDK factory, which `satisfies` alone cannot prove.
- */
-
 import { describe, expect, it } from "bun:test";
 import { generateText } from "ai";
 import {
-  modelProviderFactories,
   modelSettingsFromModelConfig,
   resolveConfiguredModel,
   resolveTranscriptionModel,
@@ -18,7 +11,6 @@ import {
 } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "@broods/convex/model/agentRules";
 
-// What a provider refuses to be built without, besides the API key.
 const PROVIDER_REQUIRED_SETTINGS: Partial<
   Record<AccountModelProviderName, Record<string, string>>
 > = {
@@ -32,16 +24,6 @@ const API_KEY_PROVIDER_NAMES = ACCOUNT_MODEL_PROVIDER_NAMES.filter(
 );
 
 describe("model provider registry", () => {
-  it("has a live AI SDK factory for every API-key provider name", () => {
-    const factories = modelProviderFactories();
-    expect(Object.keys(factories).sort()).toEqual(
-      [...API_KEY_PROVIDER_NAMES].sort(),
-    );
-    for (const name of API_KEY_PROVIDER_NAMES) {
-      expect(typeof factories[name]).toBe("function");
-    }
-  });
-
   it.each(API_KEY_PROVIDER_NAMES)(
     "builds a %s model from an API key and its own required settings",
     (name) => {
@@ -89,8 +71,7 @@ describe("model provider registry", () => {
     },
   );
 
-  // The OpenAI-compatible gateway route is pinned in harness.test.ts, which
-  // mocks that factory for every file after it.
+  // The gateway route is pinned in harness.test.ts, whose factory mock leaks into later files.
   it("sends Cloudflare to Workers AI when no gateway is named", async () => {
     const calls: string[] = [];
     const realFetch = globalThis.fetch;
@@ -122,8 +103,7 @@ describe("model provider registry", () => {
     }
   });
 
-  // The gateway's OpenAI-compatible route refuses Workers AI messages whose
-  // content is an array of parts, which every Broods turn sends.
+  // The gateway's OpenAI-compatible route refuses the array-of-parts content every turn sends.
   it("sends a Workers AI model through the gateway's Workers AI route", async () => {
     const requests: Request[] = [];
     const realFetch = globalThis.fetch;
@@ -206,7 +186,6 @@ describe("model provider registry", () => {
   it("passes provider-owned settings through validation untouched", () => {
     const config = normalizeAgentConfig({
       model: { provider: "vertex", modelId: "gemini-2.5-flash" },
-      // `project` and `location` are Vertex's own; broods declares neither.
       provider: {
         vertex: { apiKey: "sk-test", project: "p", location: "us-central1" },
       },
@@ -221,53 +200,81 @@ describe("model provider registry", () => {
   });
 });
 
-// That the three transcribing providers still expose `transcription` is pinned
-// by the type of `PROVIDER_TRANSCRIPTION`, not by a test: a rename fails
-// `bun run check`, which no module mock can hide. What is left to check is that
-// a provider outside that map, or one that cannot be built, loses its
-// transcript instead of throwing into the message it arrived on.
+// Which providers transcribe is pinned by the type of `TRANSCRIPTION_FACTORIES`, not here.
 describe("transcription model resolution", () => {
-  it("has none for a provider that ships no speech-to-text", () => {
+  it("names the provider that ships no speech-to-text", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
         provider: { anthropic: { apiKey: "sk-test" } },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "anthropic has no transcription model" });
   });
 
-  it("has none when the provider is configured without credentials", () => {
+  it("names the missing credentials of the agent's own provider", () => {
     expect(
       resolveTranscriptionModel({
         model: { provider: "openai", modelId: "gpt-5" },
       }),
-    ).toBeUndefined();
+    ).toEqual({ reason: "config.provider.openai is required" });
+  });
+
+  it("transcribes on config.transcription.provider with its own key", () => {
+    const resolved = resolveTranscriptionModel({
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      transcription: { provider: "openai" },
+      provider: {
+        anthropic: { apiKey: "sk-test" },
+        openai: { apiKey: "sk-test" },
+      },
+    });
+
+    expect("model" in resolved && resolved.model).toMatchObject({
+      provider: "openai.transcription",
+      modelId: "whisper-1",
+    });
+  });
+
+  it("transcribes on a speech-to-text only provider", () => {
+    const resolved = resolveTranscriptionModel({
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      transcription: { provider: "fishaudio" },
+      provider: {
+        anthropic: { apiKey: "sk-test" },
+        fishaudio: { apiKey: "sk-test" },
+      },
+    });
+
+    expect("model" in resolved && resolved.model).toMatchObject({
+      provider: "fish-audio.transcription",
+      modelId: "transcribe-1",
+    });
+  });
+
+  it("names the missing credentials of the transcription provider", () => {
+    expect(
+      resolveTranscriptionModel({
+        model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+        transcription: { provider: "openai" },
+        provider: { anthropic: { apiKey: "sk-test" } },
+      }),
+    ).toEqual({ reason: "config.provider.openai is required" });
   });
 });
 
-// The transcription id rides in config.model but is not a language-model
-// setting, so it must not reach the call options the agent's own model is run
-// with. An unknown key there is the provider's error, not ours.
 describe("modelSettingsFromModelConfig", () => {
-  it("leaves the transcription model out of the language model's settings", () => {
+  it("keeps the agent's own retry count and timeouts", () => {
+    const timeout = { stepMs: 120_000, firstChunkMs: 30_000 };
     expect(
       modelSettingsFromModelConfig({
         model: {
           provider: "openai",
           modelId: "gpt-5",
-          transcriptionModelId: "gpt-4o-mini-transcribe",
-          temperature: 0.2,
+          maxRetries: 1,
+          timeout: timeout,
         },
       }),
-    ).toEqual({ maxRetries: 5, temperature: 0.2 });
-  });
-
-  it("keeps the agent's own retry count", () => {
-    expect(
-      modelSettingsFromModelConfig({
-        model: { provider: "openai", modelId: "gpt-5", maxRetries: 1 },
-      }),
-    ).toEqual({ maxRetries: 1 });
+    ).toEqual({ maxRetries: 1, timeout: timeout });
   });
 });
 

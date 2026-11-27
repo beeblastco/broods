@@ -45,10 +45,10 @@ flowchart LR
 Logs and spans carry the same attributes, so a span, its logs and the live stream correlate: `account_id`, `project`, `stage`, `endpoint_id`, `agent_id`, `conversation_key`, `trace_id`. NATS subjects encode the routable part (`src/shared/nats.ts`):
 
 ```text
-v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
+<env>.v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
-The `OBSERVABILITY` stream binds `v1.*.*.*.logs.>` and `v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
+`<env>` is the deployment's `DEPLOYMENT_ENVIRONMENT`, so dev and production never share a subject. The `OBSERVABILITY_<env>` stream binds `<env>.v1.*.*.*.logs.>` and `<env>.v1.*.*.*.traces.>`, file-backed, keeping 2 hours, 512 MiB and 20,000 messages per subject. Nothing purges it early. Loki and Tempo own everything older.
 
 ## The observability socket
 
@@ -64,7 +64,7 @@ sequenceDiagram
 
   C->>G: WS upgrade to /v1/projects/:project/stages/:stage/observability/ws
   G->>Core: POST /v1/internal/observability-scope
-  Core-->>G: account, project, stage
+  Core-->>G: account, project, stage, ticket expiry
   G->>G: 403 scope_mismatch if the path differs
   C->>G: subscribe logs, backfill: n
   G->>N: ordered consumer, last 30 minutes
@@ -75,17 +75,34 @@ sequenceDiagram
   G-->>C: closing backfill message, error set on failure
 ```
 
-Traces take the same path with a Tempo search in place of the Loki query.
+Traces take the same path with a Tempo search in place of the Loki query. A traces subscribe may carry `agentId`: the search then adds an `agent_id` tag, and `ready` echoes `agentId`. A gateway that predates the field ignores it and sends no echo, so `broods runs --agent` falls back to scanning the newest 500 traces and filtering them itself.
 
-| Limit               | Value                                                                                               |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| Credential          | stage ticket `bdts_` (15 min). The runtime key is refused                                           |
-| Loki backfill steps | 1 h in 5 s, 1 day in 10 s, 30 days in 15 s. Stops at the first step that fills a page or times out  |
-| Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12   |
-| `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min |
-| Backpressure        | over 512 KiB unsent: live messages dropped, backfill waits up to 5 s                                |
+Each core log line carries a `logId`, so a client drops the Loki copy of a line it already got live and keeps two lines that only look alike.
+
+| Limit               | Value                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Credential          | stage ticket `bdts_` (15 min), or a read-only `bdob_` (5 min at most, [the dock agent](security.md#the-dock-agent-reading-logs)). The runtime key is refused. Closes `4419` at expiry; reconnect fresh |
+| Revalidation        | core asked again every minute; a refusal closes `4401`, an outage keeps the socket                                                                                                                     |
+| Loki backfill steps | 1 h in 5 s, 1 day in 10 s, 30 days in 15 s. Stops at the first step that fills a page or times out                                                                                                     |
+| Tempo backfill      | 7 day search in 15 s, then 6 trace lookups at a time, 5 s each, sent newest first in chunks of 12                                                                                                      |
+| `fetchTrace`        | one trace by id, filtered to the socket's scope (Tempo's lookup is not tenant-scoped), shared 5 min                                                                                                    |
+| Backpressure        | over 512 KiB unsent: live messages dropped, backfill waits up to 5 s                                                                                                                                   |
+
+`ready` carries `seq`, a cursor for the point the live relay starts after, and each live `log` and `span` carries its own. The cursor is the stream sequence sealed under a key for that stage: the stream is shared by every tenant, so a raw sequence would show its gaps, and with them other tenants' traffic rate. A client that kept its entries reconnects with `{ afterSeq }` in place of `backfill`: the relay starts after that point, so nothing is replayed and no history is read again. The dashboard does this when its history loaded and its cursor is under 30 minutes old (the stream keeps 2 hours); a DEBUG view and a sandbox tail always load in full, since their lines never ride NATS. An `afterSeq` the gateway cannot open or the stream cannot vouch for falls back to the 30 minute replay: one sealed for another stage, one past the stream's last sequence, one whose next entries were already evicted, or any cursor when the stream is under 30 minutes old (it was recreated).
+
+Frames are compressed with `permessage-deflate` when the client offers it, as every browser does: a trace backfill is about a fifth of its JSON on the wire. The terminal and machine relays are sent as they come.
 
 A subscribe with `backfill` always gets a closing `backfill` message, with `error` set when Loki or Tempo failed, so a client can tell an empty stage from a failed query. When the same span arrives from NATS and Tempo, the dashboard keeps the richer or terminal copy, since Tempo truncates large attributes.
+
+## Bounded history
+
+A subscribe can carry `range: { from, to }` in epoch milliseconds, with `from < to` and a maximum width of 30 days. Each bounded backfill frame echoes `range` so clients reject a gateway that ignored it; the closing frame carries `nextTo` when older history remains in that range. Continue with the original `from` and the returned `to`; an empty page is not necessarily the end. An error preserves partial rows but does not certify coverage, so retry the same page.
+
+The dashboard requests 50 rows and starts at one hour. Loki receives one backward query covering at most one hour, with a 10-second budget and one extra row to detect truncation. Tied millisecond groups stay on the next page; a group larger than the page fails explicitly instead of skipping records. Sandbox history uses the same bounded path without opening its live poll for a history-only read.
+
+Tempo 2.7 returns arbitrary matches when a search fills its limit. Bounded searches halve the newest one-hour window until all matches fit, with a shared 12-second search budget. Older traces overlapping the window can consume search slots: the gateway increases the summary limit up to 501 to establish complete coverage before filtering by start time. If coverage remains uncertain, it returns an error without advancing the cursor. Each trace-detail batch starts only while that budget remains; its existing five-second detail timeout can finish after the budget. Full trace details still load in batches of six, using the existing shared cache. A saturated one-second window returns an explicit error. Older clients without `range` retain the widening Loki and seven-day Tempo behavior above.
+
+The SDK waits up to 15 seconds for `ready`, then allows 45 seconds between history frames so a backend failure can reach the caller. This does not extend the hosted MCP runner's own execution limit. Bounded queries reduce the backend work; increasing the SDK timeout alone does not fix it.
 
 ## Traces
 
@@ -107,10 +124,12 @@ stateDiagram-v2
 OTel only has ok and error, so the state rides in `task.state` with `task.waiting_on` (`question`, `approval`, `subagent`, `tool`), and the gateway restores it on backfill.
 
 - The root and every model step record `model.system`, the whole assembled prompt, with `model.system_part_count` and `model.system_chars`.
-- `agent.environment` is the live `<environment>` block (clock, reply target, where `bash` can run). It is added after the history, never stored in it, and recorded on the trace. The system prompt has no clock, so it stays a cached prefix.
+- `agent.environment` is the live `<environment>` block (clock, reply target, where `bash` can run). It is added after the history, never stored in it, and recorded on the trace. The system prompt has no clock, so it stays a cached prefix. On Anthropic and on the `openai` provider from GPT-5.6, a prompt cache breakpoint ends the stored system prompt and the history, right before this block, so the next run reads both from cache. Azure and ChatGPT plan runs get no OpenAI breakpoint. A `custom` endpoint serving a GPT model (`gpt-6-luna`, or a proxy id like `openai/gpt-6-luna`) gets the conversation's `prompt_cache_key` in the request body, so a long run keeps landing on the server that holds its prefix. A custom endpoint serving Claude (`anthropic/claude-sonnet-5`) gets Anthropic's `cache_control` on the same two breakpoints and on each step's latest message, the convention Claude proxies such as LiteLLM follow. Other custom models get neither, since their servers cache prefixes on their own. Each step's `model.cached_input_tokens` shows what was read.
 - `tool.input` and `tool.output` hold at most 32,000 characters. Images and files show type and size, not bytes.
 - Each model step splits into time to first token, streaming and tool wait.
+- A compaction is a `phase.compaction` span with the messages it folded and its summary calls' `model.*` tokens, priced like a step. An auto-compaction sits under the turn that triggered it and adds its tokens to that run's usage row. `/compact` never runs the model loop, so it is a root of its own with a usage row of its own. Both log `session.compacted` with the same counts.
 - The Tracing tab shows one row per request: runs sharing its `task.id`, runs it resumed (`task.root_id`) and its subagents (`parent.trace_id`) nest under it. A failed `task` or `cron` root has a Continue button that posts `continue: true`.
+- The selected run's waterfall has a time axis. While the run is live, its clock ticks every second, so bars grow toward a now line. A failed span turns red, with its `error` on a line under it. A span with `model.attempts` above 1 or a `tool.retry.count` reads Retried, with its `model.retry_wait_ms` at the start of its bar. Each parent counts the issues under it, the header counts failed and retried spans, and the axis marks when each issue happened.
 - Config mutations and run completion go to the audit ledger; see [security](security.md#audit-ledger).
 
 ## Sandbox output
@@ -178,16 +197,19 @@ Core writes compact JSON lines for metric-bearing events, so CloudWatch Logs Ins
 | `model.invocation.finished`, `.failed` | status, run `durationMs`, total `usage`, step and tool counts, `toolsUsed`, `toolUsage`        |
 | `tool.call.finished`, `.failed`        | `toolName`, `toolCallId`, `durationMs`                                                         |
 | `model.step.warnings`                  | provider warnings                                                                              |
+| `session.compacted`                    | summary `usage` over all its calls, `modelCalls`, messages folded, `durationMs`                |
 
 Common fields: `accountId`, `agentId`, `conversationKey`, `eventId`, `modelProvider`, `modelId`, `stepNumber`, `durationMs`.
 
-A `tool.call` span for off-process work carries `tool.compute.type` and `tool.compute.cpu_usec`: `sandbox` (host cgroup), `lambda` (image `getrusage`) or `mcp-sandbox` (hosted MCP, an even share of its batch's CPU; Cloudflare reports none). The same samples sum per task into `sandboxUsage` rows.
+A `tool.call` span for off-process work carries `tool.compute.type` and `tool.compute.cpu_usec`: `sandbox` (host cgroup), `lambda` (image `getrusage`) or `mcp-sandbox` (hosted MCP, an even share of its batch's CPU; Cloudflare reports none). The same samples sum per task into the `sandboxUsage` field of `taskUsage`.
+
+A rate-limited MCP call waits out the window and retries inside the call, up to three times. Its span then carries `tool.retry.count` and `tool.retry.wait_ms`, so a slow call shows whether the server or the waits took the time. A failed `tool.call` has no `tool.output`; its error text is the span's `error` (the OTel status message).
 
 Prompts, full tool payloads, request and response bodies and response headers are not logged by default.
 
 ## Security
 
-- One chokepoint. `log.ts` redacts by key name with `isSecretName` (`packages/convex/model/secretNames.ts`) and scrubs every string against sensitive env values and the run's own secret values. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets and every `b`-prefixed Broods credential (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brt_`).
+- One chokepoint. `log.ts` redacts by key name with `isSecretName` (`packages/convex/model/secretNames.ts`) and scrubs every string against sensitive env values and the run's own secret values. Every log line and span attribute (`task.input`, `model.input`, `tool.input`, ...) goes through it. A run's secret values include every `envVars` and `runtimeVariables` value, except one named `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME` or ending in `EMAIL` that is not secret by `isSecretName`, so a commit author is not scrubbed from every line. Pattern rules also catch `Bearer` and `Basic` values, query-string secrets, every `b`-prefixed Broods credential (`bsk_`, `bask_`, `bpdk_`, `bcli_`, `bcode_`, `bsts_`, `bdts_`, `brt_`) and well-known third-party credentials pasted into a message: GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), OpenAI and Anthropic `sk-`, AWS access key ids (`AKIA`, `ASIA`), Slack `xox*-` and `xapp-`, Google `AIza` keys and `ya29.` access tokens, and JWTs.
 - The forwarder applies only the pattern half: it cannot know a run's secret values. A guest that echoes an injected secret shows it to its own account and to operators. Treat sandbox stdout as untrusted.
 - A sandbox tail is scoped like any socket: the Loki selector comes from the ticket's account, project and stage, and `sandboxId` only narrows it. It must be the UUID shape core mints.
 - Retention: CloudWatch keeps the MicroVM group 30 days, Loki keeps 90.

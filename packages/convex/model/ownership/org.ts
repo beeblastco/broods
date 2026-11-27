@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import { ClientError } from "../clientError";
 
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -13,7 +14,7 @@ export function orgRoleMeets(role: OrgRole, requiredRole?: OrgRole): boolean {
   return !requiredRole || ROLE_RANK[role] >= ROLE_RANK[requiredRole];
 }
 
-/** The user row behind an auth id, or null before the WorkOS webhook has synced it. */
+/** Null until the WorkOS webhook has synced the user. */
 export async function userByAuthId(
   ctx: QueryCtx | MutationCtx,
   authId: string,
@@ -24,7 +25,6 @@ export async function userByAuthId(
     .unique();
 }
 
-/** The org behind an account; null for a service account bound to no org. */
 export function orgIdOf(
   ctx: QueryCtx | MutationCtx,
   account: Doc<"accounts">,
@@ -47,12 +47,7 @@ export async function getOrgMembership(
   return membership ?? null;
 }
 
-/**
- * Returns the user's explicitly-chosen active org when set and still valid,
- * otherwise the oldest membership. Oldest, not newest, because any org admin
- * can add a user without consent, and that membership is always newer than the
- * user's own. Null if the user belongs to none.
- */
+// Falls back to the oldest membership, most likely the user's own org.
 export async function getActiveOrgForUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
@@ -78,6 +73,23 @@ export async function getActiveOrgForUser(
   return org ?? null;
 }
 
+// The dashboard shell already watches the user row, so the invitation notice costs no extra
+// subscription on every page.
+export async function syncInvited(
+  ctx: MutationCtx,
+  userId: Id<"users"> | undefined,
+): Promise<void> {
+  const user = userId && (await ctx.db.get(userId));
+  if (!user) return;
+  const waiting = await ctx.db
+    .query("orgInvitations")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .first();
+  const invited = waiting ? true : undefined;
+  if (user.invited !== invited)
+    await ctx.db.patch(user._id, { invited: invited });
+}
+
 export async function requireOrgMember(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<"orgs">,
@@ -86,13 +98,35 @@ export async function requireOrgMember(
 ): Promise<Doc<"orgMembers">> {
   const membership = await getOrgMembership(ctx, orgId, userId);
   if (!membership) {
-    throw new Error("Not a member of this org");
+    throw new ClientError("Not a member of this org", "forbidden");
   }
   if (!orgRoleMeets(membership.role, requiredRole)) {
-    throw new Error(
+    throw new ClientError(
       `Role ${requiredRole} required; caller has ${membership.role}`,
+      "forbidden",
     );
   }
 
   return membership;
+}
+
+// `purgeUser` keeps these, still billed to and owned by the deleted user, so deletion waits.
+export async function sharedOwnedOrgs(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+): Promise<Doc<"orgs">[]> {
+  const owned = await ctx.db
+    .query("orgs")
+    .withIndex("by_ownerAuthId", (q) => q.eq("ownerAuthId", user.authId))
+    .collect();
+  const shared: Doc<"orgs">[] = [];
+  for (const org of owned) {
+    const members = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_orgId_and_userId", (q) => q.eq("orgId", org._id))
+      .collect();
+    if (members.some((member) => member.userId !== user._id)) shared.push(org);
+  }
+
+  return shared;
 }

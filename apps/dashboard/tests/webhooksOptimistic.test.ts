@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { OptimisticLocalStore } from "convex/browser";
-import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { applyWebhookEnabledToggle } from "../app/lib/webhooksOptimistic";
 
@@ -113,6 +112,3 @@ describe("applyWebhookEnabledToggle", () => {
     expect(written).toEqual([]);
   });
 });
-
-// Referenced so a rename of the query function fails this file too.
-expect(api.webhooks.listAgentWebhooks).toBeDefined();

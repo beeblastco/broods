@@ -1,9 +1,5 @@
 /// <reference types="vite/client" />
-/**
- * Deleting a canvas card deletes the dashboard row behind it, except a sandbox
- * config that still holds a reserved instance: dropping it would leave the
- * instance's `sandboxConfigId` naming nothing.
- */
+// Dropping a config a reserved instance holds would leave its `sandboxConfigId` naming nothing.
 
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
@@ -93,7 +89,7 @@ test("keeps an unreferenced sandbox config while an instance holds it", async ()
 
       await pruneOrphanedDashboardRows(ctx, account, stageId, []);
       const kept = await names();
-      // The sweeper's release removes the instance row, and the config goes with it.
+      // The sweeper's release takes the config with the instance row.
       await ctx.runMutation(internal.sandbox.instances.remove, {
         accountId: accountId,
         reservationKey: "reserved-key",

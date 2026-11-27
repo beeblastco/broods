@@ -53,28 +53,29 @@ Names are uppercase letters, digits and underscores. A sync fails, and writes no
 
 The agent's model, instructions, tools, and what it can reach. See [Agents](../guides/agents.md).
 
-| Field               | Description                                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `name`              | Unique per stage. Required                                                                               |
-| `description`       | Shown to parent agents choosing a subagent                                                               |
-| `provider`          | Credentials per model provider. See [providers](#model-providers)                                        |
-| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`, `transcriptionModelId`   |
-| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                            |
-| `harness`           | A `defineHarness()` value to replace the built-in loop                                                   |
-| `tools`             | Provider-executed tools, keyed by the provider's tool name                                               |
-| `mcp`               | MCP servers to enable, keyed by server name                                                              |
-| `connections`       | Channel connections the agent answers on                                                                 |
-| `sandboxes`         | Sandboxes it can use. The first is the default                                                           |
-| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                |
-| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`                                          |
-| `skills`            | `enabled`, `allowed` skill resources                                                                     |
-| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                     |
-| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox needs `image: "obscura"` and `allow-all` |
-| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                           |
-| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                  |
-| `policies`          | Policies that gate the agent. Each carries its own mode                                                  |
-| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                       |
-| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                             |
+| Field               | Description                                                                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`              | Unique per stage. Required                                                                                                                                                   |
+| `description`       | Shown to parent agents choosing a subagent                                                                                                                                   |
+| `provider`          | Credentials per model provider. See [providers](#model-providers)                                                                                                            |
+| `model`             | `provider`, `modelId`, call settings, `reasoning`, `providerOptions`, `output`                                                                                               |
+| `transcription`     | Speech-to-text for inbound audio: `provider` and `modelId`, both optional. See [voice transcription](../channels/index.md#voice-transcription)                               |
+| `agent`             | `system` prompt and `maxTurn`, the steps per turn. Default 30, `0` for no cap                                                                                                |
+| `harness`           | A `defineHarness()` value to replace the built-in loop                                                                                                                       |
+| `tools`             | Provider-executed tools, keyed by the provider's tool name                                                                                                                   |
+| `mcp`               | MCP servers to enable, keyed by server name                                                                                                                                  |
+| `connections`       | Channel connections the agent answers on                                                                                                                                     |
+| `sandboxes`         | Sandboxes it can use. The first is the default                                                                                                                               |
+| `workspaces`        | Workspaces it mounts, with optional per-workspace sandbox                                                                                                                    |
+| `subagent`          | `enabled`, `allowed`, `context`, `mode`, `stream`, `visibility`, `model`                                                                                                     |
+| `skills`            | `enabled`, `allowed` skill resources                                                                                                                                         |
+| `scheduler`         | `{ enabled: true }` gives the agent scheduling tools                                                                                                                         |
+| `browser`           | `{ enabled: true }` gives the agent `browse`. The first sandbox is a `lambda` sandbox with `image: "obscura"` and `allow-all`, or a `machine` sandbox with obscura installed |
+| `session`           | `pruning.enabled`, `autoCompaction.enabled`, `autoCompaction.maxContextLength`                                                                                               |
+| `hooks`             | Code hook callbacks and `webhooks` for lifecycle events                                                                                                                      |
+| `policies`          | Policies that gate the agent. Each carries its own mode                                                                                                                      |
+| `publicAccess`      | Open the agent to the runtime key. Default `false`                                                                                                                           |
+| `allowRunOverrides` | Let runtime-key callers send `system` and `model` overrides. Default `false`                                                                                                 |
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -92,15 +93,15 @@ export const myAgent = defineAgent({
 
 ### model
 
-| Field                                                                                | Description                                                                                                                               |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`, `modelId`                                                                | Which model to call                                                                                                                       |
-| `temperature`, `topP`, `topK`, `maxOutputTokens`, `seed`, `stopSequences`, `timeout` | AI SDK call settings                                                                                                                      |
-| `maxRetries`                                                                         | AI SDK retries, default `5`. A 429 waits as long as the provider asks, read from its headers or its error text, up to about 60s per retry |
-| `reasoning`                                                                          | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                   |
-| `providerOptions`                                                                    | Provider-specific options. They win over `reasoning` when both set thinking                                                               |
-| `output`                                                                             | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`            |
-| `transcriptionModelId`                                                               | Speech-to-text model for inbound audio, on the same provider                                                                              |
+| Field                                                                                                            | Description                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider`, `modelId`                                                                                            | Which model to call                                                                                                                              |
+| `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `maxOutputTokens`, `seed`, `stopSequences` | AI SDK call settings                                                                                                                             |
+| `timeout`                                                                                                        | AI SDK timeout: milliseconds, or `totalMs`, `stepMs`, `firstChunkMs`, `chunkMs`, `toolMs`, `tools`. See [Timeouts](../guides/agents.md#timeouts) |
+| `maxRetries`                                                                                                     | AI SDK retries, default `5`. A 429 waits as long as the provider asks, read from its headers or its error text, up to about 60s per retry        |
+| `reasoning`                                                                                                      | `provider-default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`                                                                          |
+| `providerOptions`                                                                                                | Provider-specific options. They win over `reasoning` when both set thinking. Refused with `config.harness`                                       |
+| `output`                                                                                                         | Structured output as `{ type: "object", schema }`, `array`, `choice`, `json` or `text`, with optional `name` and `description`                   |
 
 The provider-specific thinking keys are OpenAI `providerOptions.openai.reasoningEffort`, Anthropic `providerOptions.anthropic.thinking`, Google `providerOptions.google.thinkingConfig`, MiniMax `providerOptions.anthropic.thinking`. When a model does not support a level, the run logs a `model.step.warnings` event.
 
@@ -170,6 +171,7 @@ See [Tools](../guides/tools.md).
 | `mode`       | `"persistent"` | `"ephemeral"` keeps child conversations in memory only              |
 | `stream`     | `false`        | Publish child stream parts for WebSocket attach                     |
 | `visibility` | `"result"`     | What the parent sees, `full`, `result` or `none`                    |
+| `model`      | parent's       | Model for virtual subagents, merged over the parent's `model`       |
 
 See [Subagents](../guides/subagents.md).
 
@@ -230,23 +232,23 @@ export const codingAgent = defineAgent({
 
 Compute where `bash` and the file tools run. See [Sandboxes](../guides/sandboxes/index.md).
 
-| Field                  | Default    | Description                                                                                                                               |
-| ---------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `machine`, `custom`                                                        |
-| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                                 |
-| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                                      |
-| `timeout`              | 30         | Seconds per call, max 600                                                                                                                 |
-| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                              |
-| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider` |
-| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                               |
-| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                        |
-| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                               |
-| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                 |
-| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                         |
-| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                      |
-| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                           |
-| `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                      |
-| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, only `workspaceRoot` and `reservationKey`            |
+| Field                  | Default    | Description                                                                                                                                               |
+| ---------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`             | required   | `sandbox`, `lambda`, `daytona`, `e2b`, `vercel`, `cloudflare`, `worker`, `machine`, `custom`                                                              |
+| `permissionMode`       | `ask`      | `ask`, `edit` or `bypass`                                                                                                                                 |
+| `network`              | `deny-all` | `{ mode, allowDomains?, allowCidrs? }`, mode `allow-all`, `deny-all` or `restricted`                                                                      |
+| `timeout`              | 30         | Seconds per call, max 600, or 60 on `worker`                                                                                                              |
+| `size`                 | provider   | `tiny`, `xsmall`, `small`, `medium`, `large`                                                                                                              |
+| `image`                |            | `lambda` only: `obscura` or `browser` platform image variant. With `snapshot`, the variant it was built from. Not with `fallbackProvider`                 |
+| `snapshot`             | provider   | Image or snapshot to boot from, in the provider's format. See [Images](../guides/sandboxes/index.md#images)                                               |
+| `persistent`           | `false`    | Keep one long-lived machine per workspace or agent                                                                                                        |
+| `lifecycle`            |            | `idleTimeoutSeconds`, default 900, and `maxLifetimeSeconds`                                                                                               |
+| `onCreate`, `onResume` |            | Setup commands. Persistent sandboxes only                                                                                                                 |
+| `fallbackProvider`     |            | Second provider when the first is out of capacity. Ephemeral only                                                                                         |
+| `envVars`              |            | Variables for every run. Values may be `env("NAME")`                                                                                                      |
+| `runtimes`             |            | Advisory allow-list of `bash`, `python`, `node`                                                                                                           |
+| `outputLimitBytes`     | 65536      | Output kept per call                                                                                                                                      |
+| `options`              |            | Provider settings, plus `reservationKey` to share a persistent machine. On `lambda`, `cloudflare` and `worker`, only `workspaceRoot` and `reservationKey` |
 
 `custom` runs `bash` on your own server through one HTTP contract, named by `options.endpoint`; what it accepts and refuses is on [Your own server](../guides/sandboxes/custom.md).
 
@@ -264,11 +266,11 @@ export const lambdaSandbox = defineSandbox({
 
 Persistent files, mounted into a sandbox. See [Workspaces](../guides/workspaces.md).
 
-| Field         | Default              | Description                                                                                              |
-| ------------- | -------------------- | -------------------------------------------------------------------------------------------------------- |
-| `storage`     | `{ provider: "s3" }` | Managed bucket, or your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`                        |
-| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own  |
-| `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default |
+| Field         | Default              | Description                                                                                                                                                                                                |
+| ------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage`     | `{ provider: "s3" }` | Managed bucket, your own with `bucket`, `region`, `prefix`, `endpoint`, `auth`, or `{ provider: "disk" }` on a persistent `worker` sandbox. See [Disk workspaces](../guides/workspaces.md#disk-workspaces) |
+| `partitioned` |                      | `"conversation"` lets channels split the workspace per conversation, `"agent"` gives each agent its own                                                                                                    |
+| `harness`     |                      | `workspace.enabled` for the workspace prompt, `memory.enabled` for structured memory. Both on by default                                                                                                   |
 
 ```ts
 export const notes = defineWorkspace({
@@ -385,7 +387,6 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Discord     | `defineDiscordConnection`    | `defineDiscordChannel`    | `channelId`      |
 | GitHub      | `defineGitHubConnection`     | `defineGitHubChannel`     | `repo`           |
 | Linear      | `defineLinearConnection`     | `defineLinearChannel`     | `team`           |
-| Matrix      | `defineMatrixConnection`     | `defineMatrixChannel`     | `channelId`      |
 | Pancake     | `definePancakeConnection`    | `definePancakeChannel`    | `conversationId` |
 | Zalo        | `defineZaloConnection`       | `defineZaloChannel`       | `chatId`         |
 | WhatsApp    | `defineWhatsAppConnection`   | `defineWhatsAppChannel`   | `waId`           |
@@ -395,7 +396,7 @@ A connection holds one app's credentials. A channel names one room on that conne
 | Instagram   | `defineInstagramConnection`  | `defineInstagramChannel`  | `igsid`          |
 | Messenger   | `defineMessengerConnection`  | `defineMessengerChannel`  | `psid`           |
 
-Every connection also takes `allowedChannelIds`, where `["*"]` answers everywhere, `allowedUserIds`, `partition` and `trace`. Channels take `agents`, `instructions`, `workspaces`, `policies`, `denyTools`, `partition`, `sandboxImages`, `tagRoles`, and `replyIn` on Slack. Provider fields are on each [channel page](../channels/index.md).
+Every connection also takes `allowedChannelIds`, where `["*"]` answers everywhere, `allowedUserIds`, `partition` and `trace`. Channels take `agents`, `instructions`, `workspaces`, `policies`, `denyTools`, `partition`, `sandboxImages`, `tagRoles`, and `replyIn` on Slack. Provider fields are on each [channel page](../channels/index.md). The optional `teamId`, `guildId`, `botId`, `phoneNumberId` and `phoneNumber` tie a channel to one team, guild, bot or number; without one it applies on all of them.
 
 ## Validation
 
@@ -406,17 +407,20 @@ Every connection also takes `allowedChannelIds`, where `["*"]` answers everywher
 - Every `env("NAME")` needs a stored value on the stage.
 - Skill folders need a `SKILL.md`.
 - Hosted MCP bundles must build as ESM and export a fetch-style handler.
-- Workspace storage must be `s3`.
+- Workspace storage is `s3` (default) or `disk`.
 - The old `sandbox` agent key fails. List sandboxes in `sandboxes`. A stored agent that still carries `sandbox` refuses to run until you resync.
 - A connection with no declared channels and no `allowedChannelIds` fails. `"*"` as a channel id fails.
 
 ## Generated references
 
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-await new BroodsClient().run(api.agents.myAgent, { input: "Hello" });
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
+await client.run(api.agents.myAgent, { input: "Hello" });
 ```
 
 `api.agents`, `api.channels`, `api.workspaces`, `api.sandboxes` and the other maps hold the deployed ids. See the [SDK reference](sdk.md). Every resource also maps to the raw account API, documented in the [API reference](/api-reference).

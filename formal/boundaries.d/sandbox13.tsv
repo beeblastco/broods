@@ -1,0 +1,5 @@
+kind	name	reason
+opaque	LambdaMicrovms	AWS Lambda MicroVM SDK client: used only through checked command constructors and send effects, its answers come from the service.
+external	^new (Suspend|Resume)MicrovmCommand$	AWS SDK command constructors; the trace checks the exact input and the command goes only to send.
+opaque	SuspendMicrovmCommand	AWS command token handed unchanged to send.
+opaque	ResumeMicrovmCommand	AWS command token handed unchanged to send.

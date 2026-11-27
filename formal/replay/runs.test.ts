@@ -1,0 +1,488 @@
+import { afterAll, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { convexTest } from "../../packages/convex/node_modules/convex-test/dist/index.js";
+import schema from "../../packages/convex/schema.ts";
+import { internal } from "../../packages/convex/_generated/api.js";
+import type { Id } from "../../packages/convex/_generated/dataModel.ts";
+import {
+  rootEventId,
+  askingEventId,
+  asyncToolContinuationEventId,
+} from "../../apps/core/src/harness/async-tool-result.ts";
+import { subagentResultDedupeKey } from "../../packages/convex/model/subagentResults.ts";
+import {
+  isRunnableModelInput,
+  turnSettlement,
+} from "../../apps/core/src/harness/continuation.ts";
+import {
+  answersFromChoice,
+  answersFromText,
+} from "../../apps/core/src/harness/questions.ts";
+
+const originalFetch = globalThis.fetch;
+globalThis.fetch = ((): never => {
+  throw new Error("Runs replay forbids network");
+}) as typeof fetch;
+afterAll((): void => {
+  globalThis.fetch = originalFetch;
+});
+const modules: Record<string, () => Promise<unknown>> = {};
+for (const path of new Bun.Glob("**/*.ts").scanSync({
+  cwd: `${import.meta.dir}/../../packages/convex`,
+})) {
+  if (!path.startsWith("tests/"))
+    modules[`../${path}`] = (): Promise<unknown> =>
+      import(`${import.meta.dir}/../../packages/convex/${path}`);
+}
+interface Input {
+  op: string;
+  key: number;
+  event: number;
+  generation: number;
+  now: number;
+  ttl: number;
+  mode: "reject" | "followup" | "collect" | "steer";
+  retain: number;
+  resume: boolean;
+  claim: boolean;
+  failed: boolean;
+  results?: number[];
+  settles?: boolean;
+  rows?: boolean;
+  asyncResult?: boolean;
+  active?: boolean;
+  requeue?: boolean;
+}
+interface Vector {
+  name: string;
+  steps: {
+    input: Input;
+    refused: boolean;
+    rows: { key: number; status: string }[];
+    generation: number;
+  }[];
+}
+const output = spawnSync(
+  `${import.meta.dir}/../.lake/build/bin/spec-replay`,
+  ["runs"],
+  {
+    cwd: `${import.meta.dir}/..`,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${process.env.HOME}/.elan/bin:${process.env.PATH}`,
+    },
+  },
+);
+if (output.status !== 0) throw new Error(output.stderr || output.stdout);
+const vectors = output.stdout
+  .trim()
+  .split("\n")
+  .map((line): Vector => JSON.parse(line) as Vector);
+test.each(vectors.filter((v): boolean => !v.name.startsWith("G1")))(
+  "Lean/Convex $name",
+  async (vector): Promise<void> => {
+    await replay(vector);
+  },
+);
+test.failing.each(vectors.filter((v): boolean => v.name.startsWith("G1")))(
+  "G1 D6 $name",
+  async (vector): Promise<void> => {
+    await replay(vector);
+  },
+);
+
+async function replay(vector: Vector): Promise<void> {
+  const t = convexTest(schema, modules);
+  const accountId = await t.run(
+    async (ctx): Promise<Id<"accounts">> =>
+      await ctx.db.insert("accounts", {
+        orgId: "runs-replay",
+        username: "runs-replay",
+        secretHash: "unused",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
+  const conversationKey = `acct:${accountId}:agent:test:api:replay`;
+  const realNow = Date.now;
+  try {
+    for (const { input: i, refused, rows, generation } of vector.steps) {
+      // A fenced write's history rows: the result events of the late results it carries.
+      const events = (i.results ?? []).map((key) => ({
+        cursor: `c${key}`,
+        dedupeKey: subagentResultDedupeKey(`r${key}`, "completed"),
+        event: { role: "user", content: "result" },
+      }));
+      Date.now = (): number => 2000000000000 + (i.now ?? 0);
+      const owned = {
+        conversationKey: conversationKey,
+        ownerEventId: `e${i.event}`,
+        ownerGeneration: i.generation,
+      };
+      const apply = async (): Promise<void> => {
+        switch (i.op) {
+          case "accept":
+            // A resume names an async result the conversation has not stored yet.
+            if (i.resume)
+              await t.mutation(internal.runtime.createAsyncAgentResult, {
+                eventId: `r${i.key}`,
+                conversationKey: conversationKey,
+                subagent: { parentConversationKey: conversationKey },
+              });
+            await t.mutation(internal.runtimeIngress.accept, {
+              accountId: accountId,
+              agentId: "test",
+              conversationKey: conversationKey,
+              eventId: `e${i.event}`,
+              runId: `run_${i.key}`,
+              idempotencyKey: `k${i.key}`,
+              payloadDigest: `d${i.key}`,
+              events: [{ role: "user", content: "hello" }],
+              delivery: {
+                kind: "async",
+                publicEventId: `e${i.event}`,
+                publicConversationKey: conversationKey,
+                statusUrl: "https://invalid.test/status",
+              },
+              requestedMode: i.mode,
+              sizeBytes: 1,
+              leaseTtlMs: i.ttl,
+              envelopeTtlMs: 10 - i.now,
+              statusTtlMs: i.retain - i.now,
+              maxQueuedCount: 100,
+              maxQueuedBytes: 1048576,
+              ...(i.resume ? { resultEventId: `r${i.key}` } : {}),
+            });
+            // The polling row a background run's settle writes its outcome to.
+            await t.mutation(internal.runtime.createAsyncAgentResult, {
+              eventId: `a${i.event}`,
+              conversationKey: conversationKey,
+            });
+            break;
+          case "takeNext":
+            await t.mutation(internal.runtimeIngress.takeNext, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+              ...(i.settles
+                ? { settle: { status: "completed" as const } }
+                : {}),
+              ...(i.rows
+                ? {
+                    events: [
+                      {
+                        cursor: `t${i.event}`,
+                        event: { role: "user", content: "row" },
+                      },
+                    ],
+                  }
+                : {}),
+            });
+            break;
+          case "applySteering":
+            await t.mutation(internal.runtimeIngress.applySteering, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "stepBoundary":
+            await t.mutation(internal.runtimeIngress.stepBoundary, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+              claimSteering: i.claim,
+              events: events,
+            });
+            break;
+          case "renewOwner":
+            await t.mutation(internal.runtimeIngress.renewOwner, {
+              ...owned,
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "releaseOwner":
+            await t.mutation(internal.runtimeIngress.releaseOwner, {
+              ...owned,
+              ...(i.requeue ? { requeue: true } : {}),
+            });
+            break;
+          case "settle":
+            try {
+              await t.mutation(internal.runtimeIngress.settle, {
+                ...owned,
+                status: i.failed ? "failed" : "completed",
+                events: events,
+                ...(i.asyncResult
+                  ? {
+                      asyncResult: {
+                        eventIds: [`a${i.event}`],
+                        outcome: { status: i.failed ? "failed" : "completed" },
+                      },
+                    }
+                  : {}),
+              });
+            } catch (error) {
+              if (
+                !(error instanceof Error) ||
+                !error.message.includes("Stale conversation owner")
+              )
+                throw error;
+            }
+            break;
+          case "stopOwner":
+            await t.mutation(internal.runtimeIngress.stopOwner, {
+              accountId: accountId,
+              agentId: "test",
+              conversationKey: conversationKey,
+            });
+            break;
+          case "recoverQueued":
+            await t.mutation(internal.runtimeIngress.recoverQueued, {
+              leaseTtlMs: i.ttl,
+            });
+            break;
+          case "declineRecovery":
+            // recoverQueued skips a conversation whose account is not active.
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, { status: "disabled" });
+            });
+            await t.mutation(internal.runtimeIngress.recoverQueued, {
+              leaseTtlMs: 100,
+            });
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, { status: "active" });
+            });
+            break;
+          case "maintain":
+            await t.mutation(internal.runtimeIngress.maintain, {});
+            break;
+          case "status":
+            await t.run(async (ctx): Promise<void> => {
+              await ctx.db.patch(accountId, {
+                status: i.active ? "active" : "disabled",
+              });
+            });
+            break;
+          default:
+            throw new Error(i.op);
+        }
+      };
+      // The model's `refused` is `requireActiveAccount` throwing, which rolls the mutation back.
+      const thrown = await apply().then(
+        (): null => null,
+        (error: unknown): unknown => error,
+      );
+      if (refused) {
+        expect(thrown instanceof Error && thrown.message).toContain(
+          "not active",
+        );
+      } else if (thrown !== null) {
+        throw thrown;
+      }
+      const actual = await t.run(async (ctx) => {
+        const saved = await ctx.db.query("runtimeIngressEnvelopes").collect();
+        const coordinator = await ctx.db
+          .query("runtimeConversationCoordinators")
+          .first();
+
+        return {
+          rows: saved
+            .sort((a, b): number => a.sequence - b.sequence)
+            .map((r) => ({
+              key: Number(r.eventId.slice(1)),
+              status: r.status,
+            })),
+          generation: coordinator?.ownerGeneration ?? 0,
+          queuedCount: coordinator?.queuedCount ?? 0,
+        };
+      });
+      // The coordinator's queue counter tracks the queued rows, through a requeue too.
+      expect(actual).toEqual({
+        rows: rows,
+        generation: generation,
+        queuedCount: rows.filter((r): boolean => r.status === "queued").length,
+      });
+    }
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test.failing(
+  "G3 D8 rejects unrelated terminal async overwrite",
+  async (): Promise<void> => {
+    const t = convexTest(schema, modules);
+    const accountId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("accounts", {
+          orgId: "async",
+          username: "async",
+          secretHash: "unused",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "finished",
+      conversationKey: `acct:${accountId}:agent:test:api:async`,
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "finished",
+      status: "completed",
+      response: "first",
+    });
+    await t.mutation(internal.runtime.updateAsyncAgentResult, {
+      eventId: "finished",
+      status: "failed",
+      error: "unrelated",
+    });
+    expect(
+      (
+        await t.query(internal.runtime.getAsyncAgentResult, {
+          eventId: "finished",
+        })
+      )?.status,
+    ).toBe("completed");
+  },
+);
+
+// Runtime's `detach` refuses an inactive account: `launch` writes this row before any child starts.
+test("a child's result row is refused for a disabled account", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const accountId = await t.run(
+    async (ctx) =>
+      await ctx.db.insert("accounts", {
+        orgId: "child",
+        username: "child",
+        secretHash: "unused",
+        status: "disabled",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
+  const parent = `acct:${accountId}:agent:test:api:parent`;
+  await expect(
+    t.mutation(internal.runtime.createAsyncAgentResult, {
+      eventId: "child-turn",
+      conversationKey: `acct:${accountId}:agent:child:api:child`,
+      subagent: { parentConversationKey: parent },
+    }),
+  ).rejects.toThrow("not active");
+});
+test("pure continuation identity and runnable inputs", (): void => {
+  expect(rootEventId("run:async-tools:r:async-question:q")).toBe("run");
+  expect(rootEventId("async-tools:human")).toBe("async-tools:human");
+  const row = { parentEventId: "run:async-question:q", resultId: "q" };
+  expect(askingEventId(row)).toBe("run");
+  expect(asyncToolContinuationEventId(row)).toBe("run:async-tools:q");
+  expect(isRunnableModelInput({ role: "user", content: "hi" })).toBe(true);
+  expect(isRunnableModelInput(undefined)).toBe(false);
+  expect(isRunnableModelInput({ role: "tool", content: [] })).toBe(false);
+  expect(
+    turnSettlement({
+      didFail: true,
+      failureText: null,
+      approvals: [],
+      questions: [],
+    }),
+  ).toEqual({ status: "failed", error: "Agent processing failed" });
+});
+test("question choices and first-question typed answers", (): void => {
+  const pending = {
+    questions: [
+      {
+        id: "q",
+        question: "Choose",
+        options: [{ label: "Yes" }, { label: "No" }],
+      },
+    ],
+    blocking: true,
+    answerBy: "2099-01-01",
+  };
+  expect(
+    answersFromChoice(pending, { questionIndex: 0, optionIndex: 1 }),
+  ).toEqual({ q: ["No"] });
+  expect(
+    answersFromChoice(pending, { questionIndex: 1, optionIndex: 0 }),
+  ).toBeUndefined();
+  expect(answersFromText(pending, " 2 ")?.answers).toEqual({ q: ["No"] });
+  expect(answersFromText(pending, "yes")?.answers).toEqual({ q: ["Yes"] });
+  expect(answersFromText(pending, "   ")).toBeUndefined();
+});
+
+test("G200 retention deletion permits a second run for the same idempotency key", async (): Promise<void> => {
+  const realDate = Date;
+  let now = 2000000000000;
+  globalThis.Date = new Proxy(realDate, {
+    get: function (target, property, receiver): unknown {
+      return property === "now"
+        ? (): number => now
+        : Reflect.get(target, property, receiver);
+    },
+  });
+  try {
+    const t = convexTest(schema, modules);
+    const accountId = await t.run(
+      async (ctx): Promise<Id<"accounts">> =>
+        await ctx.db.insert("accounts", {
+          orgId: "retention",
+          username: "retention",
+          secretHash: "unused",
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        }),
+    );
+    const key = `acct:${accountId}:agent:test:api:retention`;
+    const candidate = {
+      accountId: accountId,
+      agentId: "test",
+      conversationKey: key,
+      eventId: "first",
+      runId: "run_first",
+      idempotencyKey: "same",
+      payloadDigest: "same",
+      events: [{ role: "user", content: "hello" }],
+      delivery: {
+        kind: "async" as const,
+        publicEventId: "first",
+        publicConversationKey: key,
+        statusUrl: "https://invalid.test/status",
+      },
+      requestedMode: "followup" as const,
+      sizeBytes: 1,
+      leaseTtlMs: 100,
+      envelopeTtlMs: 10,
+      statusTtlMs: 20,
+      maxQueuedCount: 100,
+      maxQueuedBytes: 1048576,
+    };
+    const first = await t.mutation(internal.runtimeIngress.accept, candidate);
+    expect(first.outcome).toBe("owner");
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: key,
+      ownerEventId: "first",
+      ownerGeneration: first.ownerGeneration!,
+      status: "completed",
+    });
+    await t.mutation(internal.runtimeIngress.releaseOwner, {
+      conversationKey: key,
+      ownerEventId: "first",
+      ownerGeneration: first.ownerGeneration!,
+    });
+    now += 21;
+    expect(
+      (await t.mutation(internal.runtimeIngress.maintain, {})).deleted,
+    ).toBe(1);
+    const retry = await t.mutation(internal.runtimeIngress.accept, {
+      ...candidate,
+      eventId: "second",
+      runId: "run_second",
+    });
+    expect(retry.outcome).toBe("owner");
+    expect(retry.runId).toBe("run_second");
+  } finally {
+    globalThis.Date = realDate;
+  }
+});

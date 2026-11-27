@@ -1,0 +1,113 @@
+name: Socket transfer comment
+
+# Posts the "Socket transfer impact" comment on a pull request. A pull request's
+# own run cannot: from a fork or Dependabot its token is read-only, and
+# pull_request_target would hand a write token to the pull request's code. So
+# socket-transfer.yaml only uploads numbers, and this runs after it from the
+# default branch. It never checks out or runs pull request code, and reads the
+# uploaded files as data: scripts/socket-transfer-comment.ts keeps plain path
+# names and byte counts and drops the rest.
+on:
+  workflow_run:
+    workflows: ["Socket transfer"]
+    types: [completed]
+
+concurrency:
+  group: socket-transfer-comment-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+# Each job grants only the token permissions it needs.
+permissions: {}
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      # Reads the runs' artifacts, checks out the default branch, writes the comment.
+      actions: read
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      RUNS: repos/${{ github.repository }}/actions/workflows/socket-transfer.yaml/runs
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Find the pull request
+        # Asked of the API by head, never read from the artifact. A run whose
+        # commit is no longer the head finds nothing, so a stale run cannot
+        # overwrite the comment of a newer one.
+        id: pr
+        run: |
+          found=$(gh api -X GET "repos/$GH_REPO/pulls" -f state=open -f head="$HEAD_OWNER:$HEAD_BRANCH" \
+            --jq '.[] | select(.head.sha == env.HEAD_SHA) | "\(.number) \(.base.sha) \(.base.ref)"' | head -n 1)
+          if [ -z "$found" ]; then
+            echo "No open pull request has $HEAD_SHA as its head."
+            exit 0
+          fi
+          read -r number base_sha base_ref <<<"$found"
+          {
+            echo "number=$number"
+            echo "base_sha=$base_sha"
+            echo "base_ref=$base_ref"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download the pull request's numbers
+        if: steps.pr.outputs.number
+        run: gh run download "$RUN_ID" --name "socket-transfer-$RUN_ID" --dir "$RUNNER_TEMP/pr" || true
+
+      - name: Download the base's numbers
+        # The run on the base commit, else the newest on the base branch. Only
+        # this repository's runs: a fork can name its branch after ours.
+        if: steps.pr.outputs.number
+        id: base
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          BASE_REF: ${{ steps.pr.outputs.base_ref }}
+        run: |
+          pick='[.workflow_runs[] | select(.head_repository.full_name == env.GH_REPO)][0] | select(. != null) | "\(.id) \(.head_sha)"'
+          found=$(gh api -X GET "$RUNS" -f status=success -f head_sha="$BASE_SHA" --jq "$pick")
+          if [ -z "$found" ]; then
+            found=$(gh api -X GET "$RUNS" -f status=success -f branch="$BASE_REF" --jq "$pick")
+          fi
+          if [ -z "$found" ]; then
+            echo "No successful run on $BASE_REF."
+            exit 0
+          fi
+          read -r run sha <<<"$found"
+          gh run download "$run" --name "socket-transfer-$run" --dir "$RUNNER_TEMP/base" || true
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Write the comment
+        # One comment per pull request: a rerun edits it.
+        if: steps.pr.outputs.number
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+          MEASURED_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          bun scripts/socket-transfer-comment.ts --pr "$RUNNER_TEMP/pr/socket-transfer.json" \
+            --base "$RUNNER_TEMP/base/socket-transfer.json" --base-sha "$MEASURED_SHA" \
+            --conclusion "$CONCLUSION" > "$RUNNER_TEMP/comment.md"
+          id=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- socket-transfer -->"))) | .id' | tail -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
+          else
+            gh pr comment "$PR" --body-file "$RUNNER_TEMP/comment.md"
+          fi

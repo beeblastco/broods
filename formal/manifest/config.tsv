@@ -1,0 +1,15 @@
+path	class	status	lean	replay	note
+packages/convex/model/agentConfigCodec.ts	protocol	open	Spec.Config.encodeFragment	formal/replay/config.test.ts	Fragment and env names replayed; full extraction/assembly/pruning/substitution/badge rules and normalised round-trip remain.
+packages/convex/model/agentRules.ts	decision	open	Spec.Config.normaliseTools	formal/replay/config.test.ts	Tools, names, provider settings shape/refinement/transform, URL classification and canonical base alias replayed; provider map/custom required validation and all schema/order/errors/runtime refs/harness/channel/create/update rules remain. L702 L704.
+packages/convex/model/apiError.ts	protocol	replayed	Spec.Config.apiError	formal/replay/config.test.ts	
+packages/convex/model/clientError.ts	protocol	open	Spec.Config.clientData	formal/replay/config.test.ts	Data extraction/status map replayed; clientErrorResponse and constructor wire propagation remain.
+packages/convex/model/configValues.ts	decision	open	Spec.Config.mergeObjects	formal/replay/config.test.ts	Merge replayed with fuel 100; redactConfigSecrets and secret-name/header recursion remain. L700.
+packages/convex/model/envRefs.ts	protocol	replayed	Spec.Config.refsOnly;Spec.Config.refsScan;Spec.Config.headerRefs	formal/replay/config.test.ts	
+packages/convex/model/envelope.ts	protocol	open	Spec.Config.blobKeyId;Spec.Config.currentKey	formal/replay/config.test.ts	Key metadata replayed; offline round-trip/scope test; full wrapping/rotation/AEAD/error/cache contracts remain. L703.
+packages/convex/model/httpJson.ts	protocol	open	Spec.Config.rateHeaders;Spec.Config.methodError	formal/replay/config.test.ts	Method/error bodies and integer retry ceilings replayed; arbitrary JSON responses/header overrides/status constraints and fractional/infinite resets remain.
+packages/convex/model/inputSchema.ts	protocol	open	Spec.Config.positiveInteger;Spec.Config.nonEmpty	formal/replay/config.test.ts	Primitive validators and tools field errors replayed; issue unions/path rendering/wholeValue/proto/refusing/resource schemas remain. L700 L704.
+packages/convex/model/isolateSafety.ts	decision	open			Full ECMAScript regex matching and lexical scanning for every pattern remain.
+packages/convex/model/objects.ts	protocol	open	Spec.Config.remapKeys;Spec.Config.sortValue	formal/replay/config.test.ts	JSON sorting and selected remaps replayed; inherited function-key coercion, undefined, UTF-16/integer-key ordering and stable JSON byte encoding remain. G705 L700.
+packages/convex/model/requestId.ts	protocol	replayed	Spec.Config.resolveRequestId;Spec.Config.withRequestId	formal/replay/config.test.ts	
+packages/convex/model/sandboxMounts.ts	decision	replayed	Spec.Config.findLaterSandboxMount;Spec.Config.workspaceOnLaterSandbox	formal/replay/config.test.ts	
+packages/convex/model/storedJson.ts	protocol	replayed	Spec.Config.objectOr;Spec.Config.stringValuesOr	formal/replay/config.test.ts	

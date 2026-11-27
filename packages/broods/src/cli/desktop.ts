@@ -1,9 +1,3 @@
-/**
- * Runs the Swift helper behind `broods machine --computer`: one long-lived
- * child, one JSON request per line in and one reply per line out. The helper
- * is compiled with `swiftc` on first use into ~/.broods/desktop/<hash>/.
- */
-
 import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -140,7 +134,6 @@ export class DesktopDriver {
   }
 }
 
-/** Throws with the fix when this computer cannot build or start the helper. */
 export async function startDesktop(request: boolean): Promise<DesktopReport> {
   const driver = new DesktopDriver(buildHelper());
   try {
@@ -154,7 +147,6 @@ export async function startDesktop(request: boolean): Promise<DesktopReport> {
   }
 }
 
-// Keyed by the source hash, so a CLI upgrade rebuilds and an unchanged one starts at once.
 function buildHelper(): string {
   if (process.platform !== "darwin") {
     throw new Error("computer use is macOS only for now");

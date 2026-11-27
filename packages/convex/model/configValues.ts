@@ -1,42 +1,19 @@
-/**
- * Shared config-object helpers for the Convex config plane: deep patch-merge
- * and secret redaction, ported from core's former
- * storage/agent-config.ts so PATCH semantics and public projections stay
- * byte-identical. Pure module, safe for the default Convex runtime.
- */
-
 import {
   ACCOUNT_ENV_REFS_ONLY_PATTERN,
   CREDENTIAL_HEADER_VALUE_PATTERN,
 } from "./envRefs";
-import { isPlainObject } from "./objects";
+import { configObject, parseOr } from "./storedJson";
 import { isSecretName } from "./secretNames";
 
 export const REDACTED_SECRET_VALUE = "********";
 
-/**
- * Deep-merge a config patch into an existing config: null deletes a key,
- * a redacted placeholder keeps the existing (secret) value, arrays and
- * scalars replace, and nested objects merge recursively.
- * @param existing the stored config object
- * @param patch the caller-supplied partial config
- * @returns the merged config object
- */
 export function mergeConfigObjects(
   existing: object,
   patch: object,
 ): Record<string, unknown> {
-  const merged = mergeConfigValue(existing, patch);
-
-  return isPlainObject(merged) ? merged : {};
+  return parseOr(configObject, mergeConfigValue(existing, patch), {});
 }
 
-/**
- * Recursively replace secret values, found by name or inside a `headers`
- * map, with the redaction placeholder for public API responses.
- * @param value the config value to project
- * @returns the value with secrets masked
- */
 export function redactConfigSecrets<T>(value: T): T {
   return redactSecrets(value) as T;
 }
@@ -51,15 +28,15 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   if (patch === null) {
     return undefined;
   }
-  if (Array.isArray(patch) || !isPlainObject(patch)) {
+  const patchObject = parseOr(configObject, patch);
+  if (!patchObject) {
     return patch;
   }
 
-  const existingObject = isPlainObject(existing) ? existing : {};
+  const existingObject = parseOr(configObject, existing, {});
   const merged = { ...existingObject };
-  for (const [key, value] of Object.entries(patch)) {
-    // JSON.parse creates "__proto__" as an own key; assigning it below
-    // would rewrite the merged object's prototype instead of a property.
+  for (const [key, value] of Object.entries(patchObject)) {
+    // JSON.parse makes "__proto__" an own key; assigning it would swap the prototype.
     if (key === "__proto__" || key === "constructor" || key === "prototype") {
       continue;
     }
@@ -74,19 +51,18 @@ function mergeConfigValue(existing: unknown, patch: unknown): unknown {
   return merged;
 }
 
-// Inside a `headers` map any value but `${NAME}` refs, after an optional auth
-// scheme word, is masked: a sync resolves refs into the stored config whatever
-// the header is called.
+// Any header value but `${NAME}` refs is masked: a sync resolves refs into the stored config.
 function redactSecrets(value: unknown, inHeaders = false): unknown {
   if (Array.isArray(value)) {
     return value.map((entry): unknown => redactSecrets(entry));
   }
-  if (!isPlainObject(value)) {
+  const object = parseOr(configObject, value);
+  if (!object) {
     return value;
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]): [string, unknown] => {
+    Object.entries(object).map(([key, entry]): [string, unknown] => {
       if (inHeaders) {
         return [
           key,
@@ -99,8 +75,7 @@ function redactSecrets(value: unknown, inHeaders = false): unknown {
       if (!isSecretName(key)) {
         return [key, redactSecrets(entry, key === "headers")];
       }
-      // Under a secret name only refs show. A list is masked whole, so
-      // sending it back keeps the stored one.
+      // A list is masked whole, so sending it back keeps the stored one.
       const exposed = (Array.isArray(entry) ? entry : [entry]).some(
         (item): boolean =>
           typeof item === "string" && !ACCOUNT_ENV_REFS_ONLY_PATTERN.test(item),

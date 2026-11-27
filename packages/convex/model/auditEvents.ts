@@ -1,22 +1,15 @@
-/**
- * The account audit ledger: hash-chained, append-only rows for config
- * mutations, run lifecycle and enforced tool denials. Every writer goes
- * through `appendAuditEvent`; `verifyChainRows` is the one place a chain is
- * recomputed, shared by the internal query and the tests.
- */
+// Append-only, hash-chained ledger: every write goes through appendAuditEvent.
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { sha256Hex } from "./accountSecrets";
 import { stableJson, stripUndefined } from "./objects";
 
-/** Most rows one `GET /v1/audit` page or one sink batch carries. */
 export const AUDIT_LIST_LIMIT_MAX = 500;
 const DETAILS_JSON_LIMIT_BYTES = 8 * 1024;
 const ENCODER = new TextEncoder();
 const TRUNCATED_MARKER = "…[truncated]";
 
-/** Who wrote a row; the schema validator is the one list of kinds. */
 export type AuditActor = Doc<"auditEvents">["actor"];
 
 export type AuditEventInput = {
@@ -31,32 +24,25 @@ export type AuditEventInput = {
   detailsJson?: string;
 };
 
-/** The fields the row hash covers: every stored field but the hash itself. */
 export type AuditHashedFields = Omit<
   Doc<"auditEvents">,
   "_id" | "_creationTime" | "hash"
 >;
 
-/** The ledger tip; null for an account that has never written a row. */
 export type AuditChainHead = { seq: number; hash: string } | null;
 
-/** A stored row as `verifyChainRows` reads it: the hashed fields plus the hash. */
 export type AuditChainRow = AuditHashedFields &
   Pick<Doc<"auditEvents">, "hash">;
 
-/** What a row is about; the schema validator is the one list of kinds. */
 export type AuditResource = Doc<"auditEvents">["resource"];
 
 export type ChainVerification = {
   ok: boolean;
-  /** First row whose hash or link does not match; absent when `ok`. */
   brokenAtSeq?: number;
-  /** The seq range that was recomputed, when any row was. */
   checkedFrom?: number;
   checkedTo?: number;
 };
 
-/** A ledger row as `GET /v1/audit` and the webhook sink serve it. */
 export type PublicAuditEvent = {
   accountId: string;
   seq: number;
@@ -73,11 +59,6 @@ export type PublicAuditEvent = {
   traceId?: string;
 };
 
-/**
- * @param ctx Convex query or mutation context.
- * @param projectId project whose org owns the account.
- * @returns the account id, or null before account provisioning.
- */
 export async function accountIdForProject(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
@@ -92,14 +73,7 @@ export async function accountIdForProject(
   return account?._id ?? null;
 }
 
-/**
- * Append one row to the account's ledger. Reads the chain head, links the new
- * row to it and moves the head; Convex OCC serializes concurrent appends on
- * the head row, so `seq` stays gapless.
- * @param db Convex database writer.
- * @param event sanitized event metadata.
- * @returns the inserted row id.
- */
+// Convex OCC serializes concurrent appends on the head row, so seq stays gapless.
 export async function appendAuditEvent(
   db: MutationCtx["db"],
   event: AuditEventInput,
@@ -136,11 +110,6 @@ export async function appendAuditEvent(
   return rowId;
 }
 
-/**
- * The account's ledger tip row, or null before its first append.
- * @param db Convex database reader.
- * @param accountId the account whose chain to read.
- */
 export async function auditChainHeadRow(
   db: QueryCtx["db"],
   accountId: Id<"accounts">,
@@ -151,27 +120,15 @@ export async function auditChainHeadRow(
     .unique();
 }
 
-/**
- * Serialize small non-secret metadata for the detailsJson field. Plain
- * JSON.stringify; `appendAuditEvent` caps oversized payloads.
- * @param details ids, names, counts, or other non-secret metadata.
- * @returns JSON string.
- */
 export function auditDetailsJson(details: Record<string, unknown>): string {
   return JSON.stringify(details);
 }
 
-/**
- * sha256 hex of the canonical JSON (sorted keys) of every row field but the
- * hash. An absent optional field is left out of the JSON, never written as
- * null, so a row hashes the same however it was read.
- */
 export async function auditEventHash(
   fields: AuditHashedFields,
 ): Promise<string> {
-  // Keyed by the type, so a field added to the table fails the typecheck
-  // here until it is hashed. Listed one by one because a stored row passed
-  // in also carries `_id` and `hash`.
+  // Keyed by the type so a new table field fails typecheck until hashed; listed by hand since
+  // a stored row also carries _id and hash. An absent field stays undefined, never null.
   const canonical: Record<keyof AuditHashedFields, unknown> = {
     accountId: fields.accountId,
     seq: fields.seq,
@@ -190,10 +147,6 @@ export async function auditEventHash(
   return await sha256Hex(stableJson(canonical));
 }
 
-/**
- * @param user AuthKit user metadata.
- * @returns audit actor fields for a dashboard mutation.
- */
 export function dashboardAuditActor(user: {
   id: string;
   email?: string | null;
@@ -207,12 +160,7 @@ export function dashboardAuditActor(user: {
   };
 }
 
-/**
- * Strip the Convex system fields; everything the hash covers stays, so a
- * reader can recompute the chain from what it was served.
- * @param row stored ledger row
- * @returns the public row
- */
+// Keep every hashed field: a reader recomputes the chain from what it was served.
 export function publicAuditEvent(row: Doc<"auditEvents">): PublicAuditEvent {
   return {
     accountId: row.accountId,
@@ -231,21 +179,12 @@ export function publicAuditEvent(row: Doc<"auditEvents">): PublicAuditEvent {
   };
 }
 
-/**
- * Recompute every row's hash and check each link to the row before it. Rows
- * must be in ascending `seq`. The first row is linked against `prevHash` when
- * the caller knows it (the row before the range, or "" at seq 1); a pruned
- * predecessor leaves it unchecked, since its own hash still pins `prevHash`.
- * @param rows the stored rows to verify
- * @param prevHash hash the first row must link to, when known
- * @returns ok, or the first seq that fails
- */
+// rows ascend by seq. Without prevHash (pruned predecessor) the first link goes unchecked:
+// that row's own hash still pins its prevHash.
 export async function verifyChainRows(
   rows: AuditChainRow[],
   prevHash?: string,
 ): Promise<ChainVerification> {
-  // Each hash depends only on its own row, so they recompute in parallel;
-  // only the links are walked in order.
   const hashes = await Promise.all(rows.map(auditEventHash));
   let expectedPrevHash = prevHash;
   let expectedSeq: number | undefined;
@@ -270,8 +209,7 @@ function capDetailsJson(value: string): string {
   const byteLength = ENCODER.encode(value).byteLength;
   if (byteLength <= DETAILS_JSON_LIMIT_BYTES) return value;
 
-  // The field must stay parseable JSON, so an oversized payload is replaced
-  // with a sentinel carrying a prefix rather than truncated mid-token.
+  // Must stay parseable JSON: a sentinel carrying a prefix, never a mid-token cut.
   return JSON.stringify({
     truncated: true,
     originalBytes: byteLength,

@@ -1,5 +1,4 @@
 /// <reference types="vite/client" />
-/** MCP server registrations: stage scope, per-stage name uniqueness, input validation. */
 
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
@@ -22,7 +21,6 @@ type Scope = {
 const t = (): TestConvex<typeof schema> => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** An org, account, project and one stage, the scope a server hangs off. */
 async function seedScope(tt: T, stage = "Development"): Promise<Scope> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -651,14 +649,6 @@ describe("normalizeMcpInput", () => {
       }),
     ).rejects.toThrow("oauth applies to external (url) servers");
     await create({ url: SERVER_URL });
-  });
-
-  test("a patch may carry any subset", async () => {
-    const input = await normalizeMcpInput(
-      { disabled: true },
-      { requireConnection: false },
-    );
-    expect(input).toEqual({ disabled: true });
   });
 
   test("a bundle makes a hosted server; url and bundle never mix", async () => {

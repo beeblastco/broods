@@ -1,0 +1,5 @@
+kind	name	reason
+external	^isSecretName$	The shared secret-name predicate is its own tested contract; the twin checks each name it asks about and acts on the answer.
+external	^runSandbox$	The sandbox executes the exact command the twin builds and checks; only its exit result comes back.
+external	^store\.getById$	Storage answers are trusted persistence reads for the checked account and hook id; the twin filters on status itself.
+opaque	ZodPreprocess	A harness adapter's tool schema object, passed through untouched and never inspected.

@@ -1,25 +1,26 @@
 "use client";
 
-/**
- * An agent registers its outbound webhooks under `config.hooks.webhooks`. Edits
- * here write straight to the agent config the harness delivers from.
- */
+// Edits write straight to `config.hooks.webhooks`, the agent config the harness delivers from.
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { DitherAvatarSVG } from "@/app/components/DitherAvatar";
 import { IconTooltip } from "@/app/components/IconTooltip";
+import { SecretInput } from "@/app/components/SecretInput";
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
 import { toErrorMessage } from "@/app/lib/errors";
+import { NOT_BLANK } from "@/app/lib/notBlank";
 import { cn } from "@/app/lib/utils";
 import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { analytics } from "@/app/lib/analytics";
+import { useId, useState } from "react";
 
 interface Props {
   projectId: Id<"projects">;
@@ -66,12 +67,30 @@ export function WebhooksPanel({
     useState<PendingWebhookDelete | null>(null);
   const [isDeletingWebhook, setIsDeletingWebhook] = useState(false);
 
+  async function handleToggleWebhook(
+    agentConfigId: Id<"agentConfigs">,
+    index: number,
+    enabled: boolean,
+  ): Promise<void> {
+    setToggleError(null);
+    try {
+      await setEnabled({
+        agentConfigId: agentConfigId,
+        index: index,
+        enabled: enabled,
+      });
+      void analytics.then((posthog): void => {
+        posthog.capture("webhook_enabled_changed", { enabled: enabled });
+      });
+    } catch (error) {
+      setToggleError(toErrorMessage(error));
+    }
+  }
+
   async function handleDeleteWebhook(): Promise<void> {
     if (!deletingWebhook) return;
-    // The mutation addresses webhooks by index only, so re-resolve the index
-    // against the live list at confirm time. Another session may have
-    // reordered it since the dialog opened, and a stale index deletes the
-    // wrong webhook. URL is the only identity the list carries.
+    // The mutation takes an index and another session may have reordered the list since the
+    // dialog opened: re-resolve it by URL, the only identity the list carries.
     const liveWebhooks = agents?.find(
       (agent) => agent.agentConfigId === deletingWebhook.agentConfigId,
     )?.webhooks;
@@ -123,10 +142,11 @@ export function WebhooksPanel({
           </p>
         )}
 
-        {/* The pill flips optimistically, so a rejected toggle snaps back on
-            its own. This says why it moved. */}
+        {/* The pill flips optimistically and snaps back on rejection; this says why. */}
         {toggleError && (
-          <p className="text-sm text-destructive">{toggleError}</p>
+          <p role="alert" className="text-sm text-destructive">
+            {toggleError}
+          </p>
         )}
 
         <div className="grid gap-6">
@@ -185,16 +205,13 @@ export function WebhooksPanel({
                       <button
                         type="button"
                         disabled={!canWrite}
-                        onClick={() => {
-                          setToggleError(null);
-                          setEnabled({
-                            agentConfigId: agent.agentConfigId,
-                            index: webhook.index,
-                            enabled: !webhook.enabled,
-                          }).catch((error: unknown) =>
-                            setToggleError(toErrorMessage(error)),
-                          );
-                        }}
+                        onClick={() =>
+                          void handleToggleWebhook(
+                            agent.agentConfigId,
+                            webhook.index,
+                            !webhook.enabled,
+                          )
+                        }
                         className={cn(
                           "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
                           canWrite ? "cursor-pointer" : "cursor-not-allowed",
@@ -302,20 +319,27 @@ function AddWebhookForm({
   const [events, setEvents] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fieldId = useId();
 
   async function handleSave(): Promise<void> {
     if (!url.trim() || !secret.trim() || busy) return;
     setBusy(true);
     setError(null);
+    const eventFilter = events
+      .split(",")
+      .map((event) => event.trim())
+      .filter(Boolean);
     try {
       await addWebhook({
         agentConfigId: agentConfigId,
         url: url.trim(),
         secret: secret.trim(),
-        events: events
-          .split(",")
-          .map((event) => event.trim())
-          .filter(Boolean),
+        events: eventFilter,
+      });
+      void analytics.then((posthog): void => {
+        posthog.capture("webhook_added", {
+          has_event_filter: eventFilter.length > 0,
+        });
       });
       onDone();
     } catch (err) {
@@ -326,40 +350,72 @@ function AddWebhookForm({
   }
 
   return (
-    <div className="grid gap-2 border-t border-border/60 pt-2">
+    <form
+      className="grid gap-2 border-t border-border/60 pt-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void handleSave();
+      }}
+    >
+      <Label htmlFor={`${fieldId}-url`} variant="muted" className="text-xs">
+        Webhook URL{" "}
+        <span aria-hidden="true" className="text-destructive">
+          *
+        </span>
+      </Label>
       <Input
+        id={`${fieldId}-url`}
+        type="url"
+        required={true}
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="https://your-service.example/hooks"
-        aria-label="Webhook URL"
         className="text-sm"
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by the user's Add click
         autoFocus
       />
-      <Input
+      <Label htmlFor={`${fieldId}-secret`} variant="muted" className="text-xs">
+        Signing secret{" "}
+        <span aria-hidden="true" className="text-destructive">
+          *
+        </span>
+      </Label>
+      <SecretInput
+        id={`${fieldId}-secret`}
+        noun="secret"
+        required={true}
+        pattern={NOT_BLANK}
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
         placeholder="HMAC signing secret"
-        aria-label="Signing secret"
         className="text-sm"
       />
+      <Label htmlFor={`${fieldId}-events`} variant="muted" className="text-xs">
+        Events
+      </Label>
       <Input
+        id={`${fieldId}-events`}
         value={events}
         onChange={(e) => setEvents(e.target.value)}
-        placeholder="Events, comma-separated (blank = all, e.g. agent.started, agent.finished)"
-        aria-label="Events"
+        placeholder="Comma-separated, blank = all (e.g. agent.started, agent.finished)"
         className="text-sm"
       />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <Button
+          type="submit"
           size="sm"
-          className="cursor-pointer"
-          disabled={!url.trim() || !secret.trim() || busy}
-          onClick={handleSave}
+          className={busy ? "cursor-not-allowed" : "cursor-pointer"}
+          disabled={busy}
         >
           {busy ? "Adding…" : "Add webhook"}
         </Button>
         <Button
+          type="button"
           variant="ghost"
           size="sm"
           className="cursor-pointer"
@@ -368,6 +424,6 @@ function AddWebhookForm({
           Cancel
         </Button>
       </div>
-    </div>
+    </form>
   );
 }

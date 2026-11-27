@@ -1,49 +1,63 @@
-/**
- * Configurable client for running deployed agents over direct core SSE.
- * Stream chunks are the Vercel AI SDK's `TextStreamPart` parts that core emits.
- */
-
-import type { ModelMessage, TextStreamPart, ToolSet } from "ai";
+import type { ModelMessage } from "ai";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
+import { BroodsApiError } from "./api-error.ts";
 import { stripTrailingSlash } from "./config.ts";
 import {
   resolveRunEvents,
   type AgentRunEventInput,
   type AgentRunOverrides,
 } from "./run-input.ts";
-import { readSseStream } from "./stream.ts";
-import type { AsyncRequestAccepted, AsyncStatus } from "./types.ts";
+import { readSseStream, type AgentStreamPart } from "./stream.ts";
+import type {
+  AnswersAccepted,
+  AsyncRequestAccepted,
+  AsyncStatus,
+} from "./types.ts";
+import { USER_TOKEN_HEADER } from "./user-token.ts";
+import type { QuestionAnswer } from "./websocket-contracts.ts";
 
 export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 
-/**
- * Input for a single agent run. The core direct API is event-based (a list of
- * Vercel AI SDK model messages), so `events` is the full-fidelity form. Use it
- * for multimodal content (images/files), ephemeral system messages, or
- * tool-approval responses. `input` is a shorthand for a single user text message
- * and is wrapped into one user event. Provide exactly one of the two.
- */
 type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
-  /** Busy-conversation behavior. Defaults to `steer`: join the live run at its next step boundary (falls back to a FIFO follow-up). */
+  /** When the conversation is busy. Default `steer` joins the live run at its next step. */
   mode?: "reject" | "followup" | "collect" | "steer";
-  /** Stable retry identity within the conversation; defaults to eventId. */
+  /** Defaults to `eventId`. */
   idempotencyKey?: string;
+  /**
+   * `run`/`stream`: aborting closes the stream, and core fails the run when it next writes a frame.
+   * `runAsync`: cancels only the request; a run core already accepted keeps going, so pass an
+   * `eventId` and reuse it on a retry, or the retry starts a second run.
+   */
+  signal?: AbortSignal;
 } & AgentRunOverrides;
 
 export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
 
 export interface AgentRunResult {
   text: string;
-  events: TextStreamPart<ToolSet>[];
+  events: AgentStreamPart[];
+  /** The agent's `model.output` result, from the run's `structured-output` frame. */
+  output?: unknown;
 }
 
-/** Input for `continue`: the conversation to re-enter. */
 export interface AgentContinueInput {
   /** The key given to `run`, or the scoped key a dashboard trace row shows. */
   conversationKey: string;
   eventId?: string;
+  /** Cancels only the request; an accepted continue keeps going, so retry with its `eventId`. */
+  signal?: AbortSignal;
+}
+
+export interface AgentAnswerInput {
+  /** The key the asking run used. */
+  conversationKey: string;
+  /** One per open prompt, from an `awaiting_input` status's `questions`. */
+  answers: [QuestionAnswer, ...QuestionAnswer[]];
+  eventId?: string;
+  /** Cancels only the request; accepted answers still resume, so retry with their `eventId`. */
+  signal?: AbortSignal;
 }
 
 export class IngressAcceptedError extends Error {
@@ -73,12 +87,6 @@ export interface AgentReference<Name extends string = string> {
   readonly id: string;
   readonly project: string;
   readonly stage: string;
-  /**
-   * Authoritative scope of the stage's runtime key, embedded by codegen
-   * from the deploy response. When present the client posts to the scoped URL
-   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (matching the
-   * dashboard); when absent it falls back to the base URL.
-   */
   readonly endpointId?: string;
   readonly projectSlug?: string;
   readonly stageSlug?: string;
@@ -93,7 +101,6 @@ export interface ChannelReference {
     | "linear"
     | "slack"
     | "discord"
-    | "matrix"
     | "pancake"
     | "teams"
     | "twilio"
@@ -118,15 +125,14 @@ export interface ResourceApi {
 }
 
 export interface BroodsClientOptions {
-  /**
-   * Base URL of the core service to call directly. Use `https://gateway.broods.app`
-   * for the hosted service. If you only have a domain, use `host` instead.
-   */
   baseUrl?: string;
-  /** Hostname or URL of the core service. `gateway.broods.app` becomes `https://gateway.broods.app`. */
   host?: string;
-  /** Runtime key used as the Bearer token for direct runtime calls. */
   apiKey?: string;
+  /**
+   * Sent beside the runtime key; an agent that requires one refuses the key alone.
+   * A function fetches a fresh token per call, e.g. one your backend signs with `signUserToken`.
+   */
+  userToken?: string | (() => string | Promise<string>);
   fetch?: typeof fetch;
 }
 
@@ -135,17 +141,17 @@ export type AgentHandle = {
   run: (input: AgentRunInput) => Promise<AgentRunResult>;
   runAsync: (input: AgentRunInput) => Promise<AsyncAgentRun>;
   continue: (input: AgentContinueInput) => Promise<AsyncAgentRun>;
-  stream: (input: AgentRunInput) => AsyncGenerator<TextStreamPart<ToolSet>>;
+  answer: (input: AgentAnswerInput) => Promise<AnswersAccepted>;
+  stream: (input: AgentRunInput) => AsyncGenerator<AgentStreamPart>;
 };
 
 export class BroodsClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
+  private readonly userToken?: BroodsClientOptions["userToken"];
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: BroodsClientOptions = {}) {
-    // Loads package-local .env/.env.local files for Node/Bun callers. Dashboard
-    // auth from the returned object is intentionally ignored for runtime calls.
     loadBroodsRuntimeConfig();
     this.baseUrl = normalizeHttpServiceUrl(
       options.baseUrl ||
@@ -155,19 +161,15 @@ export class BroodsClient {
         DEFAULT_CORE_BASE_URL,
     );
     this.apiKey = options.apiKey || process.env.BROODS_API_KEY || undefined;
+    this.userToken = options.userToken;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  /** Return the public provider webhook URL for a generated channel reference. */
   channelWebhookUrl(ref: ChannelReference): string {
     return `${this.baseUrl}${ref.webhookPath.startsWith("/") ? "" : "/"}${ref.webhookPath}`;
   }
 
-  /**
-   * Return the provider webhook URL for an account's channel. The URL names no
-   * agent, since every channel of one type in an account shares it, so this is
-   * what to paste into the provider when several agents sit behind the same app.
-   */
+  /** Names no agent: paste it into the provider when several agents share one app. */
   accountWebhookUrl(
     accountId: string,
     channelType: ChannelReference["type"],
@@ -177,10 +179,7 @@ export class BroodsClient {
     return `${this.baseUrl}/v1/webhooks/${segments.join("/")}`;
   }
 
-  /**
-   * Return the provider webhook URL pinned to one stage. Production keeps the
-   * bare account URL from `accountWebhookUrl`.
-   */
+  /** Pinned to one non-production stage; production uses `accountWebhookUrl`. */
   stageWebhookUrl(
     accountId: string,
     endpointId: string,
@@ -206,13 +205,15 @@ export class BroodsClient {
 
       return {
         id: id,
-        run: (input: AgentRunInput) =>
+        run: (input: AgentRunInput): Promise<AgentRunResult> =>
           this.run({ ...input, agentName: name, agentId: id }),
-        runAsync: (input: AgentRunInput) =>
+        runAsync: (input: AgentRunInput): Promise<AsyncAgentRun> =>
           this.runAsync({ ...input, agentName: name, agentId: id }),
-        continue: (input: AgentContinueInput) =>
+        continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
           this.continue({ ...input, agentId: id }),
-        stream: (input: AgentRunInput) =>
+        answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
+          this.answer({ ...input, agentId: id }),
+        stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
           this.stream({ ...input, agentName: name, agentId: id }),
       };
     }
@@ -225,14 +226,19 @@ export class BroodsClient {
 
     return {
       id: ref.id,
-      run: (input: AgentRunInput) => this.run(ref, input),
-      runAsync: (input: AgentRunInput) => this.runAsync(ref, input),
-      continue: (input: AgentContinueInput) => this.continue(ref, input),
-      stream: (input: AgentRunInput) => this.stream(ref, input),
+      run: (input: AgentRunInput): Promise<AgentRunResult> =>
+        this.run(ref, input),
+      runAsync: (input: AgentRunInput): Promise<AsyncAgentRun> =>
+        this.runAsync(ref, input),
+      continue: (input: AgentContinueInput): Promise<AsyncAgentRun> =>
+        this.continue(ref, input),
+      answer: (input: AgentAnswerInput): Promise<AnswersAccepted> =>
+        this.answer(ref, input),
+      stream: (input: AgentRunInput): AsyncGenerator<AgentStreamPart> =>
+        this.stream(ref, input),
     };
   }
 
-  /** Run an agent and accumulate the streamed text and raw parts. */
   async run(ref: AgentReference, input: AgentRunInput): Promise<AgentRunResult>;
   async run(
     input: AgentRunInput & { agentId: string; agentName?: string },
@@ -243,8 +249,9 @@ export class BroodsClient {
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
   ): Promise<AgentRunResult> {
-    const events: TextStreamPart<ToolSet>[] = [];
+    const events: AgentStreamPart[] = [];
     let text = "";
+    let output: unknown;
 
     const stream = maybeInput
       ? this.stream(refOrInput as AgentReference, maybeInput)
@@ -255,25 +262,25 @@ export class BroodsClient {
     for await (const part of stream) {
       events.push(part);
       if (part.type === "text-delta") text += part.text;
+      if (part.type === "structured-output") output = part.output;
     }
 
-    return { text: text, events: events };
+    return { text: text, events: events, output: output };
   }
 
-  /** Stream an agent run, yielding each AI SDK `TextStreamPart` as it arrives. */
   stream(
     ref: AgentReference,
     input: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   stream(
     input: AgentRunInput & { agentId: string; agentName?: string },
-  ): AsyncGenerator<TextStreamPart<ToolSet>>;
+  ): AsyncGenerator<AgentStreamPart>;
   async *stream(
     refOrInput:
       | AgentReference
       | (AgentRunInput & { agentId: string; agentName?: string }),
     maybeInput?: AgentRunInput,
-  ): AsyncGenerator<TextStreamPart<ToolSet>> {
+  ): AsyncGenerator<AgentStreamPart> {
     const input = maybeInput
       ? {
           ...maybeInput,
@@ -286,10 +293,12 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    const response = await this.openStream(body, targetUrl);
+    const response = await this.openStream(body, targetUrl, input.signal);
     if (!response.ok)
-      throw new Error(
-        `Run failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Run failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
     if (response.status === 202) {
       throw new IngressAcceptedError(
@@ -299,23 +308,19 @@ export class BroodsClient {
     if (!response.body) throw new Error("Run response has no body");
 
     for await (const data of readSseStream(response.body)) {
-      let part: TextStreamPart<ToolSet>;
+      let part: AgentStreamPart;
       try {
-        part = JSON.parse(data) as TextStreamPart<ToolSet>;
+        part = JSON.parse(data) as AgentStreamPart;
       } catch {
-        // Skip non-JSON lines (e.g. a heartbeat comment that slipped through).
         continue;
       }
-      // A fatal `error` part means the run aborted server-side (model/auth/tool
-      // failure). Surface it instead of yielding it, so callers that only read
-      // `text-delta` parts can never silently swallow a failed run.
+      // Thrown, not yielded, so a caller reading only `text-delta` cannot miss a failed run.
       if (part.type === "error")
         throw new Error(`Agent run failed: ${formatStreamError(part.error)}`);
       yield part;
     }
   }
 
-  /** Start an async agent run and return the status id/URL used for polling. */
   async runAsync(
     ref: AgentReference,
     input: AgentRunInput,
@@ -341,14 +346,10 @@ export class BroodsClient {
       ? this.scopedUrl(refOrInput as AgentReference)
       : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Async run");
+    return this.postAcceptedRun(targetUrl, body, "Async run", input.signal);
   }
 
-  /**
-   * Re-enter a conversation whose last turn stopped short (step cap, provider
-   * fault). Core adds one "continue" user turn on the persisted history and
-   * runs it like a background run; a live channel session answers in its channel.
-   */
+  /** Re-enter a conversation whose last turn stopped short (step cap, provider fault). */
   async continue(
     ref: AgentReference,
     input: AgentContinueInput,
@@ -370,29 +371,71 @@ export class BroodsClient {
     };
     const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
 
-    return this.postAcceptedRun(targetUrl, body, "Continue");
+    return this.postAcceptedRun(targetUrl, body, "Continue", input.signal);
   }
 
-  /** Fetch one async status snapshot by status URL or run id. */
+  /** Settles open `ask_questions` prompts; the conversation resumes in the background. */
+  async answer(
+    ref: AgentReference,
+    input: AgentAnswerInput,
+  ): Promise<AnswersAccepted>;
+  async answer(
+    input: AgentAnswerInput & { agentId: string },
+  ): Promise<AnswersAccepted>;
+  async answer(
+    refOrInput: AgentReference | (AgentAnswerInput & { agentId: string }),
+    maybeInput?: AgentAnswerInput,
+  ): Promise<AnswersAccepted> {
+    const ref = maybeInput ? (refOrInput as AgentReference) : null;
+    const input = maybeInput ?? (refOrInput as AgentAnswerInput);
+    const body = {
+      agentId: ref ? ref.id : (refOrInput as { agentId: string }).agentId,
+      eventId: input.eventId ?? `answer-${crypto.randomUUID()}`,
+      conversationKey: input.conversationKey,
+      answers: input.answers,
+    };
+    const targetUrl = ref ? this.scopedUrl(ref) : `${this.baseUrl}/v1/runs`;
+    const response = await this.fetchJson(targetUrl, {
+      method: "POST",
+      headers: await this.apiKeyHeaders(),
+      body: JSON.stringify(body),
+      signal: input.signal,
+    });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `Answer failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
+    if (response.status !== 202) {
+      throw new Error(
+        `Answer failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
+      );
+    }
+
+    return (await response.json()) as AnswersAccepted;
+  }
+
   async getAsyncStatus(
     status: AsyncRequestAccepted | string,
   ): Promise<AsyncStatus> {
     const statusUrl = this.resolveStatusUrl(status);
     const response = await this.fetchJson(statusUrl, {
       method: "GET",
-      headers: this.apiKeyHeaders(),
+      headers: await this.apiKeyHeaders(),
     });
 
     if (response.status === 404) return { status: "not_found" };
     if (!response.ok)
-      throw new Error(
-        `Status check failed: ${response.status} ${await response.text()}`,
+      throw new BroodsApiError(
+        `Status check failed: ${response.status}`,
+        response.status,
+        await response.text(),
       );
 
     return (await response.json()) as AsyncStatus;
   }
 
-  /** Poll async status until it reaches completed, failed, awaiting_approval, awaiting_input, or timeout. */
   async waitForAsyncStatus(
     status: AsyncRequestAccepted | string,
     options: AsyncPollOptions = {},
@@ -420,13 +463,7 @@ export class BroodsClient {
     throw new Error("Polling timeout");
   }
 
-  /**
-   * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
-   * key's scope, this is
-   * `/v1/projects/{projectSlug}/stages/{stageSlug}/agents/{endpointId}` (the
-   * same URL the dashboard shows, so core can validate the key against the
-   * path); otherwise it falls back to the single run endpoint.
-   */
+  // The dashboard's URL for the agent, so core can check the runtime key against the path.
   private scopedUrl(ref: AgentReference): string {
     if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
       return (
@@ -446,23 +483,30 @@ export class BroodsClient {
     return {
       ...accepted,
       conversationKey: conversationKey,
-      poll: () => this.getAsyncStatus(accepted),
-      wait: (options?: AsyncPollOptions) =>
+      poll: (): Promise<AsyncStatus> => this.getAsyncStatus(accepted),
+      wait: (options?: AsyncPollOptions): Promise<AsyncStatus> =>
         this.waitForAsyncStatus(accepted, options),
     };
   }
 
-  /** POST a run body that must answer 202 and wrap the accepted run for polling. */
   private async postAcceptedRun(
     targetUrl: string,
     body: { agentId: string; conversationKey: string },
     label: string,
+    signal?: AbortSignal,
   ): Promise<AsyncAgentRun> {
     const response = await this.fetchJson(targetUrl, {
       method: "POST",
-      headers: this.apiKeyHeaders(),
+      headers: await this.apiKeyHeaders(),
       body: JSON.stringify(body),
+      signal: signal,
     });
+    if (!response.ok)
+      throw new BroodsApiError(
+        `${label} failed: ${response.status}`,
+        response.status,
+        await response.text(),
+      );
     if (response.status !== 202) {
       throw new Error(
         `${label} failed: ${response.status} ${await responseErrorDetails(response, "202 JSON")}`,
@@ -478,11 +522,18 @@ export class BroodsClient {
   private async openStream(
     body: unknown,
     targetUrl: string,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     if (this.apiKey) {
-      return await this.fetchCore(body, targetUrl, {
-        Authorization: `Bearer ${this.apiKey}`,
-      });
+      return await this.fetchCore(
+        body,
+        targetUrl,
+        {
+          Authorization: `Bearer ${this.apiKey}`,
+          ...(await this.userTokenHeaders()),
+        },
+        signal,
+      );
     }
 
     throw new Error(
@@ -496,6 +547,7 @@ export class BroodsClient {
     body: unknown,
     targetUrl: string,
     authHeaders: Record<string, string>,
+    signal: AbortSignal | undefined,
   ): Promise<Response> {
     try {
       return await this.fetchImpl(targetUrl, {
@@ -506,8 +558,10 @@ export class BroodsClient {
           ...authHeaders,
         },
         body: JSON.stringify(body),
+        signal: signal,
       });
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `The SDK uses ${DEFAULT_CORE_BASE_URL} by default; set host/baseUrl or BROODS_HOST/BROODS_BASE_URL ` +
@@ -517,7 +571,7 @@ export class BroodsClient {
     }
   }
 
-  private apiKeyHeaders(): Record<string, string> {
+  private async apiKeyHeaders(): Promise<Record<string, string>> {
     if (!this.apiKey) {
       throw new Error("BroodsClient requires apiKey or BROODS_API_KEY.");
     }
@@ -525,7 +579,17 @@ export class BroodsClient {
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
+      ...(await this.userTokenHeaders()),
     };
+  }
+
+  private async userTokenHeaders(): Promise<Record<string, string>> {
+    const token =
+      typeof this.userToken === "function"
+        ? await this.userToken()
+        : this.userToken;
+
+    return token ? { [USER_TOKEN_HEADER]: token } : {};
   }
 
   private async fetchJson(
@@ -535,6 +599,7 @@ export class BroodsClient {
     try {
       return await this.fetchImpl(targetUrl, init);
     } catch (error) {
+      if (init.signal?.aborted) throw error;
       throw new Error(
         `Cannot access the broods core service at ${targetUrl}. ` +
           `Cause: ${error instanceof Error ? error.message : String(error)}`,
@@ -588,11 +653,6 @@ function directRunBody(
   };
 }
 
-/**
- * Render a streamed `error` part into a single human-readable line. Handles the
- * AI SDK's `APICallError` shape (a nested provider error under `data.error` or a
- * raw `responseBody`) and falls back to `message`/JSON so no failure mode is lost.
- */
 function formatStreamError(error: unknown): string {
   if (typeof error === "string") return error;
   if (!error || typeof error !== "object") return String(error);
@@ -663,7 +723,7 @@ async function responseErrorDetails(
 ): Promise<string> {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.toLowerCase().includes("text/event-stream")) {
-    await response.body?.cancel().catch(() => {});
+    await response.body?.cancel().catch((): void => {});
 
     return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment ignored the background flag and ran the request on the direct streaming runner.`;
   }
@@ -675,7 +735,7 @@ async function responseErrorDetails(
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
+  return new Promise((resolvePromise, reject): void => {
     if (signal?.aborted) {
       reject(new Error("Async status polling aborted."));
 
@@ -684,7 +744,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(resolvePromise, ms);
     signal?.addEventListener(
       "abort",
-      () => {
+      (): void => {
         clearTimeout(timer);
         reject(new Error("Async status polling aborted."));
       },

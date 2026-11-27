@@ -1,65 +1,105 @@
 "use client";
 
-/**
- * Mints a sealed terminal ticket through Convex, then bridges xterm.js to the
- * gateway's terminal WebSocket. Raw bytes both ways, no resize protocol.
- */
-
-import { CONNECTION_TONE, StatusDot } from "@/app/components/StatusDot";
 import { Button } from "@/app/components/ui/button";
 import { useOrgRole } from "@/app/hooks/useOrgRole";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
+import { observeResize } from "@/app/lib/observeResize";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useAction } from "convex/react";
-import { Plug, RefreshCw } from "lucide-react";
+import { Plug } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toErrorMessage } from "@/app/lib/errors";
 
-type TerminalStatus = keyof typeof CONNECTION_TONE;
+type TerminalStatus = "idle" | "connecting" | "live" | "ended" | "error";
 
 interface Props {
   sandboxId: Id<"sandboxConfigs">;
   reservationKey: string;
-  /** Blocks connecting, e.g. while the instance is terminating. */
   disabled: boolean;
+  label: string;
 }
 
 export function LiveSandboxTerminal({
   sandboxId,
   reservationKey,
   disabled,
+  label,
 }: Props): React.JSX.Element {
   const { canWrite } = useOrgRole();
   const openTerminal = useAction(api.sandbox.public.openTerminal);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const termRef = useRef<{ dispose: () => void } | null>(null);
+  const [term, setTerm] = useState<Terminal | null>(null);
   const [status, setStatus] = useState<TerminalStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [started, setStarted] = useState(false);
 
-  // The disposed flag aborts a handleConnect still awaiting the ticket or the
-  // xterm import. Without it that continuation opens a live PTY socket (which
-  // resumes a suspended instance) on an unmounted component, and leaks it.
+  // A connect awaiting its ticket must not open a socket nothing closes: it resumes the instance.
   const disposedRef = useRef(false);
+  // oxlint-disable-next-line broods/no-unreasoned-state-sync -- xterm on the DOM and the PTY socket
   useEffect(() => {
     disposedRef.current = false;
+    const container = containerRef.current;
+    // Per run, not disposedRef: a remount resets the ref before this import settles.
+    let cancelled = false;
+    let dispose = (): void => {};
+    // xterm touches the DOM at import time, so load it only in the browser.
+    void (async (): Promise<void> => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      if (cancelled || !container) return;
+      // xterm sizes cells on a canvas, where CSS variables do not resolve: pass concrete values.
+      const style = getComputedStyle(container);
+      const color = (token: string): string =>
+        style.getPropertyValue(`--color-terminal-${token}`).trim();
+      const next = new Terminal({
+        cursorBlink: true,
+        fontSize: parseFloat(style.fontSize),
+        lineHeight: 1.2,
+        fontFamily: style.fontFamily,
+        theme: {
+          background: color("background"),
+          foreground: color("foreground"),
+          cursor: color("foreground"),
+          selectionBackground: color("subtle"),
+        },
+      });
+      const fit = new FitAddon();
+      next.loadAddon(fit);
+      next.open(container);
+      fit.fit();
+      // No resize protocol: only the local grid follows the dock, the PTY keeps its size.
+      const stopResize = observeResize(container, () => fit.fit());
+      const input = next.onData((data) => {
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+      });
+      dispose = (): void => {
+        input.dispose();
+        stopResize();
+        next.dispose();
+      };
+      setTerm(next);
+    })();
 
     return () => {
+      cancelled = true;
       disposedRef.current = true;
       socketRef.current?.close(1000, "cleanup");
       socketRef.current = null;
-      termRef.current?.dispose();
-      termRef.current = null;
+      dispose();
     };
   }, []);
 
   async function handleConnect(): Promise<void> {
-    const container = containerRef.current;
-    if (!container || disabled) return;
+    if (!term || disabled) return;
     setStatus("connecting");
-    setError(null);
+    socketRef.current?.close(1000, "reconnect");
+    socketRef.current = null;
     try {
       const endpoint = resolveCoreEndpoint();
       if (!endpoint.ok) throw new Error(endpoint.message);
@@ -67,39 +107,9 @@ export function LiveSandboxTerminal({
         sandboxId: sandboxId,
         reservationKey: reservationKey,
       });
-      // xterm touches the DOM at import time, so load it only in the browser.
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import("@xterm/xterm"),
-        import("@xterm/addon-fit"),
-      ]);
       if (disposedRef.current) return;
 
-      socketRef.current?.close(1000, "reconnect");
-      termRef.current?.dispose();
-      container.innerHTML = "";
-
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 12,
-        fontFamily: "var(--font-mono, ui-monospace, monospace)",
-        theme: { background: "#000000" },
-      });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      term.open(container);
-      fit.fit();
-      // The detail column is user-resizable, so the grid has to follow it.
-      const observer = new ResizeObserver(() => fit.fit());
-      observer.observe(container);
-      termRef.current = {
-        dispose: (): void => {
-          observer.disconnect();
-          term.dispose();
-        },
-      };
-
-      // The ticket rides the subprotocol, not the query string, which lands
-      // in access logs.
+      // The ticket rides the subprotocol: a query string lands in access logs.
       const socket = new WebSocket(
         `${endpoint.websocketBaseUrl}${ticket.websocketPath}`,
         ["broods.v1", `broods.token.${ticket.token}`],
@@ -110,6 +120,7 @@ export function LiveSandboxTerminal({
       socket.onopen = () => {
         if (socketRef.current !== socket) return;
         setStatus("live");
+        setStarted(true);
         term.focus();
       };
       socket.onmessage = (event) => {
@@ -124,57 +135,73 @@ export function LiveSandboxTerminal({
         if (socketRef.current !== socket) return;
         socketRef.current = null;
         setStatus(event.code === 1000 ? "ended" : "error");
-        if (event.code !== 1000)
-          setError(event.reason || `Connection closed (${event.code}).`);
-        term.write("\r\n\x1b[2m[terminal session ended]\x1b[0m\r\n");
+        term.write(
+          note(
+            event.code === 1000
+              ? "[session ended]"
+              : `[disconnected: ${event.reason || `code ${event.code}`}]`,
+          ),
+        );
       };
       socket.onerror = () => {
         if (socketRef.current !== socket) return;
         setStatus("error");
-        setError("WebSocket transport error.");
       };
-      term.onData((data) => {
-        if (socket.readyState === WebSocket.OPEN) socket.send(data);
-      });
     } catch (err) {
+      if (disposedRef.current) return;
       setStatus("error");
-      setError(toErrorMessage(err));
+      term.write(note(`[could not connect: ${toErrorMessage(err)}]`));
     }
   }
 
-  const connected = status === "live" || status === "connecting";
+  const blocked = disabled || !term || status === "connecting";
+  const connect = canWrite ? (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={blocked}
+      onClick={handleConnect}
+      className={blocked ? "cursor-not-allowed" : "cursor-pointer"}
+    >
+      <Plug />
+      {status === "connecting" ? "Connecting" : "Connect"}
+    </Button>
+  ) : (
+    <p className="text-xs text-terminal-muted">
+      Your role cannot open a shell.
+    </p>
+  );
+
+  // A failed first connect drops the overlay so its note in the shell shows.
+  const overlay = !started && status !== "error";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          Interactive shell inside the sandbox (a real in-guest TTY). Connecting
-          resumes a suspended instance.
-        </p>
-        {canWrite && (
-          <Button
-            type="button"
-            size="sm"
-            disabled={disabled || status === "connecting"}
-            onClick={handleConnect}
-            className="shrink-0 cursor-pointer"
-          >
-            {connected ? (
-              <RefreshCw className="mr-1 size-3.5" />
-            ) : (
-              <Plug className="mr-1 size-3.5" />
-            )}
-            {status === "idle" ? "Connect" : "Reconnect"}
-          </Button>
-        )}
+    <div
+      className="scheme-dark relative flex min-h-0 flex-1 flex-col bg-terminal-background"
+      data-terminal-state={status}
+    >
+      <div className="flex min-h-0 flex-1 py-2 pl-3">
+        <div
+          ref={containerRef}
+          className="h-full min-h-40 w-full font-mono text-terminal"
+        />
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-terminal-background p-2">
-        <div ref={containerRef} className="h-full min-h-40 w-full" />
-      </div>
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <StatusDot tone={CONNECTION_TONE[status]} label={status} />
-        {error && <span className="text-destructive">{error}</span>}
-      </p>
+      {overlay && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-terminal-background">
+          {connect}
+          <p className="text-2xs text-terminal-muted">
+            {disabled ? `${label} · waiting for the sandbox` : label}
+          </p>
+        </div>
+      )}
+      {!overlay && status !== "live" && (
+        <div className="px-3 pb-3">{connect}</div>
+      )}
     </div>
   );
+}
+
+function note(text: string): string {
+  return `\r\n\x1b[2m${text}\x1b[0m\r\n`;
 }

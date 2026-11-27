@@ -1,21 +1,19 @@
-/**
- * WorkOS-backed CLI login codes and bearer tokens, plus the HTTP exchange
- * endpoint that swaps a one-time login code for a token.
- */
-
 import { v, type Infer } from "convex/values";
 import {
   httpAction,
   internalMutation,
+  internalQuery,
   mutation,
+  query,
   type MutationCtx,
+  type QueryCtx,
 } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { authKit } from "../auth";
-import { slugifyName } from "../lib/slug";
 import { bearerToken } from "../config/routes/shared";
 import {
+  CLI_TOKEN_PREFIX,
   createAccountSecret,
   randomToken,
   sha256Hex,
@@ -25,23 +23,33 @@ import {
   getOrgMembership,
   orgRoleMeets,
   userByAuthId,
+  type OrgRole,
 } from "../model/ownership/org";
-import { ClientError } from "../model/clientError";
+import { accountDoc } from "../model/accountDoc";
+import { insertAccount } from "../account/accounts";
+import { insertOwnedOrg } from "../org/orgs";
+import { ClientError, clientErrorResponse } from "../model/clientError";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
-import { planValidator } from "../schema";
+import { orgMembersFields, planValidator } from "../schema";
 
-const CLI_CODE_PREFIX = "bcode_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-export const CLI_TOKEN_PREFIX = "bcli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
+const PRUNE_BATCH_SIZE = 100;
 
 // RFC 7636: 43..128 unreserved characters, base64url without padding.
 const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-// onboardingContextValidator embeds the validators below, so it comes last.
+const accountLoginValidator = v.object({
+  account: accountDoc,
+  authId: v.string(),
+  lentToAgent: v.boolean(),
+  /** Its conversation has read logs: what it read may try to steer it, so it may only read. */
+  observed: v.boolean(),
+});
 
-/** The API account backing the token's current org; `broods whoami` reports it. */
+export type AccountLogin = Infer<typeof accountLoginValidator>;
+
 const onboardingAccountValidator = v.object({
   id: v.id("accounts"),
   username: v.string(),
@@ -90,19 +98,11 @@ type OnboardingOrg = {
   accountStatus: "active" | "disabled" | "missing";
 };
 
-/**
- * Mint a short-lived one-time login code for the authenticated user's active
- * org. The PKCE `codeChallenge` means only the CLI process holding the
- * verifier can exchange the code, so a stray localhost listener that catches
- * it gets nothing.
- */
-export const createLoginCode = mutation({
-  args: { codeChallenge: v.string() },
-  returns: v.object({ code: v.string(), expiresAt: v.number() }),
-  handler: async (
-    ctx,
-    { codeChallenge },
-  ): Promise<{ code: string; expiresAt: number }> => {
+// The approve page's click. PKCE: only the CLI holding the verifier can collect it.
+export const approveLogin = mutation({
+  args: { codeChallenge: v.string(), orgId: v.id("orgs") },
+  returns: v.null(),
+  handler: async (ctx, { codeChallenge, orgId }): Promise<null> => {
     if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
       throw new ClientError("codeChallenge must be a base64url S256 challenge");
     }
@@ -110,53 +110,24 @@ export const createLoginCode = mutation({
     if (!authUser) {
       throw new Error("User not found or not authenticated");
     }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) throw new ClientError("User not found", "not_found");
-
-    // Plain Errors reach a production caller as "Server Error"; these
-    // sentences go back to the CLI as the reason its login failed.
-    const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) throw new ClientError("No active organization", "not_found");
-    const membership = await getOrgMembership(ctx, org._id, user._id);
-    if (!membership || !orgRoleMeets(membership.role, "admin")) {
-      throw new ClientError(
-        `broods login needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
-        "unauthorized",
-      );
-    }
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-      .unique();
-    if (!account || account.status !== "active") {
-      throw new ClientError(
-        `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
-      );
-    }
+    const target = await cliLoginTarget(ctx, authUser.id, orgId);
+    // ClientError: a plain Error reaches a production caller only as "Server Error".
+    if (target instanceof ClientError) throw target;
 
     const now = Date.now();
-    const code = randomToken(CLI_CODE_PREFIX);
-    const expiresAt = now + CODE_TTL_MS;
     await ctx.db.insert("cliAuthCodes", {
-      codeHash: await sha256Hex(code),
       authId: authUser.id,
-      orgId: org._id,
-      accountId: account._id,
+      orgId: target.orgId,
+      accountId: target.accountId,
       codeChallenge: codeChallenge,
-      expiresAt: expiresAt,
+      expiresAt: now + CODE_TTL_MS,
       createdAt: now,
     });
 
-    return { code: code, expiresAt: expiresAt };
+    return null;
   },
 });
 
-/** Creates a new org for the CLI token user and switches the token to it. */
 export const createOnboardingOrg = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -167,7 +138,7 @@ export const createOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -175,125 +146,100 @@ export const createOnboardingOrg = internalMutation({
     const name = args.name.trim();
     if (!name) throw new Error("Organization name is required");
 
-    const now = Date.now();
-    const slug = await uniqueOrgSlug(ctx, name);
-    const orgId = await ctx.db.insert("orgs", {
-      name: name,
-      slug: slug,
-      ownerAuthId: token.authId,
-      plan: user.plan,
-      createdAt: now,
-    });
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: user._id,
-      role: "owner",
-      createdAt: now,
-    });
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: orgId,
-      username: slug,
-      description: `Broods org ${name}`,
+    const org = await ctx.db.get(await insertOwnedOrg(ctx, user, name));
+    if (!org) throw new Error("Failed to read created org");
+    const account = await insertAccount(ctx, {
+      orgId: org._id,
+      username: org.slug,
+      description: `Broods org ${org.name}`,
       secretHash: await sha256Hex(createAccountSecret()),
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
+      secretRotatedBy: user._id,
     });
-    await ctx.db.patch(user._id, { activeOrgId: orgId });
     await ctx.db.patch(token._id, {
-      orgId: orgId,
-      accountId: accountId,
-      lastUsedAt: now,
+      orgId: org._id,
+      accountId: account._id,
+      lastUsedAt: Date.now(),
     });
 
-    return await onboardingContext(ctx, token.authId, orgId);
+    return await onboardingContext(ctx, token.authId, org._id);
   },
 });
 
-/** HTTP exchange endpoint: swap a one-time WorkOS-backed login code for a CLI token. */
 export const exchange = httpAction(async (ctx, req): Promise<Response> => {
   if (req.method !== "POST") {
     return methodNotAllowed(["POST"]);
   }
 
-  let body: { code?: unknown; code_verifier?: unknown };
+  let body: { code_verifier?: unknown };
   try {
-    body = (await req.json()) as { code?: unknown; code_verifier?: unknown };
+    body = (await req.json()) as { code_verifier?: unknown };
   } catch {
     return jsonError(400, "Request body must be valid JSON");
   }
 
-  if (typeof body.code !== "string" || !body.code.trim()) {
-    return jsonError(400, "Request body must include code");
-  }
   if (typeof body.code_verifier !== "string") {
     return jsonError(400, "Request body must include code_verifier");
   }
 
   try {
-    const result: Record<string, unknown> = await ctx.runMutation(
+    const result: Record<string, unknown> | null = await ctx.runMutation(
       internal.cli.auth.exchangeLoginCode,
-      {
-        code: body.code,
-        codeVerifier: body.code_verifier,
-      },
+      { codeVerifier: body.code_verifier },
     );
 
-    return json(result);
+    // The CLI polls with its verifier until the login is approved in a browser.
+    return result ? json(result) : json({ pending: true }, 202);
   } catch (error) {
+    const clientError = clientErrorResponse(error);
+    if (clientError) return clientError;
     console.error("CLI login exchange failed", error);
-    if (
-      error instanceof Error &&
-      error.message.includes("CLI login code is invalid or expired")
-    ) {
-      return jsonError(400, "Login code is invalid or expired");
-    }
 
     return jsonError(500, "Login exchange failed");
   }
 });
 
-/** Exchange a one-time code for a long-lived CLI bearer token. */
 export const exchangeLoginCode = internalMutation({
-  args: { code: v.string(), codeVerifier: v.string() },
-  returns: v.object({
-    token: v.string(),
-    expiresAt: v.number(),
-    user: v.object({
-      authId: v.string(),
-      email: v.string(),
-      name: v.string(),
+  args: { codeVerifier: v.string() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      token: v.string(),
+      expiresAt: v.number(),
+      user: v.object({
+        authId: v.string(),
+        email: v.string(),
+        name: v.string(),
+      }),
+      org: v.object({
+        id: v.string(),
+        name: v.string(),
+        slug: v.string(),
+      }),
+      account: v.object({
+        id: v.string(),
+        username: v.string(),
+      }),
     }),
-    org: v.object({
-      id: v.string(),
-      name: v.string(),
-      slug: v.string(),
-    }),
-    account: v.object({
-      id: v.string(),
-      username: v.string(),
-    }),
-  }),
-  handler: async (ctx, { code, codeVerifier }) => {
-    if (!code.startsWith(CLI_CODE_PREFIX)) {
-      throw new Error("CLI login code is invalid or expired");
-    }
-    const codeHash = await sha256Hex(code);
+  ),
+  handler: async (ctx, { codeVerifier }) => {
+    const codeChallenge = await pkceChallenge(codeVerifier);
     const row = await ctx.db
       .query("cliAuthCodes")
-      .withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
-      .unique();
+      .withIndex("by_codeChallenge", (q) =>
+        q.eq("codeChallenge", codeChallenge),
+      )
+      .order("desc")
+      .first();
+    // A row with a code hash came from a plain page load, not an Approve click.
+    if (!row || row.codeHash) return null;
     const now = Date.now();
-    if (!row || row.usedAt || row.expiresAt < now) {
-      throw new Error("CLI login code is invalid or expired");
-    }
-    if ((await pkceChallenge(codeVerifier)) !== row.codeChallenge) {
-      throw new Error("CLI login code is invalid or expired");
+    if (row.usedAt || row.expiresAt < now) {
+      throw new ClientError("Login is expired or already collected");
     }
 
     const account = await ctx.db.get(row.accountId);
     if (!account || account.status !== "active")
-      throw new Error("Account is not active");
+      throw new ClientError("Account is not active", "forbidden");
     const org = await ctx.db.get(row.orgId);
     if (!org) throw new Error("Organization not found");
     const user = await ctx.db
@@ -301,18 +247,8 @@ export const exchangeLoginCode = internalMutation({
       .withIndex("by_authId", (q) => q.eq("authId", row.authId))
       .unique();
 
-    const token = randomToken(CLI_TOKEN_PREFIX);
     const expiresAt = now + TOKEN_TTL_MS;
-    await ctx.db.insert("cliTokens", {
-      tokenHash: await sha256Hex(token),
-      authId: row.authId,
-      orgId: row.orgId,
-      accountId: row.accountId,
-      status: "active",
-      expiresAt: expiresAt,
-      createdAt: now,
-      lastUsedAt: now,
-    });
+    const token = await insertCliToken(ctx, row, expiresAt);
     await ctx.db.patch(row._id, { usedAt: now });
 
     return {
@@ -336,7 +272,6 @@ export const exchangeLoginCode = internalMutation({
   },
 });
 
-/** Returns selectable orgs and projects for the current CLI token context. */
 export const getOnboardingContext = internalMutation({
   args: { tokenHash: v.string() },
   returns: v.union(v.null(), onboardingContextValidator),
@@ -344,7 +279,7 @@ export const getOnboardingContext = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
 
     return await onboardingContext(
@@ -355,21 +290,160 @@ export const getOnboardingContext = internalMutation({
   },
 });
 
-/**
- * Hash of the request's `broods login` bearer token, for `resolveCliToken`.
- * Null when the bearer is missing or carries another prefix, so the
- * login-only CLI routes spend no lookup on it.
- */
 export async function cliLoginTokenHash(req: Request): Promise<string | null> {
   const token = bearerToken(req);
 
   return token?.startsWith(CLI_TOKEN_PREFIX) ? await sha256Hex(token) : null;
 }
 
-/**
- * Resolve a CLI token to the account key hash used by existing sync code.
- * Touches lastUsedAt at a coarse interval to avoid write contention.
- */
+// A `bcli_` login lands on the active org, a `/mcp` sign-in on the org it names: owner or admin.
+export async function cliLoginTarget(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  orgId?: Id<"orgs">,
+): Promise<{ orgId: Id<"orgs">; accountId: Id<"accounts"> } | ClientError> {
+  const user = await userByAuthId(ctx, authId);
+  if (!user) return new ClientError("User not found", "not_found");
+  const org = orgId
+    ? await ctx.db.get(orgId)
+    : await getActiveOrgForUser(ctx, user._id);
+  if (!org) return new ClientError("No active organization", "not_found");
+  const membership = await getOrgMembership(ctx, org._id, user._id);
+  if (!membership || !orgRoleMeets(membership.role, "admin")) {
+    return new ClientError(
+      `Signing in to Broods needs the owner or admin role in ${org.name}. Switch organizations in the dashboard, then try again.`,
+      "unauthorized",
+    );
+  }
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
+    .unique();
+  if (!account || account.status !== "active") {
+    return new ClientError(
+      `${org.name} has no active API account. Set it up under Organization > API Access in the dashboard.`,
+    );
+  }
+
+  return { orgId: org._id, accountId: account._id };
+}
+
+// Only the hash is stored: the plaintext returned here is the one copy.
+export async function insertCliToken(
+  ctx: MutationCtx,
+  owner: {
+    authId: string;
+    orgId: Id<"orgs">;
+    accountId: Id<"accounts">;
+    lentToAgent?: true;
+    lentConversation?: string;
+  },
+  expiresAt: number,
+): Promise<string> {
+  const now = Date.now();
+  const token = randomToken(CLI_TOKEN_PREFIX);
+  await ctx.db.insert("cliTokens", {
+    tokenHash: await sha256Hex(token),
+    authId: owner.authId,
+    orgId: owner.orgId,
+    accountId: owner.accountId,
+    status: "active",
+    expiresAt: expiresAt,
+    createdAt: now,
+    lastUsedAt: now,
+    ...(owner.lentToAgent ? { lentToAgent: true as const } : {}),
+    ...(owner.lentConversation
+      ? { lentConversation: owner.lentConversation }
+      : {}),
+  });
+
+  return token;
+}
+
+// Expiry is checked inline on every resolve; this only bounds growth.
+export const pruneExpiredTokens = internalMutation({
+  args: { now: v.optional(v.number()) },
+  returns: v.object({ tokensDeleted: v.number() }),
+  handler: async (ctx, args): Promise<{ tokensDeleted: number }> => {
+    const now = args.now ?? Date.now();
+    // A token minted with no expiresAt never expires, so the range starts above zero.
+    const expired = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_expiresAt", (q) =>
+        q.gt("expiresAt", 0).lt("expiresAt", now),
+      )
+      .take(PRUNE_BATCH_SIZE);
+    for (const token of expired) {
+      await ctx.db.delete(token._id);
+    }
+    if (expired.length === PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cli.auth.pruneExpiredTokens, {
+        now: now,
+      });
+    }
+
+    return { tokensDeleted: expired.length };
+  },
+});
+
+// The account API's view of a login, lent ones included: one round trip, account and all.
+export const resolveAccountLogin = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.union(v.null(), accountLoginValidator),
+  handler: async (ctx, args): Promise<AccountLogin | null> => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, true);
+    if (!resolved) return null;
+
+    return {
+      account: resolved.account,
+      authId: resolved.token.authId,
+      lentToAgent: resolved.token.lentToAgent === true,
+      observed: await conversationObserved(ctx, resolved.token),
+    };
+  },
+});
+
+// An AuthKit-signed-in user at core's `/mcp`: the account `broods login` would give them.
+export const resolveUserLogin = internalQuery({
+  args: { authId: v.string(), org: v.optional(v.string()) },
+  returns: v.union(
+    v.object({ account: accountDoc }),
+    v.object({ refused: v.string() }),
+  ),
+  handler: async (
+    ctx,
+    { authId, org },
+  ): Promise<{ account: Doc<"accounts"> } | { refused: string }> => {
+    // Never the dashboard's active org: switching it there must not repoint a connected client.
+    const user = await userByAuthId(ctx, authId);
+    const orgs = user ? await administeredOrgs(ctx, user) : [];
+    const picked = org ? orgs.filter(({ slug }) => slug === org) : orgs;
+    if (org && picked.length === 0) {
+      return {
+        refused: `You are not an owner or admin of an organization with the slug ${org}.`,
+      };
+    }
+    if (picked.length > 1) {
+      return {
+        refused: `You administer several organizations. Add ?org=<slug> to the MCP URL to pick one: ${picked.map(({ slug }) => slug).join(", ")}.`,
+      };
+    }
+    if (picked.length === 0) {
+      return {
+        refused:
+          "Signing in to Broods needs the owner or admin role in an organization.",
+      };
+    }
+    const target = await cliLoginTarget(ctx, authId, picked[0]!._id);
+    if (target instanceof ClientError) return { refused: target.message };
+    const account = await ctx.db.get(target.accountId);
+
+    return account
+      ? { account: account }
+      : { refused: "The organization has no API account" };
+  },
+});
+
 export const resolveCliToken = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -385,7 +459,7 @@ export const resolveCliToken = internalMutation({
     }),
   ),
   handler: async (ctx, args) => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token, account } = resolved;
 
@@ -399,7 +473,38 @@ export const resolveCliToken = internalMutation({
   },
 });
 
-/** Switches the current CLI token to another org where the user can manage resources. */
+// `broods logout`: a login revokes itself, so a leaked one stops before its 90 days run out.
+export const revoke = httpAction(async (ctx, req): Promise<Response> => {
+  const tokenHash = await cliLoginTokenHash(req);
+  const revoked =
+    tokenHash !== null &&
+    (await ctx.runMutation(internal.cli.auth.revokeToken, {
+      tokenHash: tokenHash,
+    }));
+
+  return revoked
+    ? new Response(null, { status: 204 })
+    : jsonError(401, "Login is invalid or already revoked");
+});
+
+export const revokeToken = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const token = await ctx.db
+      .query("cliTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    // No role or account check: a demoted owner or a disabled account can come back.
+    if (!token || token.status !== "active" || token.lentToAgent === true) {
+      return false;
+    }
+    await ctx.db.patch(token._id, { status: "revoked" });
+
+    return true;
+  },
+});
+
 export const selectOnboardingOrg = internalMutation({
   args: {
     tokenHash: v.string(),
@@ -410,7 +515,7 @@ export const selectOnboardingOrg = internalMutation({
     ctx,
     args,
   ): Promise<Infer<typeof onboardingContextValidator> | null> => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash, false);
     if (!resolved) return null;
     const { token } = resolved;
     const user = await userByAuthId(ctx, token.authId);
@@ -425,7 +530,10 @@ export const selectOnboardingOrg = internalMutation({
       !membership ||
       (membership.role !== "owner" && membership.role !== "admin")
     ) {
-      throw new Error("CLI org selection requires owner or admin role");
+      throw new ClientError(
+        "CLI org selection requires owner or admin role",
+        "forbidden",
+      );
     }
 
     const account = await ctx.db
@@ -433,7 +541,7 @@ export const selectOnboardingOrg = internalMutation({
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
       .unique();
     if (!account || account.status !== "active") {
-      throw new Error("Selected org does not have an active API account");
+      throw new ClientError("Selected org does not have an active API account");
     }
 
     await ctx.db.patch(token._id, {
@@ -446,7 +554,6 @@ export const selectOnboardingOrg = internalMutation({
   },
 });
 
-/** S256 PKCE transform: base64url(sha256(verifier)), no padding. */
 export async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
@@ -528,9 +635,88 @@ async function onboardingContext(
   };
 }
 
-async function resolveActiveCliToken(
+async function administeredOrgs(
+  ctx: QueryCtx,
+  user: Doc<"users">,
+): Promise<(Doc<"orgs"> & { role: OrgRole })[]> {
+  const memberships = await ctx.db
+    .query("orgMembers")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .collect();
+  const orgs = await Promise.all(
+    memberships
+      .filter(({ role }) => orgRoleMeets(role, "admin"))
+      .map(async ({ orgId, role }) => {
+        const org = await ctx.db.get(orgId);
+
+        return org ? { ...org, role: role } : null;
+      }),
+  );
+
+  return orgs.filter((org) => org !== null);
+}
+
+// What the dashboard's `/mcp-auth/start` page offers to sign an MCP client in to.
+export const mcpSignInOrgs = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      orgId: v.id("orgs"),
+      slug: v.string(),
+      name: v.string(),
+      role: orgMembersFields.role,
+      selected: v.boolean(),
+      provisioned: v.boolean(),
+    }),
+  ),
+  handler: async (
+    ctx,
+  ): Promise<
+    {
+      orgId: Id<"orgs">;
+      slug: string;
+      name: string;
+      role: OrgRole;
+      selected: boolean;
+      provisioned: boolean;
+    }[]
+  > => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+    const user = await userByAuthId(ctx, authUser.id);
+    if (!user) return [];
+    const selected = (await getActiveOrgForUser(ctx, user._id))?._id;
+    const orgs = await administeredOrgs(ctx, user);
+
+    const listed = await Promise.all(
+      orgs.map(async ({ _id, name, role, slug }) => ({
+        orgId: _id,
+        slug: slug,
+        name: name,
+        role: role,
+        selected: _id === selected,
+        provisioned:
+          (await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", _id))
+            .first()) !== null,
+      })),
+    );
+
+    return listed.sort(
+      (a, b) =>
+        Number(b.selected) - Number(a.selected) || a.name.localeCompare(b.name),
+    );
+  },
+});
+
+// A login lent to the agent is unknown to the CLI plane: it cannot mint keys or sessions there.
+export async function resolveActiveCliToken(
   ctx: MutationCtx,
   tokenHash: string,
+  acceptsLent: boolean,
 ): Promise<{ token: Doc<"cliTokens">; account: Doc<"accounts"> } | null> {
   const token = await ctx.db
     .query("cliTokens")
@@ -540,7 +726,8 @@ async function resolveActiveCliToken(
   if (
     !token ||
     token.status !== "active" ||
-    (token.expiresAt !== undefined && token.expiresAt < now)
+    (token.expiresAt !== undefined && token.expiresAt < now) ||
+    (token.lentToAgent === true && !acceptsLent)
   ) {
     return null;
   }
@@ -548,8 +735,7 @@ async function resolveActiveCliToken(
   const account = await ctx.db.get(token.accountId);
   if (!account || account.status !== "active") return null;
 
-  // A token is minted for an owner/admin; it must stop working the moment
-  // that membership is removed or demoted, not when it expires.
+  // Stops working the moment the owner/admin membership is removed or demoted.
   const user = await userByAuthId(ctx, token.authId);
   const membership = user
     ? await getOrgMembership(ctx, token.orgId, user._id)
@@ -566,19 +752,19 @@ async function resolveActiveCliToken(
   return { token: token, account: account };
 }
 
-async function uniqueOrgSlug(
+// By conversation, not token: a login re-minted mid-conversation inherits what the last one read.
+async function conversationObserved(
   ctx: MutationCtx,
-  baseName: string,
-): Promise<string> {
-  const baseSlug = slugifyName(baseName);
-  let suffix = 0;
-  for (;;) {
-    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
-      .query("orgs")
-      .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!existing) return candidate;
-    suffix += 1;
-  }
+  token: Doc<"cliTokens">,
+): Promise<boolean> {
+  const conversation = token.lentConversation;
+  if (token.lentToAgent !== true || conversation === undefined) return false;
+  const mark = await ctx.db
+    .query("observedConversations")
+    .withIndex("by_authId_and_conversationKey", (q) =>
+      q.eq("authId", token.authId).eq("conversationKey", conversation),
+    )
+    .first();
+
+  return mark !== null;
 }

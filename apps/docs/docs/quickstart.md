@@ -32,13 +32,14 @@ The first run:
 2. Asks for an organization, a project name, a stage and a service region. Press Enter to keep each default.
 3. Creates `broods/index.ts` with a starter agent.
 4. Pushes `OPENAI_API_KEY` from `.env.local` to your `development` stage.
-5. Syncs your resources and writes the runtime key to `.env.local` as `BROODS_API_KEY`.
+5. Syncs your resources and writes the runtime key to `.env.local` as `BROODS_API_KEY`, and the stage's user token signing secret as `BROODS_USER_TOKEN_SECRET`.
 6. Watches `broods/` and live-tails warnings and errors.
 
 ```text
 ✔ Created starter broods/
 ✔ Synced 2 resources to my-agents/development
 ✔ Wrote BROODS_API_KEY (bsk_…vK8s) to .env.local
+✔ Wrote a new user token signing secret to BROODS_USER_TOKEN_SECRET in .env.local
 ```
 
 The starter agent:
@@ -61,14 +62,14 @@ export const myAgent = defineAgent({
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
   sandboxes: [lambdaSandbox],
-  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key and
-  // `broods run` can reach this agent. Off by default: a private agent is
-  // only reachable via internal endpoints or channel webhooks.
+  // Expose the public runtime endpoint (SSE/WebSocket) so the runtime key can
+  // reach this agent. Off by default: a private agent is only reachable via
+  // internal endpoints, channel webhooks or `broods run`.
   publicAccess: true,
 });
 ```
 
-`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the runtime key reach this agent, which `broods run` and the SDK use.
+`env("OPENAI_API_KEY")` is a reference that the server resolves. The key never lands in your synced config. `publicAccess: true` lets the runtime key, which the SDK uses, reach this agent. `broods run` uses your login and works either way.
 
 Leave `broods dev` running. Every save re-syncs.
 
@@ -87,10 +88,13 @@ This opens a chat in the terminal. Reasoning streams in, tool calls show as card
 `broods dev` generates typed references in `broods/_generated/`:
 
 ```ts title="index.ts"
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new BroodsClient(); // reads BROODS_API_KEY from .env.local
+// reads BROODS_API_KEY and BROODS_USER_TOKEN_SECRET from .env.local
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
 
 const result = await client.run(api.agents.myAgent, {
   input: "What is the capital of France?",
@@ -108,6 +112,8 @@ for await (const part of client.stream(api.agents.myAgent, {
 bun index.ts
 ```
 
+A new agent requires a user token beside the runtime key. On a real site your server signs one per user, see [Users behind the runtime key](guides/security.md#users-behind-the-runtime-key).
+
 Other languages use the same endpoint over HTTP. See [HTTP API](reference/http-api.md).
 
 ## 6. Deploy to production
@@ -123,6 +129,8 @@ Then sync the same resources to your `production` stage once:
 ```bash
 bunx broods deploy
 ```
+
+The first deploy pins Production's region: `eu-west-1` unless you pass `--region`. It cannot move afterwards. The first `env set --stage production` or `deploy` creates the Production stage, and the dashboard's stage menu then opens it directly instead of offering to initialize Production.
 
 ## Check where you are pointed
 

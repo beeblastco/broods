@@ -1,18 +1,18 @@
-/**
- * Route handlers for the CLI HTTP surface (`cli/http.ts` is the router).
- * One exported handler per route kind, plus the external-resource sync helpers
- * (skills/hooks/mcp bundles, cron reconciliation) the manifest PUT drives.
- */
-
 import type { FunctionArgs } from "convex/server";
+import { z } from "zod/mini";
 import { type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { CliManifest, GeneratedIds } from "./types";
+import {
+  DEPLOYMENT_REGIONS,
+  type CliManifest,
+  type GeneratedIds,
+} from "./types";
 import { terminateReservedInstances } from "../config/routes/shared";
 import {
   isExternalResourceKind,
   placeholderIds,
+  prunes,
   resourceName,
   rewriteEnvRefs,
   type ExternalResourceKind,
@@ -32,11 +32,17 @@ import { normalizeCreateCronInput } from "../model/cronRules";
 import { putHookBundle, storeMcpBundle } from "../model/bundles";
 import { remapKeys, stableJson, stripUndefined } from "../model/objects";
 import type { ProjectStageScope } from "../model/projectScope";
-import { uploadQuotaResponse } from "../model/uploads";
+import { uploadQuotaResponse, type UploadKind } from "../model/uploads";
 import { json, jsonError, methodNotAllowed } from "../model/httpJson";
+import { apiErrorBody } from "../model/apiError";
 import { ClientError } from "../model/clientError";
+import { parseInput, skillFileDeclarations } from "../model/inputSchema";
+import { MAX_SKILL_BUNDLE_BYTES } from "../model/skillLimits";
+import { manifestHash } from "../model/manifestSnapshot";
+import { stageSourceProblem, type StageSource } from "../model/stageSource";
+import { stageSourceSchema } from "../model/stageSourceSchema";
+import { storeStageSync } from "../model/stageSourceStore";
 
-/** Resolved CLI auth: an account key, a scoped project key, or a CLI token. */
 export type CliAuth =
   | {
       accountId: Id<"accounts">;
@@ -50,13 +56,21 @@ export type CliAuth =
       scoped: true;
       cliTokenId: Id<"cliTokens">;
       cliAuthId: string;
+    }
+  | {
+      accountId: Id<"accounts">;
+      secretHash: string;
+      scoped: true;
+      applyAuthId: string;
     };
 
 export type RouteParts =
   | { kind: "manifest"; project: string; stage: string }
   | { kind: "mcpBundleUpload"; project: string; stage: string }
+  | { kind: "skillUpload"; project: string; stage: string }
   | { kind: "logs"; project: string; stage: string }
   | { kind: "runtimeKey"; project: string; stage: string }
+  | { kind: "userTokenSecret"; project: string; stage: string }
   | { kind: "envList"; project: string; stage: string }
   | { kind: "env"; project: string; stage: string; name: string }
   | {
@@ -66,6 +80,10 @@ export type RouteParts =
       resourceKind: "agent" | "workspace" | "sandbox" | "cron";
       name: string;
     };
+
+const pruneTargetsSchema = z.array(
+  z.object({ kind: z.string(), name: z.string() }),
+);
 
 type CronResponse = {
   cronId: string;
@@ -81,42 +99,40 @@ type CronResponse = {
 
 type DesiredCron = Omit<CronResponse, "cronId">;
 
-/** What a prune or single delete is about to remove, as the query names it. */
 type DeleteTarget = FunctionArgs<
   typeof internal.cli.sync.deleteTargetsBySecretHash
 >["target"];
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "hooks" | "mcp">;
 
-/**
- * `kind:name` of every external resource another stage of the account
- * manages. Skills and hooks are account-wide rows keyed by name, so this set
- * is what keeps a stage-scoped project key from replacing them.
- */
+type StageRef = { secretHash: string; project: string; stage: string };
+
+// `kind:name` another stage manages: skills and hooks are account-wide rows keyed by name.
 type ForeignExternalResources = ReadonlySet<string>;
 
-/** A manifest's skills, hooks and MCP servers, checked before any is stored. */
+type DeclaredSkillFiles = z.output<typeof skillFileDeclarations>;
+
+// A skill carries inline files, an uploaded blob, or neither when the account already holds it.
 type PreparedExternal = {
-  skills: Array<{ name: string; files: unknown[] }>;
+  skills: Array<
+    | { name: string; files: unknown[] }
+    | { name: string; files: DeclaredSkillFiles; held: true }
+    | {
+        name: string;
+        files: DeclaredSkillFiles;
+        filesStorageId: Id<"_storage">;
+      }
+  >;
   hooks: Array<{ name: string; upload: RequiredAccountHookUpload }>;
   mcp: Array<{ name: string; input: McpInput }>;
 };
 
-/**
- * Who manages the account's external resources. `owned` maps, per kind, each
- * name this stage records and no other stage does to the row it recorded: the
- * only rows a prune removes. MCP servers are stage rows, so another stage's
- * record never disowns one.
- */
+// owned: names only this stage records, to the row it recorded; the only rows a prune removes.
 type ExternalOwnership = {
   foreign: ForeignExternalResources;
   owned: Record<ExternalResourceKind, ReadonlyMap<string, string>>;
 };
 
-/**
- * Refuse to create or replace an account-wide resource whose name is
- * recorded as managed by a different stage.
- */
 export function assertNotForeign(
   foreign: ForeignExternalResources,
   kind: "skill" | "hook",
@@ -129,7 +145,6 @@ export function assertNotForeign(
   );
 }
 
-/** GET the stage's env names/digests; values never leave the store. */
 export async function handleEnvListRoute(
   ctx: ActionCtx,
   req: Request,
@@ -146,7 +161,6 @@ export async function handleEnvListRoute(
   return json({ variables: variables });
 }
 
-/** One env variable: GET reveals (audited), PUT sets, DELETE removes. */
 export async function handleEnvRoute(
   ctx: ActionCtx,
   req: Request,
@@ -154,8 +168,6 @@ export async function handleEnvRoute(
   auth: CliAuth,
 ): Promise<Response> {
   if (req.method === "GET") {
-    // A project key deploys; it does not carry the stage's secrets out. Reveal
-    // stays with a person (`broods login`) or the account key.
     if ("deployKeyId" in auth) {
       return jsonError(
         403,
@@ -186,6 +198,7 @@ export async function handleEnvRoute(
         project: route.project,
         stage: route.stage,
         name: route.name,
+        ...cliAuditActor(auth),
       },
     );
 
@@ -203,6 +216,7 @@ export async function handleEnvRoute(
       stage: route.stage,
       name: route.name,
       value: body.value,
+      ...cliAuditActor(auth),
     });
 
     return json({ ok: true });
@@ -214,8 +228,6 @@ export async function handleEnvRoute(
 export function handleLogsRoute(req: Request): Response {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
-  // Logs now stream via the gateway (NATS live tail + Loki backfill).
-  // Use wss://gateway.broods.app/v1/projects/<project>/stages/<stage>/observability/ws instead.
   return jsonError(
     410,
     "Log streaming has moved to the gateway observability WebSocket",
@@ -238,7 +250,12 @@ export async function handleManifestRoute(
       },
     );
 
-    return result ? json(result) : jsonError(404, "Manifest not found");
+    return result
+      ? json({
+          ...result,
+          manifestHash: await manifestHash(result.manifest.resources),
+        })
+      : jsonError(404, "Manifest not found");
   }
   if (req.method === "PUT")
     return await handleManifestSync(ctx, req, route, auth);
@@ -246,20 +263,17 @@ export async function handleManifestRoute(
   return methodNotAllowed(["GET", "PUT"]);
 }
 
-/**
- * Mint a storage upload URL for a large hosted-MCP bundle (#190); the CLI
- * passes the returned storage id as `bundleStorageId` in the manifest.
- * Minting counts against the account's hourly upload quota.
- */
-export async function handleMcpBundleUploadRoute(
+// The CLI passes the uploaded storage id as `bundleStorageId` or `filesStorageId` in the manifest.
+export async function handleUploadRoute(
   ctx: ActionCtx,
   req: Request,
   auth: CliAuth,
+  kind: Exclude<UploadKind, "workspace">,
 ): Promise<Response> {
   if (req.method !== "POST") return methodNotAllowed(["POST"]);
   const grant = await ctx.runMutation(internal.account.uploads.grant, {
     accountId: auth.accountId,
-    kind: "mcp",
+    kind: kind,
   });
   if ("retryAt" in grant) {
     return uploadQuotaResponse(grant.retryAt);
@@ -315,9 +329,6 @@ export async function handleRuntimeKeyRoute(
 ): Promise<Response> {
   if (req.method !== "GET") return methodNotAllowed(["GET"]);
 
-  // Reconnect path: recover the existing runtime key (minting one if the
-  // stage has none yet) so the CLI can write BROODS_API_KEY
-  // without a redeploy.
   const deployment = await ctx.runMutation(
     internal.cli.sync.ensureRuntimeKeyBySecretHash,
     {
@@ -339,11 +350,41 @@ export async function handleRuntimeKeyRoute(
     : jsonError(404, "Project or stage not found");
 }
 
-/**
- * Crons are account-wide rows but a job belongs to the stage of the agent it
- * targets, so a name is matched only among this stage's agents. A same-named
- * job of another stage is neither touched nor a conflict; null means create.
- */
+// Returns the new secret this once; tokens the previous secret signed stop opening.
+export async function handleUserTokenSecretRoute(
+  ctx: ActionCtx,
+  req: Request,
+  route: Extract<RouteParts, { kind: "userTokenSecret" }>,
+  auth: CliAuth,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const rotated = await ctx.runMutation(
+    internal.cli.sync.rotateUserTokenSecretBySecretHash,
+    {
+      secretHash: auth.secretHash,
+      project: route.project,
+      stage: route.stage,
+      cliAuthId: "cliAuthId" in auth ? auth.cliAuthId : undefined,
+      actorKind:
+        "deployKeyId" in auth && auth.deployKeyId ? "deployKey" : "cli",
+      actorId:
+        "deployKeyId" in auth && auth.deployKeyId
+          ? auth.deployKeyId
+          : "cliAuthId" in auth
+            ? auth.cliAuthId
+            : auth.accountId,
+    },
+  );
+
+  return rotated
+    ? json(rotated)
+    : jsonError(
+        404,
+        "Project or stage not found, or it has no runtime key yet",
+      );
+}
+
+// Crons are account-wide but belong to their agent's stage; another stage's namesake is untouched.
 export function stageCronByName<T extends { name: string; agentId: string }>(
   existing: T[],
   stageAgentIds: Set<string>,
@@ -370,9 +411,7 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-/**
- * Decodes base64 without Node Buffer because Convex HTTP actions run in the web runtime.
- */
+// No Buffer: Convex HTTP actions run in the web runtime.
 function base64ArrayBuffer(value: string): ArrayBuffer {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
@@ -381,6 +420,23 @@ function base64ArrayBuffer(value: string): ArrayBuffer {
   }
 
   return bytes.buffer as ArrayBuffer;
+}
+
+function cliAuditActor(auth: CliAuth): {
+  actorKind: "cli" | "deployKey";
+  actorId: string;
+} {
+  if ("deployKeyId" in auth && auth.deployKeyId) {
+    return { actorKind: "deployKey", actorId: auth.deployKeyId };
+  }
+  const actorId =
+    "cliAuthId" in auth
+      ? auth.cliAuthId
+      : "applyAuthId" in auth
+        ? auth.applyAuthId
+        : auth.accountId;
+
+  return { actorKind: "cli", actorId: actorId };
 }
 
 function cronEvents(config: Record<string, unknown>, label: string): unknown[] {
@@ -399,8 +455,6 @@ function cronStatus(value: unknown): "active" | "paused" {
   throw new ClientError("Cron job status must be active or paused");
 }
 
-// Matches only this stage's crons: a project key pinned to dev must not delete
-// production's job of the same name.
 async function deleteCronByName(
   ctx: ActionCtx,
   auth: CliAuth,
@@ -424,7 +478,6 @@ async function deleteCronByName(
   });
 }
 
-/** The manifest's crons, keyed by resource name. */
 function desiredCrons(
   manifest: CliManifest,
   agentIds: Record<string, string>,
@@ -443,8 +496,7 @@ function desiredCrons(
           `Cron job ${resource.name} references unknown deployed agent: ${localAgentName}`,
         );
 
-      // A cron is keyed by its resource name, the key the diff and the
-      // generated ids use, whatever `config.name` says.
+      // Keyed by resource name, as the diff and generated ids are, whatever config.name says.
       return stripUndefined({
         name: resource.name,
         description: optionalStringField(
@@ -466,16 +518,14 @@ function desiredCrons(
 async function externalOwnership(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  stageId: Id<"stages">,
+  route: Extract<RouteParts, { kind: "manifest" }>,
 ): Promise<ExternalOwnership> {
   const rows = await ctx.runQuery(
     internal.cli.sync.listExternalResourcesForAccount,
-    { accountId: accountId },
+    { accountId: accountId, project: route.project, stage: route.stage },
   );
   const foreign = new Set(
-    rows
-      .filter((row) => row.stageId !== stageId)
-      .map((row) => `${row.kind}:${row.name}`),
+    rows.filter((row) => !row.own).map((row) => `${row.kind}:${row.name}`),
   );
   const owned: Record<ExternalResourceKind, Map<string, string>> = {
     skill: new Map(),
@@ -484,7 +534,7 @@ async function externalOwnership(
   };
   for (const row of rows) {
     if (
-      row.stageId === stageId &&
+      row.own &&
       (row.kind === "mcp" || !foreign.has(`${row.kind}:${row.name}`))
     )
       owned[row.kind].set(row.name, row.externalId);
@@ -493,7 +543,6 @@ async function externalOwnership(
   return { foreign: foreign, owned: owned };
 }
 
-/** PUT `/manifest`: sync external resources, the manifest, skills files, crons. */
 async function handleManifestSync(
   ctx: ActionCtx,
   req: Request,
@@ -504,10 +553,22 @@ async function handleManifestSync(
   const accountId = auth.accountId;
   const body = (await req.json()) as {
     manifest?: unknown;
-    prune?: boolean;
+    prune?: unknown;
     rotateRuntimeKey?: boolean;
     revision?: unknown;
+    source?: unknown;
   };
+  const source =
+    body.source === undefined
+      ? undefined
+      : stageSourceSchema.safeParse(body.source);
+  const sourceProblem =
+    source && !source.success
+      ? "source must be { files: [{ path, content }], commitSha? }"
+      : source?.data
+        ? stageSourceProblem(source.data.files)
+        : null;
+  if (sourceProblem) return jsonError(400, `Invalid source: ${sourceProblem}`);
   const manifest = body.manifest;
   if (!manifest || typeof manifest !== "object") {
     return jsonError(400, "Request body must include manifest");
@@ -515,42 +576,98 @@ async function handleManifestSync(
   if (!manifestMatchesRoute(manifest, route)) {
     return jsonError(400, "Manifest project/stage must match the request path");
   }
+  const rawRegion: unknown = (manifest as { region?: unknown }).region;
+  const region = DEPLOYMENT_REGIONS.find((known) => known === rawRegion);
+  if (rawRegion !== undefined && !region) {
+    return jsonError(
+      400,
+      `Unknown region ${JSON.stringify(rawRegion)}. Use one of: ${DEPLOYMENT_REGIONS.join(", ")}`,
+    );
+  }
   if (
     body.revision !== undefined &&
     (typeof body.revision !== "number" || !Number.isInteger(body.revision))
   ) {
     return jsonError(400, "revision must be an integer");
   }
-  const prune = body.prune === true;
+  const pruneTargets = Array.isArray(body.prune)
+    ? pruneTargetsSchema.safeParse(body.prune)
+    : undefined;
+  if (pruneTargets && !pruneTargets.success) {
+    return jsonError(400, "prune must be true or a list of { kind, name }");
+  }
+  const pruneOnly = pruneTargets?.data.map(
+    (target): string => `${target.kind}:${target.name.trim()}`,
+  );
+  const prune = body.prune === true || pruneOnly !== undefined;
   const originalManifest = manifest as CliManifest;
+  const skills = parseSkills(originalManifest);
+  // The account key and a login token may move an account-wide name between stages
+  // (dev, then deploy); only a stage-scoped project key is fenced.
+  const fenced = "deployKeyId" in auth || "applyAuthId" in auth;
+  const foreign =
+    fenced &&
+    originalManifest.resources.some((entry) =>
+      isExternalResourceKind(entry.kind),
+    )
+      ? (await externalOwnership(ctx, accountId, route)).foreign
+      : new Set<string>();
+  // Before the held check, so a fenced key learns nothing of another stage's skill files.
+  for (const skill of skills) assertNotForeign(foreign, "skill", skill.name);
+  const held = skills.filter((skill) => "held" in skill);
+  const refuseUnheld = async (): Promise<Response | null> => {
+    const stale =
+      held.length > 0
+        ? await ctx.runAction(internal.aws.skills.unheld, {
+            accountId: accountId,
+            project: route.project,
+            stage: route.stage,
+            skills: held.map((skill) => ({
+              name: skill.name,
+              files: skill.files,
+            })),
+          })
+        : [];
+
+    return stale.length > 0
+      ? json(
+          {
+            ...apiErrorBody(
+              409,
+              `The account does not hold the files of skill ${stale.join(", ")}; upload them`,
+              { code: "skill_upload_required" },
+            ),
+            skills: stale,
+          },
+          409,
+        )
+      : null;
+  };
+  // Before the revision is claimed, so the CLI uploads these and sends the same revision again.
+  const refused = await refuseUnheld();
+  if (refused) return refused;
   const scope = await ctx.runMutation(
     internal.cli.sync.ensureScopeBySecretHash,
     {
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
+      ...(region ? { region: region } : {}),
       revision: body.revision,
     },
   );
+  const claimed: Array<Id<"_storage">> = [];
   try {
-    // Skills and hooks are account-wide, so the account key and a login token
-    // may move a name between stages (dev then deploy). Only a stage-scoped
-    // project key is fenced to the names another stage recorded, read before this
-    // sync records anything.
-    const fenced = "deployKeyId" in auth;
-    const foreign =
-      fenced &&
-      originalManifest.resources.some((entry) =>
-        isExternalResourceKind(entry.kind),
-      )
-        ? (await externalOwnership(ctx, accountId, scope.stageId)).foreign
-        : new Set<string>();
-    // The manifest's rules run before the first write, so a manifest they
-    // refuse leaves the stage's skills, hooks and MCP servers as they were.
+    // Again under the stage lock: another sync of this stage may have replaced one meanwhile.
+    const replaced = await refuseUnheld();
+    if (replaced) return replaced;
+    // Every rule runs before the first write, so a refused manifest changes nothing.
     const external = await prepareExternalResources(
       ctx,
       originalManifest,
       foreign,
+      skills,
+      claimed,
     );
     await validateManifest(ctx, scope, originalManifest);
     const externalIds = await syncExternalResources(
@@ -567,6 +684,7 @@ async function handleManifestSync(
         resources: originalManifest.resources as never,
         ids: externalIds,
         prune: pruneRecords,
+        pruneOnly: pruneOnly,
       });
     await recordExternal(false);
     const syncManifest = rewriteExternalResourceRefs(
@@ -579,30 +697,32 @@ async function handleManifestSync(
         secretHash: secretHash,
         manifest: syncManifest as never,
         prune: prune,
+        pruneOnly: pruneOnly,
       },
     );
     let reservedResources: string[] = [];
     if (prune) {
-      // Only once the manifest synced, so pre-sync rejection removes nothing, and
-      // with ownership read now, so a name another stage recorded meanwhile is
-      // not this stage's to remove.
-      const { owned } = await externalOwnership(ctx, accountId, scope.stageId);
+      // Ownership re-read now: a name another stage recorded meanwhile is not ours to remove.
+      const { owned } = await externalOwnership(ctx, accountId, route);
       await pruneExternalResources(ctx, {
         accountId: accountId,
         stageId: scope.stageId,
         manifest: originalManifest,
         owned: owned,
+        pruneOnly: pruneOnly,
         secretHash: secretHash,
       });
       await recordExternal(true);
       await terminateDoomedInstances(ctx, auth, route, {
         resources: syncManifest.resources,
+        pruneOnly: pruneOnly,
       });
       reservedResources = await ctx.runMutation(
         internal.cli.sync.pruneSandboxesBySecretHash,
         {
           secretHash: secretHash,
           manifest: syncManifest,
+          pruneOnly: pruneOnly,
         },
       );
     }
@@ -610,7 +730,7 @@ async function handleManifestSync(
       secretHash: secretHash,
       project: route.project,
       stage: route.stage,
-      manifest: originalManifest,
+      skills: external.skills,
     });
 
     const cronIds = await syncCrons(
@@ -619,6 +739,8 @@ async function handleManifestSync(
       syncManifest,
       result.ids,
       prune,
+      pruneOnly,
+      { secretHash: secretHash, project: route.project, stage: route.stage },
     );
     const refreshed = await ctx.runQuery(
       internal.cli.sync.getManifestBySecretHash,
@@ -629,8 +751,13 @@ async function handleManifestSync(
       },
     );
 
-    // Mint or reuse the stage's recoverable runtime key so the CLI
-    // can write BROODS_API_KEY locally on first or later deploys.
+    const synced = await recordStageSync(
+      ctx,
+      scope.stageId,
+      refreshed?.manifest.resources ?? syncManifest.resources,
+      source?.data,
+    );
+
     const deployment = await ctx.runMutation(
       internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
@@ -642,19 +769,12 @@ async function handleManifestSync(
         auditSync: {
           resourceCount: originalManifest.resources.length,
           prune: prune,
-          actorKind: fenced ? "deployKey" : "cli",
-          actorId:
-            "deployKeyId" in auth
-              ? auth.deployKeyId
-              : "cliTokenId" in auth
-                ? auth.cliTokenId
-                : accountId,
+          ...cliAuditActor(auth),
         },
       },
     );
 
-    // `refreshed` is re-read from the DB and carries no warnings, so merge
-    // the sync mutation's warnings back in either way.
+    // `refreshed` carries no warnings, so the sync's are merged back in either way.
     return json({
       ...(refreshed ?? {
         ...result,
@@ -662,14 +782,19 @@ async function handleManifestSync(
       }),
       warnings: { ...result.warnings, reservedResources: reservedResources },
       deployment: deployment,
-      // The claim stays held until the response is built.
       revision: scope.revision,
+      manifestHash: synced.manifestHash,
+      ...(synced.sourceRevision !== null
+        ? { sourceRevision: synced.sourceRevision }
+        : {}),
     });
   } finally {
     await ctx.runMutation(internal.cli.sync.finishManifestSync, {
       stageId: scope.stageId,
       revision: scope.revision,
     });
+    // A blob left behind here is the nightly prune's.
+    await Promise.allSettled(claimed.map((id) => ctx.storage.delete(id)));
   }
 }
 
@@ -687,12 +812,7 @@ function optionalStringField(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * Removes the skills, hooks and MCP servers this stage recorded and the
- * manifest no longer declares. Runs after the manifest synced. Hooks and MCP
- * servers go by the row the stage recorded, so a row another stage or the
- * dashboard made, even under the same name, is never removed.
- */
+// By recorded row id: a same-named row another stage or the dashboard made is never removed.
 async function pruneExternalResources(
   ctx: ActionCtx,
   options: {
@@ -700,10 +820,12 @@ async function pruneExternalResources(
     stageId: Id<"stages">;
     manifest: CliManifest;
     owned: ExternalOwnership["owned"];
+    pruneOnly: string[] | undefined;
     secretHash: string;
   },
 ): Promise<void> {
-  const { accountId, manifest, owned, secretHash, stageId } = options;
+  const { accountId, manifest, owned, pruneOnly, secretHash, stageId } =
+    options;
   const declared = new Set(
     manifest.resources.map(
       (entry) => `${entry.kind}:${resourceName(entry.name)}`,
@@ -711,7 +833,10 @@ async function pruneExternalResources(
   );
   const undeclared = (kind: ExternalResourceKind): Map<string, string> =>
     new Map(
-      [...owned[kind]].filter(([name]) => !declared.has(`${kind}:${name}`)),
+      [...owned[kind]].filter(
+        ([name]) =>
+          !declared.has(`${kind}:${name}`) && prunes(pruneOnly, kind, name),
+      ),
     );
   const skills = undeclared("skill");
   const hookIds = new Set(undeclared("hook").values());
@@ -722,7 +847,6 @@ async function pruneExternalResources(
       accountId: accountId,
       skillName: name,
     });
-    // An empty replace drops the files `syncSkillNodeFiles` mirrored.
     await ctx.runMutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
       secretHash: secretHash,
       project: manifest.project,
@@ -828,7 +952,6 @@ function stringField(value: unknown, label: string): string {
   return value;
 }
 
-/** One CLI skill file, decoded the way the workspace mirror stores it. */
 function skillNodeFile(
   entry: unknown,
   skillName: string,
@@ -854,6 +977,8 @@ async function syncCrons(
   manifest: CliManifest,
   ids: GeneratedIds,
   prune: boolean,
+  pruneOnly: string[] | undefined,
+  stage: { secretHash: string; project: string; stage: string },
 ): Promise<Record<string, string>> {
   const desired = desiredCrons(manifest, ids.agents ?? {});
   if (desired.length === 0 && prune !== true) return {};
@@ -871,20 +996,35 @@ async function syncCrons(
         accountId: accountId,
         cronId: existingJob._id,
         patch: job,
+        managedBy: "cli",
       });
       cronIds[job.name] = existingJob._id;
     } else {
       const created = (await ctx.runMutation(internal.agent.crons.create, {
         accountId: accountId,
         input: job,
+        managedBy: "cli",
       })) as { cronId: string };
       cronIds[job.name] = created.cronId;
     }
   }
 
+  // Only jobs code declared: an agent's own schedules survive the prune.
   if (prune === true) {
+    // Also the undeclared agents a prune list kept: their declared crons are still ours.
+    const current = await ctx.runQuery(
+      internal.cli.sync.getManifestBySecretHash,
+      stage,
+    );
+    const prunable = new Set<string>(Object.values(current?.ids.agents ?? {}));
     for (const job of existing) {
-      if (!stageAgentIds.has(job.agentId) || kept.has(job._id)) continue;
+      if (job.managedBy !== "cli") continue;
+      if (
+        !prunable.has(job.agentId) ||
+        kept.has(job._id) ||
+        !prunes(pruneOnly, "cron", job.name)
+      )
+        continue;
       await ctx.runMutation(internal.agent.crons.remove, {
         accountId: accountId,
         cronId: job._id,
@@ -961,29 +1101,74 @@ async function syncHookResources(
   return ids;
 }
 
-/**
- * Checks and normalizes the manifest's skills, hooks and MCP servers, all of
- * them before the first upload, so one bad entry cannot leave the others
- * written.
- */
+function parseSkills(manifest: CliManifest): PreparedExternal["skills"] {
+  const blobs = new Set<string>();
+
+  return manifest.resources
+    .filter((entry) => entry.kind === "skill")
+    .map((resource): PreparedExternal["skills"][number] => {
+      const config = asRecord(resource.config, `skill:${resource.name}`);
+      const files = config.files;
+      if (!Array.isArray(files))
+        throw new ClientError(`skill:${resource.name}.files must be an array`);
+      if (
+        files.some(
+          (entry) =>
+            asRecord(entry, `skill:${resource.name}.files[]`).contentBase64 !==
+            undefined,
+        )
+      ) {
+        for (const entry of files) skillNodeFile(entry, resource.name);
+
+        return { name: resource.name, files: files };
+      }
+      const declared = parseInput(
+        skillFileDeclarations,
+        files,
+        `skill:${resource.name}.files`,
+      );
+      if (config.filesStorageId === undefined) {
+        return { name: resource.name, files: declared, held: true };
+      }
+      const filesStorageId = stringField(
+        config.filesStorageId,
+        `skill:${resource.name}.filesStorageId`,
+      );
+      if (blobs.has(filesStorageId)) {
+        throw new ClientError(
+          `skill:${resource.name}.filesStorageId is used by another skill`,
+        );
+      }
+      blobs.add(filesStorageId);
+
+      return {
+        name: resource.name,
+        files: declared,
+        filesStorageId: filesStorageId as Id<"_storage">,
+      };
+    });
+}
+
 async function prepareExternalResources(
   ctx: ActionCtx,
   manifest: CliManifest,
   foreign: ForeignExternalResources,
+  skills: PreparedExternal["skills"],
+  claimed: Array<Id<"_storage">>,
 ): Promise<PreparedExternal> {
-  const skills = manifest.resources
-    .filter((entry) => entry.kind === "skill")
-    .map((resource) => {
-      assertNotForeign(foreign, "skill", resource.name);
-      const files = asRecord(resource.config, `skill:${resource.name}`).files;
-      if (!Array.isArray(files))
-        throw new ClientError(`skill:${resource.name}.files must be an array`);
-      for (const entry of files) skillNodeFile(entry, resource.name);
-
-      return { name: resource.name, files: files };
+  for (const skill of skills) {
+    if (!("filesStorageId" in skill)) continue;
+    await ctx.runMutation(internal.account.uploads.claim, {
+      storageId: skill.filesStorageId,
+      maxBytes: MAX_SKILL_BUNDLE_BYTES,
     });
-  if (skills.length > 0) {
-    await ctx.runAction(internal.aws.skills.validateSkills, { skills: skills });
+    claimed.push(skill.filesStorageId);
+  }
+  const changed = skills.filter((skill) => !("held" in skill));
+  if (changed.length > 0) {
+    await ctx.runAction(internal.aws.skills.validateSkills, {
+      skills: changed,
+    });
   }
   const hooks: PreparedExternal["hooks"] = [];
   for (const resource of manifest.resources.filter(
@@ -1039,11 +1224,6 @@ async function prepareExternalResources(
   return { skills: skills, hooks: hooks, mcp: mcp };
 }
 
-/**
- * Upsert the manifest's MCP server registrations by name within the stage. A
- * hosted server's bundle is content-addressed and re-uploads only when its
- * sha256 changed.
- */
 async function syncMcpResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
@@ -1085,18 +1265,16 @@ async function syncMcpResources(
       ...(input.allowedTools !== undefined
         ? { allowedTools: input.allowedTools }
         : {}),
-      // The manifest is the whole truth: dropping `runtime` from it means "auto".
+      // The manifest is the whole server: a dropped `runtime` means "auto".
       ...(input.transport === "hosted"
         ? { runtime: input.runtime ?? "auto" }
         : {}),
     };
     if (current) {
-      // The manifest is the whole server, so a field it dropped is cleared.
       const clear = MCP_CLEARABLE_FIELDS.filter(
         (field) => input[field] === undefined && current[field] !== undefined,
       );
-      // An identical patch is skipped: a write would bump updatedAt, which is
-      // core's MCP cache identity, and re-probe every server on the next run.
+      // Skip identical patches: updatedAt is core's MCP cache identity, a bump re-probes all.
       const row = current as unknown as Record<string, unknown>;
       const unchanged =
         clear.length === 0 &&
@@ -1126,46 +1304,45 @@ async function syncMcpResources(
   return ids;
 }
 
-/**
- * Stores CLI-bundled skill files in Convex storage and mirrors them into workspaceFiles.
- */
 async function syncSkillNodeFiles(
   ctx: ActionCtx,
-  options: {
-    secretHash: string;
-    project: string;
-    stage: string;
-    manifest: CliManifest;
-  },
+  options: StageRef & { skills: PreparedExternal["skills"] },
 ): Promise<void> {
-  for (const resource of options.manifest.resources.filter(
-    (entry) => entry.kind === "skill",
-  )) {
-    const config = asRecord(resource.config, `skill:${resource.name}`);
-    const files = config.files;
-    if (!Array.isArray(files)) continue;
-    const storedFiles = [];
-    for (const entry of files) {
-      const { path, mimeType, bytes } = skillNodeFile(entry, resource.name);
-      const storageId = await ctx.storage.store(
-        new Blob([bytes], { type: mimeType }),
-      );
-      const parts = path.split("/");
-      storedFiles.push({
-        path: path,
-        name: parts[parts.length - 1] || path,
-        storageId: storageId,
-        mimeType: mimeType,
-        sizeBytes: bytes.byteLength,
-      });
-    }
+  for (const skill of options.skills) {
+    if ("held" in skill) continue;
+    const storedFiles =
+      "filesStorageId" in skill
+        ? await ctx.runAction(internal.aws.skills.storeUploadedFiles, {
+            files: skill.files,
+            filesStorageId: skill.filesStorageId,
+          })
+        : await Promise.all(
+            skill.files.map(async (entry) => {
+              const { path, mimeType, bytes } = skillNodeFile(
+                entry,
+                skill.name,
+              );
+
+              return {
+                path: path,
+                storageId: await ctx.storage.store(
+                  new Blob([bytes], { type: mimeType }),
+                ),
+                mimeType: mimeType,
+                sizeBytes: bytes.byteLength,
+              };
+            }),
+          );
 
     await ctx.runMutation(internal.cli.sync.replaceSkillNodeFilesBySecretHash, {
       secretHash: options.secretHash,
       project: options.project,
       stage: options.stage,
-      skillName: resource.name,
-      files: storedFiles,
+      skillName: skill.name,
+      files: storedFiles.map((file) => ({
+        ...file,
+        name: file.path.split("/").pop() || file.path,
+      })),
     });
   }
 }
@@ -1176,25 +1353,26 @@ async function syncSkillResources(
   desired: PreparedExternal["skills"],
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
-  for (const { name, files } of desired) {
-    const skill = await ctx.runAction(internal.aws.skills.createSkill, {
+  for (const skill of desired) {
+    if ("held" in skill) {
+      ids[skill.name] = `${accountId}/${skill.name}`;
+      continue;
+    }
+    const created = await ctx.runAction(internal.aws.skills.createSkill, {
       accountId: accountId,
-      expectedName: name,
-      input: { source: "files", files: files },
+      expectedName: skill.name,
+      input: { source: "files", files: skill.files },
+      ...("filesStorageId" in skill
+        ? { filesStorageId: skill.filesStorageId }
+        : {}),
     });
-    ids[name] = skill.path;
+    ids[skill.name] = created.path;
   }
 
   return ids;
 }
 
-/**
- * Terminate, through core, the reserved instances of the sandbox configs and
- * workspaces a prune or delete is about to drop. Must run while the rows still
- * exist: core's lifecycle route loads the sandbox config by id, and a
- * workspace's namespace is found through its row. A sandbox config whose
- * instance core did not remove is kept; a workspace is deleted regardless.
- */
+// Before the rows go: core loads the sandbox config by id and finds a workspace via its row.
 async function terminateDoomedInstances(
   ctx: ActionCtx,
   auth: CliAuth,
@@ -1216,10 +1394,6 @@ async function terminateDoomedInstances(
   );
 }
 
-/**
- * Runs the manifest sync's and the cron sync's rules without writing. Rows the
- * sync would create get placeholder ids.
- */
 async function validateManifest(
   ctx: ActionCtx,
   scope: ProjectStageScope,
@@ -1242,4 +1416,19 @@ async function validateManifest(
   for (const job of desiredCrons(manifest, placeholderIds(agentNames))) {
     normalizeCreateCronInput(job);
   }
+}
+
+// The hash is of the manifest read back, so a rerun on the same source lands on the same one.
+async function recordStageSync(
+  ctx: ActionCtx,
+  stageId: Id<"stages">,
+  resources: CliManifest["resources"],
+  source: StageSource | undefined,
+): Promise<{ manifestHash: string; sourceRevision: number | null }> {
+  const hash = await manifestHash(resources);
+
+  return {
+    manifestHash: hash,
+    sourceRevision: await storeStageSync(ctx, stageId, hash, source, "cli"),
+  };
 }

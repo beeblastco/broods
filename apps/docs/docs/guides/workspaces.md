@@ -45,12 +45,12 @@ That lets one agent give different workspaces different sandboxes and approval r
 
 ### Tools per workspace
 
-| Effective sandbox     | Tools                                                                  |
-| --------------------- | ---------------------------------------------------------------------- |
-| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`         |
-| none                  | `read` and `glob` through a read-only mount, which sees writes at once |
-| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag  |
-| none, your own bucket | `read` and `glob` straight from storage, reads can lag                 |
+| Effective sandbox     | Tools                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------- |
+| a sandbox             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save`, `memory_delete` (memory on) |
+| none                  | `read` and `glob` through a read-only mount, which sees writes at once                      |
+| none, `sandbox: null` | `read` and `glob` straight from storage, no cold start, reads can lag                       |
+| none, your own bucket | `read` and `glob` straight from storage, reads can lag                                      |
 
 | Agent has                | Tools                                                              |
 | ------------------------ | ------------------------------------------------------------------ |
@@ -71,6 +71,26 @@ It matters whether the workspace's sandbox is the agent's own first sandbox:
 | `sandboxes: [a]`, workspace on `b`              | Both. The workspace is scoped as above, and `a` stays reachable with `bash` `sandbox: "<name>"`            |
 
 The refusal exists because the workspace is the only storage that outlives a sandbox. `sandboxes: [a, b]` with a workspace on `b` is rejected, since `b` would be reachable both with and without the mount.
+
+### Disk workspaces
+
+`storage: { provider: "disk" }` keeps a workspace's files on its sandbox's own disk instead of a bucket. It needs a persistent `worker` sandbox: no mount and no container, so every file tool answers in a fraction of a second.
+
+```ts
+export const disk = defineSandbox({
+  name: "disk",
+  provider: "worker",
+  persistent: true,
+});
+export const project = defineWorkspace({
+  name: "project",
+  storage: { provider: "disk" },
+});
+```
+
+- Each workspace folder, partition and user conversation is its own disk, up to 24 MiB.
+- `read`, `write`, `edit`, `glob`, `grep` and `bash` all work. `edit` and `glob` read the file out and compute in Broods, since the shell has no `node`.
+- There is no bucket behind it: download links and the workspace files API read nothing, and the memory harness (`memory_save`, `memory_delete` and its prompt) is off. Reach a user's files with [`GET` and `PUT .../files`](../reference/http-api.md#a-users-conversation-files) on the agent's URL, with the runtime key and that user's token.
 
 ## Partitioning
 
@@ -105,9 +125,12 @@ export const github = defineGitHubConnection({
 | Run                           | Agent sees          | Mounted folder                      |
 | ----------------------------- | ------------------- | ----------------------------------- |
 | Direct API or cron            | workspace `support` | root                                |
+| Direct API with a user token  | workspace `support` | `users/<hash of the conversation>/` |
 | Slack, any thread in `C456`   | workspace `support` | root                                |
 | GitHub issue `owner/repo#123` | workspace `support` | `support/<hash of owner/repo#123>/` |
 | GitHub issue `owner/repo#456` | workspace `support` | `support/<hash of owner/repo#456>/` |
+
+A run that carries a [user token](../internals/security.md#end-user-tokens) always mounts its own conversation's folder under `users/`, whatever `partitioned` says, so one end user never sees another's files. Its subagents mount that user folder too, under their own agent folder when the workspace is `partitioned: "agent"`. A persistent agent sandbox gets one reservation per user conversation too, unless its `options.reservationKey` pins one to share.
 
 A new child folder starts empty. Files at the root are not copied in. A [channel record](../channels/channel-records.md) can also set `partition` for one place.
 
@@ -126,10 +149,10 @@ export const scratch = defineWorkspace({
 
 ### When a child folder is deleted
 
-| Channel                                                                                                             | End of conversation       | Folder deleted |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------- | -------------- |
-| GitHub issue or pull request                                                                                        | closed                    | yes            |
-| Slack, Discord, Telegram, Matrix, Pancake, Zalo, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger, Instagram | never, threads do not end | no             |
+| Channel                                                                                                     | End of conversation       | Folder deleted |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------- | -------------- |
+| GitHub issue or pull request                                                                                | closed                    | yes            |
+| Slack, Discord, Telegram, Pancake, Zalo, Linear, WhatsApp, Teams, Google Chat, Twilio, Messenger, Instagram | never, threads do not end | no             |
 
 Only `conversation` folders are ever deleted, shortly after the close event. On chat channels they pile up one per thread, so prune them from the dashboard Files view or the files API, or use `shared` there.
 
@@ -148,7 +171,6 @@ export const notes = defineWorkspace({
     auth: {
       type: "assumeRole",
       roleArn: "arn:aws:iam::111122223333:role/broods-mount",
-      externalId: "<shared secret>",
     },
   },
 });
@@ -166,7 +188,49 @@ A workspace with `bucket` is rejected unless:
 - `bucket` is not one of the platform's own buckets.
 - `endpoint`, if set, is a public `https` URL. Other S3-compatible stores keep `provider: "s3"` and change `endpoint`.
 
-With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. Set `externalId` when the role trusts Broods across accounts. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+With `assumeRole`, the platform assumes your role for each run and narrows the session to `bucket/prefix*`, so code in the sandbox only ever holds credentials for that prefix. No access keys are stored. Static access keys for MinIO and other stores are not supported. `deny-all` sandboxes cannot reach your bucket; use `allow-all`.
+
+### Trusting Broods
+
+Broods reaches every customer's role as the same AWS principal, so your role's trust policy must also require an external id that only your account's calls carry. Broods assigns that id to your account and sends it every time it assumes your role. You cannot set it yourself: a workspace whose `auth` sets `externalId` is rejected with a 400. Without this, another Broods account that learned your role ARN could mount your bucket (the [confused deputy problem](https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html)).
+
+Read the id, the principal to trust and a ready-to-paste trust policy from the workspace's storage settings in the dashboard, `GET /v1/account/storage-trust`, or the SDK:
+
+```ts
+const { externalId, principalArn, trustPolicy } =
+  await account.getStorageTrust();
+```
+
+Set the role's trust policy to it:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::<Broods account id>:root" },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": { "sts:ExternalId": "<your external id>" }
+      }
+    }
+  ]
+}
+```
+
+The id is the same for every workspace of the account and does not change.
+
+:::warning Migrating an existing `assumeRole` workspace
+
+Workspaces created before Broods assigned the id used the `externalId` you chose, or none. Do this once per account:
+
+1. Read your id as above and put it in each role's trust policy, replacing any `sts:ExternalId` you set yourself.
+2. Drop `externalId` from each workspace's `auth`: remove it from your `defineWorkspace` and deploy, send `"externalId": null` in a `PATCH /v1/workspaces/{workspaceId}`, or press **Remove** in the dashboard.
+
+Until the trust policy names the new id, mounts and file reads of that workspace fail. A workspace still storing `externalId` is rejected on its next save and its files cannot be browsed from the dashboard. R2 workspaces and the managed bucket are not affected.
+
+:::
 
 ### Cloudflare R2
 
@@ -202,7 +266,7 @@ These rules are checked when you save and again whenever the storage is used, so
 
 ## Files and sharing
 
-The dashboard Files tab lists, uploads, renames and deletes the same files the agent mounts. Uploads there are capped at 512 KiB per file; agents can write larger files through the mount.
+The dashboard Files tab lists, previews, uploads, renames and deletes the same files the agent mounts. Selecting a file previews it below the tree, and Enter keeps it open as a tab so several files can be reviewed side by side. Uploads and previews are capped at 512 KiB per file; agents can write larger files through the mount, and those offer Download instead of a preview.
 
 To hand a file to a person, mint a download link:
 

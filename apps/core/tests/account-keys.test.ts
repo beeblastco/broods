@@ -97,7 +97,6 @@ describe("account key cache", () => {
       await decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),
     ).toEqual(VALUE);
 
-    // A rotation happened in the config plane: the row now names a new key.
     const rotated = await createWrappedAccountKey(ACCOUNT, [SECRET]);
     const fresh = await new AccountCipher(ACCOUNT, [SECRET], [rotated]).encrypt(
       "agents:encryptedConfig",
@@ -114,7 +113,7 @@ describe("account key cache", () => {
       ),
     ).toEqual([VALUE, VALUE, VALUE]);
     expect(loads).toBe(2);
-    expect(
+    await expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", stale),
     ).rejects.toThrow("does not decrypt");
   });
@@ -147,7 +146,7 @@ describe("account key cache", () => {
       VALUE,
     );
 
-    expect(
+    await expect(
       decryptAccountBlob(ACCOUNT, "agents:encryptedConfig", blob),
     ).rejects.toThrow("does not decrypt");
   });

@@ -53,7 +53,7 @@ A one-time `at(...)` job deletes itself, and its run history, once its run finis
 - Give the key of an existing channel conversation, such as a Slack thread the agent already answered in, and the run continues that conversation with the same channel rules. The reply goes to that thread.
 - Any other key, including the default `cron:<cronId>`, gives the run its own conversation. Read the result through the run status API. Nothing is posted.
 
-A run that fires while its conversation is busy is skipped and recorded as failed.
+A run that fires while its conversation is busy is skipped and recorded as failed. So is a run whose worker died. A run that stops for an approval stays `started` until someone answers it, then records that turn's result; one nobody answers within 7 days is recorded as failed.
 
 ## What the agent sees
 

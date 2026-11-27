@@ -88,15 +88,20 @@ where
     (shape [.lit "v1", .lit "env", .any] p && (m == .put || m == .delete)) ||
     (shape [.lit "v1", .lit "workspaces", .any, .lit "download-links"] p && m == .post) ||
     ((p == ["v1", "audit"] || p == ["v1", "audit", "verify"]) && m == .get) ||
+    (p == ["v1", "usage"] && m == .get) ||
     (p == ["v1", "audit", "sink"] && (m == .get || m == .put || m == .delete)) ||
     rootOrItem "skills" p || rootOrItem "mcp" p || rootOrItem "hooks" p ||
     rootOrItem "workspaces" p || rootOrItem "sandboxes" p || rootOrItem "policies" p ||
     rootOrItem "roles" p || rootOrItem "channels" p || rootOrItem "crons" p ||
     shape [.lit "v1", .lit "workspaces", .any, .lit "files"] p ||
     shape [.lit "v1", .lit "crons", .any, .lit "runs"] p
-  /-- The `webhooks`, `media` and `core` routers: `/v1` or anything under `/v1/`. -/
+  /-- The `webhooks`, `media` and `core` routers: `/v1` or anything under `/v1/`,
+  core's MCP Tasks server at `/mcp`, and its OAuth protected-resource metadata. -/
   isCore : Path → Bool
     | "v1" :: _ => true
+    | ["mcp"] => true
+    | [".well-known", "oauth-protected-resource"] => true
+    | [".well-known", "oauth-protected-resource", "mcp"] => true
     | _ => false
   /-- The `sockets` router, by path alone. -/
   socket (p : Path) : Option Socket :=
@@ -172,6 +177,16 @@ example : route .get ["healthz", ""] = .health := by decide
 /-- A socket path reaches the gateway for any method; the gateway refuses a
 non-upgrade itself. -/
 example : route .post ["v1", "agents", "a", "ws"] = .socket .agent := by decide
+
+/-- The MCP Tasks server reaches core; `/v1/mcp` stays the config plane's CRUD. -/
+example : route .post ["mcp"] = .core := by decide
+example : route .post ["mcp", "x"] = .notFound := by decide
+example : route .get ["v1", "mcp"] = .config := by decide
+
+/-- Its OAuth metadata reaches core at the well-known path, and nothing else under it. -/
+example : route .get [".well-known", "oauth-protected-resource", "mcp"] = .core := by decide
+example : route .get [".well-known", "oauth-protected-resource"] = .core := by decide
+example : route .get [".well-known", "oauth-protected-resource", "x"] = .notFound := by decide
 
 /-- In-cluster paths reach core, which refuses them without the service token. -/
 example : route .post ["v1", "cron-runs"] = .core := by decide

@@ -1,11 +1,8 @@
-/**
- * Upload URL quota: one `uploadGrants` row per minted storage upload URL, and
- * the count of unexpired rows per account is the cap.
- */
-
 import type { SystemDataModel } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { requireActiveAccount } from "./activeAccount";
+import { ClientError } from "./clientError";
 import { jsonError, rateLimitHeaders } from "./httpJson";
 
 export const OPEN_UPLOADS_PER_HOUR = 20;
@@ -16,25 +13,22 @@ export type UploadKind = Doc<"uploadGrants">["kind"];
 
 type StoredBlob = SystemDataModel["_storage"]["document"];
 
-/** Either a fresh upload URL or the time the oldest open grant expires. */
 export type UploadGrant = { uploadUrl: string } | { retryAt: number };
 
-/**
- * The blob behind a fresh upload: it must exist and be nobody's file yet.
- * Storage ids are visible to every reader of a workspace, so a caller-supplied
- * id is only trusted when no row already owns it.
- */
+// Storage ids are visible to every workspace reader: trust one only while no row owns it.
 export async function claimUploadedBlob(
   ctx: MutationCtx,
   storageId: Id<"_storage">,
+  maxBytes = Infinity,
 ): Promise<StoredBlob> {
   const blob = await ctx.db.system.get(storageId);
-  if (!blob) throw new Error("Uploaded file was not found in storage.");
-  const owner = await ctx.db
-    .query("workspaceFiles")
-    .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
-    .first();
-  if (owner) throw new Error("Uploaded file is already registered.");
+  if (!blob) throw new ClientError("Uploaded file was not found in storage.");
+  if (blob.size > maxBytes) {
+    throw new ClientError(`Uploaded file exceeds ${maxBytes} bytes.`);
+  }
+  if (await isStorageOwned(ctx, storageId)) {
+    throw new ClientError("Uploaded file is already registered.");
+  }
 
   return blob;
 }
@@ -44,6 +38,7 @@ export async function grantUpload(
   accountId: Id<"accounts">,
   kind: UploadKind,
 ): Promise<UploadGrant> {
+  await requireActiveAccount(ctx, accountId);
   const now = Date.now();
   const stale = await ctx.db
     .query("uploadGrants")
@@ -72,11 +67,28 @@ export async function grantUpload(
   return { uploadUrl: await ctx.storage.generateUploadUrl() };
 }
 
+// Every table that keeps a storage id belongs here, or the nightly prune deletes its blobs.
+export async function isStorageOwned(
+  ctx: QueryCtx,
+  storageId: Id<"_storage">,
+): Promise<boolean> {
+  const file = await ctx.db
+    .query("workspaceFiles")
+    .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+    .first();
+  if (file) return true;
+  const source = await ctx.db
+    .query("stageSources")
+    .withIndex("by_storageId", (q) => q.eq("storageId", storageId))
+    .first();
+
+  return source !== null;
+}
+
 export function uploadQuotaMessage(retryAt: number): string {
   return `upload quota: ${OPEN_UPLOADS_PER_HOUR} uploads per hour; retry after ${new Date(retryAt).toISOString()}`;
 }
 
-/** The 429 both upload routes answer once the hourly grant budget is spent. */
 export function uploadQuotaResponse(retryAt: number): Response {
   return jsonError(
     429,

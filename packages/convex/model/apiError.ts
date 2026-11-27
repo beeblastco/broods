@@ -1,11 +1,3 @@
-/**
- * The API error contract: every non-2xx JSON body is
- * `{ error: { message, type, code, param? } }`.
- *
- * Core, the gateway and the config plane all answer with this, so the table
- * lives here rather than once per package.
- */
-
 const BY_STATUS: Record<number, Pick<ApiError, "code" | "type">> = {
   400: { code: "invalid_request", type: "invalid_request_error" },
   401: { code: "unauthorized", type: "authentication_error" },

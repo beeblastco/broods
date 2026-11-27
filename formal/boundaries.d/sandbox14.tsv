@@ -1,0 +1,16 @@
+kind	name	reason
+opaque	RunMicrovmCommand	AWS command token handed unchanged to send.
+opaque	CreateMicrovmAuthTokenCommand	AWS command token handed unchanged to send.
+external	^request\.abortSignal\?\.throwIfAborted$	AbortSignal.throwIfAborted is the platform check of a signal the caller owns; the twin states when it is called.
+external	^burstTotals\.safeParse$	zod validates the parsed header as two numbers; the twin checks the parsed JSON it is given and takes the verdict.
+external	^abortSignal\?\.throwIfAborted$	AbortSignal.throwIfAborted is the platform check of a signal the caller owns; the twin states when it is called.
+opaque	GetMicrovmImageCommand	AWS command token handed unchanged to send.
+opaque	GetMicrovmImageVersionCommand	AWS command token handed unchanged to send.
+opaque	CreateMicrovmImageCommand	AWS command token handed unchanged to send.
+opaque	CreateMicrovmShellAuthTokenCommand	AWS command token handed unchanged to send.
+external	^new (RunMicrovm|CreateMicrovmImage|GetMicrovmImageVersion)Command$	AWS SDK command constructors; the trace checks the exact input and the command goes only to send.
+external	^new (MicrovmGoneError|MicrovmNotReadyError|SandboxCapacityError)$	Empty Error subclasses (no body of their own): the constructor returns an Error holding the message, which the twin checks.
+opaque	HeadObjectCommand	AWS S3 SDK command token built by the checked constructor call and handed unchanged to the S3 client send.
+opaque	PutObjectCommand	AWS S3 SDK command token built by the checked constructor call and handed unchanged to the S3 client send.
+opaque	CopyObjectCommand	AWS S3 SDK command token built by the checked constructor call and handed unchanged to the S3 client send.
+opaque	DeleteObjectCommand	AWS S3 SDK command token built by the checked constructor call and handed unchanged to the S3 client send.

@@ -3,7 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { DataModel, Id } from "../_generated/dataModel";
 import schema from "../schema";
-import { deleteStageContents } from "../stage";
+import { deleteStageContents, duplicateStageContents } from "../stage";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -29,9 +29,7 @@ type StageScopedTable = Extract<
 
 const AUTH_ID = "auth_owner";
 
-// Every table `deleteStageContents` owns. Runtime and audit tables
-// (sandboxInstances, sandboxAuditEvents, auditEvents) are swept at the
-// account level instead and are deliberately absent.
+// Runtime and audit tables are swept per account, so they are absent on purpose.
 const STAGE_SCOPED_TABLES: StageScopedTable[] = [
   "agentConfigs",
   "canvasLayouts",
@@ -228,12 +226,9 @@ async function rowsForStage(
   });
 }
 
-// `deleteStageContents` is the single cascade both `stage.remove` and
-// `cascade.purgeProject` call, so a table missing from it orphans rows on
-// every deletion path at once.
+// Both `stage.remove` and `cascade.purgeProject` run this, so a missed table orphans rows.
 describe("deleteStageContents", () => {
-  // The cascade schedules runtime and S3 cleanup. Fake timers keep those
-  // actions from firing after a test ends, where their logs race worker teardown.
+  // Fake timers keep the scheduled runtime and S3 cleanup from logging past teardown.
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -241,21 +236,15 @@ describe("deleteStageContents", () => {
     vi.useRealTimers();
   });
 
-  test("seeds one row in every stage-scoped table", async () => {
+  test("leaves no row carrying the deleted stage id", async () => {
     const t = cascadeTest();
     const { stageId } = await seedFullStage(t);
-
     for (const table of STAGE_SCOPED_TABLES) {
       expect(
         (await rowsForStage(t, table, stageId)).length,
         `${table} should be seeded`,
       ).toBe(1);
     }
-  });
-
-  test("leaves no row carrying the deleted stage id", async () => {
-    const t = cascadeTest();
-    const { stageId } = await seedFullStage(t);
 
     await t.run(async (ctx) => {
       const stage = await ctx.db.get(stageId);
@@ -269,6 +258,49 @@ describe("deleteStageContents", () => {
     }
 
     expect(orphaned).toEqual([]);
+  });
+
+  test("a copied stage's server starts signed out", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const t = cascadeTest();
+    const { projectId, stageId } = await seedFullStage(t);
+    const copyId = await t.run(async (ctx) => {
+      const [server] = await ctx.db.query("mcp").collect();
+      await ctx.db.patch(server!._id, {
+        connection: {
+          clientId: "client_1",
+          tokenUrl: "https://auth.example.com/token",
+          resource: "https://mcp.example.com/mcp",
+          expiresAt: 1,
+          updatedAt: 1,
+        },
+        connectionCiphertext: "ct",
+        connectionIv: "iv",
+        connectionTag: "tag",
+      });
+
+      return await ctx.db.insert("stages", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        name: "Copy",
+        kind: "development" as const,
+        isDefault: false,
+        updatedAt: 1,
+      });
+    });
+
+    await t.run(async (ctx) => {
+      await duplicateStageContents(ctx, AUTH_ID, projectId, stageId, copyId, 2);
+    });
+    const copied = await t.run(async (ctx) =>
+      (await ctx.db.query("mcp").collect()).find(
+        (server) => server.stageId === copyId,
+      ),
+    );
+
+    expect(copied?.connection).toBeUndefined();
+    expect(copied?.connectionCiphertext).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 
   test("deletes the account's own agents row and leaves another account's alone", async () => {
@@ -331,9 +363,8 @@ describe("deleteStageContents", () => {
     });
   });
 
-  // The webhook lookup ignores stageId, so an orphaned record both routes
-  // inbound messages into the dead stage and permanently squats the
-  // (accountId, platform, externalId) slot that `create` guards.
+  // The webhook lookup ignores stageId: an orphaned record routes messages into the dead
+  // stage and squats the (accountId, platform, externalId) slot `create` guards.
   test("frees the channel place so it can be rebound after deletion", async () => {
     const t = cascadeTest();
     const { accountId, stageId } = await seedFullStage(t);

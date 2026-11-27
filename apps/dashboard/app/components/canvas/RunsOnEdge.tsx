@@ -19,11 +19,8 @@ import {
 import { useState } from "react";
 
 /**
- * Drawn edge from a machine MCP server to the sandbox it runs on. It comes
- * from the server's row, not the saved layout, so it can't be deleted and
- * shows a lock on hover. It carries no text label: the gutter it crosses is
- * narrower than any word, and the server's card or chip already names its
- * computer.
+ * A machine MCP server's edge to its sandbox. It comes from the server row, so it is locked;
+ * no text label, since the gutter it crosses is narrower than any word.
  */
 export function RunsOnEdge({
   id,
@@ -38,7 +35,6 @@ export function RunsOnEdge({
 }: EdgeProps<Edge<SideEdgeData>>): React.JSX.Element {
   const [lineHovered, setLineHovered] = useState(false);
 
-  // Fanned and laned by the router, so two servers on one computer never share a leg.
   const [edgePath, labelX, labelY] = data?.route
     ? sideEdgePath(
         { x: sourceX, y: sourceY },
@@ -60,8 +56,7 @@ export function RunsOnEdge({
         <BaseEdge
           id={id}
           path={edgePath}
-          // Only `opacity` from the incoming style, so focus dimming applies but
-          // the gray default stroke does not.
+          // Only `opacity` from `style`: focus dimming applies, its gray default stroke does not.
           className="stroke-canvas-runs/80! opacity-(--edge-opacity)"
           style={{
             "--edge-opacity": style?.opacity,

@@ -4,16 +4,11 @@ import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Button } from "@/app/components/ui/button";
 import { useState, type ReactNode } from "react";
 
-/**
- * The red-bordered block at the end of a detail panel for the one action
- * that cannot be undone: a heading, one line on what it does, the button.
- */
 export function DangerZone({
   description,
   children,
 }: {
   description: string;
-  /** The destructive button. */
   children: ReactNode;
 }): React.JSX.Element {
   return (
@@ -25,12 +20,6 @@ export function DangerZone({
   );
 }
 
-/**
- * The danger zone whose one action is deleting the panel's resource: the
- * button, the typed-confirm dialog, and the pending state. The dialog shows
- * the mutation's rejection under its input; once the mutation resolves the
- * dialog closes and `onDeleted` runs, usually closing the panel.
- */
 export function DeleteZone({
   description,
   resourceName,
@@ -42,11 +31,9 @@ export function DeleteZone({
 }: {
   description: string;
   resourceName: string;
-  /** The noun the dialog names: "role", "scheduler". */
   resourceType: string;
   onDelete: () => Promise<unknown>;
   onDeleted: () => void;
-  /** The button's and the dialog's word when it is not Delete: "Remove", "Terminate". */
   verb?: string;
   disabled?: boolean;
 }): React.JSX.Element {

@@ -1,8 +1,3 @@
-// `broods env sync` and the drift warning `diff` prints. A stage that holds a
-// stale secret looks identical to a healthy one everywhere else. The value
-// digest the backend returns beside each name is the only thing that separates
-// them, so the states it produces are what these tests pin down.
-
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -21,13 +16,13 @@ const LOCAL_VALUES = {
 const servers: Array<{ stop: () => void }> = [];
 const workdirs: string[] = [];
 
-afterEach(async () => {
+afterEach(async (): Promise<void> => {
   for (const server of servers.splice(0)) server.stop();
   for (const dir of workdirs.splice(0))
     await rm(dir, { recursive: true, force: true });
 });
 
-test("env sync pushes the drifted and unset vars and leaves the matching one", async () => {
+test("env sync pushes the drifted and unset vars and leaves the matching one", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -43,10 +38,7 @@ test("env sync pushes the drifted and unset vars and leaves the matching one", a
   );
 });
 
-// A referenced name the stage holds and `.env.local` does not is normal, a
-// secret set straight on the stage. Naming it is what separates it from the ones
-// `.env.local` does control; pushing it would be wrong.
-test("env sync names the referenced vars .env.local does not control", async () => {
+test("env sync names the referenced vars .env.local does not control", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -58,13 +50,10 @@ test("env sync names the referenced vars .env.local does not control", async () 
     "1 referenced variable(s) live only on demo-app/development: STAGE_ONLY_KEY",
   );
   expect(puts).not.toContain("STAGE_ONLY_KEY");
-  // Never referenced by the project, so it is outside the sync entirely.
   expect(output).not.toContain("UNREFERENCED_KEY");
 });
 
-// The stage cannot resolve this one and neither can `.env.local`, so the next
-// manifest sync would reject it. Naming it here is the only warning before that.
-test("env sync names the refs with no value on either side", async () => {
+test("env sync names the refs with no value on either side", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl } = serveBackend();
 
@@ -76,7 +65,7 @@ test("env sync names the refs with no value on either side", async () => {
   );
 });
 
-test("diff warns about a stage value that no longer matches .env.local", async () => {
+test("diff warns about a stage value that no longer matches .env.local", async (): Promise<void> => {
   const cwd = await projectDir();
   const { baseUrl, puts } = serveBackend();
 
@@ -86,14 +75,9 @@ test("diff warns about a stage value that no longer matches .env.local", async (
   expect(result.exitCode).toBe(0);
   expect(output).toContain("disagree on 1 variable(s): DRIFTED_KEY");
   expect(output).toContain("broods env sync");
-  // Reporting drift must never be a write; only `env sync` and `dev` push.
   expect(puts).toEqual([]);
 });
 
-/**
- * A control plane serving just the env and manifest routes the two commands
- * touch, recording every `env set` so a test can assert what was *not* pushed.
- */
 function serveBackend(): {
   baseUrl: string;
   puts: string[];
@@ -119,7 +103,7 @@ function serveBackend(): {
   ];
   const server = Bun.serve({
     port: 0,
-    fetch: (request) => {
+    fetch: (request): Response => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/env") && request.method === "GET") {
         return Response.json({ variables: variables });
@@ -129,7 +113,6 @@ function serveBackend(): {
 
         return Response.json({ ok: true });
       }
-      // No manifest yet, so `diff` reports every resource as a create.
       if (url.pathname.endsWith("/manifest")) {
         return new Response("", { status: 404 });
       }
@@ -142,11 +125,7 @@ function serveBackend(): {
   return { baseUrl: `http://127.0.0.1:${server.port}`, puts: puts };
 }
 
-/**
- * A project whose agent reads one `env()` ref per state the classifier can
- * reach: in step, drifted, absent from the stage, held only by the stage, and
- * absent from both sides.
- */
+// One `env()` ref per drift state: in step, drifted, stage-only, local-only, on neither.
 async function projectDir(): Promise<string> {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "broods-env-sync-")));
   workdirs.push(cwd);
@@ -156,7 +135,7 @@ async function projectDir(): Promise<string> {
       'BROODS_PROJECT="demo-app"',
       'BROODS_STAGE="development"',
       ...Object.entries(LOCAL_VALUES).map(
-        ([name, value]) => `${name}="${value}"`,
+        ([name, value]): string => `${name}="${value}"`,
       ),
       "",
     ].join("\n"),
@@ -208,8 +187,7 @@ async function runCli(
     cwd: cwd,
     stdout: "pipe",
     stderr: "pipe",
-    // Minimal on purpose: the runner's own BROODS_* vars would shadow
-    // `.env.local` and change what these tests exercise.
+    // Minimal env: the runner's own BROODS_* vars would shadow `.env.local`.
     env: {
       PATH: process.env.PATH ?? "",
       HOME: process.env.HOME ?? "",

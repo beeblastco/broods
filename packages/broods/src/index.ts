@@ -1,14 +1,10 @@
-/**
- * Public package entry. Re-exports the wire types, account helpers, runtime
- * client, manifest contracts, and the resource DSL.
- */
-
 export * from "./types.ts";
 export * from "./run-input.ts";
 export * from "./stream.ts";
 export * from "./websocket-contracts.ts";
 export * from "./observability-contracts.ts";
 export * from "./client.ts";
+export * from "./user-token.ts";
 export * from "./account.ts";
 export * from "./websocket.ts";
 export * from "./contracts.ts";

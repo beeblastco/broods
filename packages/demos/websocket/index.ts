@@ -1,11 +1,10 @@
-/**
- * Example: stream a deployed endpoint and steer its active WebSocket run.
- */
-
-import { WebSocketClient } from "broods";
+import { signUserToken, WebSocketClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-const client = new WebSocketClient();
+// The demo agent requires a signed user token beside the runtime key.
+const client = new WebSocketClient({
+  userToken: await signUserToken({ userId: "demo-user" }),
+});
 const sessionId = `websocket-steer-${crypto.randomUUID()}`;
 let subscription!: ReturnType<typeof client.subscribe>;
 let steerSent = false;
@@ -24,8 +23,7 @@ await new Promise<void>((resolve, reject) => {
         if (steerSent) return;
         steerSent = true;
 
-        // Mode is omitted because steer is the default. The request is durable
-        // before ACK; without another boundary it becomes a FIFO follow-up.
+        // Mode defaults to steer; durable before ACK, with no other boundary a FIFO follow-up.
         subscription.sendControl({
           requestId: "steer-1",
           eventId: "story-2",

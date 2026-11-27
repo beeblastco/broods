@@ -1,8 +1,3 @@
-/**
- * Agent lifecycle event delivery.
- * Keep stable event payloads and subscriber transport wiring here.
- */
-
 import type { JSONValue } from "ai";
 import type {
   AgentConfig,
@@ -13,10 +8,8 @@ import { logError } from "../shared/log.ts";
 import { fireWebhook } from "../shared/webhook.ts";
 import type { Session } from "./session.ts";
 
-/** Event-specific fields of a lifecycle event, also the payload handed to code hooks. */
 export type AgentLifecycleEventPayload = Record<string, JSONValue | undefined>;
 
-/** The JSON body posted to a lifecycle webhook. */
 export interface AgentLifecycleEvent {
   type: AgentLifecycleEventName;
   timestamp: string;
@@ -27,7 +20,6 @@ export interface AgentLifecycleEvent {
   payload: AgentLifecycleEventPayload;
 }
 
-/** What the harness and subagent coordinator call to announce a lifecycle event. */
 export interface AgentLifecycleEmitter {
   emit(
     type: AgentLifecycleEventName,
@@ -35,11 +27,6 @@ export interface AgentLifecycleEmitter {
   ): Promise<void>;
 }
 
-/**
- * Built once per run by the harness, and by the subagent coordinator for its
- * parent session. `emit` posts a signed event to every
- * enabled lifecycle webhook subscribed to that type; delivery failures are logged.
- */
 export function createAgentLifecycleEmitter(
   session: Pick<
     Session,
@@ -96,11 +83,6 @@ export function createAgentLifecycleEmitter(
   };
 }
 
-/**
- * Turns any value into plain JSON for a lifecycle or hook payload. A bigint,
- * function or symbol becomes a short label, a value JSON drops becomes
- * `undefined`, and one that throws while serializing becomes a placeholder.
- */
 export function toLifecycleValue(value: unknown): JSONValue | undefined {
   if (value === undefined) {
     return undefined;

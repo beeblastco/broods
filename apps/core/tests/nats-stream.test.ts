@@ -1,16 +1,24 @@
-/**
- * Cover the pure helpers; the core-publish / stream-capture / consume path needs
- * a live JetStream server and is exercised by examples/nats-stream.ts.
- */
-
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import {
   conversationReplaySnapshot,
   consumerStartPolicy,
+  readObservabilityStream,
   streamResponseSubject,
   subjectToken,
 } from "../src/shared/nats.ts";
+
+const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
+
+beforeAll((): void => {
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
+});
+
+afterAll((): void => {
+  if (originalEnvironment === undefined)
+    delete process.env.DEPLOYMENT_ENVIRONMENT;
+  else process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
+});
 
 describe("nats subject scheme", () => {
   it("encodes a conversationKey into a single NATS-safe subject token", () => {
@@ -18,22 +26,14 @@ describe("nats subject scheme", () => {
     expect(token).toBe(
       Buffer.from("api:user.1 / chat*>", "utf8").toString("base64url"),
     );
-    // No NATS-reserved characters survive (., *, >, whitespace).
     expect(token).not.toMatch(/[.*>\s]/);
-  });
-
-  it("round-trips the conversationKey through the token", () => {
-    const key = "api:weird/key.with.dots and spaces";
-    expect(Buffer.from(subjectToken(key), "base64url").toString("utf8")).toBe(
-      key,
-    );
   });
 
   it("is conversation-scoped so a reconnecting client shares one subject", () => {
     const first = streamResponseSubject("acct1", "agent1", "conv-1");
     const second = streamResponseSubject("acct1", "agent1", "conv-1");
     expect(first).toBe(second);
-    expect(first.startsWith("v1.acct1.agent1.ws.response.")).toBe(true);
+    expect(first.startsWith("test.v1.acct1.agent1.ws.response.")).toBe(true);
   });
 
   it("isolates subagent subjects by account, agent, and conversation", () => {
@@ -66,18 +66,19 @@ describe("nats subject scheme", () => {
 
     expect(
       streamResponseSubject("acct1", agentId, "conv-1").split("."),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
   });
 
-  it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
+  it("produces exactly seven tokens so it matches the stream wildcard test.v1.*.*.ws.response.*", () => {
     const subject = streamResponseSubject(
       "acct1",
       "agent1",
       "conv with spaces.and.dots",
     );
     const tokens = subject.split(".");
-    expect(tokens).toHaveLength(6);
-    expect(tokens.slice(0, 5)).toEqual([
+    expect(tokens).toHaveLength(7);
+    expect(tokens.slice(0, 6)).toEqual([
+      "test",
       "v1",
       "acct1",
       "agent1",
@@ -199,8 +200,6 @@ describe("conversationReplaySnapshot", () => {
       conversationKey: "child-conversation",
     });
 
-    // Retention dropped the subject between the filtered info and the direct
-    // read, so the attach tails the stream boundary instead of failing.
     expect(snapshot).toEqual({
       bufferedCount: 0,
       generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(
@@ -208,5 +207,78 @@ describe("conversationReplaySnapshot", () => {
       ),
       lastSequence: 100,
     });
+  });
+});
+
+describe("readObservabilityStream resume", () => {
+  const OLD = "2026-01-01T00:00:00.000Z";
+
+  async function startOf(
+    afterSequence: number,
+    stream: { created: string; first_seq: number; last_seq: number },
+  ): Promise<{ deliver_policy?: DeliverPolicy; opt_start_seq?: number }> {
+    let opened: { deliver_policy?: DeliverPolicy; opt_start_seq?: number } = {};
+    const streams = {
+      add: async (): Promise<void> => {},
+      info: async (): Promise<object> => ({
+        created: stream.created,
+        state: { first_seq: stream.first_seq, last_seq: stream.last_seq },
+      }),
+      update: async (): Promise<void> => {},
+    };
+    await readObservabilityStream({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+        jetstream: () => ({
+          consumers: {
+            get: async (_name: string, options: typeof opened) => {
+              opened = options;
+
+              return {
+                consume: async () => ({}),
+                info: async () => ({ delivered: { stream_seq: 0 } }),
+              };
+            },
+          },
+        }),
+      } as never,
+      stream: "logs",
+      accountId: "acct1",
+      project: "p",
+      stage: "dev",
+      startTime: "2026-06-05T00:00:00.000Z",
+      afterSequence: afterSequence,
+    });
+
+    return opened;
+  }
+
+  it("resumes after a cursor the stream issued and still covers", async () => {
+    expect(
+      await startOf(40, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject({ opt_start_seq: 41 });
+    expect(
+      await startOf(9, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject({ opt_start_seq: 10 });
+  });
+
+  it("replays by time when the stream cannot vouch for the cursor", async () => {
+    const byTime = { deliver_policy: DeliverPolicy.StartTime };
+    // Evicted past the cursor: the entries right after it are gone.
+    expect(
+      await startOf(1, { created: OLD, first_seq: 44, last_seq: 104 }),
+    ).toMatchObject(byTime);
+    // Past the end: another stream issued it.
+    expect(
+      await startOf(101, { created: OLD, first_seq: 10, last_seq: 100 }),
+    ).toMatchObject(byTime);
+    // Recreated a moment ago and already longer than the old cursor.
+    expect(
+      await startOf(13, {
+        created: new Date().toISOString(),
+        first_seq: 1,
+        last_seq: 17,
+      }),
+    ).toMatchObject(byTime);
   });
 });

@@ -1,12 +1,3 @@
-/**
- * Memory tool. Saves one durable fact as a markdown file in the workspace's
- * memory/ folder and keeps memory/MEMORY.md as the index of every memory.
- * Entries carry YAML frontmatter (name, description, metadata) where
- * metadata.originSessionId records the conversation scope the fact was learned
- * in. Ships with the workspace harness (config.harness.memory); recall goes
- * through the normal read/glob/grep tools plus the index the session loads.
- */
-
 import { createHash } from "node:crypto";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
@@ -20,16 +11,11 @@ import {
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { toolError, toolText } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 export const MEMORY_DIR = "memory";
 export const MEMORY_INDEX_PATH = `${MEMORY_DIR}/MEMORY.md`;
-export const MEMORY_TYPES = [
-  "user",
-  "feedback",
-  "project",
-  "reference",
-] as const;
+const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const;
 
 export type MemoryToolContext = SandboxToolContext & {
   conversationKey: string;
@@ -66,8 +52,7 @@ Usage notes:
               `Error: the memory harness is disabled for workspace ${ws.name}`,
             );
           }
-          // Square brackets would break the index line's markdown link (and the
-          // anchored pattern that replaces it), so fold them into spaces.
+          // `[` or `]` would break the index line's markdown link and its anchored pattern.
           const cleanTitle = (title ?? "")
             .replace(/[[\]]/g, " ")
             .replace(/\s+/g, " ")
@@ -109,19 +94,17 @@ Usage notes:
 
           const qFile = shellQuote(filePath);
           const qIndex = shellQuote(MEMORY_INDEX_PATH);
-          // Anchored to the entry-defining shape `- [title](slug.md) — ` so a line
-          // that merely cross-references this slug in its description never matches.
-          // Safe as a BRE: the slug charset is [a-z0-9-] and the title has no `]`.
+          const qHeader = shellQuote(indexHeader);
+          // Anchored to `- [title](slug.md) — ` so a mere cross-reference never matches;
+          // a safe BRE since slugs are [a-z0-9-] and titles have no `]`.
           const indexLinePattern = `^- \\[[^]]*](${slug}\\.md) — `;
-          // Same base64 + `sync` discipline as the write tool: upload both files
-          // before the sandbox freezes. The workspace is a mountpoint-s3
-          // FUSE mount that rejects O_APPEND and rename() with EPERM, so surviving index
-          // lines go into a shell variable and the index is rewritten in one `>` pass.
-          // No `>>`, no `mv`, no temp files. Replacing the entry's line instead of
-          // appending is what makes a re-saved title update the summary, not duplicate it.
+          // mountpoint-s3 rejects O_APPEND and rename(), so the index is rebuilt in a variable and
+          // rewritten in one `>`; `sync` uploads both files before the sandbox freezes.
+          // grep exits 2 on a read error; the index is read first, so that error writes nothing.
           const code =
+            `index_body='' && if [ -f ${qIndex} ]; then index_body=$(grep -v ${shellQuote(indexLinePattern)} ${qIndex}); [ "$?" -le 1 ] || exit 1; fi && ` +
+            `if [ -z "$index_body" ]; then index_body=${qHeader}; fi && ` +
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
-            `index_body=$({ [ -f ${qIndex} ] && grep -v ${shellQuote(indexLinePattern)} ${qIndex}; } || printf '%s' ${shellQuote(indexHeader)}) && ` +
             `printf '%s\\n%s\\n' "$index_body" ${shellQuote(indexLine)} > ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
@@ -135,10 +118,9 @@ Usage notes:
             );
           }
 
-          return toolText(result.stdout.trim());
+          return result.stdout.trim();
         } catch (cause) {
-          // toolError throws, so an in-try call already landed here. Feeding its
-          // message back through would prefix a fatal setup error a second time.
+          // toolError throws; rethrow as is so a fatal setup error is not prefixed twice.
           throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
@@ -146,9 +128,7 @@ Usage notes:
   };
 }
 
-// kebab-case file slug from the title (diacritics folded), capped so index lines
-// and paths stay short. A capped or empty slug is no longer unique per title, so
-// those get a stable hash suffix. Distinct titles must never share a file.
+// A capped or empty slug gets a title hash: distinct titles must never share a file.
 export function memorySlug(title: string): string {
   const kebab = title
     .normalize("NFKD")

@@ -1,21 +1,20 @@
-/**
- * AI SDK adapter for connected MCP tools (issue #331 phase 1). One tool() per
- * remote tool, named `server__tool`. Request/response only: MCP tools/call
- * has no streaming analog, so execute is a plain async function and
- * notifications/progress are not mapped onto chunk frames.
- */
-
 import type { Tool as McpTool } from "@modelcontextprotocol/client";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
+import type { McpRecord } from "../../shared/domain/mcp.ts";
+import { toErrorMessage } from "../../shared/errors.ts";
 import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { normalizeToolResultOutput } from "../tools/utils.ts";
 import { callMcpTool, type McpConnection } from "./client.ts";
+import { mcpSignInLink } from "./connection.ts";
+
+const MAX_TOOL_NAME_LENGTH = 64;
 
 export function mcpTools(
   connection: McpConnection,
   remoteTools: McpTool[],
   onSandboxCpu?: (sample: SandboxCpuSample) => void,
+  onToolRetry?: (toolCallId: string, waitMs: number) => void,
 ): ToolSet {
   const tools: ToolSet = {};
   for (const remote of remoteTools) {
@@ -32,9 +31,9 @@ export function mcpTools(
           (input ?? {}) as Record<string, unknown>,
           {
             abortSignal: options.abortSignal,
-            // Only a hosted row's Lambda reports CPU; metered under the
-            // dedicated tool-compute type so it never files as the agent's
-            // own sandbox.
+            toolDefinition: remote,
+            onRetry: (waitMs: number): void =>
+              onToolRetry?.(options.toolCallId, waitMs),
             ...(onSandboxCpu
               ? {
                   onCpuUsec: (cpuUsec: number): void =>
@@ -57,11 +56,35 @@ export function mcpTools(
 }
 
 /**
- * Model-facing name of one remote tool: the server's namespace plus its own.
- * Pre-2026 spec revisions put no charset on tool names, and providers reject
- * names outside [A-Za-z0-9_-], so anything else maps to '_'; a collision this
- * produces is caught by the registration conflict check.
+ * Stands in for a remote server that needs a sign-in. The account's own caller gets the link
+ * to hand to the user; anyone else could bind their own account to it, so they get none.
  */
+export function mcpSignInTool(
+  record: McpRecord,
+  owner: boolean,
+): ToolSet[string] {
+  return tool({
+    description: `${record.name} is not signed in yet, so its tools are missing. Call this when the user needs ${record.name}.`,
+    inputSchema: jsonSchema({ type: "object", properties: {} }),
+    execute: async function (): Promise<string> {
+      if (!owner) {
+        return `${record.name} is not connected yet. Tell the user it is unavailable for now: the owner of this agent has to connect it.`;
+      }
+      try {
+        const link = await mcpSignInLink(record);
+
+        return `Give the user this link to sign in to ${record.name}: ${link}\nThe link works for 10 minutes. Once they say they have signed in, ${record.name}'s tools are available on your next turn.`;
+      } catch (error) {
+        return `${record.name} could not start a sign-in: ${toErrorMessage(error)}`;
+      }
+    },
+  });
+}
+
+// Providers reject names outside [A-Za-z0-9_-] or past 64; a collision fails registration.
 export function mcpToolName(serverName: string, remoteName: string): string {
-  return `${serverName}__${remoteName.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  return `${serverName}__${remoteName.replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(
+    0,
+    MAX_TOOL_NAME_LENGTH,
+  );
 }

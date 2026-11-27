@@ -1,15 +1,9 @@
-/**
- * Internal MCP server registration API (issue #331 phase 1). Rows are scoped
- * to one (projectId, stageId); core resolves a stage's servers at agent
- * registration time and connects over the stateless HTTP transport. Names are
- * unique per stage because they namespace the server's tools (`name__tool`).
- */
-
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { accountCipher, accountCipherForWrite } from "../model/accountKeys";
 import {
   assertMcpRow,
   MCP_CLEARABLE_FIELDS,
@@ -21,7 +15,34 @@ import { resolveProjectStage } from "../model/projectScope";
 import { mcpFields, paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
 
-/** Full mcp row validator, shared with the dashboard-facing mcp service. */
+const CONNECTION_SCOPE = "mcp:connection";
+
+export const NO_MCP_CONNECTION = {
+  connection: undefined,
+  connectionCiphertext: undefined,
+  connectionIv: undefined,
+  connectionTag: undefined,
+};
+
+const connectionRef = { accountId: v.id("accounts"), serverId: v.id("mcp") };
+const connectionSecrets = {
+  accessToken: v.string(),
+  refreshToken: v.string(),
+  clientSecret: v.optional(v.string()),
+};
+const storedConnection = v.object({
+  clientId: v.string(),
+  tokenUrl: v.string(),
+  resource: v.string(),
+  expiresAt: v.number(),
+  updatedAt: v.number(),
+  ...connectionSecrets,
+});
+const connectionSecretsValidator = v.object(connectionSecrets);
+
+type ConnectionSecrets = Infer<typeof connectionSecretsValidator>;
+export type StoredMcpConnection = Infer<typeof storedConnection>;
+
 export const mcpDoc = v.object({
   ...mcpFields,
   _id: v.id("mcp"),
@@ -56,8 +77,7 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
-    // Every caller derives the scope from the same secret, but the project's
-    // org is what actually ties a server to this account. Check it here.
+    // The project's org, not the caller's scope, is what ties a server to this account.
     const project = await ctx.db.get(args.projectId);
     if (
       !project ||
@@ -118,6 +138,20 @@ export const create = internalMutation({
   },
 });
 
+export const disconnect = internalMutation({
+  args: connectionRef,
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    if (server?.accountId !== args.accountId || !server.connection) {
+      return false;
+    }
+    await ctx.db.patch(server._id, NO_MCP_CONNECTION);
+
+    return true;
+  },
+});
+
 export const getById = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -135,10 +169,7 @@ export const getById = internalQuery({
   },
 });
 
-/**
- * What each agent on the server's stage sets for it under `config.mcp`, read
- * from the `agentConfigs` mirror, which keeps `${NAME}` refs unresolved.
- */
+// Read from the `agentConfigs` mirror, which keeps `${NAME}` refs unresolved.
 export const agentEntries = internalQuery({
   args: { accountId: v.id("accounts"), serverId: v.id("mcp") },
   returns: v.array(v.any()),
@@ -152,13 +183,8 @@ export const agentEntries = internalQuery({
       )
       .collect();
 
-    // `extraConfig` is a `v.any()` column, so only the one key read is named.
     return agents
-      .map(
-        (agent) =>
-          (agent.extraConfig as { mcp?: Record<string, unknown> } | undefined)
-            ?.mcp?.[server._id],
-      )
+      .map((agent) => agent.extraConfig?.mcp?.[server._id])
       .filter((entry) => entry !== undefined);
   },
 });
@@ -205,6 +231,33 @@ export const listForStagePage = internalQuery({
   },
 });
 
+export const loadConnection = internalQuery({
+  args: connectionRef,
+  returns: v.union(v.null(), storedConnection),
+  handler: async (ctx, args): Promise<StoredMcpConnection | null> => {
+    const server = await ctx.db.get(args.serverId);
+    if (
+      server?.accountId !== args.accountId ||
+      !server.connection ||
+      !server.connectionCiphertext ||
+      !server.connectionIv ||
+      !server.connectionTag
+    ) {
+      return null;
+    }
+    const cipher = await accountCipher(ctx, server.accountId);
+
+    return {
+      ...server.connection,
+      ...((await cipher.decrypt(CONNECTION_SCOPE, {
+        ciphertext: server.connectionCiphertext,
+        iv: server.connectionIv,
+        tag: server.connectionTag,
+      })) as ConnectionSecrets),
+    };
+  },
+});
+
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -225,21 +278,19 @@ export const remove = internalMutation({
       );
     }
 
-    // Release the canvas node: a tombstone that keeps `nodeId` shadows the row
-    // a later deploy creates under the same deterministic node id.
+    // A tombstone keeping `nodeId` would shadow the row a later deploy makes on that node.
     await ctx.db.patch(normalized, {
       status: "deleted",
       deletedAt: Date.now(),
       nodeId: undefined,
       updatedAt: Date.now(),
+      ...NO_MCP_CONNECTION,
     });
 
     return null;
   },
 });
 
-// Unlike the CLI's `ensureScopeBySecretHash` this never creates: an unknown
-// slug is a client error, not a reason to spawn a project.
 export const resolveScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -274,6 +325,72 @@ export const resolveScope = internalQuery({
   },
 });
 
+// A sign-in or disconnect since core loaded the tokens wins over this refresh.
+export const saveRefreshedConnection = internalMutation({
+  args: {
+    ...connectionRef,
+    loadedUpdatedAt: v.number(),
+    expiresAt: v.number(),
+    ...connectionSecrets,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    if (
+      server?.accountId !== args.accountId ||
+      server.connection?.updatedAt !== args.loadedUpdatedAt
+    ) {
+      return false;
+    }
+    await ctx.db.patch(server._id, {
+      connection: {
+        ...server.connection,
+        expiresAt: args.expiresAt,
+        updatedAt: Date.now(),
+      },
+      ...(await sealConnection(ctx, args.accountId, args)),
+    });
+
+    return true;
+  },
+});
+
+export const setConnection = internalMutation({
+  args: {
+    ...connectionRef,
+    url: v.string(),
+    clientId: v.string(),
+    tokenUrl: v.string(),
+    resource: v.string(),
+    expiresAt: v.number(),
+    ...connectionSecrets,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const server = await ctx.db.get(args.serverId);
+    // Checked with the write: tokens for one URL must never land on a row repointed since.
+    if (
+      server?.accountId !== args.accountId ||
+      server.status !== "active" ||
+      server.url !== args.url
+    ) {
+      return false;
+    }
+    await ctx.db.patch(server._id, {
+      connection: {
+        clientId: args.clientId,
+        tokenUrl: args.tokenUrl,
+        resource: args.resource,
+        expiresAt: args.expiresAt,
+        updatedAt: Date.now(),
+      },
+      ...(await sealConnection(ctx, args.accountId, args)),
+    });
+
+    return true;
+  },
+});
+
 export const update = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -293,7 +410,6 @@ export const update = internalMutation({
     allowedTools: v.optional(v.array(v.string())),
     disabled: v.optional(v.boolean()),
     sourceCode: v.optional(v.string()),
-    // A declarative sync names the optional fields its manifest left out.
     clear: v.optional(
       v.array(
         v.union(...MCP_CLEARABLE_FIELDS.map((field) => v.literal(field))),
@@ -317,8 +433,6 @@ export const update = internalMutation({
     if (args.name !== undefined && args.name !== doc.name) {
       await requireNameFree(ctx, doc.stageId, args.name);
     }
-    // The normalizer only sees one body; the row the patch produces is
-    // what has to hold.
     const patch = {
       ...Object.fromEntries(
         (args.clear ?? []).map((field) => [field, undefined]),
@@ -327,12 +441,42 @@ export const update = internalMutation({
     };
     assertMcpRow({ ...doc, ...patch });
 
-    await ctx.db.patch(normalized, patch);
+    // Tokens are bound to one URL: repointing the server signs it out.
+    await ctx.db.patch(normalized, {
+      ...patch,
+      ...("url" in patch && patch.url !== doc.url ? NO_MCP_CONNECTION : {}),
+    });
 
     return null;
   },
 });
 
+async function sealConnection(
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
+  secrets: ConnectionSecrets,
+): Promise<{
+  connectionCiphertext: string;
+  connectionIv: string;
+  connectionTag: string;
+}> {
+  const cipher = await accountCipherForWrite(ctx, accountId);
+  const sealed = await cipher.encrypt(CONNECTION_SCOPE, {
+    accessToken: secrets.accessToken,
+    refreshToken: secrets.refreshToken,
+    ...(secrets.clientSecret !== undefined
+      ? { clientSecret: secrets.clientSecret }
+      : {}),
+  });
+
+  return {
+    connectionCiphertext: sealed.ciphertext,
+    connectionIv: sealed.iv,
+    connectionTag: sealed.tag,
+  };
+}
+
+// Names namespace the server's tools (`name__tool`), so they are unique per stage.
 async function requireNameFree(
   ctx: MutationCtx,
   stageId: Id<"stages">,
@@ -349,7 +493,6 @@ async function requireNameFree(
   }
 }
 
-/** The other transports' connection fields, cleared when a row switches to `transport`. */
 function transportClears(
   transport: McpTransport | undefined,
 ): Partial<Doc<"mcp">> {
@@ -378,13 +521,6 @@ function transportClears(
   return {};
 }
 
-/**
- * The fields an update writes. Provided args win; a transport switch clears
- * the other side's connection fields so a hosted row never carries a stale
- * url or oauth and vice versa; a bundle change that brings no source (a CLI sync over
- * a dashboard-authored row) clears the stored source rather than letting it
- * drift from the running bundle.
- */
 function updatePatch(
   args: {
     name?: string;
@@ -430,6 +566,7 @@ function updatePatch(
     ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
     ...transportClears(args.transport),
+    // A new bundle with no source (a CLI sync over a dashboard row) drops the stale source.
     ...(args.sha256 !== undefined &&
     args.sha256 !== doc.sha256 &&
     args.sourceCode === undefined

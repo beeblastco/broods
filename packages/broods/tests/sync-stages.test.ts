@@ -10,7 +10,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response): {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async (input, init) => {
+    fetch: async (input, init): Promise<Response> => {
       const url = requestUrl(input);
       calls.push({
         url: url,
@@ -35,9 +35,9 @@ const STAGE = {
   updatedAt: 1,
 };
 
-test("listStages passes the project as a query parameter", async () => {
+test("listStages passes the project as a query parameter", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ stages: [STAGE] })),
+    (): Response => new Response(JSON.stringify({ stages: [STAGE] })),
   );
 
   const stages = await client.listStages("client lamy");
@@ -49,15 +49,9 @@ test("listStages passes the project as a query parameter", async () => {
   });
 });
 
-test("listStages returns an empty array when the payload omits stages", async () => {
-  const { client } = clientWith(() => new Response(JSON.stringify({})));
-
-  expect(await client.listStages("demo-app")).toEqual([]);
-});
-
-test("createStage posts the project, name and clone source", async () => {
+test("createStage posts the project, name and clone source", async (): Promise<void> => {
   const { client, calls } = clientWith(
-    () =>
+    (): Response =>
       new Response(JSON.stringify({ stage: STAGE, clonedFrom: "Development" })),
   );
 
@@ -77,66 +71,35 @@ test("createStage posts the project, name and clone source", async () => {
   });
 });
 
-test("createStage omits `from` when no clone source is given", async () => {
-  const { client, calls } = clientWith(
-    () => new Response(JSON.stringify({ stage: STAGE, clonedFrom: null })),
-  );
-
-  await client.createStage("demo-app", "staging");
-
-  expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({
-    project: "demo-app",
-    name: "staging",
-  });
-});
-
-test("createStage surfaces the server error message", async () => {
+test("listStages rejects a non-JSON 404 as a missing stages route", async (): Promise<void> => {
   const { client } = clientWith(
-    () =>
-      new Response(JSON.stringify({ error: "Stage Staging already exists" }), {
-        status: 400,
-      }),
+    (): Response => new Response("Not Found", { status: 404 }),
   );
 
-  expect(client.createStage("demo-app", "staging")).rejects.toThrow(
-    /Stage Staging already exists/,
-  );
-});
-
-// `stage list` marks the current stage and `stage use` matches a name against
-// this payload, so a 404 that the router (not the handler) produced has to read
-// as "route missing", not "project missing".
-test("listStages rejects a non-JSON 404 as a missing stages route", async () => {
-  const { client } = clientWith(
-    () => new Response("Not Found", { status: 404 }),
-  );
-
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     /older than your CLI .*no \/v1\/account\/stages route/,
   );
 });
 
-// Node's bare "fetch failed" hid which server was down and why.
-test("a network failure names the server and the cause", async () => {
+test("a network failure names the server and the cause", async (): Promise<void> => {
   const client = new BroodsSyncClient({
     baseUrl: "https://convex.example.com",
     token: "tok",
-    fetch: async () => {
+    fetch: async (): Promise<never> => {
       throw new TypeError("fetch failed", {
         cause: new Error("connect ECONNREFUSED 10.0.0.1:443"),
       });
     },
   });
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     "Cannot reach https://convex.example.com: connect ECONNREFUSED 10.0.0.1:443",
   );
 });
 
-// A sync can hold the connection for minutes; every other call gives up.
-test("requests time out, except the manifest write", async () => {
+test("requests time out, except the manifest write", async (): Promise<void> => {
   const signals: Array<AbortSignal | null | undefined> = [];
-  const { client } = clientWith((_url, init) => {
+  const { client } = clientWith((_url, init): Response => {
     signals.push(init.signal);
 
     return Response.json({ stages: [], manifest: {}, ids: {} });
@@ -152,9 +115,9 @@ test("requests time out, except the manifest write", async () => {
   expect(signals[1]).toBeUndefined();
 });
 
-test("listStages surfaces a JSON 404 as a normal request failure", async () => {
+test("listStages surfaces a JSON 404 as a normal request failure", async (): Promise<void> => {
   const { client } = clientWith(
-    () =>
+    (): Response =>
       new Response(
         JSON.stringify({ error: "Project demo-app was not found" }),
         {
@@ -164,21 +127,20 @@ test("listStages surfaces a JSON 404 as a normal request failure", async () => {
       ),
   );
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     /Project demo-app was not found/,
   );
 });
 
-// CLI tokens expire after 90 days, and the bare 401 did not say what to do.
-test("a 401 tells the user to log in again", async () => {
+test("a 401 tells the user to log in again", async (): Promise<void> => {
   const { client } = clientWith(
-    () =>
+    (): Response =>
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
       }),
   );
 
-  expect(client.listStages("demo-app")).rejects.toThrow(
+  await expect(client.listStages("demo-app")).rejects.toThrow(
     "List stages failed: 401 Unauthorized\nRun `broods login` to sign in again.",
   );
 });

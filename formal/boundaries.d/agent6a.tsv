@@ -1,0 +1,21 @@
+kind	name	reason
+external	^NoSuchProviderReferenceError\.isInstance$	The AI SDK owns this error brand; the twin only branches on its answer.
+external	^UnsupportedFunctionalityError\.isInstance$	The AI SDK owns this error brand; the twin only branches on its answer.
+external	^toErrorMessage$	Shared formatter; replay checks it receives the caught error.
+external	^Date\.now$	The clock is an outside input; replay supplies the recorded time.
+external	^getTracer$	OpenTelemetry tracer accessor; the tracer is only passed through.
+external	^getTracer\(\)\.startSpan$	OpenTelemetry span creation; replay checks the name, attributes and parent context.
+external	^mintSpanId$	Random id generator; only its output is forwarded.
+external	^mintTraceId$	Random id generator; only its output is forwarded.
+external	^otelContextApi\.active$	OpenTelemetry context value carried through unread.
+external	^otelTraceApi\.setSpanContext$	OpenTelemetry context helper; replay checks the ids and passes the result through.
+external	^otelSpan\.setStatus$	OpenTelemetry span call; replay checks the status code and message.
+external	^otelSpan\.end$	OpenTelemetry span call; replay checks the end time.
+external	^otelSpan\.spanContext$	OpenTelemetry span call; the twin reads only the span id, and handles an all-zero one.
+external	^root\.spans\.phase$	Span tracker handed in by the caller; replay checks the phase name, times and attributes.
+external	^taskTotals\.addCompaction$	Totals object from createTaskTotals; replay checks the usage it is given.
+external	^createRunFinalizer\(\{ session: session, root: \{ span: root\.span, [^\n]+ restoreObservabilityContext: \(\): void => \{\}, \}\)\.finalize$	The finalizer built by this function, labelled by its source text; replay checks status, count, duration and error.
+opaque	SpanImpl	OpenTelemetry span the twin only passes through.
+opaque	Tracer	OpenTelemetry tracer the twin only passes through.
+opaque	ParentBasedSampler	Held inside a recorded tracer; the twin does not read it.
+opaque	AlwaysOnSampler	Held inside a recorded tracer; the twin does not read it.

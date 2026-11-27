@@ -23,6 +23,14 @@ writes for the selected stage.
 WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
 HTTP clients. The hosted SDK default is `gateway.broods.app`.
 
+A new agent refuses the runtime key without a signed user token, so the demos
+sign one for a single `demo-user` with `signUserToken`. It reads the stage's
+signing secret from `BROODS_USER_TOKEN_SECRET`, which `bun run dev`/`bun run
+deploy` write to the demo's `.env.local` with the runtime key (the dashboard's
+Runtime key tab can rotate it too; it is shown once). A
+real app signs a token per signed-in user on its server, never in a browser.
+See `apps/docs/docs/guides/security.md`, "Users behind the runtime key".
+
 ## Run against a local core
 
 The core now runs as a single container (`apps/core`, off Lambda). You can run
@@ -72,9 +80,29 @@ Sandbox examples (one `defineSandbox` per provider/mode):
 - `sandbox-lambda`: stateless, bash-only `lambda` (AWS Lambda MicroVM).
 - `sandbox-multiple`: two `lambda` sandboxes in `sandboxes`. The first is the default, the second is deny-all, picked per bash call.
 - `sandbox-workspace-lambda`: persistent workspace-backed `lambda` MicroVM.
-- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-cloudflare`, `sandbox-workspace-override`: provider-specific sandbox configs.
+- `sandbox-workspace-daytona`, `sandbox-vercel`, `sandbox-e2b`, `sandbox-cloudflare`, `sandbox-worker`, `sandbox-workspace-override`: provider-specific sandbox configs.
 
 Workspace examples:
 
 - `workspace-multiple`: one agent with two named S3-backed workspaces.
 - `workspace-readonly`: one shared workspace, a writer with a sandbox and two read-only readers.
+
+## Read a history page
+
+History reads use a member login, not the runtime key used to run an agent. With `BROODS_SESSION_TOKEN` set to a login credential, this example reads one page without starting a live subscription:
+
+```ts
+import { BroodsAccountClient } from "broods";
+
+const account = new BroodsAccountClient({
+  sessionToken: process.env.BROODS_SESSION_TOKEN,
+});
+const to = Date.now();
+const page = await account.readLogPage(
+  { project: "demo", stage: "development" },
+  { range: { from: to - 3_600_000, to: to }, limit: 50 },
+);
+console.log(page.logs, page.nextTo, page.incomplete);
+```
+
+Keep the original `from` and use `nextTo` as `to` for the next page. Retry the same range after `incomplete`. The [SDK history reference](../../apps/docs/docs/reference/sdk.md#log-and-run-history-pages) covers run pages and filters.

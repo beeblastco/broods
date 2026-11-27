@@ -1,14 +1,21 @@
-/**
- * Sandbox-config validation for the Convex config plane. Ports core's former
- * storage/sandbox-config.ts normalizer so the public /v1/sandboxes contract
- * is unchanged. The public projection lives in ./responses.ts.
- */
+import { z } from "zod/mini";
 
 import { assertPublicHttpsUrl } from "./agentRules";
 import { mergeConfigObjects } from "./configValues";
-import { normalizeHeaders } from "./mcp";
-import { isPlainObject, isStringRecord } from "./objects";
 import {
+  nonEmptyString,
+  nonEmptyStrings,
+  parseInput,
+  resourceCreateInput,
+  resourceUpdateInput,
+  stringRecord,
+  wholeValue,
+} from "./inputSchema";
+import { configObject, stringValues } from "./storedJson";
+import { normalizeHeaders } from "./mcp";
+import {
+  MOUNT_FLAG_SANDBOX_PROVIDERS,
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
@@ -18,17 +25,16 @@ import { assertStorageEndpoint } from "./workspaceRules";
 import { ClientError } from "./clientError";
 
 export {
+  PLATFORM_WORKER_SANDBOX_PROVIDERS,
   SANDBOX_PROVIDERS,
   SNAPSHOT_SANDBOX_PROVIDERS,
   STATELESS_SANDBOX_PROVIDERS,
   type SandboxProvider,
 } from "./sandboxProviders";
 
-/** The provider a config without one runs on: AWS MicroVM, until `sandbox` has hosts everywhere. */
 export const DEFAULT_SANDBOX_PROVIDER: SandboxProvider = "lambda";
 
-// Platform MicroVM image variants a lambda sandbox can boot by name instead of ARN.
-// Core resolves each to `<default image name>-<variant>` in the default's account.
+// Core boots each as `<default image name>-<variant>` in the default image's account.
 export const SANDBOX_IMAGES = ["browser", "obscura"] as const;
 
 export const SANDBOX_RUNTIMES = ["bash", "python", "node"] as const;
@@ -48,24 +54,24 @@ export const SANDBOX_SIZE_NAMES = [
   "large",
 ] as const;
 
-export const DEFAULT_TIMEOUT_SECONDS = 30;
-export const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 export const DEFAULT_MAX_OUTPUT_LIMIT_BYTES = 256 * 1024;
 export const LAMBDA_MAX_TIMEOUT_SECONDS = 600;
 export const PERSISTENT_MAX_TIMEOUT_SECONDS = 600;
 export const MAX_IDLE_TIMEOUT_SECONDS = 7 * 24 * 60 * 60;
 export const MAX_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
-// Cloudflare refuses a Container inactivity timeout over six hours.
-export const CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS = 6 * 60 * 60;
-// The only options core reads for a platform-run provider (lambda, cloudflare):
-// the executor's workspaceRoot and the reservation pin every provider shares.
-// Images, roles and the cloudflare bridge are platform resources core takes from
-// its env, so anything else is refused.
+// Cloudflare refuses a Container idle timeout over 6h; Vercel caps a Pro session at 24h.
+const PROVIDER_MAX_IDLE_TIMEOUT_SECONDS: Partial<
+  Record<SandboxProvider, number>
+> = {
+  cloudflare: 6 * 60 * 60,
+  vercel: 24 * 60 * 60,
+};
+// Must match MAX_TIMEOUT_MS in apps/cloudflare-worker/src/limits.ts.
+export const WORKER_MAX_TIMEOUT_SECONDS = 60;
 const PLATFORM_OPTION_KEYS: ReadonlySet<string> = new Set([
   "reservationKey",
   "workspaceRoot",
 ]);
-// Provider options that used to pick the boot image. `config.snapshot` does now.
 const RETIRED_IMAGE_OPTIONS: Partial<
   Record<SandboxProvider, readonly string[]>
 > = {
@@ -73,6 +79,58 @@ const RETIRED_IMAGE_OPTIONS: Partial<
   e2b: ["template", "templateId"],
   vercel: ["image", "runtime"],
 };
+
+const POSITIVE_INTEGER = z
+  .number({ error: "must be a positive integer" })
+  .check(
+    z.refine((value): boolean => Number.isSafeInteger(value) && value >= 1, {
+      error: "must be a positive integer",
+    }),
+  );
+const HOOK_LIST = wholeValue(
+  z.array(nonEmptyString).check(z.minLength(1)),
+  "must be a non-empty array of non-empty strings",
+);
+const SANDBOX_CONFIG_INPUT = z.looseObject({
+  provider: z.optional(z.enum(SANDBOX_PROVIDERS)),
+  fallbackProvider: z.optional(z.enum(SANDBOX_PROVIDERS)),
+  permissionMode: z.optional(z.enum(SANDBOX_PERMISSION_MODES)),
+  size: z.optional(z.enum(SANDBOX_SIZE_NAMES)),
+  persistent: z.optional(z.boolean()),
+  snapshot: z.optional(z.string()),
+  image: z.optional(z.enum(SANDBOX_IMAGES)),
+  network: z.optional(
+    z.looseObject({
+      mode: z.optional(z.enum(SANDBOX_NETWORK_MODES)),
+      allowDomains: z.optional(nonEmptyStrings),
+      allowCidrs: z.optional(nonEmptyStrings),
+    }),
+  ),
+  lifecycle: z.optional(
+    z.object({
+      idleTimeoutSeconds: z.optional(
+        boundedPositiveInteger(MAX_IDLE_TIMEOUT_SECONDS),
+      ),
+      maxLifetimeSeconds: z.optional(
+        boundedPositiveInteger(MAX_LIFETIME_SECONDS),
+      ),
+    }),
+  ),
+  onCreate: z.optional(HOOK_LIST),
+  onResume: z.optional(HOOK_LIST),
+  runtimes: z.optional(
+    wholeValue(
+      z.array(z.enum(SANDBOX_RUNTIMES)).check(z.minLength(1)),
+      `must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
+    ),
+  ),
+  timeout: z.optional(POSITIVE_INTEGER),
+  outputLimitBytes: z.optional(POSITIVE_INTEGER),
+  envVars: z.optional(stringRecord("must be an object with string values")),
+  options: z.optional(configObject),
+});
+
+type SandboxConfigInput = z.output<typeof SANDBOX_CONFIG_INPUT>;
 
 export type RuntimeName = (typeof SANDBOX_RUNTIMES)[number];
 
@@ -84,9 +142,6 @@ export type SandboxSize = (typeof SANDBOX_SIZE_NAMES)[number];
 
 export type SandboxImage = (typeof SANDBOX_IMAGES)[number];
 
-/**
- * Idle and maximum lifetime controls for a persistent sandbox.
- */
 export interface SandboxLifecycleConfig {
   idleTimeoutSeconds?: number;
   maxLifetimeSeconds?: number;
@@ -98,20 +153,11 @@ export interface SandboxNetworkConfig {
   allowCidrs?: string[];
 }
 
-/**
- * Account-scoped reusable sandbox configuration referenced by agents.
- */
 export interface SandboxConfig {
   provider: SandboxProvider;
-  // Where an ephemeral run goes when `provider` refuses the create for capacity.
-  // Never set with `persistent`: a reserved sandbox belongs to one provider.
   fallbackProvider?: SandboxProvider;
   size?: SandboxSize;
-  // A platform image variant by name (lambda only): "browser" has Chromium,
-  // "obscura" has the Obscura headless browser. With `snapshot`, the variant it was built from.
   image?: SandboxImage;
-  // What the sandbox boots from, in its provider's own format. See
-  // SNAPSHOT_SANDBOX_PROVIDERS.
   snapshot?: string;
   runtimes?: RuntimeName[];
   network?: SandboxNetworkConfig;
@@ -123,7 +169,6 @@ export interface SandboxConfig {
   timeout?: number;
   outputLimitBytes?: number;
   envVars?: Record<string, undefined | string>;
-  // Provider knobs; `docker: boolean` is the sandbox provider's only typed one.
   options?: Record<string, unknown>;
 }
 
@@ -132,11 +177,6 @@ export interface WorkspaceSandboxLimits {
   maxOutputLimitBytes: number;
 }
 
-/**
- * Per-call sandbox limits for a provider, including environment overrides.
- * @param provider sandbox compute backend
- * @returns provider-aware ceilings used by config validation
- */
 export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
@@ -147,10 +187,12 @@ export function workspaceSandboxLimits(
             "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
             LAMBDA_MAX_TIMEOUT_SECONDS,
           )
-        : positiveIntegerEnv(
-            "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
-            PERSISTENT_MAX_TIMEOUT_SECONDS,
-          ),
+        : provider === "worker"
+          ? WORKER_MAX_TIMEOUT_SECONDS
+          : positiveIntegerEnv(
+              "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+              PERSISTENT_MAX_TIMEOUT_SECONDS,
+            ),
     maxOutputLimitBytes: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
       DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
@@ -158,11 +200,6 @@ export function workspaceSandboxLimits(
   };
 }
 
-/**
- * @param value the raw config value
- * @param stored the config an update merges into, when there is one
- * @returns the normalized sandbox config
- */
 export function normalizeSandboxConfig(
   value: unknown,
   stored?: SandboxConfig,
@@ -174,32 +211,15 @@ export function normalizeSandboxConfig(
       network: { mode: "deny-all" },
     };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config must be an object");
-  }
-
-  const config = value;
+  const config = parseInput(SANDBOX_CONFIG_INPUT, value, "config");
   if ("internet" in config) {
     throw new ClientError(
       "config.internet is no longer supported; use config.network",
     );
   }
-  const provider =
-    assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS) ??
-    DEFAULT_SANDBOX_PROVIDER;
-  const fallbackProvider = assertOptionalEnum(
-    config.fallbackProvider,
-    "config.fallbackProvider",
-    SANDBOX_PROVIDERS,
-  );
-  assertOptionalEnum(
-    config.permissionMode,
-    "config.permissionMode",
-    SANDBOX_PERMISSION_MODES,
-  );
-  assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
-  assertOptionalBoolean(config.persistent, "config.persistent");
-  const snapshot = optionalString(config.snapshot, "config.snapshot");
+  const provider = config.provider ?? DEFAULT_SANDBOX_PROVIDER;
+  const { fallbackProvider, image } = config;
+  const snapshot = config.snapshot?.trim() || undefined;
   if (
     config.snapshot !== undefined &&
     !SNAPSHOT_SANDBOX_PROVIDERS.has(provider)
@@ -208,11 +228,6 @@ export function normalizeSandboxConfig(
       `config.snapshot does not apply to the ${provider} provider`,
     );
   }
-  const image = assertOptionalEnum(
-    config.image,
-    "config.image",
-    SANDBOX_IMAGES,
-  );
   assertImage(image, provider, fallbackProvider);
 
   if (fallbackProvider === provider) {
@@ -220,8 +235,7 @@ export function normalizeSandboxConfig(
       "config.fallbackProvider must differ from config.provider",
     );
   }
-  // A machine is one computer, and a custom server's endpoint lives in
-  // `options`, which does not carry over to the fallback.
+  // A machine is one computer, and a custom server's options do not carry over to a fallback.
   if (fallbackProvider && STATELESS_SANDBOX_PROVIDERS.has(fallbackProvider)) {
     throw new ClientError(
       `config.fallbackProvider cannot be ${fallbackProvider}`,
@@ -235,8 +249,6 @@ export function normalizeSandboxConfig(
   assertStatelessProviderFields(config, provider);
   const network = normalizeNetwork(config.network);
   const persistentFields = normalizePersistentFields(config, provider);
-  assertRuntimes(config.runtimes);
-  // The fallback runs this same config, so it has to be able to enforce it too.
   for (const runsOn of fallbackProvider
     ? [provider, fallbackProvider]
     : [provider]) {
@@ -256,20 +268,15 @@ export function normalizeSandboxConfig(
   );
 }
 
-/**
- * @param value the raw request body
- * @returns normalized create fields
- */
 export function normalizeCreateSandboxConfigInput(value: unknown): {
   name: string;
   description?: string;
   config: SandboxConfig;
 } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-  const name = requireString(value.name, "name");
-  const description = optionalString(value.description, "description");
-  const config = normalizeSandboxConfig(value.config);
+  const input = parseInput(resourceCreateInput, value, "");
+  const name = input.name.trim();
+  const description = input.description?.trim() || undefined;
+  const config = normalizeSandboxConfig(input.config);
 
   return {
     name: name,
@@ -278,13 +285,6 @@ export function normalizeCreateSandboxConfigInput(value: unknown): {
   };
 }
 
-/**
- * Refuses the provider options `config.snapshot` replaced. Config validation,
- * core's run loader and its sandbox lifecycle handler call it, so a config
- * stored before the cutover fails loudly instead of booting the provider default.
- * @param provider the sandbox compute backend
- * @param options the config's provider options
- */
 export function assertNoRetiredImageOptions(
   provider: SandboxProvider,
   options: Record<string, unknown>,
@@ -298,52 +298,86 @@ export function assertNoRetiredImageOptions(
   }
 }
 
-/**
- * Validate an update-sandbox request body against the stored config.
- * @param existingConfig the stored sandbox config
- * @param value the raw request body
- * @returns normalized patch fields with a fully merged config
- */
+// Mirrors sandboxSnapshotScopeValidator.
+export type SandboxScope = "account" | { projectId: string; stageId: string };
+
+export function sandboxScope<P extends string, S extends string>(row: {
+  projectId?: P;
+  stageId?: S;
+}): "account" | { projectId: P; stageId: S } {
+  return row.projectId && row.stageId
+    ? { projectId: row.projectId, stageId: row.stageId }
+    : "account";
+}
+
+export function browserSandboxRefusal(
+  sandbox:
+    | { provider?: string; image?: unknown; network?: { mode?: unknown } }
+    | undefined,
+): string | null {
+  if (sandbox?.provider === "machine") return null;
+  if (sandbox?.provider !== "lambda" || sandbox.image !== "obscura") {
+    return 'config.browser needs the agent\'s first sandbox on provider lambda with image: "obscura", or a machine sandbox with obscura installed';
+  }
+  if (sandbox.network?.mode !== "allow-all") {
+    return "config.browser needs the agent's first sandbox to set network.mode to allow-all";
+  }
+
+  return null;
+}
+
+// A snapshot is a copy of another sandbox's disk: it boots only on its own account and stage.
+export function snapshotBootRefusal(
+  snapshot: { accountId: string; scope?: SandboxScope },
+  sandbox: { accountId: string; scope: SandboxScope },
+): string | null {
+  if (snapshot.accountId !== sandbox.accountId) {
+    return "config.snapshot names a snapshot of another account";
+  }
+  if (snapshot.scope === undefined) {
+    return "config.snapshot names a snapshot taken before snapshots were locked to a stage; take it again from a sandbox on this stage";
+  }
+  const same =
+    snapshot.scope === "account" || sandbox.scope === "account"
+      ? snapshot.scope === sandbox.scope
+      : snapshot.scope.projectId === sandbox.scope.projectId &&
+        snapshot.scope.stageId === sandbox.scope.stageId;
+
+  return same
+    ? null
+    : "config.snapshot names a snapshot taken on another stage; a sandbox boots only snapshots taken on its own stage";
+}
+
 export function normalizeUpdateSandboxConfigInput(
   existingConfig: SandboxConfig,
   value: unknown,
 ): { name?: string; description?: string | null; config: SandboxConfig } {
-  if (!isPlainObject(value))
-    throw new ClientError("Request body must be an object");
-
+  const input = parseInput(resourceUpdateInput, value, "");
   const config =
-    "config" in value
+    "config" in input
       ? normalizeSandboxConfig(
-          mergeConfigObjects(existingConfig, asObject(value.config)),
+          mergeConfigObjects(
+            existingConfig,
+            parseInput(configObject, input.config, "config"),
+          ),
           existingConfig,
         )
       : existingConfig;
 
   return {
-    ...(value.name !== undefined
-      ? { name: requireString(value.name, "name") }
-      : {}),
-    ...(value.description !== undefined
+    ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+    ...(input.description !== undefined
       ? {
           description:
-            value.description === null
+            input.description === null
               ? null
-              : optionalString(value.description, "description"),
+              : input.description.trim() || undefined,
         }
       : {}),
     config: config,
   };
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) throw new ClientError("config must be an object");
-
-  return value;
-}
-
-// A custom server is reached by one URL and nothing else, so the endpoint is
-// the one required option. A `${NAME}` token or header resolves on a code sync
-// only (core refuses one left over); a placeholder URL is never accepted.
 function assertCustomOptions(
   options: Record<string, unknown>,
   storedHeaders: unknown,
@@ -367,26 +401,16 @@ function assertCustomOptions(
     requireString(options.token, "config.options.token");
   }
   if (options.headers !== undefined) {
-    normalizeHeaders(
-      options.headers,
-      isStringRecord(storedHeaders) ? storedHeaders : undefined,
-    );
+    const stored = stringValues.safeParse(storedHeaders);
+    normalizeHeaders(options.headers, stored.success ? stored.data : undefined);
   }
 }
 
 function assertEnvVarsAndOptions(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
   stored: SandboxConfig | undefined,
 ): void {
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new ClientError(
-      "config.envVars must be an object with string values",
-    );
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new ClientError("config.options must be an object");
-  }
   if (config.options !== undefined) {
     validateProviderOptions(provider, config.options, config.snapshot);
   }
@@ -395,10 +419,6 @@ function assertEnvVarsAndOptions(
   }
 }
 
-// An image variant is a platform MicroVM image, so only lambda boots it, and a
-// capacity fallback onto another provider would silently run without it. With a
-// snapshot pinned too, the VM boots the snapshot and `image` names the variant it
-// was built from, which is what the browse tool and the dashboard read.
 function assertImage(
   image: SandboxImage | undefined,
   provider: SandboxProvider,
@@ -427,9 +447,12 @@ function assertNetworkEnforceable(
       `${provider} cannot enforce egress restrictions; set config.network.mode to allow-all explicitly`,
     );
   }
-  if (provider === "cloudflare" && network.mode === "restricted") {
+  if (
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider) &&
+    network.mode === "restricted"
+  ) {
     throw new ClientError(
-      "cloudflare can only turn a container's internet on or off; use config.network.mode deny-all or allow-all",
+      `${provider} can only turn a sandbox's internet on or off; use config.network.mode deny-all or allow-all`,
     );
   }
   if (
@@ -443,80 +466,28 @@ function assertNetworkEnforceable(
   }
 }
 
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean") {
-    throw new ClientError(`${name} must be a boolean`);
-  }
-}
-
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): T | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
-    throw new ClientError(`${name} must be one of: ${allowed.join(", ")}`);
-  }
-
-  return value as T;
-}
-
-function assertOptionalPositiveInteger(
-  value: unknown,
-  name: string,
-  max?: number,
-): void {
-  if (value === undefined) return;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new ClientError(`${name} must be a positive integer`);
-  }
-  if (max !== undefined && value > max) {
-    throw new ClientError(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
 function assertResourceLimits(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): void {
   const limits = workspaceSandboxLimits(provider);
-  assertOptionalPositiveInteger(
-    config.timeout,
-    "config.timeout",
-    limits.maxTimeoutSeconds,
-  );
-  assertOptionalPositiveInteger(
-    config.outputLimitBytes,
-    "config.outputLimitBytes",
-    limits.maxOutputLimitBytes,
-  );
-}
-
-function assertRuntimes(value: unknown): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every(
-      (entry) =>
-        typeof entry === "string" &&
-        SANDBOX_RUNTIMES.includes(entry as RuntimeName),
-    )
-  ) {
-    throw new ClientError(
-      `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
-    );
+  for (const [name, value, max] of [
+    ["timeout", config.timeout, limits.maxTimeoutSeconds],
+    ["outputLimitBytes", config.outputLimitBytes, limits.maxOutputLimitBytes],
+  ] as const) {
+    if (value !== undefined && value > max)
+      throw new ClientError(
+        `config.${name} must be an integer from 1 to ${max}`,
+      );
   }
 }
 
-// A stateless provider is never sized or reserved by Broods.
 function assertStatelessProviderFields(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): void {
   if (!STATELESS_SANDBOX_PROVIDERS.has(provider)) return;
-  for (const field of ["persistent", "size"]) {
+  for (const field of ["persistent", "size"] as const) {
     if (config[field] !== undefined) {
       throw new ClientError(
         `config.${field} does not apply to the ${provider} provider`,
@@ -526,7 +497,7 @@ function assertStatelessProviderFields(
 }
 
 function buildNormalizedConfig(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
   fallbackProvider: SandboxProvider | undefined,
   network: SandboxNetworkConfig,
@@ -538,93 +509,35 @@ function buildNormalizedConfig(
     provider: provider,
     ...(fallbackProvider ? { fallbackProvider: fallbackProvider } : {}),
     network: network,
-    permissionMode:
-      (config.permissionMode as PermissionMode | undefined) ?? "ask",
-    ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    permissionMode: config.permissionMode ?? "ask",
+    ...(config.size !== undefined ? { size: config.size } : {}),
     ...(image ? { image: image } : {}),
     ...(snapshot ? { snapshot: snapshot } : {}),
     ...(config.persistent !== undefined
-      ? { persistent: config.persistent as boolean }
+      ? { persistent: config.persistent }
       : {}),
     ...persistentFields,
     ...(config.runtimes !== undefined
-      ? { runtimes: [...(config.runtimes as RuntimeName[])] }
+      ? { runtimes: [...config.runtimes] }
       : {}),
-    ...(config.timeout !== undefined
-      ? { timeout: config.timeout as number }
-      : {}),
+    ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
     ...(config.outputLimitBytes !== undefined
-      ? { outputLimitBytes: config.outputLimitBytes as number }
+      ? { outputLimitBytes: config.outputLimitBytes }
       : {}),
-    ...(config.envVars !== undefined
-      ? { envVars: { ...(config.envVars as Record<string, string>) } }
-      : {}),
-    ...(config.options !== undefined
-      ? { options: { ...(config.options as Record<string, unknown>) } }
-      : {}),
+    ...(config.envVars !== undefined ? { envVars: { ...config.envVars } } : {}),
+    ...(config.options !== undefined ? { options: { ...config.options } } : {}),
   };
 }
 
-function normalizeHookList(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new ClientError(
-      `${name} must be a non-empty array of non-empty strings`,
-    );
-  }
-  const commands = value.map((entry) =>
-    typeof entry === "string" ? entry.trim() : "",
-  );
-  if (commands.some((entry) => entry.length === 0)) {
-    throw new ClientError(
-      `${name} must be a non-empty array of non-empty strings`,
-    );
-  }
-
-  return commands;
-}
-
-function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.lifecycle must be an object");
-  }
-  assertOptionalPositiveInteger(
-    value.idleTimeoutSeconds,
-    "config.lifecycle.idleTimeoutSeconds",
-    MAX_IDLE_TIMEOUT_SECONDS,
-  );
-  assertOptionalPositiveInteger(
-    value.maxLifetimeSeconds,
-    "config.lifecycle.maxLifetimeSeconds",
-    MAX_LIFETIME_SECONDS,
-  );
-
-  return {
-    ...(value.idleTimeoutSeconds !== undefined
-      ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }
-      : {}),
-    ...(value.maxLifetimeSeconds !== undefined
-      ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number }
-      : {}),
-  };
-}
-
-function normalizeNetwork(value: unknown): SandboxNetworkConfig {
+function normalizeNetwork(
+  value: SandboxConfigInput["network"],
+): SandboxNetworkConfig {
   if (value === undefined) {
     return { mode: "deny-all" };
   }
-  if (!isPlainObject(value)) {
-    throw new ClientError("config.network must be an object");
-  }
-  assertOptionalEnum(value.mode, "config.network.mode", SANDBOX_NETWORK_MODES);
-  const mode = (value.mode as NetworkMode | undefined) ?? "deny-all";
-  const allowDomains = normalizeOptionalStringList(
-    value.allowDomains,
-    "config.network.allowDomains",
-  );
-  const allowCidrs = normalizeOptionalStringList(
-    value.allowCidrs,
-    "config.network.allowCidrs",
-  );
+  const mode = value.mode ?? "deny-all";
+  const allowDomains = value.allowDomains?.map((entry) => entry.trim());
+  const allowCidrs = value.allowCidrs?.map((entry) => entry.trim());
   if (mode !== "restricted" && (allowDomains || allowCidrs)) {
     throw new ClientError(
       "config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted",
@@ -638,67 +551,55 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
   };
 }
 
-function normalizeOptionalStringList(
-  value: unknown,
-  name: string,
-): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
+function assertWorkerLifecycle(
+  config: SandboxConfigInput,
+  provider: SandboxProvider,
+  lifecycle: SandboxConfig["lifecycle"],
+): void {
+  if (!PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)) return;
+  for (const field of ["onCreate", "onResume"] as const) {
+    if (config[field] !== undefined)
+      throw new ClientError(
+        `config.${field} is not supported by the ${provider} provider; the Worker sets the machine`,
+      );
   }
-  const entries = value.map((entry) =>
-    typeof entry === "string" ? entry.trim() : "",
-  );
-  if (entries.some((entry) => entry.length === 0)) {
-    throw new ClientError(`${name} must be an array of non-empty strings`);
-  }
+  if (provider === "worker") {
+    if (lifecycle !== undefined)
+      throw new ClientError(
+        "config.lifecycle is not supported by the worker provider: nothing runs between commands, and stored files stay until the sandbox is terminated",
+      );
 
-  return entries;
+    return;
+  }
+  if (lifecycle?.maxLifetimeSeconds !== undefined)
+    throw new ClientError(
+      "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
+    );
 }
 
 function normalizePersistentFields(
-  config: Record<string, unknown>,
+  config: SandboxConfigInput,
   provider: SandboxProvider,
 ): Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume"> {
-  const lifecycle =
-    config.lifecycle !== undefined
-      ? normalizeLifecycle(config.lifecycle)
-      : undefined;
+  const { lifecycle } = config;
   if (lifecycle && config.persistent !== true) {
     throw new ClientError(
       "config.lifecycle requires config.persistent to be true",
     );
   }
-  const onCreate =
-    config.onCreate !== undefined
-      ? normalizeHookList(config.onCreate, "config.onCreate")
-      : undefined;
-  const onResume =
-    config.onResume !== undefined
-      ? normalizeHookList(config.onResume, "config.onResume")
-      : undefined;
+  const onCreate = config.onCreate?.map((entry) => entry.trim());
+  const onResume = config.onResume?.map((entry) => entry.trim());
   if ((onCreate || onResume) && config.persistent !== true) {
     throw new ClientError(
       "config.onCreate and config.onResume require config.persistent to be true",
     );
   }
-  if (provider === "cloudflare") {
-    for (const field of ["onCreate", "onResume"]) {
-      if (config[field] !== undefined)
-        throw new ClientError(
-          `config.${field} is not supported by the cloudflare provider; the bridge Worker's image sets the machine`,
-        );
-    }
-    if (lifecycle?.maxLifetimeSeconds !== undefined)
-      throw new ClientError(
-        "config.lifecycle.maxLifetimeSeconds is not supported by the cloudflare provider",
-      );
-    if (
-      (lifecycle?.idleTimeoutSeconds ?? 0) > CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS
-    )
-      throw new ClientError(
-        `config.lifecycle.idleTimeoutSeconds must be at most ${CLOUDFLARE_MAX_IDLE_TIMEOUT_SECONDS} on the cloudflare provider`,
-      );
+  assertWorkerLifecycle(config, provider, lifecycle);
+  const maxIdle = PROVIDER_MAX_IDLE_TIMEOUT_SECONDS[provider];
+  if (maxIdle !== undefined && (lifecycle?.idleTimeoutSeconds ?? 0) > maxIdle) {
+    throw new ClientError(
+      `config.lifecycle.idleTimeoutSeconds must be at most ${maxIdle} on the ${provider} provider`,
+    );
   }
   if (provider === "e2b" && (onCreate || onResume)) {
     throw new ClientError(
@@ -746,12 +647,9 @@ function requireString(value: unknown, name: string): string {
 
 function validateProviderOptions(
   provider: SandboxProvider,
-  options: unknown,
+  options: Record<string, unknown>,
   snapshot: unknown,
 ): void {
-  if (!isPlainObject(options)) {
-    return;
-  }
   if ("docker" in options) {
     if (typeof options.docker !== "boolean") {
       throw new ClientError("config.options.docker must be a boolean");
@@ -762,13 +660,36 @@ function validateProviderOptions(
       );
     }
   }
-  if (provider === "lambda" || provider === "cloudflare") {
+  if (
+    provider === "lambda" ||
+    PLATFORM_WORKER_SANDBOX_PROVIDERS.has(provider)
+  ) {
     for (const key of Object.keys(options)) {
       if (!PLATFORM_OPTION_KEYS.has(key)) {
         throw new ClientError(
           `config.options.${key} is not supported in account sandbox config`,
         );
       }
+    }
+  }
+  if ("networkId" in options) {
+    requireString(options.networkId, "config.options.networkId");
+    if (provider !== "vercel") {
+      throw new ClientError(
+        "config.options.networkId is only supported by the vercel provider",
+      );
+    }
+  }
+  if ("mountAwsS3Buckets" in options) {
+    if (typeof options.mountAwsS3Buckets !== "boolean") {
+      throw new ClientError(
+        "config.options.mountAwsS3Buckets must be a boolean",
+      );
+    }
+    if (!MOUNT_FLAG_SANDBOX_PROVIDERS.has(provider)) {
+      throw new ClientError(
+        `config.options.mountAwsS3Buckets is only read by the daytona and sandbox providers, not ${provider}; lambda and vercel mount any attached workspace without it`,
+      );
     }
   }
   if (provider === "machine" && "cwd" in options) {
@@ -781,8 +702,6 @@ function validateProviderOptions(
     );
   }
   assertNoRetiredImageOptions(provider, options);
-  // Daytona builds `options.image` into a fresh snapshot on create, so a
-  // sandbox names one or the other.
   if (
     provider === "daytona" &&
     optionalString(options.image, "config.options.image") !== undefined &&
@@ -792,4 +711,12 @@ function validateProviderOptions(
       "config.snapshot and config.options.image cannot both be set: Daytona boots a snapshot or builds one from an image",
     );
   }
+}
+
+function boundedPositiveInteger(max: number): z.ZodMiniNumber {
+  return POSITIVE_INTEGER.check(
+    z.refine((value): boolean => value <= max, {
+      error: `must be an integer from 1 to ${max}`,
+    }),
+  );
 }

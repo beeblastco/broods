@@ -1,5 +1,5 @@
 import type { HeadFilter, HeadSort } from "@/app/components/DataTable";
-import { parseQuery } from "@/app/lib/queryTokens";
+import { parseQuery, type Query } from "@/app/lib/queryTokens";
 import {
   clearField,
   sortRows,
@@ -13,25 +13,19 @@ import { useQueryStates } from "nuqs";
 import { useMemo } from "react";
 import { useRemembered } from "./useRemembered";
 
-// A list without a search box never sees a chip or a word.
 const noMatch = (): boolean => false;
 const noText = (): string => "";
 
-/** How one list searches, filters and sorts its rows. */
+/** `sortKey`, `matches` and `text` must be module constants, or the list memo breaks. */
 export interface ListSpec<Row, Column extends string, Field extends string> {
   rows: readonly Row[];
-  /** The `field:value` tokens the search box understands. */
   fields: readonly Field[];
   initialSort: SortState<NoInfer<Column>>;
-  /** What each column sorts by. A module constant, so the list memo holds. */
   sortKey: Record<Column, (row: Row) => SortKey>;
-  /** Whether a lowercased `field:value` chip keeps the row. A module constant; absent when the list has no search box. */
+  /** `value` arrives lowercased. */
   matches?: (row: Row, field: Field, value: string) => boolean;
-  /** The words free text searches, lowercased here. A module constant; absent when the list has no search box. */
   text?: (row: Row) => string;
-  /** Keep the query and sort across reloads under this id; absent keeps them in memory. */
   remember?: string;
-  /** False keeps the query and sort out of the URL, for a second list on the same page. */
   url?: boolean;
 }
 
@@ -39,21 +33,11 @@ export interface ListState<Row, Column extends string, Field extends string> {
   query: string;
   setQuery: (query: string) => void;
   sort: SortState<Column>;
-  /** The rows that match the query, in sort order. */
   shown: Row[];
-  /** The sort half of a column's header menu. */
   sortFor: (column: Column, words?: [string, string]) => HeadSort;
-  /** The filter half of a column's header menu, over the values it may take. */
   filterFor: (field: Field, values: readonly string[]) => HeadFilter;
 }
 
-/**
- * The state every list on the kit shares: the search box with its
- * `field:value` chips, one sorted column, and the header menus that change
- * them. Pages describe their rows once and render the result. The query and
- * sort live in the URL (`q`, `sort` as `column.dir`) so a link opens the same
- * view; a link's values win over the remembered ones.
- */
 export function useListState<Row, Column extends string, Field extends string>(
   spec: ListSpec<Row, Column, Field>,
 ): ListState<Row, Column, Field> {
@@ -74,7 +58,6 @@ export function useListState<Row, Column extends string, Field extends string>(
     remember ? `${remember}.sort` : null,
     spec.initialSort,
   );
-  // Only a column the list sorts by parses. sortKey is a module constant, so the memo holds.
   const parsers = useMemo(
     () => ({
       q: parseAsSearch,
@@ -96,25 +79,10 @@ export function useListState<Row, Column extends string, Field extends string>(
   };
   const parsed = useMemo(() => parseQuery(query, fields), [query, fields]);
   const shown = useMemo(() => {
-    // Two chips on one field widen it (either value); chips on different
-    // fields narrow (every field must hold).
-    const byField = new Map<Field, string[]>();
-    for (const { field, value } of parsed.fields) {
-      byField.set(field, [...(byField.get(field) ?? []), value]);
-    }
-    const matching = rows.filter((row) => {
-      const chipsPass = [...byField].every(([field, values]) =>
-        values.some((value) => matches(row, field, value)),
-      );
-      if (!chipsPass) return false;
-
-      return !parsed.text || text(row).toLowerCase().includes(parsed.text);
-    });
-
     // A remembered column the list no longer has falls back to the default.
     const key = sortKey[sort.column] ?? sortKey[spec.initialSort.column];
 
-    return sortRows(matching, key, sort.dir);
+    return sortRows(matchingRows(rows, parsed, matches, text), key, sort.dir);
   }, [rows, parsed, sort, sortKey, matches, text, spec.initialSort.column]);
 
   return {
@@ -135,4 +103,20 @@ export function useListState<Row, Column extends string, Field extends string>(
       onClear: () => setQuery(clearField(query, field)),
     }),
   };
+}
+
+export function matchingRows<Row, Field extends string>(
+  rows: readonly Row[],
+  parsed: Query<Field>,
+  matches: (row: Row, field: Field, value: string) => boolean,
+  text: (row: Row) => string,
+): Row[] {
+  return rows.filter(
+    (row) =>
+      parsed.fields.every(({ field }) =>
+        parsed.fields.some(
+          (chip) => chip.field === field && matches(row, field, chip.value),
+        ),
+      ) && text(row).toLowerCase().includes(parsed.text),
+  );
 }

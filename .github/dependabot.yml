@@ -1,12 +1,7 @@
 # Dependabot version updates.
 #
-# Known limitation (npm ecosystem): Dependabot does not regenerate `bun.lock`
-# in a workspaces repo. See https://github.com/dependabot/dependabot-core/issues/14223.
-# CI installs with `--frozen-lockfile`, so every npm PR arrives RED with
-# "lockfile had changes, but lockfile is frozen". Treat those PRs as "a release
-# exists": apply the bumps on a branch, run `bun install`, commit the lockfile,
-# and close the Dependabot PRs. `bun run deps:check` is the authoritative
-# picture for the AI SDK family.
+# Use the Bun ecosystem so updates include `bun.lock` for frozen CI installs.
+# `bun run deps:check` checks version alignment across the AI SDK family.
 #
 # Everything is grouped. The AI SDK packages pin `ai` at an exact version inside
 # their own manifests, so one PR per package would each install a second copy of
@@ -37,7 +32,7 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: "/"
     schedule:
       interval: weekly
@@ -47,11 +42,55 @@ updates:
     commit-message:
       prefix: chore(deps)
     ignore:
-      # layout-elk 1.x peers on mermaid 12. @docusaurus/theme-mermaid 3.10 runs
-      # mermaid 11 and peers on the 0.x line. Its client bundle still imports the
-      # package, so removing it breaks the docs build. Lift this when Docusaurus
-      # moves to mermaid 12.
-      - dependency-name: "@mermaid-js/layout-elk"
+      # The dashboard reads next fire times with the cron-parser major that
+      # @convex-dev/crons schedules with, so the two never disagree.
+      - dependency-name: cron-parser
+        update-types: ["version-update:semver-major"]
+      # @pulumi/pulumi caps api at ~1.9, so core declares api ~1.9.1 to share that
+      # one copy and the OpenTelemetry packages stay on that line together.
+      - dependency-name: "@opentelemetry/*"
+        versions: [">=0.300.0 <1.0.0", ">=1.10.0 <2.0.0", ">=3.0.0"]
+      # 0.230 moved to OpenTelemetry 0.300 / api 1.10, whose SeverityNumber import
+      # fails on our api 1.9 at load. Lift with the OpenTelemetry hold above.
+      - dependency-name: "@daytona/sdk"
+        versions: [">=0.230.0"]
+      # 4.17 adds the Workspace API to its one-file module, and Turbopack ships all of
+      # it: +15 KB dashboard first-load JS. Lift once the perf baseline has room.
+      - dependency-name: react-resizable-panels
+        versions: [">=4.17.0"]
+      # 4.0 imports undici's Dispatcher1Wrapper, which Bun's built-in undici lacks, so
+      # the import throws. Lift once vercel/sandbox#479 ships.
+      - dependency-name: "@vercel/sandbox"
+        update-types: ["version-update:semver-major"]
+      # @convex-dev/workos-authkit takes @workos-inc/node up to 10; a newer
+      # major installs a second copy beside it.
+      - dependency-name: "@workos-inc/node"
+        update-types: ["version-update:semver-major"]
+      # The root override keeps @convex-dev/stripe (which asks for ^23) on our stripe 22
+      # client and API version; moving to 23 changes the API version our calls use.
+      - dependency-name: stripe
+        update-types: ["version-update:semver-major"]
+      # 1.95 reports react/set-state-in-effect through scheduleSave in the Canvas MCP re-frame
+      # effect. Lift oxlint, @oxlint/plugins and oxlint-tsgolint together once that is fixed.
+      - dependency-name: oxlint
+        versions: [">=1.95.0"]
+      - dependency-name: "@oxlint/plugins"
+        versions: [">=1.95.0"]
+      - dependency-name: oxlint-tsgolint
+        versions: [">=7.0.2008"]
+      # 4.45 moves Telegram replies in a regular supergroup onto the chat's thread, so our
+      # own Bot API calls and the adapter's posts disagree. Lift once core picks a behavior.
+      - dependency-name: chat
+        versions: [">=4.45.0"]
+      - dependency-name: "@chat-adapter/*"
+        versions: [">=4.45.0"]
+      # 2.8 adds 27 KB to the dashboard's client JS, past the client-js-total ceiling in
+      # bench/bundle-budgets.json. Lift once that ceiling has room.
+      - dependency-name: streamdown
+        versions: [">=2.8.0"]
+      # 13 drops applyNodeChanges, applyEdgeChanges and useStore for changesets and a split
+      # store, so the canvas state path needs a rewrite. Lift with that migration PR.
+      - dependency-name: "@xyflow/react"
         update-types: ["version-update:semver-major"]
     groups:
       ai-sdk:

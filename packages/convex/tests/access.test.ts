@@ -1,9 +1,4 @@
 /// <reference types="vite/client" />
-/**
- * A custom role grants a member the dashboard permissions its policies allow,
- * a deny wins over an allow, and an admin holds everything by tier.
- */
-
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
@@ -181,13 +176,12 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     }),
   ).rejects.toThrow(/No permission/);
   await expect(
-    t.mutation(api.org.members.add, {
+    t.mutation(api.org.invitations.create, {
       orgId: seeded.orgId,
       email: "owner@example.com",
     }),
   ).rejects.toThrow(/No permission/);
 
-  // A rule scoped to one project counts there and nowhere else.
   const [projectA, projectB] = await t.run(
     async (ctx): Promise<[Id<"projects">, Id<"projects">]> => [
       await ctx.db.insert("projects", {
@@ -223,7 +217,6 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
     await t.query(api.access.viewerPermissions, { projectId: projectB }),
   ).toEqual(["keys:read"]);
 
-  // A policy row made for one stage counts only on that stage.
   const stageId = await t.run(
     async (ctx): Promise<Id<"stages">> =>
       await ctx.db.insert("stages", {
@@ -261,14 +254,11 @@ test("a member with a custom role sees the keys its policy allows", async (): Pr
   expect(await t.query(api.access.viewerPermissions, {})).toEqual([
     "keys:read",
   ]);
-  // The key list says which stages the member may write on.
   const keys = await t.query(api.apiKeys.listForProject, {
     projectId: projectA,
   });
   expect(keys?.writable).toEqual([{ _id: stageId, name: "Production" }]);
 
-  // Each stage answers for itself: a grant on one of projectB's two stages
-  // writes there and nowhere else in the project.
   const [productionB] = await t.run(
     async (ctx): Promise<[Id<"stages">, Id<"stages">]> => [
       await ctx.db.insert("stages", {
@@ -439,8 +429,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     roleId: roleId,
   });
 
-  // An audit policy grants nothing, so its keys:write rule and the role
-  // holding it pass; turning it on is where the ceiling must hold.
+  // An audit policy grants nothing: turning it on is where the ceiling must hold.
   currentAuthId = "auth_member";
   const audit = await t.mutation(api.access.createPolicy, {
     name: "Sleeper",
@@ -504,7 +493,6 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     ruleId: allowId ?? "",
   });
 
-  // The owner holds everything, so the same switch is theirs to make.
   currentAuthId = "auth_owner";
   await t.mutation(api.access.updatePolicy, {
     policyId: audit,
@@ -512,8 +500,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
   });
   await t.mutation(api.access.removeRule, { policyId: masked, ruleId: denyId });
 
-  // A deny that masks nothing comes off a policy that already grants more
-  // than the caller holds: the edit answers only for what it adds.
+  // The edit answers only for what it adds: a no-op deny comes off a wider policy.
   const wide = await t.mutation(api.access.createPolicy, {
     name: "Wide",
     mode: "enforce",
@@ -535,8 +522,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     ruleId: unrelated,
   });
 
-  // A stage rule is weighed with its project, so keys:write held across the
-  // project covers turning on a keys:write rule for one of its stages.
+  // A stage rule is weighed with its project's grants.
   const { projectId, stageId } = await t.run(
     async (
       ctx,
@@ -581,8 +567,7 @@ test("access:write may not reach past its ceiling by switching a policy to enfor
     mode: "enforce",
   });
 
-  // A deny in one policy can mask another policy's allow in the same role, so
-  // dropping it is weighed against every role that holds it.
+  // A deny can mask another policy's allow in the same role: weigh every role holding it.
   currentAuthId = "auth_owner";
   const granting = await t.mutation(api.access.createPolicy, {
     name: "Grants keys",
@@ -679,8 +664,7 @@ test("access:write and members:write may not drop a deny by switching it to audi
     },
   );
 
-  // Ada holds access:write, members:write and keys:write, except keys:write
-  // in the prod project, which a scoped deny takes away.
+  // Ada: access, members and keys:write, except keys:write in prod (a scoped deny).
   currentAuthId = "auth_owner";
   const policy = async (
     name: string,
@@ -720,7 +704,6 @@ test("access:write and members:write may not drop a deny by switching it to audi
     role: "member",
     roleId: roleId,
   });
-  // Bob holds keys:write in prod too.
   const strongId = await t.mutation(api.access.createRole, {
     name: "Prod keys",
     policyIds: [keys.policyId],
@@ -791,4 +774,206 @@ test("access:write and members:write may not drop a deny by switching it to audi
   expect(stored?.status).toBe("active");
   expect(stored?.document.mode).toBe("enforce");
   expect(stored?.document.rules).toHaveLength(1);
+});
+
+test("a rule may scope only to the caller's own projects and stages", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  const seeded = await t.run(
+    async (
+      ctx,
+    ): Promise<{
+      ownProject: Id<"projects">;
+      ownStage: Id<"stages">;
+      foreignProject: Id<"projects">;
+      foreignStage: Id<"stages">;
+    }> => {
+      const now = Date.now();
+      const org = async (slug: string, authId: string): Promise<Id<"orgs">> => {
+        const orgId = await ctx.db.insert("orgs", {
+          name: slug,
+          slug: slug,
+          ownerAuthId: authId,
+          plan: "free",
+          createdAt: now,
+        });
+        const userId = await ctx.db.insert("users", {
+          authId: authId,
+          email: `${authId}@example.com`,
+          name: authId,
+          plan: "free",
+          activeOrgId: orgId,
+        });
+        await ctx.db.insert("orgMembers", {
+          orgId: orgId,
+          userId: userId,
+          role: "owner",
+          createdAt: now,
+        });
+        await ctx.db.insert("accounts", {
+          orgId: orgId,
+          username: slug,
+          secretHash: `hash-${slug}`,
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        return orgId;
+      };
+      const project = async (
+        orgId: Id<"orgs">,
+        name: string,
+      ): Promise<[Id<"projects">, Id<"stages">]> => {
+        const projectId = await ctx.db.insert("projects", {
+          authId: "auth_owner",
+          orgId: orgId,
+          name: name,
+          slug: name,
+          updatedAt: now,
+        });
+        const stageId = await ctx.db.insert("stages", {
+          authId: "auth_owner",
+          projectId: projectId,
+          name: "Production",
+          kind: "production",
+          isDefault: true,
+          updatedAt: now,
+        });
+
+        return [projectId, stageId];
+      };
+      const [ownProject, ownStage] = await project(
+        await org("beeblast", "auth_owner"),
+        "mine",
+      );
+      const [foreignProject, foreignStage] = await project(
+        await org("elsewhere", "auth_other"),
+        "theirs",
+      );
+
+      return {
+        ownProject: ownProject,
+        ownStage: ownStage,
+        foreignProject: foreignProject,
+        foreignStage: foreignStage,
+      };
+    },
+  );
+
+  currentAuthId = "auth_owner";
+  const policyId = await t.mutation(api.access.createPolicy, {
+    name: "Tools",
+    mode: "enforce",
+  });
+  for (const scope of [
+    { projectId: seeded.foreignProject },
+    { stageId: seeded.foreignStage },
+    { projectId: seeded.ownProject, stageId: seeded.foreignStage },
+  ]) {
+    await expect(
+      t.mutation(api.access.addRule, {
+        policyId: policyId,
+        permission: "tool.call",
+        scope: scope,
+      }),
+    ).rejects.toThrow(/not found/);
+  }
+  await t.mutation(api.access.addRule, {
+    policyId: policyId,
+    permission: "tool.call",
+    scope: { projectId: seeded.ownProject, stageId: seeded.ownStage },
+  });
+
+  const [listed] = await t.query(api.access.listPolicies, {});
+  expect(listed?.rules.map((rule) => rule.scope)).toEqual([
+    "stage mine / Production",
+  ]);
+
+  await t.run(async (ctx): Promise<void> => {
+    const policy = await ctx.db.get(policyId);
+    if (!policy) throw new Error("policy missing");
+    const [rule] = policy.document.rules;
+    if (!rule) throw new Error("rule missing");
+    await ctx.db.patch(policyId, {
+      document: {
+        ...policy.document,
+        rules: [
+          {
+            ...rule,
+            conditions: [
+              {
+                attribute: "project.id",
+                operator: "equals",
+                value: seeded.foreignProject,
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+  const [stored] = await t.query(api.access.listPolicies, {});
+  expect(stored?.rules.map((rule) => rule.scope)).toEqual(["organization"]);
+});
+
+test("a renamed role or policy keeps the names creating one allows", async (): Promise<void> => {
+  const t = convexTest(schema, modules);
+  await t.run(async (ctx): Promise<void> => {
+    const now = Date.now();
+    const orgId = await ctx.db.insert("orgs", {
+      name: "beeblast",
+      slug: "beeblast",
+      ownerAuthId: "auth_owner",
+      plan: "free",
+      createdAt: now,
+    });
+    const userId = await ctx.db.insert("users", {
+      authId: "auth_owner",
+      email: "owner@example.com",
+      name: "Owner",
+      plan: "free",
+      activeOrgId: orgId,
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: userId,
+      role: "owner",
+      createdAt: now,
+    });
+    await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: "beeblast",
+      secretHash: "hash-beeblast",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  currentAuthId = "auth_owner";
+  const policyId = await t.mutation(api.access.createPolicy, {
+    name: "Ops",
+    mode: "audit",
+  });
+  const roleId = await t.mutation(api.access.createRole, {
+    name: "Engineer",
+    policyIds: [policyId],
+  });
+
+  await expect(
+    t.mutation(api.access.updatePolicy, { policyId: policyId, name: "  " }),
+  ).rejects.toThrow("A policy needs a name");
+  await expect(
+    t.mutation(api.access.updateRole, { roleId: roleId, name: " " }),
+  ).rejects.toThrow("A role needs a name");
+  await expect(
+    t.mutation(api.access.updateRole, { roleId: roleId, name: "Owner" }),
+  ).rejects.toThrow("Owner is a built-in role");
+  await t.mutation(api.access.updateRole, { roleId: roleId, name: " SRE " });
+
+  expect(
+    (await t.query(api.access.listRoles, {})).find(
+      (role) => role.kind === "custom",
+    )?.name,
+  ).toBe("SRE");
 });

@@ -1,8 +1,10 @@
 import { afterEach, expect, it } from "bun:test";
 import { getFunctionName } from "convex/server";
+import { clientErrorResponse } from "@broods/convex/model/clientError";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   getConvexClient,
+  internal,
   resetConvexClientForTests,
 } from "../src/shared/convex/client.ts";
 import { convexStorage } from "../src/shared/convex/storage.ts";
@@ -31,7 +33,7 @@ it("propagates workspace listing failures before destructive cleanup", async () 
     },
   } as never);
 
-  expect(
+  await expect(
     deleteAccountRuntimeData({
       accountId: "acct_test",
       username: "test",
@@ -81,25 +83,23 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     };
   }) as never;
 
-  expect(
-    deleteAccountRuntimeData({
-      accountId: "acct_test",
-      username: "test",
-      secretHash: "hash",
-      status: "disabled",
-      createdAt: "2026-07-13T00:00:00.000Z",
-      updatedAt: "2026-07-13T00:00:00.000Z",
-    }),
-  ).rejects.toThrow("Account runtime cleanup exceeded 100 Convex batches");
+  const error = await deleteAccountRuntimeData({
+    accountId: "acct_test",
+    username: "test",
+    secretHash: "hash",
+    status: "disabled",
+    createdAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+  }).catch((err: unknown) => err);
+  expect(clientErrorResponse(error)?.status).toBe(409);
+  expect(error).toMatchObject({
+    message: expect.stringContaining("retry deletion to continue"),
+  });
   expect(attempts).toBe(100);
 });
 
-// agent/crons.remove is the mutation that drops the registered schedule and
-// the row in one transaction; assert it is registered at the expected path.
 it("registers agent/crons.remove as an internal mutation", () => {
-  // agent/crons reaches ../auth, which picks the sign-in provider and
-  // constructs AuthKit at import time. Dummy values only, nothing here
-  // authenticates.
+  // agent/crons constructs AuthKit at import time; dummy values, nothing here authenticates.
   process.env.BROODS_AUTH_PROVIDER ||= "workos";
   process.env.WORKOS_CLIENT_ID ||= "client_test";
   process.env.WORKOS_API_KEY ||= "sk_test";
@@ -108,7 +108,6 @@ it("registers agent/crons.remove as an internal mutation", () => {
     string,
     { isInternal?: boolean; isMutation?: boolean } | undefined
   >;
-  const internal = require("@broods/convex/_generated/api").internal;
 
   expect(registered.remove).toMatchObject({
     isInternal: true,
@@ -119,11 +118,8 @@ it("registers agent/crons.remove as an internal mutation", () => {
   );
 });
 
-// Delete disables the account first, so Convex refuses every row take. A live
-// reservation goes down the unconditional release, never the sweeper's
-// expiry-gated one, and before the cascade drops its row. sandbox-sweeper.test.ts
-// mocks sandbox-cleanup.ts for the whole process, so only the mutation boundary
-// is visible from here; the teardown itself is in sandbox-cleanup.test.ts.
+// sandbox-sweeper.test.ts mocks sandbox-cleanup.ts process-wide, so only the mutation boundary
+// is visible here; the teardown itself is in sandbox-cleanup.test.ts.
 it("releases a live reservation without the expiry condition before the cascade", async () => {
   const order: string[] = [];
   const takes: Record<string, unknown>[] = [];
@@ -146,7 +142,6 @@ it("releases a live reservation without the expiry condition before the cascade"
     },
   } as never);
   runtime.query = (async (name: string, args: Record<string, unknown>) => {
-    // The release looks up each provider's machine by key; only `sandbox` holds one.
     if (name === "getSandboxReleaseTarget") {
       return {
         externalId: args.provider === "sandbox" ? "sbx_live" : null,
@@ -202,8 +197,7 @@ it("releases a live reservation without the expiry condition before the cascade"
   expect(takes.some((args): boolean => args.onlyExpired === true)).toBe(false);
 });
 
-// The adapter reaches this reference through an any-typed require, so nothing
-// but this check catches a rewire that stops descheduling deleted crons.
+// Types check args and result, not which function is named: only this catches a rewire.
 it("crons.remove delegates to internal.agent.crons.remove via mutation", async () => {
   process.env.CONVEX_URL ||= "https://example.convex.cloud";
   process.env.CONVEX_DEPLOY_KEY ||= "test-deploy-key";

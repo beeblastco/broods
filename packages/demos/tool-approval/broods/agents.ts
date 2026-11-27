@@ -14,9 +14,8 @@ export const approvalAgent = defineAgent({
     system: "Use web search when current web information is needed.",
   },
   tools: {
-    // Import the tool from the AI SDK provider and pass it straight in. It
-    // serializes to a provider-defined descriptor; core rebuilds it off the
-    // configured google provider. `needsApproval` is a Broods-side flag.
+    // Serializes to a provider-defined descriptor core rebuilds off the configured google
+    // provider; `needsApproval` is a Broods-side flag.
     googleSearch: {
       ...google.tools.googleSearch({}),
       needsApproval: true,

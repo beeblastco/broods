@@ -23,18 +23,15 @@ export const agent = defineAgent({
   agent: {
     system: "You are a helpful assistant.",
   },
-  // Human-handoff filter: drop inbound messages on conversations a staff member
-  // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
-  // the old baked-in `ignoreTagIds` channel option, the same behavior, now
-  // owned by you. Handlers run in an isolate and must be self-contained, so the
-  // handoff tag ids are inlined rather than read from env or a closure.
+  // Human handoff: drop messages on conversations staff tagged in Pancake. Hooks run in an
+  // isolate and must be self-contained, so the tag ids are inlined, not read from env.
   hooks: {
     onMessageReceived: (ctx, event) => {
       if (event.channel !== "pancake") return undefined;
-      const handoffTagIds = ["order-tag", "pending-tag"];
+      const handoffTagIds = new Set(["order-tag", "pending-tag"]);
       const tagIds = event.source.tagIds ?? [];
 
-      return tagIds.some((tagId) => handoffTagIds.includes(tagId))
+      return tagIds.some((tagId) => handoffTagIds.has(tagId))
         ? { drop: true }
         : undefined;
     },

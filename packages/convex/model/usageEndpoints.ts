@@ -1,28 +1,19 @@
-/**
- * Endpoint-resolution helper for the logs/usage reads: maps a project to the
- * `endpointId`s that key the usage tables. Takes a query ctx so the reactive
- * `logs.ts` queries can call it directly.
- */
-
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { type QueryCtx } from "../_generated/server";
 import { getProjectForRole } from "./ownership/project";
 
-/**
- * Active deployment endpointIds for a project, optionally narrowed to a single
- * stage. Returns `[]` when the caller does not own the project.
- * @param ctx QueryCtx for the reactive query calling this helper
- * @param authId WorkOS auth id of the caller
- * @param projectId project to scope to
- * @param stageId optional stage to narrow to
- * @returns active endpointId strings
- */
-export async function projectEndpointIds(
+// Endpoint ids are not unique across accounts, so every usage read names the account too.
+export type UsageEndpoint = Pick<
+  Doc<"agentDeployments">,
+  "accountId" | "endpointId"
+>;
+
+export async function projectEndpoints(
   ctx: QueryCtx,
   authId: string,
   projectId: Id<"projects">,
   stageId?: Id<"stages">,
-): Promise<string[]> {
+): Promise<UsageEndpoint[]> {
   const project = await getProjectForRole(ctx, authId, projectId);
   if (!project) return [];
 
@@ -45,5 +36,8 @@ export async function projectEndpointIds(
 
   return deployments
     .filter((deployment) => deployment.status === "active")
-    .map((deployment) => deployment.endpointId);
+    .map((deployment) => ({
+      accountId: deployment.accountId,
+      endpointId: deployment.endpointId,
+    }));
 }

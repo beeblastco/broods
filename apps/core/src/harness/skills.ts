@@ -1,20 +1,19 @@
-/**
- * Harness skill prompt loading for model context.
- * Keep account skill CRUD in account-manage and shared rules in _shared.
- */
-
 import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
+import { MAX_CONFIGURED_SKILLS } from "@broods/convex/model/skillLimits";
+import { MAX_SKILL_METADATA_BYTES } from "@broods/convex/model/skillRules";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { optionalEnv } from "../shared/env.ts";
+import { logWarn } from "../shared/log.ts";
 import {
   copyS3Object,
   deleteS3Object,
   ensureS3DirectoryMarkers,
   isMissingS3Error,
   listS3Prefix,
+  readS3Bytes,
+  readS3TextHead,
+  writeS3Object,
 } from "../shared/s3.ts";
-import { workspaceNamespacePrefix } from "../shared/sandbox.ts";
 import {
   contentTypeForSkillPath,
   isExecutableSkillPath,
@@ -31,14 +30,17 @@ import {
   skillsBucketName,
   type SkillMetadata,
 } from "../shared/skills.ts";
+import type { ResolvedWorkspace } from "../shared/workspaces.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+  type S3ReadTarget,
+} from "./sandbox/s3-mount.ts";
 
-// Skills are re-staged fresh on every `load_skill`: the account skill bucket is the
-// source of truth, and each load copies a clean read/run checkout into the run path so
-// the agent can execute bundled scripts in the sandbox. The canonical copy lives under
-// `.claude/skills/<name>`; the same bundle is mirrored into SKILL_MIRROR_DIRS for tools
-// that expect those locations.
+// Every load_skill re-stages a clean copy from the skills bucket, the source of truth.
 const SKILL_CANONICAL_DIR = ".claude/skills";
 const SKILL_MIRROR_DIRS = [".agents/skills"];
+const SKILL_READ_CONCURRENCY = 8;
 
 interface SkillBundleSandboxStage {
   stagedPath: string;
@@ -46,14 +48,10 @@ interface SkillBundleSandboxStage {
   files: string[];
 }
 
-interface LoadedHarnessSkill {
-  bytes: number;
-  skill: HarnessAgentSkill;
-}
-
 interface SkillSourceFile {
   key: string;
   path: string;
+  size: number;
 }
 
 export type { SkillMetadata } from "../shared/skills.ts";
@@ -72,31 +70,32 @@ export async function listConfiguredSkillMetadata(
   );
 }
 
-// Runs every turn, so every SKILL.md is read at once.
+// Runs every turn, so it reads only each SKILL.md head; one that does not parse is skipped.
 export async function listSkillMetadataForConfig(
   accountId: string,
   skillPaths: string[] = [],
 ): Promise<SkillMetadata[]> {
+  const limit = skillReadLimit();
   const metadata = await Promise.all(
-    skillPaths.map(async (skillPath): Promise<SkillMetadata | null> => {
-      const skillText = await readOwnedSkillFile(
-        accountId,
-        skillPath,
-        SKILL_FILE,
-      );
-
-      return skillText
-        ? { ...parseSkillMarkdown(skillText), path: skillPath }
-        : null;
-    }),
+    ownedSkillPaths(accountId, skillPaths).map(
+      async (skillPath): Promise<SkillMetadata | null> =>
+        await readSkillOrSkip(
+          skillPath,
+          limit(() =>
+            readS3TextHead(
+              skillsBucketName(),
+              `${skillPath}/${SKILL_FILE}`,
+              MAX_SKILL_METADATA_BYTES,
+            ),
+          ).then((head) => ({ ...parseSkillMarkdown(head), path: skillPath })),
+        ),
+    ),
   );
 
   return metadata.filter((entry): entry is SkillMetadata => entry !== null);
 }
 
-// Every skill and every bundled file is read at once; the bundle budget is
-// checked over the result. A skill that cannot be read is left out, as in the
-// metadata list; only a missing one fails the run.
+// Each read is capped at its listed size, so a file grown after the listing stays in budget.
 export async function loadConfiguredHarnessSkills(
   accountId: string | undefined,
   agentConfig: AgentConfig,
@@ -105,53 +104,68 @@ export async function loadConfiguredHarnessSkills(
     return [];
   }
 
-  const loaded = await Promise.all(
-    (agentConfig.skills.allowed ?? []).map(
-      async (skillPath): Promise<LoadedHarnessSkill | null> => {
-        const skillText = await readOwnedSkillFile(
-          accountId,
-          skillPath,
-          SKILL_FILE,
-        );
-        if (!skillText) return null;
-        let bytes = skillFileBytes(skillPath, SKILL_FILE, skillText);
-        const sourceFiles = await listSkillSourceFiles(skillPath);
-        const files = await Promise.all(
-          sourceFiles
-            .filter((sourceFile) => sourceFile.path !== SKILL_FILE)
-            .map(async (file): Promise<{ path: string; content: string }> => ({
-              path: file.path,
-              content: await readSkillText(skillPath, file.path),
-            })),
-        );
-        for (const file of files) {
-          bytes += skillFileBytes(skillPath, file.path, file.content);
-        }
-        const skill = parseSkillMarkdown(skillText);
-
-        return {
-          bytes: bytes,
-          skill: {
-            name: skill.name,
-            description: skill.description,
-            content: skillInstructionsFromMarkdown(skillText),
-            ...(files.length > 0 ? { files: files } : {}),
-          },
-        };
-      },
+  const limit = skillReadLimit();
+  const listed = await Promise.all(
+    ownedSkillPaths(accountId, agentConfig.skills.allowed ?? []).map(
+      async (skillPath) => ({
+        skillPath: skillPath,
+        files: await limit(() => listSkillSourceFiles(skillPath)),
+      }),
     ),
   );
-  const readable = loaded.filter(
-    (entry): entry is LoadedHarnessSkill => entry !== null,
-  );
-  const totalBytes = readable.reduce((sum, entry) => sum + entry.bytes, 0);
+  let totalBytes = 0;
+  for (const { skillPath, files } of listed) {
+    for (const file of files) {
+      if (file.size > MAX_SKILL_FILE_BYTES) {
+        throw new Error(
+          `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${file.path}`,
+        );
+      }
+      totalBytes += file.size;
+    }
+  }
   if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
     throw new Error(
       `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
     );
   }
 
-  return readable.map((entry) => entry.skill);
+  const loaded = await Promise.all(
+    listed.map(
+      async ({ skillPath, files }): Promise<HarnessAgentSkill | null> => {
+        // listSkillSourceFiles sorts SKILL.md first.
+        const [skillFile, ...resources] = files;
+        if (skillFile?.path !== SKILL_FILE) {
+          throw new SkillNotFoundError(skillPath);
+        }
+        const skillText = await readSkillOrSkip(
+          skillPath,
+          limit(() => readSkillText(skillPath, SKILL_FILE, skillFile.size)),
+        );
+        if (skillText === null) return null;
+        const skill = parseSkillMarkdown(skillText);
+        const resourceFiles = await Promise.all(
+          resources.map(
+            async (file): Promise<{ path: string; content: string }> => ({
+              path: file.path,
+              content: await limit(() =>
+                readSkillText(skillPath, file.path, file.size),
+              ),
+            }),
+          ),
+        );
+
+        return {
+          name: skill.name,
+          description: skill.description,
+          content: skillInstructionsFromMarkdown(skillText),
+          ...(resourceFiles.length > 0 ? { files: resourceFiles } : {}),
+        };
+      },
+    ),
+  );
+
+  return loaded.filter((skill): skill is HarnessAgentSkill => skill !== null);
 }
 
 export async function loadConfiguredSkillPrompt(
@@ -159,7 +173,7 @@ export async function loadConfiguredSkillPrompt(
   allowedSkillPaths: string[],
   skillPath: string,
   resourcePaths: string[] = [],
-  workspaceNamespace?: string,
+  workspace?: ResolvedWorkspace,
 ): Promise<{
   path: string;
   loadedPaths: string[];
@@ -171,16 +185,15 @@ export async function loadConfiguredSkillPrompt(
   if (!allowedSkillPaths.includes(skillPath)) {
     throw new Error(`Skill is not configured for this agent: ${skillPath}`);
   }
-  // `skills.allowed` is only checked to be strings, so the tool holds the
-  // ownership line itself rather than lean on the metadata listing failing.
+  // `skills.allowed` is only checked to be strings, so ownership is enforced here.
   if (!accountId) {
     throw new Error("Skills require an account-scoped run");
   }
   parseOwnedSkillPath(accountId, skillPath);
 
   const loaded = await loadSkillContent(skillPath, resourcePaths);
-  const staged = workspaceNamespace
-    ? await stageSkillBundleForSandbox(skillPath, workspaceNamespace)
+  const staged = workspace
+    ? await stageSkillBundleForSandbox(skillPath, workspace)
     : null;
 
   return {
@@ -212,13 +225,14 @@ export async function loadSkillContent(
 
   const skillText = await readSkillText(skillPath, SKILL_FILE);
   const skill = parseSkillMarkdown(skillText);
-  const safeResourcePaths = resourcePaths
-    .map(normalizeBundlePath)
-    .filter((resource) => resource !== SKILL_FILE);
+  const safeResourcePaths = [
+    ...new Set(resourcePaths.map(normalizeBundlePath)),
+  ].filter((resource) => resource !== SKILL_FILE);
+  const limit = skillReadLimit();
   const resourceParts = await Promise.all(
     safeResourcePaths.map(async (resourcePath) => ({
       path: resourcePath,
-      text: await readSkillText(skillPath, resourcePath),
+      text: await limit(() => readSkillText(skillPath, resourcePath)),
     })),
   );
   const parts = [
@@ -241,14 +255,7 @@ export async function loadSkillContent(
 }
 
 function canonicalStagedPath(skillName: string): string {
-  return `/${SKILL_CANONICAL_DIR}/${skillName}`;
-}
-
-function canonicalStagePrefix(
-  workspaceNamespace: string,
-  skillName: string,
-): string {
-  return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
+  return `${SKILL_CANONICAL_DIR}/${skillName}`;
 }
 
 function compareSkillBundlePath(a: string, b: string): number {
@@ -259,11 +266,15 @@ function compareSkillBundlePath(a: string, b: string): number {
 }
 
 async function deleteStaleStagedSkillFiles(
-  workspaceBucket: string,
+  target: S3ReadTarget,
   destinationPrefix: string,
   sourcePathSet: Set<string>,
 ): Promise<void> {
-  const stagedObjects = await listS3Prefix(workspaceBucket, destinationPrefix);
+  const stagedObjects = await listS3Prefix(
+    target.bucket,
+    destinationPrefix,
+    target.access,
+  );
   await Promise.all(
     stagedObjects.map(async (object) => {
       if (object.key.endsWith("/")) {
@@ -275,7 +286,7 @@ async function deleteStaleStagedSkillFiles(
       if (sourcePathSet.has(relativePath)) {
         return;
       }
-      await deleteS3Object(workspaceBucket, object.key);
+      await deleteS3Object(target.bucket, object.key, target.access);
     }),
   );
 }
@@ -292,11 +303,9 @@ function formatLoadedSkillPrompt(
       ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
       : "";
   const sandboxText = staged
-    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
+    ? `\n\n## Sandbox files\n\nThis skill's helper files are staged in the workspace at \`${staged.stagedPath}\`, relative to the directory \`bash\` starts in. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or \`./${staged.stagedPath}/script.sh\` when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
 
-  // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
-  // refreshed system instructions instead of polluting chat history.
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">
 ${parts}${sandboxText}
 </loaded-skill>`;
@@ -318,6 +327,7 @@ async function listSkillSourceFiles(
         {
           key: object.key,
           path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
+          size: object.size ?? MAX_SKILL_FILE_BYTES,
         },
       ];
     })
@@ -325,74 +335,83 @@ async function listSkillSourceFiles(
 }
 
 function mirrorStagedPaths(skillName: string): string[] {
-  return SKILL_MIRROR_DIRS.map((dir) => `/${dir}/${skillName}`);
+  return SKILL_MIRROR_DIRS.map((dir) => `${dir}/${skillName}`);
 }
 
-function mirrorStagePrefixes(
-  workspaceNamespace: string,
-  skillName: string,
-): string[] {
-  return SKILL_MIRROR_DIRS.map(
-    (dir) =>
-      `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
-  );
+// A config saved before the config-time cap keeps running on its first MAX_CONFIGURED_SKILLS.
+function ownedSkillPaths(accountId: string, skillPaths: string[]): string[] {
+  const unique = [...new Set(skillPaths)];
+  if (unique.length > MAX_CONFIGURED_SKILLS) {
+    logWarn("Agent lists more skills than the limit; using the first ones", {
+      accountId: accountId,
+      skills: unique.length,
+      limit: MAX_CONFIGURED_SKILLS,
+    });
+  }
+  const used = unique.slice(0, MAX_CONFIGURED_SKILLS);
+  for (const skillPath of used) parseOwnedSkillPath(accountId, skillPath);
+
+  return used;
 }
 
-// The read doubles as the existence check: a 404 fails the turn as a missing
-// skill, like the HEAD it replaces, and any other read error skips the skill.
-async function readOwnedSkillFile(
-  accountId: string,
+async function readSkillOrSkip<T>(
   skillPath: string,
-  filePath: string,
-): Promise<string | null> {
-  parseOwnedSkillPath(accountId, skillPath);
-
-  return readSkillText(skillPath, filePath).catch((error: unknown) => {
+  read: Promise<T>,
+): Promise<T | null> {
+  return read.catch((error: unknown) => {
     if (isMissingS3Error(error)) {
       throw new SkillNotFoundError(skillPath);
     }
+    logWarn("Skipping a skill that could not be read", {
+      skillPath: skillPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     return null;
   });
 }
 
-function skillFileBytes(
-  skillPath: string,
-  filePath: string,
-  content: string,
-): number {
-  const bytes = Buffer.byteLength(content, "utf-8");
-  if (bytes > MAX_SKILL_FILE_BYTES) {
-    throw new Error(
-      `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${filePath}`,
-    );
-  }
+function skillReadLimit(): <T>(call: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: Array<() => void> = [];
 
-  return bytes;
+  return async <T>(call: () => Promise<T>): Promise<T> => {
+    if (active < SKILL_READ_CONCURRENCY) active += 1;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await call();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
 }
 
+// Staged where the workspace's own files live, so the sandbox mount sees them.
 async function stageSkillBundleForSandbox(
   skillPath: string,
-  workspaceNamespace: string,
+  workspace: ResolvedWorkspace,
 ): Promise<SkillBundleSandboxStage | null> {
-  const workspaceBucket = optionalEnv("FILESYSTEM_BUCKET_NAME");
-  if (!workspaceBucket) return null;
+  if (workspace.config.storage.provider === "disk") return null;
 
   const parsed = parseSkillPath(skillPath);
   if (!parsed) {
     throw new Error(`Invalid skill path: ${skillPath}`);
   }
 
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(workspace.config.storage, workspace.namespace),
+  );
   const sourceFiles = await listSkillSourceFiles(skillPath);
   const sourcePathSet = new Set(sourceFiles.map((file) => file.path));
-  const prefixes = [
-    canonicalStagePrefix(workspaceNamespace, parsed.skillName),
-    ...mirrorStagePrefixes(workspaceNamespace, parsed.skillName),
-  ];
+  const prefixes = [SKILL_CANONICAL_DIR, ...SKILL_MIRROR_DIRS].map(
+    (dir) => `${target.prefix}${dir}/${parsed.skillName}/`,
+  );
 
   await Promise.all(
     prefixes.map((prefix) =>
-      stageSkillFiles(workspaceBucket, prefix, sourceFiles, sourcePathSet),
+      stageSkillFiles(target, prefix, sourceFiles, sourcePathSet),
     ),
   );
 
@@ -404,31 +423,51 @@ async function stageSkillBundleForSandbox(
 }
 
 async function stageSkillFiles(
-  workspaceBucket: string,
+  target: S3ReadTarget,
   destinationPrefix: string,
   sourceFiles: SkillSourceFile[],
   sourcePathSet: Set<string>,
 ): Promise<void> {
-  await ensureS3DirectoryMarkers(workspaceBucket, destinationPrefix);
-  await deleteStaleStagedSkillFiles(
-    workspaceBucket,
+  await ensureS3DirectoryMarkers(
+    target.bucket,
     destinationPrefix,
-    sourcePathSet,
+    target.access,
   );
+  await deleteStaleStagedSkillFiles(target, destinationPrefix, sourcePathSet);
   await Promise.all(
     sourceFiles.map(async (file) => {
       const destinationKey = `${destinationPrefix}${file.path}`;
-      await ensureS3DirectoryMarkers(workspaceBucket, destinationKey);
-      await copyS3Object(
+      const options = {
+        contentType: contentTypeForSkillPath(file.path),
+        executable: isExecutableSkillPath(file.path),
+      };
+      await ensureS3DirectoryMarkers(
+        target.bucket,
+        destinationKey,
+        target.access,
+      );
+      // A bucket reached with its own credentials cannot read the skills bucket to copy.
+      if (!target.access) {
+        await copyS3Object(
+          skillsBucketName(),
+          file.key,
+          target.bucket,
+          destinationKey,
+          options,
+        );
+
+        return;
+      }
+      const bytes = await readS3Bytes(
         skillsBucketName(),
         file.key,
-        workspaceBucket,
-        destinationKey,
-        {
-          contentType: contentTypeForSkillPath(file.path),
-          executable: isExecutableSkillPath(file.path),
-        },
+        undefined,
+        MAX_SKILL_FILE_BYTES,
       );
+      await writeS3Object(target.bucket, destinationKey, bytes, {
+        ...options,
+        access: target.access,
+      });
     }),
   );
 }

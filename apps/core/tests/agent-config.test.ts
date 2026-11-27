@@ -5,11 +5,8 @@ import {
   toRuntimeAgentConfig,
 } from "../src/shared/domain/agent-config.ts";
 
-// The validation rules themselves are tested with the config plane's copy in
-// packages/convex/tests/agentRules.test.ts; these cover what core adds.
 describe("agent config runtime", () => {
-  // toRuntimeAgentConfig rebuilds from an explicit whitelist; a branch missing
-  // there silently never reaches the harness.
+  // The projection is a whitelist: a branch missing there silently never reaches the harness.
   it("keeps mcp and browser in the runtime projection", () => {
     const serverId = "k57mcpserver00000000000000000000";
     const runtime = toRuntimeAgentConfig({

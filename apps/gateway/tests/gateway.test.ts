@@ -1,4 +1,18 @@
-import { beforeEach, expect, setSystemTime, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  expect,
+  jest,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
+import {
+  cursorKey,
+  openCursor,
+  sealCursor,
+} from "../src/observability-cursor.ts";
 import { DeliverPolicy } from "nats.ws";
 import type { NatsConnection } from "../../core/src/shared/nats.ts";
 import type {
@@ -7,9 +21,11 @@ import type {
 } from "../../../packages/broods/src/websocket-contracts.ts";
 import {
   buildCoreRunBody,
+  cleanupAgentSocket,
   handleAgentMessage,
   parseGatewayMessage,
   stopActiveRun,
+  watchUserTokenLifetime,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
 import { matchAgentWebSocketPath } from "../src/routes.ts";
@@ -45,10 +61,16 @@ import {
   json,
   mapWithConcurrency,
   resolveRequestId,
+  USER_TOKEN_HEADER,
   websocketToken,
   websocketUpgradeHeaders,
+  websocketUserToken,
   withRequestId,
 } from "../src/utils.ts";
+import {
+  USER_TOKEN_HEADER as CORE_USER_TOKEN_HEADER,
+  USER_TOKEN_SUBPROTOCOL_PREFIX,
+} from "../../../packages/convex/model/userToken.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
   createSubagentTaskId,
@@ -60,15 +82,28 @@ import {
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
 
-// Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
-beforeEach(resetTempoTraceCacheForTests);
+const originalEnvironment = process.env.DEPLOYMENT_ENVIRONMENT;
 
-// The scope every observability fixture lives in: stage shop/dev of acct-1.
+// Trace lookups are shared process-wide, and tests reuse trace ids with different spans.
+beforeEach((): void => {
+  resetTempoTraceCacheForTests();
+  process.env.DEPLOYMENT_ENVIRONMENT = "test";
+});
+afterEach((): void => {
+  jest.useRealTimers();
+});
+afterAll((): void => {
+  if (originalEnvironment === undefined)
+    delete process.env.DEPLOYMENT_ENVIRONMENT;
+  else process.env.DEPLOYMENT_ENVIRONMENT = originalEnvironment;
+});
+
 const TEST_SCOPE: ObservabilityScope = {
   accountId: "acct-1",
   projectSlug: "shop",
   stageSlug: "dev",
   endpointIds: [],
+  expiresAt: Number.MAX_SAFE_INTEGER,
 };
 
 test("builds the core direct API body from a websocket execute message", () => {
@@ -154,28 +189,6 @@ test("refuses an agent id that is not one NATS subject token", (): void => {
   }
 });
 
-test("reuses attach and stream contracts for subagent task identities", () => {
-  expect(
-    parseGatewayMessage(
-      JSON.stringify({
-        type: "attach",
-        requestId: "attach-subagent",
-        agentId: "agent_child",
-        conversationKey: "subagent-persistent-abc",
-        eventId: "subagent_task_123",
-        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      }),
-    ),
-  ).toEqual({
-    type: "attach",
-    requestId: "attach-subagent",
-    agentId: "agent_child",
-    conversationKey: "subagent-persistent-abc",
-    eventId: "subagent_task_123",
-    runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  });
-});
-
 test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
   for (const childKind of ["virtual", "private"] as const) {
     const fixture = gatewaySubagentFixture(childKind);
@@ -183,10 +196,8 @@ test("attaches virtual and private child streams through durable parent deployme
     const sent: Array<Record<string, unknown>> = [];
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
-    // Core authorizes the child status read (covered by core's status-access
-    // tests); the gateway only proceeds when the returned agentId and
-    // conversationKey match.
-    globalThis.fetch = (async (input, init) => {
+    // Core authorizes the child status read; the gateway only checks the returned ids match.
+    globalThis.fetch = (async (_input, init) => {
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
       ) {
@@ -194,13 +205,10 @@ test("attaches virtual and private child streams through durable parent deployme
           status: 401,
         });
       }
-      const taskId = decodeURIComponent(
-        new URL(requestUrl(input)).pathname.slice("/v1/runs/".length),
-      );
 
       return new Response(
         JSON.stringify({
-          eventId: taskId,
+          eventId: fixture.taskId,
           agentId: fixture.childAgentId,
           conversationKey: fixture.publicConversationKey,
           status: "processing",
@@ -250,6 +258,75 @@ test("attaches virtual and private child streams through durable parent deployme
       stopActiveRun(socket);
       globalThis.fetch = originalFetch;
     }
+  }
+});
+
+test("an attach cursor resumes only with its event key", async (): Promise<void> => {
+  const fixture = gatewaySubagentFixture("private");
+  const originalFetch = globalThis.fetch;
+  const sockets: ReturnType<typeof gatewaySocket>[] = [];
+  const attach = (
+    sent: Array<Record<string, unknown>>,
+    afterCursor?: string,
+  ): void => {
+    const socket = gatewaySocket(sent);
+    sockets.push(socket);
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-cursor",
+        agentId: fixture.childAgentId,
+        conversationKey: fixture.publicConversationKey,
+        eventId: fixture.taskId,
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ...(afterCursor ? { afterCursor: afterCursor } : {}),
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => replayThenLiveConnection(fixture) as never,
+    );
+  };
+  globalThis.fetch = Object.assign(
+    async (): Promise<Response> =>
+      Response.json({
+        eventId: fixture.taskId,
+        agentId: fixture.childAgentId,
+        conversationKey: fixture.publicConversationKey,
+        status: "processing",
+      }),
+    { preconnect: originalFetch.preconnect },
+  );
+
+  try {
+    const first: Array<Record<string, unknown>> = [];
+    attach(first);
+    await waitForGatewayMessage(
+      first,
+      (message): boolean => message.type === "output",
+    );
+    const cursor = String(
+      first.find((message): boolean => message.type === "output")?.cursor,
+    );
+    expect(cursor.split(":")).toHaveLength(4);
+
+    const answers: unknown[] = [];
+    for (const afterCursor of [
+      cursor,
+      cursor.slice(0, cursor.lastIndexOf(":")),
+    ]) {
+      const sent: Array<Record<string, unknown>> = [];
+      attach(sent, afterCursor);
+      await waitForGatewayMessage(
+        sent,
+        (message): boolean =>
+          message.type === "attached" || message.type === "replay_unavailable",
+      );
+      answers.push(sent[0]?.type);
+    }
+    expect(answers).toEqual(["attached", "replay_unavailable"]);
+  } finally {
+    for (const socket of sockets) stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
   }
 });
 
@@ -439,7 +516,6 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
@@ -530,6 +606,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
 });
 
 test("finishes buffered replay before applying terminal tail grace", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -551,7 +628,6 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
@@ -648,10 +724,8 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
-  // The oldest message retained on the shared stream is sequence 2 and belongs
-  // to another conversation; this subject's own frames start at 10.
+  // The shared stream's oldest retained frame (seq 2) is another conversation's; ours start at 10.
   const connection = zeroBufferConnection(
     async () => ({
       [Symbol.asyncIterator]: async function* () {
@@ -700,10 +774,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
       1_600,
     );
     const attached = sent.find((message) => message.type === "attached");
-    // A cursor built from the shared stream head names another conversation's
-    // message, so resuming with it would be denied by the subject check.
     expect(attached?.replayFromCursor).toBeUndefined();
-    // The inclusive upper bound is this subject's own last sequence.
     expect(attached?.replayThroughCursor).toContain(":12:");
     expect(consumerOptions[0]?.opt_start_seq).toBeUndefined();
   } finally {
@@ -713,6 +784,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
 });
 
 test("closes a zero-frame attach after durable completion and emits one terminal frame", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -782,7 +854,79 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   }
 });
 
+test("backs off status polls while an attached run stays quiet", async () => {
+  jest.useFakeTimers();
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let consumerClosed = false;
+  const polledAt: number[] = [];
+  const connection = zeroBufferConnection(async () => ({
+    [Symbol.asyncIterator]: async function* () {
+      for (;;) {
+        if (consumerClosed) break;
+        await Bun.sleep(10);
+      }
+    },
+    close: async () => {
+      consumerClosed = true;
+    },
+  }));
+  globalThis.fetch = (async () => {
+    polledAt.push(Date.now());
+
+    return new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-quiet",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    // One status read up front, then the polls back off: 500 ms, then 1000 ms.
+    await waitForCondition(
+      () => polledAt.length >= 3,
+      600,
+      () => `three status reads, saw ${polledAt.length}`,
+    );
+    const gaps = polledAt
+      .slice(1)
+      .map((at, index) => at - (polledAt[index] ?? at));
+    // A gap may run one 5 ms clock step over: the poll lands on the step after its timer.
+    expect(gaps).toHaveLength(2);
+    for (const [index, expected] of [500, 1000].entries()) {
+      expect(gaps[index]).toBeGreaterThanOrEqual(expected);
+      expect(gaps[index]).toBeLessThanOrEqual(expected + 5);
+    }
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+}, 10_000);
+
 test("does not duplicate a streamed error when durable failure arrives without done", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -807,7 +951,6 @@ test("does not duplicate a streamed error when durable failure arrives without d
             sequence: 1,
           }),
         ),
-        ack: () => {},
       };
       for (;;) {
         if (consumerClosed) break;
@@ -851,7 +994,6 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
-    // Status is only polled once the stream has been quiet for a while.
     await waitForCondition(
       () => consumerClosed,
       1600,
@@ -873,6 +1015,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
 }, 10_000);
 
 test("closes a zero-frame queued execute consumer after durable completion", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];
   const socket = gatewaySocket(sent);
@@ -1331,14 +1474,177 @@ test("a started turn streams from its own start and polls core in-cluster", asyn
   }
 });
 
-test("uses conservative gateway limit defaults", () => {
-  expect(gatewayLimitsFromEnv({})).toEqual({
-    maxConnections: 10_000,
-    maxPayloadBytes: 1024 * 1024,
-    backpressureBytes: 1024 * 1024,
-    idleTimeoutSeconds: 255,
-    runStartTimeoutMs: 15_000,
+test("a refused start keeps core's error code on the WebSocket error frame", async (): Promise<void> => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  globalThis.fetch = (async (): Promise<Response> =>
+    Response.json(
+      {
+        error: {
+          message: "Conversation is busy.",
+          type: "conflict_error",
+          code: "conversation_busy",
+        },
+      },
+      { status: 409 },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "busy-conversation",
+        input: "go",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> =>
+        zeroBufferConnection(async () => ({
+          [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+          close: async (): Promise<void> => {},
+        })) as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "error",
+    );
+    expect(sent.find((message) => message.type === "error")).toEqual({
+      type: "error",
+      status: 409,
+      error: "Conversation is busy.",
+      code: "conversation_busy",
+      errorType: "conflict_error",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a runtime key runs a public agent of its stage on the agent socket", async (): Promise<void> => {
+  const { frames, consumers, credentials } =
+    await runtimeKeyExecute("agent_public");
+
+  expect(frames).toEqual([
+    { type: "meta", sessionId: "chat-1", taskId: "event-1" },
+    {
+      type: "ack",
+      requestId: "event-1",
+      eventId: "event-1",
+      status: "completed",
+    },
+    { type: "done" },
+  ]);
+  expect(credentials).toEqual(["Bearer bsk_runtime"]);
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key is refused a private agent, and nothing of it is read", async (): Promise<void> => {
+  const { frames, consumers } = await runtimeKeyExecute("agent_private");
+
+  expect(frames.at(-1)).toEqual({
+    type: "error",
+    status: 403,
+    error: "Agent agent_private is not publicly accessible.",
+    code: "public_access_disabled",
   });
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key is refused another stage's agent, and nothing of it is read", async (): Promise<void> => {
+  const { frames, consumers } = await runtimeKeyExecute("agent_staging");
+
+  expect(frames.at(-1)).toEqual({
+    type: "error",
+    status: 404,
+    error: "Agent not found",
+  });
+  expect(consumers).toBe(0);
+});
+
+test("a runtime key cannot attach to a private agent's run", async (): Promise<void> => {
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  socket.data.token = "bsk_runtime";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = runtimeKeyCore([]);
+  let natsRequested = false;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-private",
+        agentId: "agent_private",
+        conversationKey: "chat-1",
+        eventId: "event-1",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an attach naming another event of the run's conversation replays nothing", async (): Promise<void> => {
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async (): Promise<Response> =>
+      Response.json({
+        eventId: "event-1",
+        agentId: "agent_public",
+        conversationKey: "chat-1",
+        status: "processing",
+      }),
+    { preconnect: originalFetch.preconnect },
+  );
+  let natsRequested = false;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-sibling",
+        agentId: "agent_public",
+        conversationKey: "chat-1",
+        eventId: "event-2",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message): boolean => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("ignores invalid gateway limit overrides", () => {
@@ -1398,29 +1704,44 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
   ).toBeNull();
 });
 
-test("resolves the scope a runtime key grants from core", async (): Promise<void> => {
+test("each socket asks core for its own scope", async (): Promise<void> => {
   const calls: string[] = [];
-  const resolved = await resolveSocketScope(
-    "runtime-key",
-    "https://core.example",
-    async (input): Promise<Response> => {
-      calls.push(requestUrl(input));
+  const answer = async (input: RequestInfo | URL): Promise<Response> => {
+    calls.push(requestUrl(input));
 
-      return Response.json({
-        accountId: "account-1",
-        projectSlug: "project",
-        stageSlug: "production",
-        endpointIds: ["endpoint-1"],
-      });
-    },
+    return Response.json({
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+    });
+  };
+
+  const agent = await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+  );
+  await resolveSocketScope(
+    "observability",
+    "bdts_ticket",
+    "https://core.example",
+    answer,
   );
 
   expect(calls).toEqual([
+    "https://core.example/v1/internal/agent-socket-scope",
     "https://core.example/v1/internal/observability-scope",
   ]);
-  expect(resolved).toMatchObject({
+  expect(agent).toEqual({
     kind: "resolved",
-    scope: { stageSlug: "production" },
+    scope: {
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+    },
   });
 });
 
@@ -1428,7 +1749,7 @@ test("a core that cannot answer is an outage, not a bad token", async (): Promis
   const resolve = (
     answer: () => Promise<Response>,
   ): ReturnType<typeof resolveSocketScope> =>
-    resolveSocketScope("runtime-key", "https://core.example", answer);
+    resolveSocketScope("agent", "runtime-key", "https://core.example", answer);
 
   expect(
     await resolve(
@@ -1490,6 +1811,44 @@ test("bounds observability backfill requests", () => {
   ).toBe(false);
 });
 
+test("a resume cursor is one sealed block, and never a sandbox tail's", () => {
+  const resume = { type: "subscribe", stream: "logs" };
+  const cursor = "AAAAAAAAAAAAAAAAAAAAAA";
+
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: cursor })).toBe(
+    true,
+  );
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: 41 })).toBe(false);
+  expect(isObservabilityClientMessage({ ...resume, afterSeq: "41" })).toBe(
+    false,
+  );
+  expect(
+    isObservabilityClientMessage({ ...resume, afterSeq: `${cursor}=` }),
+  ).toBe(false);
+  expect(
+    isObservabilityClientMessage({
+      ...resume,
+      afterSeq: cursor,
+      sandboxId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+    }),
+  ).toBe(false);
+});
+
+test("a cursor opens only under the key that sealed it", () => {
+  const scope = { accountId: "acct_1", projectSlug: "p", stageSlug: "dev" };
+  const key = cursorKey("secret", scope);
+  const other = cursorKey("secret", { ...scope, accountId: "acct_2" });
+
+  expect(openCursor(key, sealCursor(key, 41))).toBe(41);
+  expect(openCursor(key, sealCursor(key, 0))).toBe(0);
+  expect(openCursor(other, sealCursor(key, 41))).toBeUndefined();
+  expect(openCursor(key, "AAAAAAAAAAAAAAAAAAAAAA")).toBeUndefined();
+  expect(openCursor(key, "short")).toBeUndefined();
+  // Neighbouring sequences share nothing a reader could order or subtract.
+  expect(sealCursor(key, 41)).toMatch(/^[A-Za-z0-9_-]{22}$/);
+  expect(sealCursor(key, 41)).not.toBe(sealCursor(key, 42));
+});
+
 test("observability relay skips malformed and below-threshold log messages", async () => {
   const encoder = new TextEncoder();
   const sent: unknown[] = [];
@@ -1497,6 +1856,7 @@ test("observability relay skips malformed and below-threshold log messages", asy
     readyState: WebSocket.OPEN,
     getBufferedAmount: () => 0,
     send: (value: string) => sent.push(JSON.parse(value)),
+    data: { kind: "observability", scope: TEST_SCOPE },
   } as unknown as Bun.ServerWebSocket<
     import("../src/observability.ts").ObservabilityGatewayData
   >;
@@ -1540,12 +1900,11 @@ test("asks Loki to drop the levels a subscription does not want", () => {
     projectSlug: "shop",
     stageSlug: "dev",
     endpointIds: [],
+    expiresAt: Number.MAX_SAFE_INTEGER,
   };
   const tenant = 'account_id="acct-1",project="shop",stage="dev"';
-  // The deployment stream never carries guest output, matching the NATS relay.
   const selector = `{${tenant},service_name!="broods-sandbox"}`;
 
-  // A DEBUG subscriber wants everything, so nothing is filtered away.
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(selector);
   expect(lokiBackfillQuery(scope, "WARN")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO)"`,
@@ -1553,7 +1912,6 @@ test("asks Loki to drop the levels a subscription does not want", () => {
   expect(lokiBackfillQuery(scope, "ERROR")).toBe(
     `${selector} | level!~"(?i)(DEBUG|INFO|WARN)"`,
   );
-  // A sandbox tail narrows on the bridge's sandbox_id metadata before the level.
   expect(
     lokiBackfillQuery(scope, "WARN", "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"),
   ).toBe(
@@ -1562,6 +1920,7 @@ test("asks Loki to drop the levels a subscription does not want", () => {
 });
 
 test("a sandbox tail relays each guest line once and ignores a repeat subscribe", async () => {
+  jest.useFakeTimers();
   const originalFetch = globalThis.fetch;
   const originalLokiUrl = process.env.LOKI_URL;
   process.env.LOKI_URL = "http://loki.example";
@@ -1579,6 +1938,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
         projectSlug: "shop",
         stageSlug: "dev",
         endpointIds: [],
+        expiresAt: Number.MAX_SAFE_INTEGER,
       },
     },
   } as unknown as Bun.ServerWebSocket<ObservabilityGatewayData>;
@@ -1588,8 +1948,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
     text,
   ];
   let queries = 0;
-  // Loki answers newest first. The backfill sees B and A; every poll sees C
-  // and B again, and a guest line that looks like a core record stays text.
+  // Loki answers newest first: the backfill sees B and A, every poll sees C and B again.
   globalThis.fetch = (async (input) => {
     const url = new URL(requestUrl(input));
     expect(url.searchParams.get("query")).toContain(
@@ -1620,7 +1979,7 @@ test("a sandbox tail relays each guest line once and ignores a repeat subscribe"
   openObservabilitySocket(socket);
   try {
     await handleObservabilityMessage(socket, subscribe, noNats);
-    await waitForGatewayMessage(sent, (message) => message.type === "log", 400);
+    await waitForGatewayMessage(sent, (message) => message.type === "log", 500);
 
     expect(sent.map((message) => message.type)).toEqual([
       "ready",
@@ -1663,7 +2022,6 @@ test("accepts a sandbox tail only for logs and only with a UUID id", () => {
       sandboxId: sandboxId,
     }),
   ).toBe(false);
-  // Anything that could escape a LogQL string is refused at the wire.
   expect(
     isObservabilityClientMessage({
       type: "subscribe",
@@ -1702,7 +2060,6 @@ test("a failed trace backfill reports itself instead of leaving the client waiti
 
   openObservabilitySocket(socket);
   try {
-    // With no live transport the subscribe fails before any backfill runs.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "subscribe", stream: "traces", backfill: 5 }),
@@ -1765,7 +2122,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
     expect(sent.at(-1)).toMatchObject({
       type: "backfill",
       entries: [],
-      error: "Trace not found in this stage",
+      error: "Trace not found in this stage. Traces are kept 30 days",
     });
 
     await handleObservabilityMessage(socket, fetchTrace(ownTraceId), noNats);
@@ -1782,9 +2139,7 @@ test("a fetched trace only leaves the gateway when it belongs to the socket's st
 
 test("fetchTempoBackfill shares trace lookups across backfills", async () => {
   const originalFetch = globalThis.fetch;
-  // Two tabs open Tracing at once, then one reconnects: each trace reaches
-  // Tempo once. The second backfill joins the lookup in flight, the reconnect
-  // reads the shared answer.
+  // Two tabs open Tracing at once, then one reconnects: each trace still reaches Tempo once.
   const lookups: string[] = [];
   const tempo = tempoFetch(tempoSearchHits(3));
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
@@ -1816,8 +2171,7 @@ test("fetchTempoBackfill shares trace lookups across backfills", async () => {
 
 test("fetchTempoBackfill asks Tempo again after a failed or expired lookup", async () => {
   const originalFetch = globalThis.fetch;
-  // "bbb" fails once, so the next backfill retries it at once. "aaa" is shared
-  // until its lifetime ends, then read from Tempo again.
+  // "bbb" fails once and is retried at once; "aaa" is shared until its lifetime ends.
   const lookups: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
     const url = requestUrl(input);
@@ -1852,8 +2206,7 @@ test("a traces backfill piece waits for the socket buffer to empty", async () =>
   const originalFetch = globalThis.fetch;
   const originalTempoUrl = process.env.TEMPO_URL;
   process.env.TEMPO_URL = "http://tempo.example";
-  // Live spans left 600 KB queued. A trace piece on top of that passes the
-  // socket's 1 MB backpressure limit, which closes the socket.
+  // 600 KB of live spans queued: a trace piece on top passes the 1 MB backpressure limit.
   const { socket, sent } = observabilitySocket();
   let queuedPolls = 3;
   let sentWhileQueued = false;
@@ -1891,9 +2244,6 @@ test("a traces backfill piece waits for the socket buffer to empty", async () =>
 
 test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches", async () => {
   const originalFetch = globalThis.fetch;
-  // Search finds two traces; the first detail loads, the second 503s. The
-  // chunk keeps the good row and reports the one failure, so the caller sends
-  // the recovered trace with an error rather than an empty, error-free list.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
     if (url.includes("/api/search"))
@@ -1920,9 +2270,7 @@ test("fetchTempoBackfill keeps recovered rows and counts failed detail fetches",
 
 test("fetchTempoBackfill hands traces over newest first, a chunk at a time", async () => {
   const originalFetch = globalThis.fetch;
-  // 25 traces, listed oldest first as Tempo may return them. Each chunk paints
-  // on its own, so the first one must hold the newest traces, and a consumer
-  // that stops after two chunks must not cost a third round of lookups.
+  // Listed oldest first, as Tempo may; a consumer that stops after two chunks costs no third.
   const searchHits = tempoSearchHits(25);
   const fetched: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -1957,8 +2305,6 @@ test("fetchTempoBackfill hands traces over newest first, a chunk at a time", asy
 
 test("fetchTempoBackfill drops spans from other scopes in a matched trace", async () => {
   const originalFetch = globalThis.fetch;
-  // Tempo's search is tag-scoped, but a matched trace's detail can carry spans
-  // from another scope (here a "prod" batch). Only the in-scope span may leave.
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
     if (url.includes("/api/search"))
@@ -2023,6 +2369,51 @@ test("a traces backfill streams newest-first pieces, one trace each, and a closi
       "t24",
     );
     expect(pieces.at(-1)!.error).toBeUndefined();
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("a traces subscribe with agentId searches Tempo for that agent and echoes it on ready", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const searches: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = requestUrl(input);
+    if (url.includes("/api/search")) {
+      searches.push(new URL(url).searchParams.get("tags") ?? "");
+
+      return json({ traces: [] });
+    }
+
+    return json({ batches: [] });
+  }) as unknown as typeof fetch;
+
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "traces",
+        backfill: 5,
+        historyOnly: true,
+        agentId: "ag_A",
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && message.more !== true,
+    );
+
+    expect(sent[0]).toEqual({ type: "ready", agentId: "ag_A" });
+    expect(searches).toHaveLength(1);
+    expect(searches[0]).toEndWith(' agent_id="ag_A"');
   } finally {
     cleanupObservabilitySocket(socket);
     globalThis.fetch = originalFetch;
@@ -2109,7 +2500,6 @@ test("an unsubscribe cancels the traces backfill still streaming for it", async 
       JSON.stringify({ type: "subscribe", stream: "traces", backfill: 100 }),
       idleNats,
     );
-    // The first chunk is in flight; the client walks away from the stream.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "unsubscribe", stream: "traces" }),
@@ -2135,7 +2525,6 @@ test("a traces backfill that fails after an unsubscribe sends no error closer", 
     new Promise<Response>((_resolve, reject) => {
       failSearch = reject;
     })) as unknown as typeof fetch;
-  // The failure is logged before the superseded run decides to stay quiet.
   const logged = spyOn(console, "error").mockImplementation(() => {});
 
   openObservabilitySocket(socket);
@@ -2146,7 +2535,6 @@ test("a traces backfill that fails after an unsubscribe sends no error closer", 
       idleNats,
     );
     await waitForCondition(() => failSearch !== undefined);
-    // The search is still pending; the client walks away, then Tempo fails.
     await handleObservabilityMessage(
       socket,
       JSON.stringify({ type: "unsubscribe", stream: "traces" }),
@@ -2285,13 +2673,9 @@ test("a sandbox tail replaced while its backfill is pending sends nothing from i
     process.env.LOKI_URL = originalLokiUrl;
   }
 });
-// The windows of LOKI_BACKFILL_STEPS, in hours, newest first.
+// Mirrors LOKI_BACKFILL_STEPS.
 const BACKFILL_STEP_HOURS = [1, 24, 720];
 
-/**
- * Runs a deployment logs backfill against a Loki stub answering each step with
- * `rowsPerStep` lines, and reports the window each query asked for in hours.
- */
 async function backfillStepHours(
   rowsPerStep: number,
   limit: number,
@@ -2345,7 +2729,6 @@ test("a logs backfill stops at the first window that fills the page", async () =
   try {
     const { hours, sent } = await backfillStepHours(5, 5);
 
-    // A stage with recent logs never pays for the 30-day scan.
     expect(hours).toEqual([BACKFILL_STEP_HOURS[0]]);
     expect(
       (
@@ -2386,8 +2769,6 @@ test("a timed-out logs backfill names Loki and its budget, and does not widen", 
   process.env.LOKI_URL = "http://loki.example";
   const { socket, sent } = observabilitySocket();
   let queries = 0;
-  // The abort's own message ("The operation timed out.") named neither the
-  // query nor its budget, and reached the Logs tab verbatim.
   globalThis.fetch = (async () => {
     queries += 1;
     throw new DOMException("The operation timed out.", "TimeoutError");
@@ -2407,7 +2788,6 @@ test("a timed-out logs backfill names Loki and its budget, and does not widen", 
       entries: [],
       error: "Loki query timed out after 5000ms",
     });
-    // A wider window is strictly more expensive, so it is never a retry.
     expect(queries).toBe(1);
   } finally {
     cleanupObservabilitySocket(socket);
@@ -2454,7 +2834,6 @@ test("a traces backfill stops asking Tempo once the socket is gone", async () =>
     const url = requestUrl(input);
     if (url.includes("/api/search")) return json({ traces: searchHits });
     lookups += 1;
-    // The tab closes while the first chunk is in flight.
     (socket as { readyState: number }).readyState = WebSocket.CLOSED;
 
     return json({
@@ -2504,6 +2883,25 @@ test("defaults a Loki line with no eventType to its level, like the live stream"
       "fallback",
     ).eventType,
   ).toBe("error");
+});
+
+test("keeps core's log id from a Loki line or its OTLP metadata", () => {
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1" },
+      JSON.stringify({ logId: "line-1", message: "progress ." }),
+      1_700_000_000_000,
+      "fallback",
+    ).logId,
+  ).toBe("line-1");
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1", logId: "line-2" },
+      "progress .",
+      1_700_000_000_000,
+      "fallback",
+    ).logId,
+  ).toBe("line-2");
 });
 
 test("rehydrates Loki OTLP metadata for durable log history", () => {
@@ -2636,7 +3034,6 @@ test("keeps a root's waiting and needs_input state from task.state", () => {
 });
 
 test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () => {
-  // 16-byte trace id and 8-byte span id, hex then base64-encoded.
   const traceHex = "2e4a86cf02516e0768dff2a96ae9eb12";
   const spanHex = "5bb16b70ae735d82";
   const traceB64 = Buffer.from(traceHex, "hex").toString("base64");
@@ -2644,7 +3041,6 @@ test("normalizes base64 Tempo ids to hex so backfill keys match live spans", () 
 
   expect(normalizeOtelId(traceB64, 16)).toBe(traceHex);
   expect(normalizeOtelId(spanB64, 8)).toBe(spanHex);
-  // Already-hex ids pass through unchanged; unknown fixtures are left alone.
   expect(normalizeOtelId(traceHex, 16)).toBe(traceHex);
   expect(normalizeOtelId("trace-1", 16)).toBe("trace-1");
   expect(normalizeOtelId("root-1", 8)).toBe("root-1");
@@ -2837,6 +3233,96 @@ test("terminal relay closes sockets that exceed the pending input buffer", () =>
   }
 });
 
+test("terminal relay ends cleanly only on a clean upstream close", () => {
+  const originalWebSocket = globalThis.WebSocket;
+  const closes: Array<[number, string]> = [];
+
+  class FakeWebSocket {
+    static OPEN = 1;
+    static instances: FakeWebSocket[] = [];
+    readyState = FakeWebSocket.OPEN;
+    binaryType = "arraybuffer";
+    onclose: ((event: { code: number; reason: string }) => void) | null = null;
+    constructor(_url: string, _options?: unknown) {
+      FakeWebSocket.instances.push(this);
+    }
+  }
+
+  globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  try {
+    for (const code of [1011, 1001, 1000, 1005]) {
+      const socket = {
+        readyState: FakeWebSocket.OPEN,
+        data: {
+          kind: "terminal",
+          ticket: {
+            url: "ws://sandbox.example/pty",
+            authorization: "Bearer sandbox-token",
+            accountId: "acct_1",
+            expiresAt: Date.now() + 60_000,
+          },
+        },
+        send: () => {},
+        close: (closeCode: number, reason: string) =>
+          closes.push([closeCode, reason]),
+      } as unknown as Bun.ServerWebSocket<
+        import("../src/terminal.ts").TerminalGatewayData
+      >;
+      openTerminalUpstream(socket);
+      FakeWebSocket.instances.at(-1)!.onclose?.({
+        code: code,
+        reason: "Terminal output failed",
+      });
+    }
+
+    expect(closes).toEqual([
+      [1011, "Terminal output failed"],
+      [1011, "Terminal output failed"],
+      [1000, "terminal session ended"],
+      [1000, "terminal session ended"],
+    ]);
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+  }
+});
+
+test("attach reports a timeout while NATS is stalled, and frees the socket", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "event-1",
+        agentId: "agent_1",
+        conversationKey: "conversation-1",
+        status: "processing",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as unknown as typeof fetch;
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-1",
+        agentId: "agent_1",
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "20" }),
+      () => new Promise<never>(() => {}),
+    );
+
+    await waitForGatewayMessage(sent, (message) => message.type === "error");
+
+    expect(sent).toEqual([{ type: "error", error: "Attach timed out" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a terminal socket whose ticket did not verify is closed with a reason, and never dials upstream", () => {
   const originalWebSocket = globalThis.WebSocket;
   const closes: Array<[number, string]> = [];
@@ -2980,8 +3466,7 @@ test("client ip takes the rightmost forwarded hop, then the socket address", () 
   });
   expect(clientIp(withForwarded, "127.0.0.1")).toBe("10.0.0.1");
 
-  // Only the ingress appends the rightmost hop, so a caller cannot mint a fresh
-  // rate-limit bucket by prepending one or by sending its own x-real-ip.
+  // A caller cannot mint a fresh bucket by prepending a hop or sending its own x-real-ip.
   const spoofed = new Request("https://gateway.example.com/", {
     headers: {
       "x-real-ip": "203.0.113.7",
@@ -3028,13 +3513,12 @@ test("observability relay sheds droppable frames when the socket buffer is backe
 test("observability relay waits out span backpressure instead of shedding", async () => {
   const encoder = new TextEncoder();
   const sent: unknown[] = [];
-  // Backed up for the first few polls, drained afterwards. The relay must
-  // deliver the span once the buffer drops rather than shedding it.
   let drainChecks = 0;
   const socket = {
     readyState: WebSocket.OPEN,
     getBufferedAmount: () => (drainChecks++ < 3 ? 10 * 1024 * 1024 : 0),
     send: (value: string) => sent.push(JSON.parse(value)),
+    data: { kind: "observability", scope: TEST_SCOPE },
   } as unknown as Bun.ServerWebSocket<
     import("../src/observability.ts").ObservabilityGatewayData
   >;
@@ -3078,7 +3562,90 @@ function gatewaySocket(
   >;
 }
 
-/** `count` search hits, oldest first as Tempo may list them: t0 is the oldest, t(count-1) the newest. */
+// A runtime key of stage development: agent_public runs, agent_private is refused.
+function runtimeKeyCore(credentials: string[]): typeof fetch {
+  const refusal = (agentId: string): Response =>
+    agentId === "agent_private"
+      ? Response.json(
+          {
+            error: {
+              message: `Agent ${agentId} is not publicly accessible.`,
+              code: "public_access_disabled",
+            },
+          },
+          { status: 403 },
+        )
+      : Response.json(
+          { error: { message: "Agent not found" } },
+          { status: 404 },
+        );
+
+  return Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      credentials.push(new Headers(init?.headers).get("authorization") ?? "");
+      // A status read names no agent; the fixture's run is the private one's.
+      if (init?.method !== "POST") return refusal("agent_private");
+      const body = (await new Request(input, init).json()) as {
+        agentId: string;
+      };
+      if (body.agentId !== "agent_public") return refusal(body.agentId);
+
+      return Response.json(
+        { eventId: "event-1", status: "completed" },
+        { status: 202 },
+      );
+    },
+    { preconnect: (): void => {} },
+  );
+}
+
+async function runtimeKeyExecute(agentId: string): Promise<{
+  consumers: number;
+  credentials: string[];
+  frames: Array<Record<string, unknown>>;
+}> {
+  const frames: Array<Record<string, unknown>> = [];
+  const credentials: string[] = [];
+  const socket = gatewaySocket(frames);
+  socket.data.token = "bsk_runtime";
+  let consumers = 0;
+  const connection = zeroBufferConnection(
+    async () => ({
+      [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+      close: async (): Promise<void> => {},
+    }),
+    (): void => {
+      consumers += 1;
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = runtimeKeyCore(credentials);
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: agentId,
+        sessionId: "chat-1",
+        eventId: "event-1",
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+    await waitForGatewayMessage(
+      frames,
+      (message): boolean => message.type === "done" || message.type === "error",
+    );
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+
+  return { consumers: consumers, credentials: credentials, frames: frames };
+}
+
+// Oldest first, as Tempo may list them: t0 is the oldest.
 function tempoSearchHits(
   count: number,
 ): Array<{ traceID: string; startTimeUnixNano: string }> {
@@ -3088,7 +3655,6 @@ function tempoSearchHits(
   }));
 }
 
-/** One resource batch of a Tempo trace response holding a single 1 s agent.task span. */
 function tempoBatch({
   traceId,
   spanId,
@@ -3125,7 +3691,6 @@ function tempoBatch({
   };
 }
 
-/** A live subscription that opens and then stays quiet, for tests about the backfill alone. */
 const idleNats = async (): Promise<NatsConnection> =>
   zeroBufferConnection(async () => ({
     [Symbol.asyncIterator]: async function* () {},
@@ -3133,10 +3698,6 @@ const idleNats = async (): Promise<NatsConnection> =>
     stop: () => {},
   })) as unknown as NatsConnection;
 
-/**
- * Like idleNats, but numbers each consumer it opens and records which ones were
- * stopped, for tests about one subscribe superseding another.
- */
 function countingNats(): {
   nats: () => Promise<NatsConnection>;
   opened: () => number;
@@ -3161,12 +3722,10 @@ function countingNats(): {
   return { nats: nats, opened: (): number => opened, stopped: stopped };
 }
 
-/** The URL a fetch mock was called with, whatever form the input took. */
 function requestUrl(input: RequestInfo | URL): string {
   return input instanceof Request ? input.url : input.toString();
 }
 
-/** Tempo answering a search with `hits`, then every by-id lookup with one root span. */
 function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
   return (async (input: RequestInfo | URL) => {
     const url = requestUrl(input);
@@ -3183,7 +3742,6 @@ function tempoFetch(hits: ReturnType<typeof tempoSearchHits>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-/** An open observability socket for stage shop/dev of acct-1, capturing what the gateway sends. */
 function observabilitySocket(): {
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>;
   sent: Array<Record<string, unknown>>;
@@ -3255,7 +3813,6 @@ function replayThenLiveConnection(
         sequence: sequence,
       }),
     ),
-    ack: () => {},
   });
   const messages = [
     streamMessage(10, { type: "reasoning-delta", text: "thinking" }),
@@ -3310,11 +3867,8 @@ async function waitForGatewayMessage(
   );
 }
 
-/**
- * For conditions that do not depend on a sent frame. `sent.some(predicate)`
- * never calls the predicate while `sent` is empty, so those waits would time
- * out even once the condition held.
- */
+// `sent.some()` never calls its predicate while `sent` is empty, hence this. Microtasks only:
+// in bun 1.4.2 a queued setImmediate can stall a fake clock.
 async function waitForCondition(
   condition: () => boolean,
   attempts = 100,
@@ -3324,7 +3878,12 @@ async function waitForCondition(
     if (condition()) {
       return;
     }
-    await Bun.sleep(5);
+    if (jest.isFakeTimers()) {
+      for (let hop = 0; hop < 100; hop += 1) await Promise.resolve();
+      jest.advanceTimersByTime(5);
+    } else {
+      await Bun.sleep(5);
+    }
   }
 
   throw new Error(`Timed out waiting for ${describe()}`);
@@ -3335,7 +3894,6 @@ function zeroBufferConnection(
     [Symbol.asyncIterator](): AsyncIterator<{
       seq: number;
       data: Uint8Array;
-      ack(): void;
     }>;
     close(): Promise<void>;
   }>,
@@ -3388,7 +3946,12 @@ function zeroBufferConnection(
         ) => {
           onConsumerOptions?.(options);
 
-          return { consume: consume };
+          return {
+            consume: consume,
+            info: async (): Promise<{ delivered: { stream_seq: number } }> => ({
+              delivered: { stream_seq: (options.opt_start_seq ?? 1) - 1 },
+            }),
+          };
         },
       },
     }),
@@ -3401,7 +3964,6 @@ test("websocket token reads the broods.token subprotocol", () => {
     headers: { "sec-websocket-protocol": "broods.v1, broods.token.from-proto" },
   });
   expect(websocketToken(request)).toBe("from-proto");
-  // The handshake completes only when the offered subprotocol is echoed.
   expect(websocketUpgradeHeaders(request)).toEqual({
     "Sec-WebSocket-Protocol": "broods.v1",
   });
@@ -3441,6 +4003,7 @@ test("observability selectors keep a hostile stage slug inside the string", () =
     projectSlug: "shop",
     stageSlug: 'dev"} or {stage=~".+',
     endpointIds: [],
+    expiresAt: Number.MAX_SAFE_INTEGER,
   };
   expect(quoteLabel(scope.stageSlug)).toBe('"dev\\"} or {stage=~\\".+"');
   expect(lokiBackfillQuery(scope, "DEBUG")).toBe(
@@ -3483,10 +4046,427 @@ test("withRequestId preserves status and existing headers", () => {
   expect(stamped.headers.get("x-request-id")).toBe("req_3");
 });
 
-test("retryAfterSeconds returns zero once the window has elapsed", () => {
-  const limiter = new RateLimiter(1, 1);
-  limiter.allow("k");
-  Bun.sleepSync(5);
+test("the gateway spells the user token header and subprotocol as core does", () => {
+  expect(USER_TOKEN_HEADER).toBe(CORE_USER_TOKEN_HEADER);
+  const request = new Request("https://gateway.example.com/ws", {
+    headers: {
+      "sec-websocket-protocol": `broods.v1, broods.token.bsk_key, ${USER_TOKEN_SUBPROTOCOL_PREFIX}buat_from-proto`,
+    },
+  });
+  expect(websocketUserToken(request)).toBe("buat_from-proto");
+  expect(websocketToken(request)).toBe("bsk_key");
+  expect(
+    websocketUserToken(
+      new Request("https://gateway.example.com/ws", {
+        headers: { [USER_TOKEN_HEADER]: " buat_from-header " },
+      }),
+    ),
+  ).toBe("buat_from-header");
+  expect(
+    websocketUserToken(new Request("https://gateway.example.com/ws")),
+  ).toBeUndefined();
+});
 
-  expect(limiter.retryAfterSeconds("k")).toBe(0);
+test("the socket scope lookup carries the user token, and its namespace comes back", async (): Promise<void> => {
+  const sent: Array<string | null> = [];
+  const answer = async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    sent.push(new Headers(init?.headers).get(USER_TOKEN_HEADER));
+
+    return Response.json({
+      accountId: "account-1",
+      projectSlug: "project",
+      stageSlug: "production",
+      endpointIds: ["endpoint-1"],
+      conversationPrefix: "bsu:alice:",
+    });
+  };
+
+  const scope = await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+    "buat_alice",
+  );
+  await resolveSocketScope(
+    "agent",
+    "bsk_runtime",
+    "https://core.example",
+    answer,
+  );
+
+  expect(sent).toEqual(["buat_alice", null]);
+  expect(scope).toMatchObject({
+    kind: "resolved",
+    scope: { conversationPrefix: "bsu:alice:" },
+  });
+});
+
+test("an agent socket closes when its user token dies, unless it closed first", async (): Promise<void> => {
+  const closes: Array<[number | undefined, string | undefined]> = [];
+  const socket = gatewaySocket([]);
+  const close = (code?: number, reason?: string): void => {
+    closes.push([code, reason]);
+  };
+  socket.close = close;
+  socket.data.userTokenExpiresAt = Date.now() + 20;
+  const closedFirst = gatewaySocket([]);
+  closedFirst.close = close;
+  closedFirst.data.userTokenExpiresAt = Date.now() + 20;
+  const withoutToken = gatewaySocket([]);
+  withoutToken.close = close;
+
+  watchUserTokenLifetime(socket);
+  watchUserTokenLifetime(closedFirst);
+  watchUserTokenLifetime(withoutToken);
+  cleanupAgentSocket(closedFirst);
+  await Bun.sleep(60);
+
+  expect(closes).toEqual([[4419, "User token expired"]]);
+});
+
+test("a user's run sends the token to core and streams from the user's namespace", async (): Promise<void> => {
+  const frames: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(frames);
+  socket.data.token = "bsk_runtime";
+  socket.data.userToken = "buat_alice";
+  socket.data.conversationPrefix = "bsu:alice:";
+  const userTokens: Array<string | null> = [];
+  const subjects: string[] = [];
+  const base = zeroBufferConnection(async () => ({
+    [Symbol.asyncIterator]: async function* (): AsyncGenerator<never> {},
+    close: async (): Promise<void> => {},
+  }));
+  const connection = {
+    ...base,
+    jetstreamManager: async () => {
+      const manager = await base.jetstreamManager();
+
+      return {
+        streams: {
+          ...manager.streams,
+          info: async (
+            name: string,
+            options?: { subjects_filter?: string },
+          ) => {
+            if (options?.subjects_filter)
+              subjects.push(options.subjects_filter);
+
+            return manager.streams.info(name, options);
+          },
+        },
+      };
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    async (_input: RequestInfo | URL, init?: RequestInit) => {
+      userTokens.push(new Headers(init?.headers).get(USER_TOKEN_HEADER));
+
+      return Response.json(
+        { eventId: "bsu:alice:event-1", status: "completed" },
+        { status: 202 },
+      );
+    },
+    { preconnect: (): void => {} },
+  );
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_public",
+        sessionId: "chat-1",
+        eventId: "event-1",
+        input: "hi",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async (): Promise<never> => connection as never,
+    );
+    await waitForCondition((): boolean => subjects.length > 0);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+
+  expect(userTokens[0]).toBe("buat_alice");
+  expect(subjects).toContain(
+    streamResponseSubject("acct_test", "agent_public", "bsu:alice:chat-1"),
+  );
+  expect(subjects).not.toContain(
+    streamResponseSubject("acct_test", "agent_public", "chat-1"),
+  );
+});
+
+test("bounded log history queries once and continues without skipping timestamp ties", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requests.push(new URL(requestUrl(input)));
+    return json({
+      data: {
+        result: [
+          {
+            stream: {},
+            values: [
+              ["9000000", "new"],
+              ["8000000", "tie-a"],
+              ["8000000", "tie-b"],
+            ],
+          },
+        ],
+      },
+    });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 2,
+        historyOnly: true,
+        range: { from: 1, to: 10 },
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe("1000000");
+    expect(requests[0]!.searchParams.get("end")).toBe("9999999");
+    expect(requests[0]!.searchParams.get("limit")).toBe("3");
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      nextTo: 9,
+      entries: [{ message: "new" }],
+    });
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("bounded Tempo searches narrow a saturated unordered result before paging", async () => {
+  const originalFetch = globalThis.fetch;
+  const starts: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = new URL(requestUrl(input));
+    starts.push(url.searchParams.get("start") ?? "");
+    return json({
+      traces:
+        starts.length === 1
+          ? [
+              { traceID: "a", startTimeUnixNano: "1000000000" },
+              { traceID: "b", startTimeUnixNano: "2000000000" },
+            ]
+          : [],
+    });
+  }) as typeof fetch;
+  try {
+    const pages = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+        from: 0,
+        to: 3600000,
+      }),
+    );
+    expect(starts).toEqual(["0", "1800"]);
+    expect(pages).toEqual([{ rows: [], failures: 0, nextTo: 1800000 }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a sparse bounded sandbox page searches only one hour without starting a poll", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLokiUrl = process.env.LOKI_URL;
+  process.env.LOKI_URL = "http://loki.example";
+  const { socket, sent } = observabilitySocket();
+  const requests: URL[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    requests.push(new URL(requestUrl(input)));
+
+    return json({ data: { result: [] } });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    const range = { from: 0, to: 86_400_000 };
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: range,
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      async (): Promise<never> => {
+        throw new Error("history opened live transport");
+      },
+    );
+    await waitForGatewayMessage(sent, (message) => message.type === "backfill");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.searchParams.get("start")).toBe(
+      String(82_800_000n * 1_000_000n),
+    );
+    expect(requests[0]!.searchParams.get("query")).toContain(
+      'sandbox_id="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"',
+    );
+    expect(sent.find((message) => message.type === "backfill")).toMatchObject({
+      entries: [],
+      range: range,
+      nextTo: 82_800_000,
+    });
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        historyOnly: true,
+        range: { from: 0, to: 82_800_000 },
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      idleNats,
+    );
+    await waitForCondition(
+      () => sent.filter((message) => message.type === "backfill").length === 2,
+    );
+    expect(requests).toHaveLength(2);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(1);
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "logs",
+        backfill: 10,
+        sandboxId: "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+      }),
+      idleNats,
+    );
+    await waitForCondition(() => requests.length === 3);
+    expect(sent.filter((message) => message.type === "ready")).toHaveLength(2);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.LOKI_URL = originalLokiUrl;
+  }
+});
+
+test("bounded trace chunks and their closer echo the requested range", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTempoUrl = process.env.TEMPO_URL;
+  process.env.TEMPO_URL = "http://tempo.example";
+  const { socket, sent } = observabilitySocket();
+  const range = { from: 0, to: 3000 };
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    if (requestUrl(input).includes("/api/search"))
+      return json({ traces: tempoSearchHits(1) });
+
+    return json({ batches: [tempoBatch({ traceId: "t0", spanId: "root" })] });
+  }) as typeof fetch;
+  openObservabilitySocket(socket);
+  try {
+    await handleObservabilityMessage(
+      socket,
+      JSON.stringify({
+        type: "subscribe",
+        stream: "traces",
+        backfill: 10,
+        historyOnly: true,
+        range: range,
+      }),
+      idleNats,
+    );
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "backfill" && !message.more,
+    );
+    const pieces = sent.filter((message) => message.type === "backfill");
+    expect(pieces).toHaveLength(2);
+    expect(
+      pieces.every(
+        (message) => JSON.stringify(message.range) === JSON.stringify(range),
+      ),
+    ).toBe(true);
+    expect(pieces[0]!.more).toBe(true);
+  } finally {
+    cleanupObservabilitySocket(socket);
+    globalThis.fetch = originalFetch;
+    process.env.TEMPO_URL = originalTempoUrl;
+  }
+});
+
+test("overlapping older traces do not hide a complete page of starts inside the window", async () => {
+  const originalFetch = globalThis.fetch;
+  const limits: number[] = [];
+  const summaries = [
+    { traceID: "old-a", startTimeUnixNano: "1000000000" },
+    { traceID: "old-b", startTimeUnixNano: "2000000000" },
+    { traceID: "inside", startTimeUnixNano: "1500000000000" },
+  ];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = new URL(requestUrl(input));
+    if (url.pathname === "/api/search") {
+      const limit = Number(url.searchParams.get("limit"));
+      limits.push(limit);
+
+      return json({ traces: summaries.slice(0, limit) });
+    }
+
+    return json({
+      batches: [tempoBatch({ traceId: "inside", spanId: "root" })],
+    });
+  }) as typeof fetch;
+  try {
+    const chunks = await Array.fromAsync(
+      fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+        from: 1_000_000,
+        to: 2_000_000,
+      }),
+    );
+    expect(limits).toEqual([2, 4]);
+    expect(
+      chunks.flatMap((chunk) => chunk.rows).map((row) => row.traceId),
+    ).toEqual(["inside"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("overlapping trace search fails without certifying a page at its summary cap", async () => {
+  const originalFetch = globalThis.fetch;
+  const limits: number[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = new URL(requestUrl(input));
+    const limit = Number(url.searchParams.get("limit"));
+    limits.push(limit);
+
+    return json({
+      traces: Array.from({ length: limit }, (_, index) => ({
+        traceID: `old-${index}`,
+        startTimeUnixNano: "1000000000",
+      })),
+    });
+  }) as typeof fetch;
+  try {
+    await expect(
+      Array.fromAsync(
+        fetchTempoBackfill("http://tempo.example", TEST_SCOPE, 1, undefined, {
+          from: 1_000_000,
+          to: 2_000_000,
+        }),
+      ),
+    ).rejects.toThrow("Too many overlapping traces");
+    expect(limits).toEqual([2, 4, 8, 16, 32, 64, 128, 256, 501]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

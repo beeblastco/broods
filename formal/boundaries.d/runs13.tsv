@@ -1,0 +1,4 @@
+kind	name	reason
+external	^connect(WebSocket|Tcp)$	The nats.ws and nats client dials to the broker; the twin checks the options and which client the url scheme selects.
+external	^_natsConn\.flush$	The NATS client flushing its outgoing buffer to the broker; the twin ignores its failure as the code does.
+external	^createHash\("sha256"\) \.update(\(scope\) \.update(\("\\0"\) \.update(\(value\) \.digest)?)?)?$	Node SHA-256 over the scope, a NUL and the value; the twin computes the digest itself and the recorded one must equal it.

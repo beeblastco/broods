@@ -1,60 +1,39 @@
-/**
- * Canvas layout persistence keyed by (project, stage).
- */
-
-import { v, type Infer } from "convex/values";
+import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { ClientError } from "./model/clientError";
 import {
   accountCipherForWrite,
   hasEncryptionSecret,
 } from "./model/accountKeys";
+import {
+  canvasEdgeValidator,
+  canvasNodeValidator,
+  type CanvasEdge,
+  type CanvasNode,
+} from "./model/canvasShapes";
 import { stableJson } from "./model/objects";
 import { assertNoAccountScopedResourceConflict } from "./model/cliSync";
 import { hasReservation } from "./model/cliSyncResources";
+import { assertSnapshotInScope } from "./sandbox/snapshots";
 import { sandboxDisplayConfig } from "./model/sandboxDisplayConfig";
 import { getOwnedStage, getProjectStage } from "./model/ownership/stage";
-import { getProjectForRole } from "./model/ownership/project";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "./model/ownership/project";
 import {
   normalizeWorkspaceConfig,
   workspaceEnvRefFields,
 } from "./model/workspaceRules";
-
-export const canvasEdgeValidator = v.object({
-  id: v.string(),
-  source: v.string(),
-  target: v.string(),
-  animated: v.optional(v.boolean()),
-});
-
-export const canvasNodeValidator = v.object({
-  id: v.string(),
-  type: v.union(
-    v.literal("agent"),
-    v.literal("sandbox"),
-    v.literal("workspace"),
-    v.literal("mcp"),
-    v.literal("skill"),
-  ),
-  position: v.object({ x: v.number(), y: v.number() }),
-  data: v.any(),
-});
 
 const saveLayoutResult = v.object({
   layoutId: v.id("canvasLayouts"),
   nodes: v.array(canvasNodeValidator),
   edges: v.array(canvasEdgeValidator),
 });
-
-export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
-
-// `data` is `v.any()` (which infers `any`); every consumer treats it as an
-// unknown-valued record, so the override keeps type checking without casts.
-export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
-  data: Record<string, unknown>;
-};
 
 type MaterializeNodeOptions = {
   account: Doc<"accounts">;
@@ -70,13 +49,7 @@ type MaterializeNodeOptions = {
   previousData: Record<string, unknown>;
 };
 
-/**
- * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
- * kind. The side panel uses this to warn when a dashboard-created agent /
- * workspace / sandbox is named the same as a code-managed one. The next
- * `broods deploy` would adopt and overwrite that resource with the code
- * definition (the CLI resolves by `(stageId, name)`).
- */
+/** The next `broods deploy` adopts a same-named dashboard resource; the panel warns of it. */
 export const cliManagedResourceNames = query({
   args: {
     projectId: v.id("projects"),
@@ -140,10 +113,7 @@ export const cliManagedResourceNames = query({
   },
 });
 
-/**
- * A stage's canvas layout. With no `stageId` it reads the project's default
- * stage, so a cold load can ask before the stage list arrives.
- */
+/** No `stageId` reads the default stage, so a cold load can ask before the stage list. */
 export const getByProject = query({
   args: {
     projectId: v.id("projects"),
@@ -163,8 +133,7 @@ export const getByProject = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Reactive subscribers may briefly hold a just-deleted project/stage;
-    // return null instead of throwing so the canvas unmounts without crashing.
+    // A subscriber may briefly hold a just-deleted stage: null lets the canvas unmount.
     const stage = await getProjectStage(ctx, authUser.id, projectId, stageId);
     if (!stage) return null;
 
@@ -179,13 +148,7 @@ export const getByProject = query({
   },
 });
 
-/**
- * Authoritative ownership for a stage's workspace/sandbox resources,
- * keyed by row `_id` (the canvas node's `resourceId`). The side panel reads this
- * rather than the cached `managedBy` on canvas node data, so the "managed by
- * code" lock/warning reflects the real row even if the node JSON is stale or
- * missing it.
- */
+/** Read from the rows, not the node's cached `managedBy`, which can be stale or missing. */
 export const resourceOwnership = query({
   args: {
     projectId: v.id("projects"),
@@ -226,8 +189,6 @@ export const resourceOwnership = query({
     const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
     for (const row of [...workspaces, ...sandboxes]) {
       if (row.accountId !== account._id) continue;
-      // Preserve both code-owner markers. Collapsing "api" into "dashboard"
-      // would unlock API-managed resources in the side panel.
       ownership[row._id] =
         row.managedBy === "cli" || row.managedBy === "api"
           ? row.managedBy
@@ -257,14 +218,17 @@ export const saveLayout = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       authUser.id,
       projectId,
       "admin",
     );
     if (!project) {
-      throw new Error("The canvas can only be changed by an org admin.");
+      throw new ClientError(
+        "The canvas can only be changed by an org admin.",
+        "forbidden",
+      );
     }
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId, "admin");
@@ -334,11 +298,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-/**
- * Encrypt a plaintext sandbox config object into the at-rest blob fields, or
- * `null` when the encryption secret is unavailable (then the row is stored
- * config-less rather than failing the whole canvas save).
- */
+/** Null without the encryption secret: the row is stored config-less, the save goes on. */
 async function encryptSandboxConfigFields(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
@@ -362,14 +322,6 @@ async function encryptSandboxConfigFields(
   };
 }
 
-/**
- * Points canvas workspace/sandbox nodes at real, stage-scoped core
- * resource rows. Creates a `managedBy: "dashboard"` row for new nodes and patches
- * existing dashboard-owned rows from the node's edited config, so dashboard adds
- * and edits become real (the runtime resolves these rows by `_id`). Rows owned by
- * a `broods/` project (`managedBy: "cli"`) are left untouched. Code is their
- * source of truth and the side panel shows them as locked.
- */
 async function materializeRuntimeNodes(
   ctx: MutationCtx,
   account: Doc<"accounts"> | null,
@@ -422,12 +374,6 @@ async function materializeRuntimeNodes(
   return result;
 }
 
-/**
- * Sandbox arm of `materializeRuntimeNodes`: binds the node to its
- * `sandboxConfigs` row (creating or patching a dashboard-owned one) and
- * returns the node to persist. The config blob is encrypted at rest (may
- * carry provider secrets).
- */
 async function materializeSandboxNode(
   ctx: MutationCtx,
   options: MaterializeNodeOptions,
@@ -467,6 +413,13 @@ async function materializeSandboxNode(
     const codeManaged =
       existing.managedBy === "cli" || existing.managedBy === "api";
     if (!codeManaged && changed) {
+      // Even an unchanged snapshot: the canvas copy can be older than the row.
+      await assertSnapshotInScope(
+        ctx,
+        account._id,
+        { projectId: projectId, stageId: stageId },
+        sandboxConfig.snapshot,
+      );
       await ctx.db.patch(existing._id, {
         projectId: projectId,
         stageId: stageId,
@@ -491,6 +444,12 @@ async function materializeSandboxNode(
     accountId: account._id,
     name: name,
   });
+  await assertSnapshotInScope(
+    ctx,
+    account._id,
+    { projectId: projectId, stageId: stageId },
+    sandboxConfig.snapshot,
+  );
   const createdId = await ctx.db.insert("sandboxConfigs", {
     accountId: account._id,
     projectId: projectId,
@@ -506,11 +465,6 @@ async function materializeSandboxNode(
   return sandboxLayoutNode(node, data, createdId, data.config);
 }
 
-/**
- * Workspace arm of `materializeRuntimeNodes`: binds the node to its
- * `workspaceConfigs` row (creating or patching a dashboard-owned one) and
- * returns the node to persist.
- */
 async function materializeWorkspaceNode(
   ctx: MutationCtx,
   options: MaterializeNodeOptions,
@@ -533,9 +487,7 @@ async function materializeWorkspaceNode(
       "Workspace resource belongs to a different project or stage.",
     );
   }
-  // Fall back to (stage, name) so a node named like an existing row
-  // binds to it instead of inserting a duplicate. Duplicates would later
-  // break the CLI's by-name `.unique()` lookup on deploy.
+  // Bind by (stage, name) too: a duplicate row breaks the CLI's by-name `.unique()` on deploy.
   const existing =
     byId && byId.accountId === account._id
       ? byId
@@ -546,7 +498,6 @@ async function materializeWorkspaceNode(
           )
           .first();
   if (existing && existing.accountId === account._id) {
-    // Code owns CLI/API-managed rows; dashboard edits are not written back.
     if (
       existing.managedBy !== "cli" &&
       existing.managedBy !== "api" &&
@@ -588,7 +539,6 @@ async function materializeWorkspaceNode(
   return { ...node, data: { ...data, resourceId: createdId } };
 }
 
-/** A node's trimmed resource name: `mountName`, else `label`, else empty. */
 function nodeName(data: Record<string, unknown>): string {
   const name =
     typeof data.mountName === "string"
@@ -601,13 +551,8 @@ function nodeName(data: Record<string, unknown>): string {
 }
 
 /**
- * Delete dashboard-owned workspace/sandbox rows in this stage that no
- * canvas node references anymore, making node deletion a real resource delete.
- * CLI-owned (`managedBy: "cli"`) rows are never touched. Code owns their
- * lifecycle and prune removes them via the CLI instead. A sandbox config that
- * still holds a reserved instance is kept, like the CLI prune does, so the
- * instance never names a config that is gone; once the sweeper releases it,
- * `pruneReleasedDashboardSandbox` drops the config.
+ * A config still holding a reserved instance is kept, as the CLI prune does, so the instance
+ * never names a gone config; `pruneReleasedDashboardSandbox` drops it once released.
  */
 export async function pruneOrphanedDashboardRows(
   ctx: MutationCtx,
@@ -649,10 +594,6 @@ export async function pruneOrphanedDashboardRows(
   }
 }
 
-/**
- * Called when an instance row goes: deletes the dashboard sandbox config the
- * canvas prune kept for it, once no card and no other instance holds it.
- */
 export async function pruneReleasedDashboardSandbox(
   ctx: MutationCtx,
   sandboxConfigId: Id<"sandboxConfigs">,
@@ -675,7 +616,6 @@ export async function pruneReleasedDashboardSandbox(
   if (!referenced) await ctx.db.delete(config._id);
 }
 
-/** Compare only the node fields that materialize into runtime resource rows. */
 function resourceFieldsChanged(
   next: Record<string, unknown>,
   previous: Record<string, unknown>,
@@ -705,15 +645,8 @@ function rowBelongsToStage(
 }
 
 /**
- * Canvas layouts are UI state, not a secret store. Sandbox config may include
- * provider credentials/env vars, so persist only display metadata + resource
- * id. Keep the fields the node renders, though, or the globe and the
- * `persistent` badge go dark on the first save after a deploy.
- *
- * `displayConfig` is the authoritative side: a code-managed row ignores the
- * incoming node data (the save never patches that row, so an edit there would
- * paint state the sandbox does not have) and re-derives from what was already
- * persisted.
+ * Layouts are UI state, not a secret store: only the display fields the node renders persist.
+ * A code-managed row re-derives them from what was persisted, as the save never patches it.
  */
 function sandboxLayoutNode(
   node: CanvasNode,

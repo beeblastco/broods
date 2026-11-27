@@ -1,10 +1,5 @@
-/**
- * ask_questions state shared by the tool, the answer intake and the handler.
- * The tool leaves an open async-tool row; a reply, a button click or the
- * direct API settles it; handler.ts resumes the conversation from there.
- */
-
 import type { JSONValue } from "ai";
+import type { TaskWaitingOn } from "../../../../packages/broods/src/observability-contracts.ts";
 import type {
   ChannelIdentity,
   ChannelQuestion,
@@ -13,6 +8,7 @@ import type {
 import { runtime } from "../shared/convex/runtime.ts";
 import { logWarn } from "../shared/log.ts";
 import {
+  getAsyncToolResult,
   markAsyncToolResultFailed,
   settleAsyncToolResultFromCallback,
   type AsyncToolResultRecord,
@@ -27,30 +23,25 @@ export const MIN_ANSWER_TIMEOUT_SECONDS = 30;
 export const MIN_OPTIONS = 2;
 export const NO_ANSWER_ERROR = "no_answer";
 
-/** An open prompt row with its parsed input. */
 export interface OpenQuestion {
   record: AsyncToolResultRecord;
   pending: PendingQuestionInput;
 }
 
-/** The row's `input`. `answerBy` is when the prompt stops accepting answers. */
 export interface PendingQuestionInput {
   questions: ChannelQuestion[];
   blocking: boolean;
   answerBy: string;
 }
 
-/** An open prompt as reported while a run is awaiting_input. */
 export interface PendingQuestionSummary {
   statusId: string;
   questions: ChannelQuestion[];
   answerBy: string;
 }
 
-/** Chosen labels (or free text) keyed by question id. */
 export type QuestionAnswers = Record<string, string[]>;
 
-/** The tool result injected back into the conversation. */
 export interface QuestionAnswerResult {
   status: "answered";
   answers: QuestionAnswers;
@@ -58,7 +49,19 @@ export interface QuestionAnswerResult {
   note?: string;
 }
 
-/** The label a button click stands for; undefined when the click is stale. */
+export interface RunOpenWork {
+  waitingOn?: TaskWaitingOn;
+  questions: ChannelQuestion[];
+}
+
+export interface RunOpenWorkSources {
+  conversationKey: string;
+  awaitingApproval: boolean;
+  detachedResultIds: string[];
+  questionSummaries: PendingQuestionSummary[];
+  pendingWork?: () => TaskWaitingOn | undefined;
+}
+
 export function answersFromChoice(
   pending: PendingQuestionInput,
   choice: ChannelQuestionAnswer,
@@ -70,12 +73,7 @@ export function answersFromChoice(
   return { [question.id]: [option.label] };
 }
 
-/**
- * A typed reply against the first question: an option number or label picks
- * that option, and anything else is the person's own answer. Every question
- * takes one, so a reply never slips past an open question as a new turn. A
- * reply with no text, such as a lone attachment, is not an answer.
- */
+// Any text answers the first question, so a reply never slips past it as a new turn.
 export function answersFromText(
   pending: PendingQuestionInput,
   text: string,
@@ -102,7 +100,6 @@ export function answersFromText(
   };
 }
 
-/** Numbered plain-text rendering every channel can post. */
 export function formatQuestionsText(questions: ChannelQuestion[]): string {
   return questions
     .map((question): string => {
@@ -119,24 +116,19 @@ export function formatQuestionsText(questions: ChannelQuestion[]): string {
     .join("\n\n");
 }
 
-/** Open prompts on a conversation, oldest first. Expired ones settle on the way out. */
 export async function listOpenQuestions(
   conversationKey: string,
 ): Promise<OpenQuestion[]> {
-  const rows = await runtime.query<AsyncToolResultRecord[]>(
-    "listPendingAsyncToolResults",
-    { conversationKey: conversationKey, toolName: ASK_QUESTIONS_TOOL_NAME },
-  );
+  const rows = await runtime.query("listPendingAsyncToolResults", {
+    conversationKey: conversationKey,
+    toolName: ASK_QUESTIONS_TOOL_NAME,
+  });
 
   return rows
     .map((row): OpenQuestion | undefined => openQuestion(row, conversationKey))
     .filter((open): open is OpenQuestion => open !== undefined);
 }
 
-/**
- * The row as an open prompt, or undefined when it is not one this
- * conversation may answer. A prompt past `answerBy` is settled as no_answer.
- */
 export function openQuestion(
   record: AsyncToolResultRecord | null,
   conversationKey: string,
@@ -167,7 +159,41 @@ export function openQuestion(
   return { record: record, pending: pending };
 }
 
-/** Settles an open prompt with its answer. Null when it already settled. */
+export async function openWorkAfterRun(
+  run: RunOpenWorkSources,
+): Promise<RunOpenWork> {
+  if (run.awaitingApproval) {
+    return { waitingOn: "approval", questions: [] };
+  }
+  const rows = await Promise.all(
+    run.detachedResultIds.map((resultId) =>
+      getAsyncToolResult(resultId).catch(() => null),
+    ),
+  );
+  const open = rows.filter((row) => row?.status === "processing");
+  const questions = open.flatMap(
+    (row): ChannelQuestion[] =>
+      openQuestion(row, run.conversationKey)?.pending.questions ?? [],
+  );
+  // Rows, not summaries: an answer can settle one before the run ends. An unread row counts.
+  const unread = run.questionSummaries
+    .filter(
+      (summary) =>
+        rows[run.detachedResultIds.indexOf(summary.statusId)] === null,
+    )
+    .flatMap((summary) => summary.questions);
+  if (questions.length > 0 || unread.length > 0) {
+    return { waitingOn: "question", questions: [...questions, ...unread] };
+  }
+  const pending = run.pendingWork?.();
+  if (pending) return { waitingOn: pending, questions: [] };
+
+  return {
+    ...(open.length > 0 ? { waitingOn: "tool" } : {}),
+    questions: [],
+  };
+}
+
 export function settleQuestion(
   record: AsyncToolResultRecord,
   result: QuestionAnswerResult,

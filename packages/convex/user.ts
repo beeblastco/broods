@@ -1,16 +1,18 @@
-/**
- * Public user queries, mutations and the signup sync action for authentication-gated user management.
- */
-
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { components, internal } from "./_generated/api";
-import { action, mutation, query } from "./_generated/server";
+import { action, internalMutation, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { hexFromBytes } from "./model/accountSecrets";
+import { ClientError } from "./model/clientError";
+import { sharedOwnedOrgs } from "./model/ownership/org";
 import { SELF_HOST_ADMIN, SELF_HOST_ISSUER } from "./model/selfHostAuth";
+import { ticketKey } from "./model/stageSessionTicket";
 import { usersFields } from "./schema";
 
+// Keeps the user id key apart from the session ids core tags with the same secret.
+const ANALYTICS_ID_KEY_CONTEXT = "broods-analytics-user:";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const userDoc = v.object({
@@ -19,27 +21,16 @@ const userDoc = v.object({
   _creationTime: v.number(),
 });
 
-/**
- * Creates the caller's user rows when a valid session has none. Signup relies
- * on the WorkOS `user.created` webhook to populate both the AuthKit component's
- * `users` table and ours; while that delivery is late or misrouted, a freshly
- * signed-up user holds a valid JWT but every dashboard read returns null.
- * Fetches the user from WorkOS server-side and replays it through the same
- * `user.created` path the webhook uses, so both rows land in one transaction.
- * Idempotent: the component dedups the synthetic event id across concurrent
- * calls, and skips `user.created` for an id it already has, so a later real
- * webhook delivery is a no-op.
- */
+// Replays a late WorkOS `user.created` webhook so a fresh signup's reads stop returning null.
+// Idempotent: the component dedups the `sync:` id and skips users it already has.
 export const ensureSynced = action({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
-    // Check authenticated user
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("User not found or not authenticated");
     }
-    // The webhook already landed.
     if (await authKit.getAuthUser(ctx)) {
       return null;
     }
@@ -49,9 +40,6 @@ export const ensureSynced = action({
         ? selfHostAdminUser()
         : await authKit.workos.userManagement.getUser(identity.subject);
     await ctx.runMutation(components.workOSAuthKit.lib.onWebhookEvent, {
-      // The component only reads the key for non-create events; the
-      // validator still wants a string.
-      apiKey: process.env.WORKOS_API_KEY ?? "",
       event: {
         id: `sync:${workosUser.id}`,
         createdAt: new Date().toISOString(),
@@ -62,6 +50,24 @@ export const ensureSynced = action({
     });
 
     return null;
+  },
+});
+
+// An HMAC, so PostHog counts one person once across devices but never learns who.
+export const analyticsId = query({
+  args: {},
+  returns: v.union(v.null(), v.string()),
+  handler: async (ctx): Promise<string | null> => {
+    const user = await authKit.getAuthUser(ctx);
+    const secret = process.env.ANALYTICS_ID_SECRET;
+    if (!user || !secret) return null;
+    const mac = await crypto.subtle.sign(
+      "HMAC",
+      await ticketKey(ANALYTICS_ID_KEY_CONTEXT, secret),
+      new TextEncoder().encode(user.id),
+    );
+
+    return hexFromBytes(new Uint8Array(mac));
   },
 });
 
@@ -124,17 +130,12 @@ export const updateProfile = mutation({
   },
 });
 
-/**
- * Refreshes the caller's avatarUrl from the WorkOS client session, for webhook
- * payloads that lacked the picture. Names come only from the WorkOS webhooks.
- */
 export const syncProfile = mutation({
   args: {
     avatarUrl: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) {
       return null;
@@ -170,6 +171,14 @@ export const requestAccountDeletion = mutation({
       throw new Error("User record not found. Please sign in again.");
     }
 
+    const shared = await sharedOwnedOrgs(ctx, user);
+    if (shared.length > 0) {
+      throw new ClientError(
+        `These organizations you own have other members: ${shared.map((org) => org.name).join(", ")}. Remove the other members or delete the organization first.`,
+        "conflict",
+      );
+    }
+
     const scheduledFor = Date.now() + SEVEN_DAYS_MS;
     await ctx.db.patch(user._id, { deletionScheduledFor: scheduledFor });
 
@@ -177,7 +186,30 @@ export const requestAccountDeletion = mutation({
   },
 });
 
-// The self-hosted admin, shaped like the WorkOS user `user.created` carries.
+// Support's restore path, open until the hourly sweep claims the request.
+export const cancelAccountDeletion = internalMutation({
+  args: { authId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first();
+    if (!user) {
+      throw new Error(`No user with authId ${args.authId}`);
+    }
+    if (user.workosDeletionRequestedAt) {
+      throw new Error(
+        "Deletion already started; the account cannot be restored",
+      );
+    }
+
+    await ctx.db.patch(user._id, { deletionScheduledFor: undefined });
+
+    return null;
+  },
+});
+
 function selfHostAdminUser(): Awaited<
   ReturnType<typeof authKit.workos.userManagement.getUser>
 > {

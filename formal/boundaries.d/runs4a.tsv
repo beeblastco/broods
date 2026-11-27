@@ -1,0 +1,18 @@
+kind	name	reason
+external	^applyRunSchema\.safeParse$	zod validates the body against the schema; the twin only follows success and data.
+external	^optionalEnv$	Reads one named environment variable; the twin checks only presence and parses it.
+external	^getHarnessPublicUrl$	Returns the configured public URL; the twin only checks it is set and passes it on.
+external	^Date\.now$	The clock is an input; the twin only subtracts its readings.
+external	^acceptIngress$	Convex admission is an external store; the twin passes on its verdict.
+external	^new (Session|SubagentCoordinator|ReadableStream)$	Constructors whose instance is only handed to later effects.
+external	^controller\.(close|enqueue)$	The web stream sink; the twin checks the exact bytes written.
+external	^event\.channel\.sendText$	The channel adapter; the twin checks the text sent.
+external	^recordFailedTurn$	Telemetry for a failed turn; its result is not used.
+external	^session ?\.(assertCurrentOwner|createTurnContext)$	Session instance methods over stored state; the twin follows the outcome only.
+opaque	SubagentCoordinator	Instance is only passed from its constructor to the continuation loop.
+opaque	Session	Instance is only passed along; the twin reads scalar fields.
+opaque	ReadableStream	Result of the stream constructor, passed along.
+opaque	ReadableStreamDefaultController	The controller handed to start, only written to.
+external	^\$enter:(arg0|arg2|compact|start|onFinalText|onErrorText|onApprovalRequired|onQuestionsPending)$	Callback entries carry only the arguments the caller supplied; the twin checks every effect made inside them.
+opaque	SpanImpl	An OpenTelemetry span held in the run's inputs; the twin does not read it.
+opaque	Tracer	An OpenTelemetry tracer held in the tracker's inputs; the twin does not read it.

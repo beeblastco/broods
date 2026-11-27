@@ -10,6 +10,14 @@ export default [
     plugins: [dts({ tsconfig: "./tsconfig.dts.json" })],
   },
   {
+    input: "src/mcp-tools.ts",
+    output: {
+      file: "dist/mcp-tools.d.ts",
+      format: "es",
+    },
+    plugins: [dts({ tsconfig: "./tsconfig.dts.json" })],
+  },
+  {
     input: "src/account.ts",
     output: {
       file: "dist/account.d.ts",

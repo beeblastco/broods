@@ -1,13 +1,8 @@
-/**
- * Sandbox config validation tests, ported from core's former
- * sandbox-config.test.ts when the normalizers moved here. Cover provider
- * limits, unsafe option rejection, and public secret redaction.
- */
-
 import { describe, expect, it } from "vitest";
 import type { Doc } from "../_generated/dataModel";
 import { toPublicSandboxConfigResponse } from "../model/responses";
 import {
+  browserSandboxRefusal,
   normalizeCreateSandboxConfigInput,
   normalizeSandboxConfig,
   normalizeUpdateSandboxConfigInput,
@@ -389,6 +384,121 @@ describe("sandbox config defaults & validation", () => {
     ).toThrow("must be at most 21600 on the cloudflare provider");
   });
 
+  it("takes mountAwsS3Buckets as a boolean, on the providers that read it", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: true },
+      }).options,
+    ).toEqual({ mountAwsS3Buckets: true });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { mountAwsS3Buckets: "true" },
+      }),
+    ).toThrow("config.options.mountAwsS3Buckets must be a boolean");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("not vercel; lambda and vercel mount any attached workspace");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "e2b",
+        network: { mode: "allow-all" },
+        options: { mountAwsS3Buckets: true },
+      }),
+    ).toThrow("only read by the daytona and sandbox providers, not e2b");
+  });
+
+  it("caps a vercel idle window at Vercel's 24 hour session limit", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 },
+      }).lifecycle,
+    ).toEqual({ idleTimeoutSeconds: 86400 });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 24 * 60 * 60 + 1 },
+      }),
+    ).toThrow("must be at most 86400 on the vercel provider");
+  });
+
+  it("takes a Secure Compute networkId on vercel only", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { networkId: "net_1" },
+      }).options,
+    ).toEqual({ networkId: "net_1" });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "daytona",
+        options: { networkId: "net_1" },
+      }),
+    ).toThrow(
+      "config.options.networkId is only supported by the vercel provider",
+    );
+    expect(() =>
+      normalizeSandboxConfig({ provider: "vercel", options: { networkId: 7 } }),
+    ).toThrow("config.options.networkId must be a non-empty string");
+  });
+
+  it("isolate takes on/off networking, no hooks, no lifecycle and a 60 s timeout", () => {
+    expect(
+      normalizeSandboxConfig({ provider: "worker", persistent: true }),
+    ).toMatchObject({ provider: "worker", network: { mode: "deny-all" } });
+    expect(
+      normalizeSandboxConfig({
+        provider: "worker",
+        network: { mode: "allow-all" },
+        timeout: 60,
+        persistent: true,
+      }),
+    ).toMatchObject({ timeout: 60, network: { mode: "allow-all" } });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        persistent: true,
+        lifecycle: { idleTimeoutSeconds: 3600 },
+      }),
+    ).toThrow("config.lifecycle is not supported by the worker provider");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        network: { mode: "restricted", allowDomains: ["pypi.org"] },
+      }),
+    ).toThrow("deny-all or allow-all");
+    // Like lambda, one fixed size: a `size` is kept and ignored.
+    expect(
+      normalizeSandboxConfig({ provider: "worker", size: "large" }).size,
+    ).toBe("large");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "worker", snapshot: "img" }),
+    ).toThrow("config.snapshot does not apply to the worker provider");
+    expect(() =>
+      normalizeSandboxConfig({ provider: "worker", timeout: 61 }),
+    ).toThrow("config.timeout");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        options: { baseURL: "https://isolate.example.com" },
+      }),
+    ).toThrow("config.options.baseURL is not supported");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "worker",
+        persistent: true,
+        onCreate: ["npm install"],
+      }),
+    ).toThrow("config.onCreate is not supported by the worker provider");
+  });
+
   it("machine sandbox takes only allow-all network, envVars and options.cwd", () => {
     expect(
       normalizeSandboxConfig({
@@ -476,13 +586,6 @@ describe("sandbox config provider-aware limits", () => {
 });
 
 describe("sandbox config persistent / lifecycle", () => {
-  it("accepts persistent on the lambda (MicroVM) provider", () => {
-    expect(
-      normalizeSandboxConfig({ provider: "lambda", persistent: true })
-        .persistent,
-    ).toBe(true);
-  });
-
   it("accepts persistent on sandbox/daytona/e2b/vercel", () => {
     expect(
       normalizeSandboxConfig({ provider: "sandbox", persistent: true })
@@ -796,5 +899,25 @@ describe("sandbox config host boundary", () => {
         network: { mode: "restricted", allowDomains: ["api.example.com"] },
       }).network,
     ).toEqual({ mode: "restricted", allowDomains: ["api.example.com"] });
+  });
+});
+
+describe("browser sandbox", () => {
+  it("accepts only a first sandbox that can run Obscura", () => {
+    const obscura = {
+      provider: "lambda",
+      image: "obscura",
+      network: { mode: "allow-all" },
+    };
+
+    expect(browserSandboxRefusal(obscura)).toBeNull();
+    expect(browserSandboxRefusal({ provider: "machine" })).toBeNull();
+    expect(browserSandboxRefusal({ ...obscura, image: undefined })).toContain(
+      'image: "obscura"',
+    );
+    expect(
+      browserSandboxRefusal({ ...obscura, network: { mode: "deny-all" } }),
+    ).toContain("network.mode to allow-all");
+    expect(browserSandboxRefusal(undefined)).toContain('image: "obscura"');
   });
 });

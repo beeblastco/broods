@@ -1,7 +1,3 @@
-/**
- * Agent policy CRUD for dashboard, CLI sync, and core runtime reads.
- */
-
 import { v } from "convex/values";
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -10,34 +6,33 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
 } from "../_generated/server";
-import { authKit } from "../auth";
-import { accountIdForProject } from "../model/auditEvents";
+import { authKit, type AuthUser } from "../auth";
+import {
+  accountIdForProject,
+  appendAuditEvent,
+  dashboardAuditActor,
+} from "../model/auditEvents";
 import { getOwnedStage } from "../model/ownership/stage";
-import { getProjectForRole } from "../model/ownership/project";
-import { isPlainObject, stableJson } from "../model/objects";
+import {
+  getProjectForRole,
+  getProjectForWrite,
+} from "../model/ownership/project";
+import { configObject, parseOr } from "../model/storedJson";
+import { stableJson } from "../model/objects";
 import { roleHoldingPolicy } from "../model/access";
 import { assertPolicyUnreferenced } from "../model/policyReferences";
 import { normalizePolicyDocument } from "../model/policyRules";
-import { agentPoliciesFields, paginationCursorFields } from "../schema";
+import { policyDoc } from "../runtimeLookups";
+import { paginationCursorFields } from "../schema";
 import { ClientError } from "../model/clientError";
-
-const policyDoc = v.object({
-  ...agentPoliciesFields,
-  _id: v.id("agentPolicies"),
-  _creationTime: v.number(),
-});
 
 const policyStatusValidator = v.union(
   v.literal("active"),
   v.literal("deleted"),
 );
 
-/**
- * Creates a dashboard-owned policy in one stage.
- * @param args policy fields
- * @returns created policy id
- */
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -48,13 +43,12 @@ export const create = mutation({
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getProjectForRole(
+    const project = await getProjectForWrite(
       ctx,
       user.id,
       args.projectId,
@@ -64,14 +58,11 @@ export const create = mutation({
     const stage = await getOwnedStage(ctx, user.id, args.stageId);
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
-    // The project's org owns the policy, not whichever org the caller has
-    // switched to in another tab.
+    // The project's org owns the policy, not the org the caller switched to in another tab.
     const accountId = await accountIdForProject(ctx, args.projectId);
     if (!accountId) throw new Error("Broods account not provisioned.");
 
-    // CLI sync adopts policies by exact (stageId, name), so a
-    // duplicate dashboard name could be claimed non-deterministically by an
-    // unrelated manifest entry on the next `broods deploy`.
+    // CLI sync adopts policies by (stageId, name), so a duplicate would be claimed at random.
     const duplicate = await ctx.db
       .query("agentPolicies")
       .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -88,12 +79,14 @@ export const create = mutation({
 
     const document = normalizePolicyDocument(args.document);
     const now = Date.now();
-
-    return await ctx.db.insert("agentPolicies", {
+    const policy = {
       accountId: accountId,
       projectId: args.projectId,
       stageId: args.stageId,
       name: args.name.trim(),
+    };
+    const policyId = await ctx.db.insert("agentPolicies", {
+      ...policy,
       description: args.description?.trim() || undefined,
       document: document,
       status: "active",
@@ -101,23 +94,18 @@ export const create = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    await recordPolicyAudit(ctx, user, "created", { ...policy, _id: policyId });
+
+    return policyId;
   },
 });
 
-/**
- * Internal create path used by account-manage in Convex storage mode.
- * @param args policy fields
- * @returns created policy id
- */
 export const createInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
     name: v.string(),
     description: v.optional(v.string()),
     document: v.any(),
-    projectId: v.optional(v.id("projects")),
-    stageId: v.optional(v.id("stages")),
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
@@ -128,47 +116,16 @@ export const createInternal = internalMutation({
 
     return await ctx.db.insert("agentPolicies", {
       accountId: args.accountId,
-      projectId: args.projectId,
-      stageId: args.stageId,
       name: args.name,
       description: args.description,
       document: document,
       status: "active",
-      managedBy: args.managedBy,
       createdAt: now,
       updatedAt: now,
     });
   },
 });
 
-/**
- * Internal lookup by account and runtime policy id.
- * @param accountId owning account
- * @param policyId policy id
- * @returns active policy or null
- */
-export const getById = internalQuery({
-  args: { accountId: v.id("accounts"), policyId: v.string() },
-  returns: v.union(policyDoc, v.null()),
-  handler: async (ctx, args): Promise<Doc<"agentPolicies"> | null> => {
-    const normalized = ctx.db.normalizeId("agentPolicies", args.policyId);
-    if (!normalized) return null;
-    const policy = await ctx.db.get(normalized);
-    if (
-      !policy ||
-      policy.accountId !== args.accountId ||
-      policy.status !== "active"
-    )
-      return null;
-
-    return policy;
-  },
-});
-
-/**
- * @param accountId owning account
- * @returns active policies
- */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(policyDoc),
@@ -201,16 +158,10 @@ export const listPage = internalQuery({
   },
 });
 
-/**
- * @param projectId project containing the policies
- * @param stageId stage containing the policies
- * @returns active policy documents
- */
 export const listForStage = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(policyDoc),
   handler: async (ctx, args): Promise<Doc<"agentPolicies">[]> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -222,8 +173,7 @@ export const listForStage = query({
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
 
-    // Status leads the range: deletes are soft, so the name-only index range
-    // accumulates tombstones this reactive query would re-read forever.
+    // Status leads the range: soft deletes leave tombstones this query would re-read forever.
     return await ctx.db
       .query("agentPolicies")
       .withIndex("by_stageId_and_status_and_name", (q) =>
@@ -233,16 +183,10 @@ export const listForStage = query({
   },
 });
 
-/**
- * Soft-deletes a dashboard-owned policy.
- * @param policyId policy to delete
- * @returns deleted policy id
- */
 export const remove = mutation({
   args: { policyId: v.id("agentPolicies") },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -260,12 +204,12 @@ export const remove = mutation({
       deletedAt: Date.now(),
       updatedAt: Date.now(),
     });
+    await recordPolicyAudit(ctx, user, "deleted", policy);
 
     return args.policyId;
   },
 });
 
-/** Soft-deletes an internal account policy. */
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), policyId: v.string() },
   returns: v.null(),
@@ -288,11 +232,6 @@ export const removeInternal = internalMutation({
   },
 });
 
-/**
- * Updates a dashboard-owned policy.
- * @param args policy patch
- * @returns updated policy id
- */
 export const update = mutation({
   args: {
     policyId: v.id("agentPolicies"),
@@ -302,7 +241,6 @@ export const update = mutation({
   },
   returns: v.id("agentPolicies"),
   handler: async (ctx, args): Promise<Id<"agentPolicies">> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -321,16 +259,15 @@ export const update = mutation({
       ...(document !== undefined ? { document: document } : {}),
       updatedAt: Date.now(),
     });
+    await recordPolicyAudit(ctx, user, "updated", {
+      ...policy,
+      name: args.name?.trim() ?? policy.name,
+    });
 
     return policy._id;
   },
 });
 
-/**
- * Internal update path used by account-manage in Convex storage mode.
- * @param args policy patch
- * @returns null
- */
 export const updateInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -383,18 +320,10 @@ export const updateInternal = internalMutation({
   },
 });
 
-/**
- * Counts how many agent configs in a stage reference each policy.
- * Policy assignments live in `extraConfig.policies` on `agentConfigs`.
- * @param projectId project containing the agents
- * @param stageId stage containing the agents
- * @returns record mapping policy id to the number of agents referencing it
- */
 export const usageCounts = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.record(v.string(), v.number()),
   handler: async (ctx, args): Promise<Record<string, number>> => {
-    // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
@@ -415,7 +344,7 @@ export const usageCounts = query({
 
     const counts: Record<string, number> = {};
     for (const agent of agents) {
-      const extra = isPlainObject(agent.extraConfig) ? agent.extraConfig : {};
+      const extra = parseOr(configObject, agent.extraConfig, {});
       const policyIds = Array.isArray(extra.policies) ? extra.policies : [];
       for (const policyId of policyIds) {
         if (typeof policyId === "string") {
@@ -427,6 +356,27 @@ export const usageCounts = query({
     return counts;
   },
 });
+
+// Names the policy only: its document can name tools and MCP ids the ledger should not hold.
+async function recordPolicyAudit(
+  ctx: MutationCtx,
+  user: AuthUser,
+  action: "created" | "deleted" | "updated",
+  policy: Pick<
+    Doc<"agentPolicies">,
+    "_id" | "accountId" | "name" | "projectId" | "stageId"
+  >,
+): Promise<void> {
+  await appendAuditEvent(ctx.db, {
+    accountId: policy.accountId,
+    projectId: policy.projectId,
+    stageId: policy.stageId,
+    actor: dashboardAuditActor(user),
+    action: action,
+    resource: { kind: "policy", id: policy._id, name: policy.name },
+    summary: `Policy ${action}`,
+  });
+}
 
 async function requireEditablePolicy(
   ctx: Parameters<typeof getProjectForRole>[0],
@@ -442,7 +392,7 @@ async function requireEditablePolicy(
   ) {
     throw new Error("Policy not found.");
   }
-  const project = await getProjectForRole(
+  const project = await getProjectForWrite(
     ctx,
     authId,
     policy.projectId,

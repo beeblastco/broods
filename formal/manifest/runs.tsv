@@ -1,0 +1,24 @@
+path	class	status	lean	replay	note
+apps/core/src/harness/apply-runs.ts	decision	open			Reclassified: authentication, sandbox choice, script chunking and output parsing are decision/protocol logic; not a thin adapter. Unmodelled.
+apps/core/src/harness/async-agent-result.ts	adapter	contract	Spec.Runs.asyncWrite		Convex owns row persistence and handback; wrappers forward typed arguments and log handback errors; D8 contract Spec.Runs.asyncWrite under A2/A3.
+apps/core/src/harness/async-tool-result.ts	protocol	open		formal/replay/runs.test.ts	Directed TS identity checks; callback guards/redaction/token verification and full Lean protocol remain.
+apps/core/src/harness/async-tools.ts	decision	open			Unmodelled: result wire formatting, pagination and sweep admission/handback decisions.
+apps/core/src/harness/connections.ts	decision	open			Reclassified: refresh/cache/CAS/retry state machine is decision logic; unmodelled.
+apps/core/src/harness/continuation.ts	decision	open	Spec.Runs.Model	formal/replay/runs.test.ts	Partial: turnStatus only; runnable-input tests are directed TS checks; pass/yield/drain/wait/deadline state machine remains.
+apps/core/src/harness/handler.ts	decision	open	Spec.Runs.Model		Partial: pollStatus only. Request routing, admission/continuation, channel commands, cron and stream ownership decisions remain unmodelled.
+apps/core/src/harness/ingress-recovery.ts	decision	open	Spec.Runs.Model		Partial: recovery promotion only; pagination/cursors, sweep bounds, dispatch failure and async sweeps remain.
+apps/core/src/harness/ingress.ts	decision	open	Spec.Runs.Model		Partial: atomic service contract and outcome ordering only; config resolution, command normalization, scope validation, payload hashing and live owner tracking remain.
+apps/core/src/harness/nats-publisher.ts	protocol	open			Unmodelled: sequence, structural-field redaction and payload truncation protocol.
+apps/core/src/harness/questions.ts	decision	open		formal/replay/runs.test.ts	Directed TS tests for answers; no Lean question parsing/openWork/expiry model yet.
+apps/core/src/harness/responses.ts	protocol	open			Unmodelled: admission response codes, duplicate runId, SSE encoding and final stream chunks.
+apps/core/src/harness/run-finalizer.ts	decision	open			Unmodelled: once-only promise, error propagation and cleanup ordering, observability status and usage persistence.
+apps/core/src/harness/run-spans.ts	decision	open			Reclassified: span matching, orphan settlement and waiting status are decision logic; unmodelled.
+apps/core/src/shared/convex/account-keys.ts	decision	open			Reclassified: TTL cache and stale-key reload are decision logic; unmodelled.
+apps/core/src/shared/convex/audit-ledger.ts	adapter	contract			Trusted Convex append contract; failures are logged and not propagated; no durability claim.
+apps/core/src/shared/convex/budgets.ts	decision	open			Reclassified: bounded retry with stable writeId is decision logic; unmodelled.
+apps/core/src/shared/convex/client.ts	adapter	contract			Trusted Convex authenticated query/mutation transport under A2/A3; cache and wire casts excluded; exceptions propagate.
+apps/core/src/shared/convex/runtime.ts	adapter	contract			Typed query/mutation routing adapter; mutation calls skip client FIFO; only awaited ordering, atomicity from A2.
+apps/core/src/shared/convex/storage.ts	adapter	contract			Storage service contract under A2/A3; scoped persistence and encryption delegated; no proof of those services.
+apps/core/src/shared/convex/usage.ts	adapter	contract			Trusted Convex usage recording contract; failures logged without propagation; no delivery guarantee.
+apps/core/src/shared/nats.ts	protocol	open			Reclassified: consumer selection, subject encoding, stream configuration and replay are protocol/decision logic; unmodelled.
+apps/core/src/shared/storage.ts	glue	excluded			Storage interfaces and cached dependency wiring; external store guarantees are not proved here.

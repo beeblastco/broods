@@ -1,13 +1,17 @@
 /// <reference types="vite/client" />
-/** Agent sandboxes travel by name in a manifest and by id at rest. */
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { CanvasEdge, CanvasNode } from "../canvas";
+import type { CanvasEdge, CanvasNode } from "../model/canvasShapes";
 import { accountCipher } from "../model/accountKeys";
-import { rewriteIdsToNames, rewriteResourceRefs } from "../model/cliSync";
+import {
+  assertBrowserSandboxes,
+  type CliResource,
+  rewriteIdsToNames,
+  rewriteResourceRefs,
+} from "../model/cliSync";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -22,7 +26,6 @@ const SECRET_HASH = "hash-sandbox-refs";
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
@@ -173,5 +176,57 @@ describe("cli sync sandbox refs", () => {
     });
 
     expect(stored).toEqual({ provider: "lambda", size: "xsmall" });
+  });
+});
+
+describe("cli sync browser sandbox", () => {
+  function manifest(
+    sandboxes: string[] | undefined,
+    web: Record<string, unknown>,
+  ): CliResource[] {
+    return [
+      { kind: "sandbox", name: "web", config: web },
+      {
+        kind: "agent",
+        name: "support",
+        config: { browser: { enabled: true }, sandboxes: sandboxes },
+      },
+    ];
+  }
+
+  test.each([
+    {
+      case: "a sandbox provider",
+      sandboxes: ["web"],
+      web: { provider: "sandbox" },
+      error: 'first sandbox on provider lambda with image: "obscura"',
+    },
+    {
+      case: "no sandbox",
+      sandboxes: undefined,
+      web: { image: "obscura" },
+      error: "first sandbox on provider lambda",
+    },
+    {
+      case: "Obscura without egress",
+      sandboxes: ["web"],
+      web: { image: "obscura" },
+      error: "first sandbox to set network.mode to allow-all",
+    },
+  ])("refuses a browser agent on $case", ({ sandboxes, web, error }) => {
+    expect(() => assertBrowserSandboxes(manifest(sandboxes, web))).toThrow(
+      `Agent "support": config.browser needs the agent's ${error}`,
+    );
+  });
+
+  test("accepts Obscura on the default provider, and a stage's own sandbox", () => {
+    const obscura = { image: "obscura", network: { mode: "allow-all" } };
+
+    expect(() =>
+      assertBrowserSandboxes(manifest(["web"], obscura)),
+    ).not.toThrow();
+    expect(() =>
+      assertBrowserSandboxes(manifest(["stage-browser"], {})),
+    ).not.toThrow();
   });
 });

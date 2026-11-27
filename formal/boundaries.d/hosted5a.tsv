@@ -1,0 +1,28 @@
+kind	name	reason
+opaque	StreamableHTTPClientTransport	The MCP SDK transport handle is only passed to the checked client.connect.
+opaque	Client	The MCP SDK client handle is only returned or passed along; each method on it is a checked effect.
+external	^new StreamableHTTPClientTransport$	The SDK constructor receives the checked URL and fetch; the twin only passes the handle on.
+external	^new Client$	The SDK constructor receives the checked client info and pinned protocol version.
+external	^client\.connect$	The SDK performs the handshake; the twin branches only on whether it threw.
+external	^client\.getDiscoverResult$	The SDK reports what the server's discover answered; the twin caches it as given.
+external	^client\.close$	The SDK closes the transport and the code ignores its failure.
+external	^client\.listTools$	The MCP server's listing is the outside answer.
+external	^operation$	The caller's callback; the twin checks it gets the connected client and returns its answer.
+external	^isSpecType\.(Tool|ListToolsResult)$	The MCP SDK's own schema guards over a remote answer; the twin acts on the boolean.
+external	^testOverrides\.listTools$	A test-installed stub read from module state; the twin checks the connection it receives.
+external	^\$enter:arg[01]$	Callbacks the instrumented sort and withClient enter; any effect they perform is checked.
+external	^AbortSignal\.timeout$	The platform builds the signal from the checked constant and the twin only passes it on.
+external	^getStorage\(\)\.mcp\.getById$	The storage row is the outside answer, read by the checked account and server id.
+external	^storage\.sandboxConfigs\.list$	The storage rows are the outside answer, read by the checked account.
+external	^storage\.agents\.listForStage$	The storage rows are the outside answer, read by the checked account and stage.
+internal	apps/core/src/harness/mcp/client.ts#pruneCache	Only evicts from a module Map and returns undefined, so no comparable twin exists.
+internal	apps/core/src/harness/mcp/hosted.ts#hostedMcpFetch	Returns a closure the recorder cannot look into; connectClient only hands it to the transport.
+opaque	ZodObject	The schema handle is only passed to the checked server.setRequestHandler.
+opaque	ZodUnion	The schema handle is only passed to the checked server.setRequestHandler.
+opaque	Server	The MCP SDK server handle is only returned; each registration on it is a checked effect.
+external	^new Server$	The SDK constructor receives the checked server info and capabilities.
+external	^server\.setRequestHandler$	The SDK stores the checked method name, schemas and handler.
+external	^createMcpHandler$	The SDK builds the handler from the checked options; the twin passes its answer on.
+external	^mcp\.fetch$	The SDK serves the checked request; its response is the outside answer.
+external	^\$enter:arg0$	The SDK enters the server factory; the twin checks the effect it performs.
+opaque	InMemoryServerEventBus	The SDK event bus inside the handler is only carried along in a recorded value and never read.

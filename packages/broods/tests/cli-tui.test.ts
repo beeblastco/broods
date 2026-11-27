@@ -6,8 +6,10 @@ import {
   type UIMessage,
 } from "ai";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { EventEmitter } from "node:events";
 import {
   RemoteAgentTransport,
+  stopTurnOnEscape,
   streamAgentText,
   submitPrompt,
 } from "../src/cli/tui.ts";
@@ -22,7 +24,6 @@ const AGENT: AgentReference = {
 
 type RunBody = { conversationKey: string; events: ModelMessage[] };
 
-/** Collect the streamed assistant message the TUI would assemble for a turn. */
 async function readTurn(
   transport: RemoteAgentTransport,
   messages: UIMessage[],
@@ -44,7 +45,7 @@ async function readTurn(
 
 function sse(...parts: unknown[]): Response {
   return new Response(
-    `${parts.map((part) => `data: ${JSON.stringify(part)}`).join("\n\n")}\n\n`,
+    `${parts.map((part): string => `data: ${JSON.stringify(part)}`).join("\n\n")}\n\n`,
   );
 }
 
@@ -55,7 +56,7 @@ function testTransport(responses: Response[]): {
   const bodies: RunBody[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
       );
@@ -75,7 +76,7 @@ function userMessage(id: string, text: string): UIMessage {
   };
 }
 
-test("transport streams a user turn and converts core parts to UI chunks", async () => {
+test("transport streams a user turn and converts core parts to UI chunks", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       { type: "text-start", id: "0" },
@@ -97,7 +98,7 @@ test("transport streams a user turn and converts core parts to UI chunks", async
   });
 });
 
-test("transport forwards only the approval response on an approval round-trip", async () => {
+test("transport forwards only the approval response on an approval round-trip", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       {
@@ -134,7 +135,8 @@ test("transport forwards only the approval response on an approval round-trip", 
   const messages: UIMessage[] = [userMessage("m1", "list files")];
   const assistant = await readTurn(transport, messages);
   const pending = assistant?.parts.find(
-    (part) => isToolUIPart(part) && part.state === "approval-requested",
+    (part): boolean =>
+      isToolUIPart(part) && part.state === "approval-requested",
   );
   expect(pending).toBeDefined();
 
@@ -161,11 +163,10 @@ test("transport forwards only the approval response on an approval round-trip", 
       ],
     },
   ]);
-  // Core owns the conversation, so every turn resumes the same one.
   expect(bodies[1]?.conversationKey).toBe(bodies[0]?.conversationKey as string);
 });
 
-test("transport re-sends only the newest approval when one turn asks twice", async () => {
+test("transport re-sends only the newest approval when one turn asks twice", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse({ type: "finish", finishReason: "stop" }),
     sse({ type: "finish", finishReason: "stop" }),
@@ -187,7 +188,6 @@ test("transport re-sends only the newest approval when one turn asks twice", asy
   const messages: UIMessage[] = [userMessage("m1", "list files"), assistant];
 
   await readTurn(transport, messages);
-  // Core approves the first call, then stops on a second one in the same turn.
   assistant.parts.push({
     type: "tool-bash",
     toolCallId: "call_2",
@@ -213,7 +213,7 @@ test("transport re-sends only the newest approval when one turn asks twice", asy
   ]);
 });
 
-test("transport sends each new user turn once", async () => {
+test("transport sends each new user turn once", async (): Promise<void> => {
   const { transport, bodies } = testTransport([
     sse(
       { type: "text-start", id: "0" },
@@ -234,10 +234,10 @@ test("transport sends each new user turn once", async () => {
   ]);
 });
 
-test("redirected output streams plain text without terminal escapes", async () => {
+test("redirected output streams plain text without terminal escapes", async (): Promise<void> => {
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       sse(
         { type: "reasoning-start", id: "r0" },
         { type: "reasoning-delta", id: "r0", text: "thinking hard" },
@@ -269,13 +269,14 @@ test("redirected output streams plain text without terminal escapes", async () =
   expect(written.join("")).toBe("Paris is the capital.\n");
 });
 
-test("a CLI prompt is typed into the terminal UI once it listens", async () => {
+test("a CLI prompt is typed into the terminal UI once it listens", async (): Promise<void> => {
   const chunks: string[] = [];
   const submitted = submitPrompt("hello there");
 
   // The terminal UI attaches its listener a tick after the run starts.
-  await new Promise((resolve) => setTimeout(resolve, 30));
-  const listener = (chunk: Buffer) => chunks.push(chunk.toString("utf8"));
+  await new Promise((resolve): NodeJS.Timeout => setTimeout(resolve, 30));
+  const listener = (chunk: Buffer): number =>
+    chunks.push(chunk.toString("utf8"));
   process.stdin.on("data", listener);
 
   await submitted;
@@ -284,11 +285,11 @@ test("a CLI prompt is typed into the terminal UI once it listens", async () => {
   expect(chunks).toEqual(["hello there", "\r"]);
 });
 
-test("a failed run is re-sent, not silently dropped from the conversation", async () => {
+test("a failed run is re-sent, not silently dropped from the conversation", async (): Promise<void> => {
   const bodies: RunBody[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async (_input, init) => {
+    fetch: async (_input, init): Promise<Response> => {
       bodies.push(
         JSON.parse(typeof init?.body === "string" ? init.body : "") as RunBody,
       );
@@ -304,22 +305,20 @@ test("a failed run is re-sent, not silently dropped from the conversation", asyn
   await readTurn(transport, messages);
   await readTurn(transport, messages);
 
-  // Core never saw the first attempt, so the same turn has to go out again.
   expect(bodies).toHaveLength(2);
   expect(bodies[1]?.events).toEqual([
     { role: "user", content: [{ type: "text", text: "hello" }] },
   ]);
 });
 
-test("aborting stops a turn that is waiting on the model", async () => {
+test("aborting stops a turn that is waiting on the model", async (): Promise<void> => {
   const controller = new AbortController();
   const client = new BroodsClient({
     apiKey: "test-key",
-    // A run that streams one part and then never produces another.
-    fetch: async () =>
+    fetch: async (): Promise<Response> =>
       new Response(
         new ReadableStream({
-          start: function (sse) {
+          start: function (sse): void {
             sse.enqueue(
               new TextEncoder().encode(
                 `data: ${JSON.stringify({ type: "text-start", id: "0" })}\n\n`,
@@ -342,6 +341,266 @@ test("aborting stops a turn that is waiting on the model", async () => {
   const pending = reader.read();
   controller.abort();
 
-  // Without racing the signal this would hang until the server sent more.
   expect((await pending).done).toBe(true);
+});
+
+/** An SSE body that sends `parts` and then stays open, like a long reply. */
+function openSse(...parts: unknown[]): Response {
+  const encoder = new TextEncoder();
+
+  return new Response(
+    new ReadableStream({
+      start: function (controller): void {
+        for (const part of parts)
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(part)}\n\n`),
+          );
+      },
+    }),
+  );
+}
+
+test("stopTurn ends a streaming reply and keeps the text so far", async (): Promise<void> => {
+  const { transport } = testTransport([
+    openSse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "Once upon" },
+    ),
+  ]);
+  expect(transport.stopTurn()).toBe(false);
+
+  const turn = readTurn(transport, [userMessage("m1", "tell a story")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  const message = await turn;
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "Once upon" }),
+  );
+  expect(transport.stopTurn()).toBe(false);
+});
+
+test("Esc stops a streaming turn; keys, split keys, Ctrl+C and idle Esc reach the UI", async (): Promise<void> => {
+  const input = new EventEmitter();
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer): number => seen.push(String(chunk)));
+  let streaming = true;
+  let stops = 0;
+  const transport = {
+    get streaming(): boolean {
+      return streaming;
+    },
+    stopTurn: (): boolean => {
+      stops += 1;
+      const was = streaming;
+      streaming = false;
+
+      return was;
+    },
+  };
+  const send = (text: string): boolean => input.emit("data", Buffer.from(text));
+
+  const restore = stopTurnOnEscape(transport, input);
+  send("\x1b[A");
+  // An arrow split across two reads is still an arrow, not a stop.
+  send("\x1b");
+  send("[B");
+  expect(stops).toBe(0);
+  // Pressed mid-turn: stops it, and never quits, even if the turn already ended.
+  send("\x1b");
+  streaming = false;
+  await Bun.sleep(60);
+  expect(stops).toBe(1);
+  // A double Esc or Esc then Ctrl+C: the Esc settles at once, the next key passes.
+  streaming = true;
+  send("\x1b");
+  send("\x03");
+  expect(stops).toBe(2);
+  // Idle, Esc reaches the UI (which quits) once no sequence follows.
+  send("\x1b");
+  await Bun.sleep(60);
+  restore();
+  send("x");
+
+  expect(seen).toEqual(["\x1b[A", "\x1b[B", "\x03", "\x1b", "x"]);
+});
+
+test("Esc then a typed [ or O stops the turn; a split CSI or SS3 key stays one key", (): void => {
+  const input = new EventEmitter();
+  const seen: string[] = [];
+  input.on("data", (chunk: Buffer): number => seen.push(String(chunk)));
+  let stops = 0;
+  const transport = {
+    streaming: true,
+    stopTurn: (): boolean => {
+      stops += 1;
+
+      return true;
+    },
+  };
+  const send = (text: string): boolean => input.emit("data", Buffer.from(text));
+
+  const restore = stopTurnOnEscape(transport, input);
+  for (const typed of ["[", "O", "[1;"]) {
+    send("\x1b");
+    send(typed);
+  }
+  for (const tail of ["[1;5C", "OP", "[200~pasted"]) {
+    send("\x1b");
+    send(tail);
+  }
+  restore();
+
+  expect(stops).toBe(3);
+  expect(seen).toEqual([
+    "[",
+    "O",
+    "[1;",
+    "\x1b[1;5C",
+    "\x1bOP",
+    "\x1b[200~pasted",
+  ]);
+});
+
+test("Esc before the first part counts the turn as sent", async (): Promise<void> => {
+  const { transport, bodies } = testTransport([
+    openSse(),
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "ok" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const first = readTurn(transport, [userMessage("m1", "first")]);
+  await Bun.sleep(50);
+  expect(transport.stopTurn()).toBe(true);
+  await first;
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]);
+
+  // Core already has "first": the next turn sends only the new message.
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});
+
+test("a turn queued behind a stopped one streams its answer, not the 202", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
+        (input instanceof Request ? input.url : input.toString()).endsWith(
+          "/status/run_2",
+        )
+          ? Response.json({ status: "completed", response: "queued answer" })
+          : Response.json(
+              {
+                statusUrl: "http://core.test/status/run_2",
+                runId: "run_2",
+                status: "queued",
+              },
+              { status: 202 },
+            ),
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  const message = await readTurn(transport, [userMessage("m1", "and then?")]);
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({ type: "text", text: "queued answer" }),
+  );
+});
+
+test("a queued turn that fails still counts as sent", async (): Promise<void> => {
+  const bodies: RunBody[] = [];
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input, init]: Parameters<typeof fetch>): Promise<Response> => {
+        const url = input instanceof Request ? input.url : input.toString();
+        if (url.endsWith("/status/run_2"))
+          return Response.json({ status: "failed" });
+        bodies.push(
+          JSON.parse(
+            typeof init?.body === "string" ? init.body : "",
+          ) as RunBody,
+        );
+
+        return Response.json(
+          {
+            statusUrl: "http://core.test/status/run_2",
+            runId: "run_2",
+            status: "queued",
+          },
+          { status: 202 },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  await readTurn(transport, [userMessage("m1", "first")]).catch(
+    (): undefined => undefined,
+  );
+  await readTurn(transport, [
+    userMessage("m1", "first"),
+    userMessage("m2", "second"),
+  ]).catch((): undefined => undefined);
+
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});
+
+test("a queued turn waiting on approval shows its approval card", async (): Promise<void> => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    baseUrl: "http://core.test",
+    fetch: Object.assign(
+      async (...[input]: Parameters<typeof fetch>): Promise<Response> =>
+        (input instanceof Request ? input.url : input.toString()).endsWith(
+          "/status/run_2",
+        )
+          ? Response.json({
+              status: "awaiting_approval",
+              approvals: [
+                {
+                  approvalId: "ap_1",
+                  toolCallId: "call_1",
+                  toolName: "deploy",
+                  input: { env: "dev" },
+                },
+              ],
+            })
+          : Response.json(
+              {
+                statusUrl: "http://core.test/status/run_2",
+                runId: "run_2",
+                status: "queued",
+              },
+              { status: 202 },
+            ),
+      { preconnect: fetch.preconnect },
+    ),
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+
+  const message = await readTurn(transport, [userMessage("m1", "ship it")]);
+
+  expect(message?.parts).toContainEqual(
+    expect.objectContaining({
+      toolCallId: "call_1",
+      state: "approval-requested",
+      approval: expect.objectContaining({ id: "ap_1" }),
+    }),
+  );
 });

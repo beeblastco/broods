@@ -4,15 +4,18 @@ What happens to a message that arrives while its conversation is busy. One contr
 
 ## Where it lives
 
-| File                                | Owns                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/convex/runtimeIngress.ts` | The coordinator: `accept`, `stepBoundary`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `maintain`, `recoverQueued`, `acquireClear` |
-| `apps/core/src/harness/ingress.ts`  | Candidate and delivery types, limits and TTLs, admission helpers                                                                           |
-| `apps/core/src/harness/harness.ts`  | `prepareStep`, where a steer joins a running turn                                                                                          |
-| `apps/core/src/harness/handler.ts`  | HTTP, async and channel admission, `409` and `429`, the drain loops                                                                        |
-| `apps/core/src/shared/commands.ts`  | `/steer`, `/queue`, `/stop` and `/cancel`, `/new` and `/clear`, `/compact`                                                                 |
-| `apps/gateway/src/agent.ts`         | WebSocket `execute`, `control`, `attach` and `cancel`, `ack` and `status` relay                                                            |
-| `verification/Broods/Ingress.lean`  | The envelope lifecycle model and its proofs. Change the mutations, update the model.                                                       |
+| File                                              | Owns                                                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/convex/runtimeIngress.ts`               | The coordinator: `accept`, `stepBoundary`, `applySteering`, `takeNext`, `settle`, `stopOwner`, `maintain`, `recoverQueued`, `acquireClear` |
+| `apps/core/src/harness/ingress.ts`                | Candidate and delivery types, limits and TTLs, admission helpers                                                                           |
+| `apps/core/src/harness/harness.ts`                | `prepareStep`, where a steer joins a running turn                                                                                          |
+| `apps/core/src/harness/ai-sdk-harness/session.ts` | `steerHarnessTurn`, where a steer joins a running `config.harness` turn                                                                    |
+| `apps/core/src/harness/handler.ts`                | HTTP, async and channel admission, the drain loops                                                                                         |
+| `apps/core/src/harness/responses.ts`              | The `409` and `429` admission answers, the `202` bodies, SSE error frames                                                                  |
+| `apps/core/src/harness/worker-queue.ts`           | The worker slots, the FIFO queue behind them, lease renewal while a run waits                                                              |
+| `apps/core/src/shared/commands.ts`                | `/steer`, `/queue`, `/stop` and `/cancel`, `/new` and `/clear`, `/compact`                                                                 |
+| `apps/gateway/src/agent.ts`                       | WebSocket `execute`, `control`, `attach` and `cancel`, `ack` and `status` relay                                                            |
+| `verification/Broods/Ingress.lean`                | The envelope lifecycle model and its proofs. Change the mutations, update the model.                                                       |
 
 ## Modes
 
@@ -50,7 +53,7 @@ flowchart TD
 
 - The idempotency identity is `(accountId, agentId, scopedConversationKey, idempotencyKey)`, with `idempotencyKey` defaulting to `eventId`. The binding lasts as long as the status row, seven days, so an expired envelope cannot run twice.
 - A recovered group comes back with the outcome, and core dispatches it (`dispatchRecoveredIngress`) before handling the newcomer.
-- `activeOwnerOnly` is how [subagent](subagents.md) controls refuse to land on a finished or different task.
+- `activeOwnerOnly` refuses a control that would land on a finished or different task. [Subagent](subagents.md) messages never queue on a child's conversation: a live child gets them in memory, an idle one is admitted with `reject`.
 - Each envelope stores its own execution context (resolved config ref, per-run `model` overrides, one-turn `system` messages), and the digest covers it, so a queued request never inherits the previous owner's overrides.
 - `delivery` holds routing ids only: `http`, `async` and `websocket` carry the public event and conversation ids and, for runtime-key ingress, the `publicDeploymentIngress` marker. `channel` carries the channel name, sender `identity` and reply `source`. Never credentials, headers or message copies.
 
@@ -63,7 +66,8 @@ stateDiagram-v2
   [*] --> processing: accept, idle conversation
   [*] --> queued: accept, busy conversation
   queued --> processing: stepBoundary or applySteering, as a steer
-  queued --> processing: takeNext, recoverQueued, recovery in accept
+  queued --> processing: takeNext, recoverQueued, recovery in accept, active account only
+  processing --> queued: releaseOwner with requeue, a full pod shed the dispatch
   queued --> expired: past 15 min
   processing --> completed: settle or takeNext, completed
   processing --> failed: settle or takeNext, failed
@@ -143,7 +147,7 @@ stateDiagram-v2
   Settle --> [*]: next group runs as its own turn
 ```
 
-`stepBoundary` stores the finished step's messages, checks for a stop, renews the lease once a tenth of the TTL has passed, and claims the steer prefix, all in one transaction. A claimed steer costs one more call, the append. Subagent results queued during the pass join at the same boundary ([subagents](subagents.md)). A steer still queued when the run has no model call left is promoted by `takeNext`, merged with contiguous steers from the same sender, as one `followup` under the next generation.
+`stepBoundary` stores the finished step's messages (the first one stores the turn's own input too, so that input never costs an append of its own), checks for a stop, renews the lease once a tenth of the TTL has passed, and claims the steer prefix, all in one transaction. A turn that fails before its first boundary hands those input rows to `settle` or `takeNext` instead; one interrupted by a pod shutdown before then does not store them. A claimed steer costs one more call, the append. Subagent results queued during the pass join at the same boundary ([subagents](subagents.md)). A steer still queued when the run has no model call left is promoted by `takeNext`, merged with contiguous steers from the same sender, as one `followup` under the next generation.
 
 A `config.harness` run has no `prepareStep`. Its steers are applied before the turn starts, and on runtimes that take mid-turn input (Claude Code, Codex, OpenCode, Pi) `applySteering` with `textOnly` claims plain-text steers at each step start and hands them over with `experimental_steerTurn`. A steer with an image, file or system message waits for the next turn. DeepAgents, and any runtime that refuses mid-turn input, get steers at the next turn.
 
@@ -230,8 +234,8 @@ sequenceDiagram
 
   Cl->>G: attach, eventId, runId, afterCursor
   G->>Core: GET /v1/runs/:runId
-  Core-->>G: status, agentId, conversationKey
-  alt not found, other agent or conversation
+  Core-->>G: status, agentId, conversationKey, eventId
+  alt not found, refused, other agent, conversation or event
     G-->>Cl: replay_unavailable, statusUrl
   else cursor stale, other event, past the end, or expired
     G-->>Cl: replay_unavailable, statusUrl
@@ -267,7 +271,7 @@ Authorization finishes before any envelope exists. An account key keeps its acco
 
 ## Subagents and status
 
-Steer and stop reach one conversation owner and never spread into children the parent already started. A persistent child is steered only through ingress addressed to that child. With `subagent.stream: true`, a child publishes on `WS_RESPONSES` under its own account, agent and conversation, and its `taskId` is the attach `eventId`, so attach, control and cursors work unchanged. Who may attach to a child is in [subagents](subagents.md#attach-authorization).
+Steer and stop reach one conversation owner and never spread into children the parent already started. A persistent child's parent reaches it through the coordinator in memory, never through an envelope queued on its conversation. With `subagent.stream: true`, a child publishes on `WS_RESPONSES` under its own account, agent and conversation, and its `taskId` is the attach `eventId`, so attach, control and cursors work unchanged. Who may attach to a child is in [subagents](subagents.md#attach-authorization).
 
 ## Limits
 

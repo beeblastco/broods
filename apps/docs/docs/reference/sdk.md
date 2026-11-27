@@ -40,34 +40,58 @@ Pass an `AgentReference` to the client. It carries the routing metadata, and the
 ## BroodsClient
 
 ```ts
-import { BroodsClient } from "broods";
+import { BroodsClient, signUserToken } from "broods";
 
-const client = new BroodsClient();
+const client = new BroodsClient({
+  userToken: await signUserToken({ userId: "me" }),
+});
 ```
 
-| Option    | Default                                                                               |
-| --------- | ------------------------------------------------------------------------------------- |
-| `apiKey`  | The runtime key. `BROODS_API_KEY`, loaded from `.env` and `.env.local`                |
-| `baseUrl` | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
-| `host`    | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
-| `fetch`   | Global `fetch`                                                                        |
+| Option      | Default                                                                               |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `apiKey`    | The runtime key. `BROODS_API_KEY`, loaded from `.env` and `.env.local`                |
+| `baseUrl`   | `BROODS_BASE_URL`, then `BROODS_HOST`, then `https://gateway.broods.app`              |
+| `host`      | Hostname form of `baseUrl`. `gateway.broods.app` becomes `https://gateway.broods.app` |
+| `userToken` | None. The signed-in user's token, or a function that returns a fresh one per call     |
+| `fetch`     | Global `fetch`                                                                        |
 
 The runtime key, `bsk_...`, is scoped to one project and stage. It reaches only agents with `publicAccess: true` in that stage.
 
+### User tokens
+
+An agent created now requires a user token beside the runtime key, so a visitor cannot read or steer another user's conversation by guessing its key. Sign one on your server with the stage's signing secret, and hand it to the client.
+
+```ts
+import { signUserToken } from "broods";
+
+const token = await signUserToken({ userId: "user_123" });
+```
+
+| Field           | Default                                                                   |
+| --------------- | ------------------------------------------------------------------------- |
+| `userId`        | Required. Your id for the user. Letters, digits and `._@+=-`, 128 at most |
+| `conversations` | Any key. Or the only conversation keys this user may use                  |
+| `credential`    | None. The user's own bearer, sent to hosted MCP servers only              |
+| `ttlMs`         | 10 minutes. 60 at most                                                    |
+| `secret`        | `BROODS_USER_TOKEN_SECRET`, which `broods dev` and `deploy` write         |
+
+Never call `signUserToken` in a browser: the signing secret speaks for every user of the stage. Conversation keys and event ids come back under the user, as `bsu:<userId>:<key>`; pass either form back. See [Users behind the runtime key](../guides/security.md#users-behind-the-runtime-key).
+
 ### Methods
 
-| Method                                         | Returns                          | What it does                                                     |
-| ---------------------------------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `run(agent, input)`                            | `{ text, events }`               | Streams a run and collects the text and parts                    |
-| `stream(agent, input)`                         | `AsyncGenerator<TextStreamPart>` | Yields AI SDK stream parts as they arrive                        |
-| `runAsync(agent, input)`                       | `AsyncAgentRun`                  | Starts a background run, returns `runId` and `statusUrl`         |
-| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                  | Re-enters a run that stopped on the step cap or a provider fault |
-| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                    | One status snapshot. `{ status: "not_found" }` on 404            |
-| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                    | Polls until a settled status or timeout                          |
-| `agent(ref)`                                   | `AgentHandle`                    | Binds `run`, `stream`, `runAsync`, `continue` to one agent       |
-| `channelWebhookUrl(ref)`                       | `string`                         | Webhook URL for a generated channel reference                    |
-| `accountWebhookUrl(accountId, type)`           | `string`                         | Production webhook URL for a channel type                        |
-| `stageWebhookUrl(accountId, endpointId, type)` | `string`                         | Webhook URL pinned to one non-production stage                   |
+| Method                                         | Returns                           | What it does                                                                 |
+| ---------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------- |
+| `run(agent, input)`                            | `{ text, events, output }`        | Streams a run and collects the text, parts and structured output             |
+| `stream(agent, input)`                         | `AsyncGenerator<AgentStreamPart>` | Yields AI SDK stream parts, plus `structured-output`, as they arrive         |
+| `runAsync(agent, input)`                       | `AsyncAgentRun`                   | Starts a background run, returns `runId` and `statusUrl`                     |
+| `continue(agent, { conversationKey })`         | `AsyncAgentRun`                   | Re-enters a run that stopped on the step cap or a provider fault             |
+| `answer(agent, { conversationKey, answers })`  | `AnswersAccepted`                 | Answers an `awaiting_input` run's prompts; the run resumes in the background |
+| `getAsyncStatus(runOrUrl)`                     | `AsyncStatus`                     | One status snapshot. `{ status: "not_found" }` on 404                        |
+| `waitForAsyncStatus(runOrUrl, options)`        | `AsyncStatus`                     | Polls until a settled status or timeout                                      |
+| `agent(ref)`                                   | `AgentHandle`                     | Binds `run`, `stream`, `runAsync`, `continue`, `answer` to one agent         |
+| `channelWebhookUrl(ref)`                       | `string`                          | Webhook URL for a generated channel reference                                |
+| `accountWebhookUrl(accountId, type)`           | `string`                          | Production webhook URL for a channel type                                    |
+| `stageWebhookUrl(accountId, endpointId, type)` | `string`                          | Webhook URL pinned to one non-production stage                               |
 
 `AsyncAgentRun` has `runId`, `eventId`, `statusUrl`, `conversationKey`, `poll()` and `wait(options)`. `wait` and `waitForAsyncStatus` take `intervalMs`, default 2000, `timeoutMs`, default 180000, and `signal`, and return on `completed`, `failed`, `expired`, `awaiting_approval`, `awaiting_input` or `not_found`.
 
@@ -90,16 +114,17 @@ const status = await job.wait({ timeoutMs: 300_000 });
 
 Pass exactly one of `input` or `events`.
 
-| Field             | Description                                                                                            |
-| ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `input`           | One user text message                                                                                  |
-| `events`          | AI SDK model messages, for images, files, tool approval responses                                      |
-| `conversationKey` | Conversation to continue. Omit for a new one                                                           |
-| `eventId`         | Correlation id. Generated when omitted                                                                 |
-| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                        |
-| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject` |
-| `system`          | One-turn system message or messages, not persisted                                                     |
-| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`         |
+| Field             | Description                                                                                                                                                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `input`           | One user text message                                                                                                                                                                                                                                                                            |
+| `events`          | AI SDK model messages, for images, files, tool approval responses                                                                                                                                                                                                                                |
+| `conversationKey` | Conversation to continue. Omit for a new one                                                                                                                                                                                                                                                     |
+| `eventId`         | Correlation id. Generated when omitted                                                                                                                                                                                                                                                           |
+| `idempotencyKey`  | Retry identity within the conversation. Defaults to `eventId`, bound for 7 days                                                                                                                                                                                                                  |
+| `mode`            | What to do when the conversation is busy. `steer` is the default, then `followup`, `collect`, `reject`                                                                                                                                                                                           |
+| `system`          | One-turn system message or messages, not persisted                                                                                                                                                                                                                                               |
+| `model`           | Per-run call settings such as `temperature`, `maxOutputTokens`, `reasoning`, `providerOptions`                                                                                                                                                                                                   |
+| `signal`          | `AbortSignal`. On `run` and `stream`, aborting closes the stream and core fails the run when it next writes a frame, so a running tool call finishes first. On `runAsync` it cancels only the request: a run core already accepted keeps going, so pass an `eventId` and retry with the same one |
 
 `model` rejects `provider`, `modelId`, `output` and `apiKey`, so a request cannot swap the model or credentials. With a runtime key, `system` and `model` need `allowRunOverrides: true` on the agent, or the run fails with `403 run_overrides_disabled`.
 
@@ -120,7 +145,16 @@ await client.run(api.agents.myAgent, {
 
 ### Stream parts
 
-`stream` yields AI SDK `TextStreamPart` values such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+`stream` yields `AgentStreamPart` values: the AI SDK `TextStreamPart` types such as `text-delta`, `reasoning-delta`, `tool-call`, `tool-result`, `finish`, `error` and the rest, plus `{ type: "structured-output", output }` at the end of a run whose agent sets `model.output`. An `error` part throws. Closing the stream before the run finishes aborts the run and marks it failed. Steps that already finished stay in the conversation. Use `runAsync` when the caller may disconnect.
+
+Upgrading from a release where `stream` and `run().events` were typed `TextStreamPart<ToolSet>`: code that assigns parts to that type, or switches over `part.type` exhaustively, no longer compiles. Type it `AgentStreamPart` (exported from `broods`), or skip `structured-output` first:
+
+```ts
+for await (const part of client.stream(api.agents.myAgent, input)) {
+  if (part.type === "structured-output") continue;
+  handle(part); // TextStreamPart<ToolSet>
+}
+```
 
 ### Async status
 
@@ -133,7 +167,60 @@ await client.run(api.agents.myAgent, {
 | `failed`                                      | `error` explains. `stoppedByUser: true` means a deliberate stop     |
 | `expired`                                     | Queued work was never run                                           |
 
+Answer an `awaiting_input` run with `answer`, one entry per prompt. The conversation resumes in the background as a new turn, named by `eventId` and `runId` in the result; pass `runId` to `waitForAsyncStatus` to follow it. `runId` is present only when a turn was started or queued, and names the last turn an answer started or queued when one call answers several prompts. `answer` and `continue` take `signal` like `runAsync`: it cancels only the request, and answers core already accepted still resume the run. Pass your own `eventId` and reuse it when you retry after an abort, so the retry cannot start a second run. Approve an `awaiting_approval` run by sending the responses as `events`:
+
+```ts
+const status = await job.wait();
+const prompt = status.questions?.[0];
+if (status.status === "awaiting_input" && prompt) {
+  const answered = await client.answer(api.agents.myAgent, {
+    conversationKey: job.conversationKey,
+    answers: [{ statusId: prompt.statusId, answers: { color: ["Blue"] } }],
+  });
+  if (answered.runId) await client.waitForAsyncStatus(answered.runId);
+}
+if (status.status === "awaiting_approval") {
+  await client.runAsync(api.agents.myAgent, {
+    conversationKey: job.conversationKey,
+    events: [
+      {
+        role: "tool",
+        content: (status.approvals ?? []).map((approval) => ({
+          type: "tool-approval-response",
+          approvalId: approval.approvalId,
+          approved: true,
+        })),
+      },
+    ],
+  });
+}
+```
+
 Every status core returns also carries the owning `agentId`, plus `requestedMode`, `appliedMode` and `appliedToEventId`, which say whether a busy request steered the live run or became a follow-up. See [Conversations](../guides/conversations.md).
+
+### Errors
+
+A refused request throws `BroodsApiError` with the server's error as fields, from a JSON body, the SSE `error` frame a streamed run is refused with, or a WebSocket `error` frame that carries a `status`. Branch on `code`, which stays stable across releases. A core older than the SDK sends no `code` on a streamed refusal, so `code` is then undefined. The message reads `Run failed: 403 This agent needs a user token. (user_token_required)`, so code that matched the code in the message text keeps working. `broods/account` exports the class too.
+
+| Field           | Description                                                    |
+| --------------- | -------------------------------------------------------------- |
+| `status`        | HTTP status                                                    |
+| `code`          | Stable error code, such as `user_token_required`               |
+| `type`          | Error class, such as `permission_error`                        |
+| `serverMessage` | The server's message, or the raw body when it sent no envelope |
+| `body`          | The raw response body                                          |
+
+```ts
+import { BroodsApiError } from "broods";
+
+try {
+  await client.run(api.agents.myAgent, { input: "Hello" });
+} catch (error) {
+  if (error instanceof BroodsApiError && error.code === "user_token_required") {
+    // sign a user token and retry
+  }
+}
+```
 
 ### Busy conversations
 
@@ -169,11 +256,12 @@ const ws = new WebSocketClient();
 | Option             | Default                                            |
 | ------------------ | -------------------------------------------------- |
 | `apiKey`           | The runtime key. `BROODS_API_KEY`. Required        |
+| `userToken`        | None. A user token every socket opens with         |
 | `baseUrl`, `host`  | As for `BroodsClient`. `https` becomes `wss`       |
 | `WebSocket`        | `globalThis.WebSocket`. Pass one on older runtimes |
 | `connectTimeoutMs` | 2000                                               |
 
-The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.token.<key>`, never in the URL.
+The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.token.<key>`, never in the URL, and a user token as `broods.user.<token>`. `subscribe` and `attach` also take `userToken`, over the client's, since a token outlives no more than an hour.
 
 | Method                        | What it does                                            |
 | ----------------------------- | ------------------------------------------------------- |
@@ -183,7 +271,7 @@ The key travels as the `Sec-WebSocket-Protocol` entries `broods.v1` and `broods.
 | `subscription.sendControl(m)` | Sends more input to the live run. Steers by default     |
 | `subscription.close()`        | Closes the socket                                       |
 
-`subscribe` takes the run input fields above plus `agent`, a reference, `sessionId`, the conversation key, and `signal`. An aborted signal sends `cancel`. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
+`subscribe` takes the run input fields above plus `agent`, a reference, `sessionId`, the conversation key, and `signal`. An aborted signal sends `cancel`. `attach` also takes `signal`; aborting it closes the socket and calls `onError` once, but sends no `cancel`, so the run keeps going. Pass `answers` instead of `input` to answer an open `ask_questions` prompt; the resumed run streams back on the same socket.
 
 | Handler     | Receives                                                                       |
 | ----------- | ------------------------------------------------------------------------------ |
@@ -215,7 +303,7 @@ const sub = ws.subscribe(
 );
 ```
 
-`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
+`attach` takes `agentId`, `conversationKey`, `eventId`, `runId`, `requestId` and an optional `afterCursor`. It closes its socket after `onDone`. When the gateway answers `replay_unavailable` (no such run for this caller, or a cursor it no longer keeps), it calls `onError` and closes; poll the run's status instead. See the [WebSocket protocol](http-api.md) for frames, and the [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
 
 ## BroodsAccountClient
 
@@ -240,7 +328,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 
 | Resource   | Methods                                                                                                                                                                           |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Account    | `getAccount`, `updateAccount`, `rotateSecret`, `deleteAccount`, `assumeRole`, `webhookUrl`                                                                                        |
+| Account    | `getAccount`, `updateAccount`, `rotateSecret`, `deleteAccount`, `assumeRole`, `getStorageTrust`, `webhookUrl`                                                                     |
 | Agents     | `listAgents`, `createAgent`, `getAgent`, `updateAgent`, `deleteAgent`                                                                                                             |
 | Env        | `listEnvVars`, `setEnvVar`, `deleteEnvVar`                                                                                                                                        |
 | Crons      | `listCrons`, `createCron`, `getCron`, `updateCron`, `deleteCron`, `listCronRuns`                                                                                                  |
@@ -257,7 +345,7 @@ The entry point has no dependencies and uses plain `fetch`, so it runs in Convex
 Behavior shared by every method:
 
 - `get*` returns `null` on 404 and `delete*` returns `false`, so upserts need no try/catch.
-- Other failures throw `BroodsAccountApiError` with the HTTP `status` and response body.
+- Other failures throw `BroodsAccountApiError`, a `BroodsApiError` (see [Errors](#errors)).
 - Updates deep-merge `config` into the stored config. A `null` value deletes a key.
 - Secrets inside configs are encrypted at rest and come back as `********`. Sending `********` back keeps the stored value.
 
@@ -279,3 +367,26 @@ const scoped = new BroodsAccountClient({ sessionToken: session.token });
 ```
 
 See [Security](../guides/security.md) for roles and sessions, and the [API reference](/api-reference) for request and response schemas.
+
+## Log and run history pages
+
+With a logged-in `BroodsAccountClient`, use `readLogPage(scope, { range, limit })` or `listRuns(scope, { range, limit })`. The range uses epoch milliseconds: `from` is inclusive, `to` exclusive, and the maximum width is 30 days. Each page searches at most the newest hour of that range. `listRuns` can search a shorter window in a busy stage.
+
+```ts
+const to = Date.now();
+const range = { from: to - 24 * 60 * 60 * 1000, to: to };
+const page = await account.readLogPage(scope, { range: range, limit: 50 });
+if (page.incomplete) throw new Error(page.incomplete);
+if (page.nextTo !== undefined) {
+  const older = await account.readLogPage(scope, {
+    range: { from: range.from, to: page.nextTo },
+    limit: 50,
+  });
+  if (older.incomplete) throw new Error(older.incomplete);
+  console.log(older.logs);
+}
+```
+
+`nextTo` means more of the requested range remains to be searched, even when the page has no matching rows. Keep the original `from` and pass `nextTo` as the next `to`. Do not advance after `incomplete`; retry the same range. `readLogPage` accepts `level` and `sandboxId`; `listRuns` accepts `agentId` and `status`. Status filters apply to the fetched page, so a filtered page can contain fewer than `limit` runs.
+
+The MCP tools `read-logs` and `list-runs` use these bounded pages, default to the last hour, and return the requested `range` plus `nextTo` when available. Pass `from` and `to` to query older history. The array-returning `readLogs` and unbounded `listRuns` remain available for existing SDK callers.

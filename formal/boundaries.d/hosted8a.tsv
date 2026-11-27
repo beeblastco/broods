@@ -1,0 +1,8 @@
+kind	name	reason
+external	^drain$	The transport passed in by sendBatch; each transport (drainBridgeStream, drainInvokeStream) has its own twin, and the trace checks the queue and callback it is given.
+external	^new FrameQueue$	Constructs an empty queue with no input; its push, close and frames behaviour are checked in their own twins.
+internal	apps/core/src/harness/frames.ts#FrameQueue.frames	An async generator: calling it only creates the iterator, so no twin can exist, and the caller reads nothing from it but the handle.
+internal	apps/core/src/harness/mcp/hosted.ts#collectBatchFrames	Its answer is decided entirely by the frames an async iterator yields, which a recording cannot carry, so no twin can exist.
+external	^ctx\.db \.query$	Convex table selection; the twin checks the table name.
+external	^ctx\.db \.query\("mcp"\) \.withIndex$	Convex index selection; the twin checks the index name.
+external	^ctx\.db \.query\("mcp"\) \.withIndex\("by_stageId_and_status_and_name", \(q\) => q\.eq\("stageId", stageId\)\.eq\("status", "active"\), \) \.collect$	The database read; its rows are the input the twin computes placements from.

@@ -7,6 +7,10 @@ import {
 } from "next/server";
 import { redirectUri } from "@/app/lib/authConfig";
 import {
+  NONCE_HEADER,
+  contentSecurityPolicy,
+} from "@/app/lib/contentSecurityPolicy";
+import {
   SESSION_COOKIE,
   keyPagePath,
   selfHosted,
@@ -20,19 +24,16 @@ const UNAUTHENTICATED_PATHS = [
   "/auth/key",
   "/auth/sign-in",
   "/auth/session",
-  // The component fixture the browser tests drive; it 404s outside dev.
+  "/cli-auth/config",
   ...(process.env.NODE_ENV === "development" ? ["/ui-gallery"] : []),
 ];
 
-// A self-hosted stack never builds the AuthKit proxy, so it needs no WorkOS config.
 const authProxy = selfHosted
   ? null
   : authkitProxy({
       redirectUri: redirectUri,
-      // Hands the access token to the browser in a 30 s cookie on document loads,
-      // so the client token store starts full instead of asking a server action.
-      // With `initialAuth` in the root layout that removes both auth round trips
-      // from a cold load.
+      // Access token in a 30 s cookie on document loads: with `initialAuth` in the root
+      // layout, a cold load makes no auth round trip.
       eagerAuth: true,
       middlewareAuth: {
         enabled: true,
@@ -40,37 +41,41 @@ const authProxy = selfHosted
       },
     });
 
-export default function proxy(
+// Next stamps the request policy's nonce on its own scripts; the layout reads NONCE_HEADER.
+export default async function proxy(
   request: NextRequest,
   event: NextFetchEvent,
-): Promise<NextMiddlewareResult> | NextMiddlewareResult {
-  return authProxy ? authProxy(request, event) : selfHostProxy(request);
+): Promise<NextMiddlewareResult> {
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const policy = contentSecurityPolicy(nonce);
+  request.headers.set("content-security-policy", policy);
+  request.headers.set(NONCE_HEADER, nonce);
+  const response = await (authProxy
+    ? authProxy(request, event)
+    : selfHostProxy(request));
+  if (response) response.headers.set("content-security-policy", policy);
+
+  return response;
 }
 
-// Lets a signed-in admin through; anyone else goes to the admin-key page.
 async function selfHostProxy(request: NextRequest): Promise<NextResponse> {
   const { pathname, search } = request.nextUrl;
-  if (UNAUTHENTICATED_PATHS.includes(pathname)) return NextResponse.next();
-  if (await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value)) {
-    return NextResponse.next();
+  if (
+    UNAUTHENTICATED_PATHS.includes(pathname) ||
+    (await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value))
+  ) {
+    return NextResponse.next({ request: { headers: request.headers } });
   }
 
-  // The proxy must redirect to an absolute URL; `request.url` carries the
-  // request's own Host, not the server's bind address.
+  // Absolute URL required; `request.url` carries the request's Host, not the bind address.
   return NextResponse.redirect(
     new URL(keyPagePath(pathname + search), request.url),
   );
 }
 
-/**
- * Configure middleware to run on every route except the files actually served
- * from disk: the build output, `public/assets/`, and the favicon.
- *
- * Excluding every asset-looking path instead let `/x.png` past the proxy and
- * into the router, where `/[projectId]` matches any single segment, dot
- * included. A typo answered 200 with the app shell, so uptime checks and
- * crawlers read it as a live page.
- */
+// Skip only files served from disk: `/[projectId]` matches a dotted segment like `/x.png`,
+// so a broader asset exclusion answers a typo 200 with the app shell. Keep next.config's
+// static-policy source the complement of this.
 export const config = {
-  matcher: ["/((?!_next|assets/|favicon\\.ico).*)", "/(api|trpc)(.*)"],
+  matcher: ["/((?!_next/|assets/|favicon\\.ico).*)", "/(api|trpc)(.*)"],
 };

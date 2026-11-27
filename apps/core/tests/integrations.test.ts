@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { UserToken } from "@broods/convex/model/userToken";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
@@ -19,6 +20,7 @@ const STAGE_TICKET: StageTicketScope = {
   projectId: "proj_1",
   stageId: "stage_1",
   sandboxWrite: false,
+  expiresAt: 1_900_000_000_000,
 };
 const CHILD_RUN_ID = `run_${"b".repeat(32)}`;
 const TEST_RUN_ID = `run_${"a".repeat(32)}`;
@@ -57,14 +59,11 @@ const TEST_AGENT = {
   agentId: "agent_test",
   name: "Test agent",
   status: "active" as const,
-  // Opted into the public endpoint so the deployment (runtime-key) path is allowed.
   config: { ...TEST_ACCOUNT.config, publicAccess: true },
   createdAt: "2026-04-24T00:00:00.000Z",
   updatedAt: "2026-04-24T00:00:00.000Z",
 };
 
-// A second agent that has NOT opted into the public endpoint, used to assert the
-// secure-by-default gate on the deployment (runtime-key) path.
 const TEST_AGENT_PRIVATE = {
   ...TEST_AGENT,
   agentId: "agent_private",
@@ -91,14 +90,17 @@ afterEach(() => {
 });
 
 describe("direct API ingress", () => {
-  it("gives observability scope to a stage ticket, never the embeddable key", async () => {
-    const scopeFor = async (stageTicket: boolean): Promise<ResponseShape> =>
+  it("gives observability scope to a stage ticket, agent socket scope to the embeddable key too", async () => {
+    const scopeFor = async (
+      stageTicket: boolean,
+      socket: "agent-socket" | "observability" = "observability",
+    ): Promise<ResponseShape> =>
       await routeIncomingEvent(
         createEvent(
           {},
           { authorization: "Bearer token" },
           {
-            rawPath: "/v1/internal/observability-scope",
+            rawPath: `/v1/internal/${socket}-scope`,
             addDefaultAgentId: false,
           },
         ),
@@ -122,7 +124,21 @@ describe("direct API ingress", () => {
       projectSlug: "demo",
       stageSlug: "development",
       endpointIds: ["env-endpoint"],
+      expiresAt: STAGE_TICKET.expiresAt,
     });
+    // The agent socket runs every turn through the run paths, which hold the
+    // key to public agents of its stage, so the key gets its stage's scope.
+    const key = await scopeFor(false, "agent-socket");
+    expect(key.statusCode).toBe(200);
+    expect(JSON.parse(key.body ?? "{}")).toEqual({
+      accountId: TEST_ACCOUNT.accountId,
+      projectSlug: "demo",
+      stageSlug: "development",
+      endpointIds: ["env-endpoint"],
+    });
+    expect(
+      JSON.parse((await scopeFor(true, "agent-socket")).body ?? "{}"),
+    ).toMatchObject({ expiresAt: STAGE_TICKET.expiresAt });
   });
 
   it("returns 401 when the account bearer token is missing", async () => {
@@ -658,6 +674,31 @@ describe("direct API ingress", () => {
     }
   });
 
+  it("refuses per-run providerOptions for a harness agent", async () => {
+    const response = await runtimeKeyRequest(
+      {
+        ...USER_TURN,
+        model: { providerOptions: { openai: { reasoningEffort: "high" } } },
+      },
+      {
+        agentLoader: async () => ({
+          ...TEST_AGENT,
+          config: {
+            ...TEST_AGENT.config,
+            allowRunOverrides: true,
+            harness: { type: "codex", permissionMode: "allow-all" },
+            sandboxes: ["sandbox_1"],
+          },
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(responseJson(response))).toContain(
+      "model.providerOptions is not supported with config.harness",
+    );
+  });
+
   it("lets a runtime key continue an API conversation but not a channel session", async () => {
     const channel = await runtimeKeyRequest({
       eventId: "continue-1",
@@ -715,8 +756,7 @@ describe("direct API ingress", () => {
   });
 
   it("keeps direct API disabled for a path that matches no run shape", async () => {
-    // The retired slug-first URL no longer parses as a public endpoint, so a
-    // gate keyed on the recognized shapes would have let it dispatch a run.
+    // The retired slug-first URL parses as no run shape; a gate keyed on shapes would dispatch it.
     const response = await routeIncomingEvent(
       createEvent(
         {
@@ -1991,12 +2031,9 @@ describe("direct API ingress", () => {
     expect(response.statusCode).toBe(200);
   });
 
-  for (const source of [
-    "channel",
-    "cron/internal",
-    "account-auth direct",
-  ] as const) {
-    it(`refuses deployment-key status access to ${source} ingress without public deployment provenance`, async () => {
+  it.each(["channel", "cron/internal", "account-auth direct"])(
+    "refuses deployment-key status access to %s ingress without public deployment provenance",
+    async (source) => {
       const eventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2021,16 +2058,17 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
-  for (const [field, value] of [
+  it.each([
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
     ["stageSlug", "stage-other"],
-  ] as const) {
-    it(`requires the public deployment ingress ${field} to match exactly`, async () => {
+  ] as const)(
+    "requires the public deployment ingress %s to match exactly",
+    async (field, value) => {
       const eventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2055,11 +2093,15 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
-  for (const childKind of ["virtual", "private"] as const) {
-    it(`authorizes ${childKind === "private" ? "private predefined" : "virtual"} child status through its durable public parent scope`, async () => {
+  it.each([
+    { childKind: "virtual", label: "virtual" },
+    { childKind: "private", label: "private predefined" },
+  ] as const)(
+    "authorizes $label child status through its durable public parent scope",
+    async ({ childKind }) => {
       const parentEventId = scopedDirectEventId(
         TEST_ACCOUNT.accountId,
         TEST_AGENT.agentId,
@@ -2132,8 +2174,8 @@ describe("direct API ingress", () => {
           publicEventId: taskId,
         },
       ]);
-    });
-  }
+    },
+  );
 
   it("lets a stage ticket read a subagent of a private parent, never the runtime key", async () => {
     const fixture = subagentStatusFixture({
@@ -2207,13 +2249,14 @@ describe("direct API ingress", () => {
     });
   });
 
-  for (const [field, value] of [
+  it.each([
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
     ["stageSlug", "stage-other"],
-  ] as const) {
-    it(`rejects subagent status when the parent ingress ${field} does not match`, async () => {
+  ] as const)(
+    "rejects subagent status when the parent ingress %s does not match",
+    async (field, value) => {
       const fixture = subagentStatusFixture();
       const response = await deploymentStatusRequest(
         CHILD_RUN_ID,
@@ -2242,8 +2285,8 @@ describe("direct API ingress", () => {
       expect(responseJson(response)).toMatchObject({
         error: { code: "status_access_denied" },
       });
-    });
-  }
+    },
+  );
 
   it("rejects subagent status when the parent belongs to another endpoint", async () => {
     const fixture = subagentStatusFixture();
@@ -2749,6 +2792,47 @@ describe("run token (auth kind agent)", () => {
     ]);
   });
 
+  it("puts a user token's user ahead of the key and holds its credential in memory", async () => {
+    const handled: DirectInboundEvent[] = [];
+    await routeIncomingEvent(
+      createEvent(USER_TURN, { authorization: "Bearer token" }),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      {
+        authResolver: async (): Promise<AuthContext> => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          user: {
+            userId: "user_42",
+            credential: "bcli_user",
+            expiresAt: Date.now() + 60_000,
+          },
+        }),
+        deploymentLoader: async () => ({
+          accountId: TEST_ACCOUNT.accountId,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+        }),
+      },
+    );
+    expect(handled.map((event) => event.principalChain)).toEqual([
+      [
+        { kind: "user", id: "user_42" },
+        { kind: "api", keyKind: "deployment" },
+      ],
+    ]);
+    expect(handled.map((event) => event.userCredential)).toEqual(["bcli_user"]);
+  });
+
   it("reads its own agent's runs and nothing else", async () => {
     const own = await routeIncomingEvent(
       createEvent(
@@ -2810,5 +2894,265 @@ describe("run token (auth kind agent)", () => {
     expect(responseJson(endpoint)).toMatchObject({
       error: { code: "run_token_scope" },
     });
+  });
+});
+describe("runtime key with a user token", () => {
+  const REQUIRING_AGENT = { ...TEST_AGENT, requireUserToken: true };
+  const ALICE: UserToken = { userId: "alice", expiresAt: 1_900_000_000_000 };
+  const BOB: UserToken = { userId: "bob", expiresAt: 1_900_000_000_000 };
+
+  async function userTurn(
+    body: Record<string, unknown>,
+    user: UserToken | undefined,
+    agent: typeof TEST_AGENT = REQUIRING_AGENT,
+    handled: DirectInboundEvent[] = [],
+  ): Promise<ResponseShape> {
+    return routeIncomingEvent(
+      createEvent(
+        { agentId: agent.agentId, ...body },
+        { authorization: "Bearer bsk_example" },
+        {
+          rawPath: "/v1/projects/demo/stages/development/agents/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handled.push(event);
+
+          return { statusCode: 200, body: "ok" };
+        },
+      }),
+      {
+        agentLoader: async () => agent,
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          ...(user ? { user: user } : {}),
+        }),
+      },
+    );
+  }
+
+  async function userStatusRead(
+    conversationKey: string,
+    user: UserToken | undefined,
+    agent: typeof TEST_AGENT = REQUIRING_AGENT,
+  ): Promise<ResponseShape> {
+    return routeIncomingEvent(
+      createEvent(
+        undefined,
+        { authorization: "Bearer bsk_example" },
+        { method: "GET", rawPath: `/v1/runs/${TEST_RUN_ID}` },
+      ),
+      createHandlers({
+        handleStatusRequest: async () => ({ statusCode: 200, body: "{}" }),
+      }),
+      {
+        agentLoader: async () => agent,
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          ...(user ? { user: user } : {}),
+        }),
+        ingressStatusLoader: async ({ runId }) =>
+          ingressStatus(
+            scopedDirectEventId(TEST_ACCOUNT.accountId, agent.agentId, "one"),
+            conversationKey,
+            agent.agentId,
+            runId,
+          ),
+      },
+    );
+  }
+
+  it("refuses a runtime key without a token when the agent requires one", async () => {
+    const response = await userTurn(USER_TURN, undefined);
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      error: { code: "user_token_required" },
+    });
+  });
+
+  it("puts the conversation and event id under the token's user", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const response = await userTurn(USER_TURN, ALICE, REQUIRING_AGENT, handled);
+
+    expect(response.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("bsu:alice:chat_1");
+    expect(handled[0]?.conversationKey).toBe(
+      scopedDirectConversationKey(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT.agentId,
+        "bsu:alice:chat_1",
+      ),
+    );
+    expect(handled[0]?.publicEventId).toBe("bsu:alice:one");
+
+    // The namespaced form core answered with names the same conversation.
+    const again: DirectInboundEvent[] = [];
+    await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:alice:chat_1" },
+      ALICE,
+      REQUIRING_AGENT,
+      again,
+    );
+    expect(again[0]?.conversationKey).toBe(handled[0]?.conversationKey);
+  });
+
+  it("keeps user A's token out of user B's conversation", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const named = await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:bob:chat_1" },
+      ALICE,
+      REQUIRING_AGENT,
+      handled,
+    );
+    // Bob's namespaced key is just a key under Alice's namespace, and a
+    // reserved one at that, so it never lands in Bob's conversation.
+    expect(named.statusCode).toBe(400);
+    expect(handled).toHaveLength(0);
+
+    const bobScoped = scopedDirectConversationKey(
+      TEST_ACCOUNT.accountId,
+      TEST_AGENT.agentId,
+      "bsu:bob:chat_1",
+    );
+    const continued = await userTurn(
+      { eventId: "c-1", conversationKey: bobScoped, continue: true },
+      ALICE,
+    );
+    expect(continued.statusCode).toBe(404);
+
+    const answered = await userTurn(
+      { eventId: "c-2", conversationKey: bobScoped, continue: true },
+      BOB,
+      REQUIRING_AGENT,
+      handled,
+    );
+    expect(answered.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("bsu:bob:chat_1");
+  });
+
+  it("holds a token that lists its conversations to those", async () => {
+    const listed = { ...ALICE, conversations: ["chat_1"] };
+
+    expect((await userTurn(USER_TURN, listed)).statusCode).toBe(200);
+    const other = await userTurn(
+      { ...USER_TURN, conversationKey: "chat_2" },
+      listed,
+    );
+    expect(other.statusCode).toBe(403);
+    expect(responseJson(other)).toMatchObject({
+      error: { code: "user_token_conversation", param: "conversationKey" },
+    });
+  });
+
+  it("keeps a legacy agent answering without a token, outside every user's namespace", async () => {
+    const handled: DirectInboundEvent[] = [];
+    const legacy = await userTurn(USER_TURN, undefined, TEST_AGENT, handled);
+    expect(legacy.statusCode).toBe(200);
+    expect(handled[0]?.publicConversationKey).toBe("chat_1");
+
+    // No token cannot name a user's namespace, new or continued.
+    const named = await userTurn(
+      { ...USER_TURN, conversationKey: "bsu:alice:chat_1" },
+      undefined,
+      TEST_AGENT,
+    );
+    expect(named.statusCode).toBe(400);
+    const continued = await userTurn(
+      {
+        eventId: "c-1",
+        conversationKey: scopedDirectConversationKey(
+          TEST_ACCOUNT.accountId,
+          TEST_AGENT.agentId,
+          "bsu:alice:chat_1",
+        ),
+        continue: true,
+      },
+      undefined,
+      TEST_AGENT,
+    );
+    expect(continued.statusCode).toBe(404);
+
+    // A token is honored even while the requirement is off.
+    const scoped: DirectInboundEvent[] = [];
+    await userTurn(USER_TURN, ALICE, TEST_AGENT, scoped);
+    expect(scoped[0]?.publicConversationKey).toBe("bsu:alice:chat_1");
+  });
+
+  it("hands the agent socket its user's namespace and token expiry", async () => {
+    const response = await routeIncomingEvent(
+      createEvent(
+        {},
+        { authorization: "Bearer bsk_example" },
+        {
+          rawPath: "/v1/internal/agent-socket-scope",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers(),
+      {
+        authResolver: async () => ({
+          kind: "deployment",
+          account: TEST_ACCOUNT,
+          endpointId: "env-endpoint",
+          projectSlug: "demo",
+          stageSlug: "development",
+          user: ALICE,
+        }),
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(responseJson(response)).toMatchObject({
+      conversationPrefix: "bsu:alice:",
+      userTokenExpiresAt: ALICE.expiresAt,
+    });
+  });
+
+  it("lets a member's stage ticket past the requirement", async () => {
+    const response = await runtimeKeyRequest(
+      USER_TURN,
+      { agentLoader: async () => REQUIRING_AGENT },
+      true,
+    );
+
+    expect(response.statusCode).toBe(200);
+  });
+
+  it("reads a run only for its own user", async () => {
+    expect((await userStatusRead("bsu:alice:chat_1", ALICE)).statusCode).toBe(
+      200,
+    );
+
+    const other = await userStatusRead("bsu:alice:chat_1", BOB);
+    expect(other.statusCode).toBe(403);
+    expect(responseJson(other)).toMatchObject({
+      error: { code: "status_access_denied" },
+    });
+
+    const missing = await userStatusRead("bsu:alice:chat_1", undefined);
+    expect(missing.statusCode).toBe(403);
+    expect(responseJson(missing)).toMatchObject({
+      error: { code: "user_token_required" },
+    });
+
+    // A legacy agent without a token still reads its un-namespaced runs, never a user's.
+    expect(
+      (await userStatusRead("chat_1", undefined, TEST_AGENT)).statusCode,
+    ).toBe(200);
+    expect(
+      (await userStatusRead("bsu:alice:chat_1", undefined, TEST_AGENT))
+        .statusCode,
+    ).toBe(403);
   });
 });

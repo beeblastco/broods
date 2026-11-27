@@ -1,7 +1,6 @@
-# CI for community / OSS builds (PRs + pushes to dev).
-# Validates the core SST app (Convex path), SDK/Convex types, gateway, and
-# dashboard before branch deployment workflows are allowed to become the first
-# place cross-workspace failures appear.
+# CI for pull requests and pushes to dev: lint, types and tests for every
+# workspace and the core compile, plus the secrets scan, dependency audit,
+# benchmarks, local stack and dashboard suites.
 
 name: CI
 
@@ -37,7 +36,7 @@ jobs:
     permissions:
       contents: read
     env:
-      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'us-east-1' }}
+      AWS_REGION: ${{ vars.DEV_AWS_REGION || 'eu-west-1' }}
       # sst.config.ts reads these at runtime (no in-source defaults).
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
@@ -46,19 +45,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
         # Skip workspace postinstall (`sst install`). This validation job does
         # not deploy infrastructure, and `bun run check` / `bun run build`
         # regenerate the prompt artifacts they need.
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Lint, format check and typecheck
+        # `check` lints with `lint:types`: the type-aware pass (floating
+        # promises, awaiting a non-promise) fails here, not only the plain rules.
         run: bun run check
+
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
 
       - name: Read the Node version
         id: node
@@ -87,10 +88,21 @@ jobs:
           fi
           echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm/runner.mjs" >> "$GITHUB_ENV"
 
+      - name: Allow unprivileged user namespaces
+        # Ubuntu 24.04 blocks them; the hosted-MCP reaper test needs one (`unshare --user`).
+        run: |
+          key=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$key" ]]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+
       - name: Run unit tests
         run: bun run test
 
-      - name: Build Lambda binaries
+      - name: Report core coverage
+        # Report only: lists the least-covered files so untested state paths show before they are modelled.
+        if: always()
+        run: bun scripts/coverage-summary.ts core apps/core/coverage/lcov.info
+
+      - name: Compile the core server binary
         run: bun run build
 
   secrets-scan:
@@ -133,6 +145,28 @@ jobs:
           fi
           /tmp/gitleaks/gitleaks git --no-banner --redact --log-opts="$range" .
 
+  dependency-audit:
+    # Fails on a high/critical advisory in bun.lock without a reviewed, unexpired
+    # exception in scripts/audit-gate.ts. Its own job: the result also moves when
+    # an advisory is published or the registry is down, and that must not stop
+    # lint, types and tests in `validate` from reporting.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+
+      - name: Check dependency advisories
+        run: bun run deps:audit
+
   performance:
     # Deterministic CPU-only benchmarks over the per-request, per-turn and
     # per-line hot paths. Absolute product ceilings block on any runner; drift
@@ -145,18 +179,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
-      - name: Test the regression gate
-        # The gate's own grading rules. A gate that silently stops failing is
-        # worse than no gate, so it is tested before it is trusted.
-        run: bun run bench:test
+      - name: Set up Node for isolated-vm 7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "26"
 
       - name: Read the Node version
         id: node
@@ -199,7 +228,7 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: benchmark-${{ github.run_id }}
           path: |
@@ -216,24 +245,26 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    env:
-      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Start the local stack
         run: bun run local:up
 
+      - name: Generated Convex API is current
+        # local:up deploys packages/convex, which regenerates _generated. The
+        # API is static (convex.json codegen.staticApi): core and the dashboard
+        # type every call from it, so a validator changed without
+        # `bun run --filter @broods/convex codegen` fails here.
+        run: git diff --exit-code -- packages/convex/_generated
+
       - name: Verify through the edge
+        # Keyless, so model cases stop at the provider call; real-model.yaml
+        # runs them with the key (same setup steps: change both).
         run: bun run local:verify
 
       - name: Perf report
@@ -244,15 +275,65 @@ jobs:
           bun run local:up -- --perf
           bun run local:perf
 
+      - name: Harness turn perf
+        # No harness runs on the local stack, so this drives real Pi turns in
+        # process on convex-test. Fails when history stops surviving a resume
+        # or the checkpoint grows; the table goes to the job summary.
+        run: |
+          set -o pipefail
+          bun run harness:perf | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Cache Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Cache the dashboard build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: apps/dashboard/.next/cache
+          key: dashboard-next-${{ hashFiles('bun.lock') }}-${{ github.sha }}
+          restore-keys: dashboard-next-${{ hashFiles('bun.lock') }}-
+
+      - name: Dashboard perf against the baseline
+        # A production build on the stack's fixed fixture, graded against
+        # apps/dashboard/e2e/perf/baseline.json: a blocking number over its
+        # allowance fails the job, a timing one only warns. The table is in
+        # the job summary; the run's numbers are uploaded for a re-baseline.
+        # The @rollout specs run here too: this stack has the PR's own Convex.
+        run: |
+          set -o pipefail
+          (cd apps/dashboard && bunx playwright install chromium)
+          url=$(bun run local:up -- --perf --dashboard | tee /dev/stderr | sed -n 's/.*E2E_BASE_URL=//p')
+          test -n "$url"
+          cd apps/dashboard
+          export E2E_ADMIN_KEY=$(bun ../../scripts/local-stack.ts status --key | tail -1) E2E_BASE_URL=$url
+          # Each run clears test-results, so perf runs last and its numbers survive for the upload.
+          bunx playwright test --project=app --grep @rollout
+          bunx playwright test --project=perf
+
+      - name: Upload dashboard perf numbers
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dashboard-perf-${{ github.run_id }}
+          path: apps/dashboard/test-results/perf-baseline.json
+          if-no-files-found: ignore
+
       - name: Upload stack logs
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: local-stack-${{ github.run_id }}
           path: |
             ~/.broods-local/*/logs/
             ~/.broods-local/*/perf.jsonl
             ~/.broods-local/*/convex-calls.jsonl
+          # The stack's state dir is hidden, and upload-artifact skips
+          # everything under a dot directory unless told otherwise.
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
 
@@ -268,7 +349,7 @@ jobs:
     env:
       NEXT_PUBLIC_CONVEX_URL: ${{ vars.NEXT_PUBLIC_CONVEX_URL || 'https://example.convex.cloud' }}
       NEXT_PUBLIC_WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
-      NEXT_PUBLIC_BROODS_BASE_URL: https://gateway.broods.app
+      NEXT_PUBLIC_BROODS_BASE_URL: ${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
       WORKOS_REDIRECT_URI: http://localhost:3000/auth/callback
     steps:
       - name: Checkout repository
@@ -277,34 +358,11 @@ jobs:
           # Nothing in this job pushes, so it needs no token left on disk.
           persist-credentials: false
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
-      # Types and lint for every workspace run once, in validate's `bun run
-      # check`, and the convex tests in its `bun run test`.
-      - name: Test gateway
-        run: bun run --filter @broods/gateway test
-
-      - name: Test edge routes
-        run: bun run --filter @broods/edge test
-
-      - name: Test discord forwarder
-        run: bun run --filter @broods/discord-forwarder test
-
-      - name: Test matrix forwarder
-        run: bun run --filter @broods/matrix-forwarder test
-
-      - name: Test Cloudflare MCP runtime
-        run: bun run --filter @broods/cloudflare-mcp test
-
-      - name: Test dashboard
-        run: bun run --filter @broods/dashboard test
-
+      # validate runs every workspace's types, lint and unit tests. This job
+      # builds the dashboard and runs its browser suites.
       - name: Require the dashboard probe account
         # Pull requests from this repo only: a fork gets no secrets, and a
         # Dependabot pull request gets only Dependabot's own. A silent
@@ -337,6 +395,15 @@ jobs:
       - name: Check dashboard bundle budget
         run: bun bench/bundles.ts --check dashboard
 
+      - name: Cache Chromium
+        # Playwright's browser downloads, keyed on the lock that pins its
+        # version; the install below is a no-op on a hit.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
+
       - name: Install Chromium for the dashboard fixtures
         # No --with-deps: that runs apt, which fails whenever a mirror is off,
         # and the ubuntu-24.04 image already ships Chromium's libraries.
@@ -355,6 +422,9 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
         env:
           E2E_SERVER_COMMAND: bun .next/standalone/apps/dashboard/server.js
+          # A failure's page snapshot records form values, the typed probe
+          # password included, and the uploaded artifact is public.
+          PLAYWRIGHT_NO_COPY_PROMPT: "1"
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
           WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID }}
           WORKOS_COOKIE_PASSWORD: ${{ secrets.WORKOS_COOKIE_PASSWORD }}
@@ -366,13 +436,16 @@ jobs:
           cp -r .next/static .next/standalone/apps/dashboard/.next/static
           cp -r public .next/standalone/apps/dashboard/public
           # @rollout tests need Convex functions this build calls that the dev
-          # backend only has after the merge; e2e-dashboard.yaml runs them
+          # backend only has after the merge, and the perf project is graded
+          # against its baseline on the stack: local-stack runs both.
+          # @post-rollout tests time the shared dev backend or a CSS
+          # transition and flaked here. e2e-dashboard.yaml runs all of them
           # after the rollout.
-          bunx playwright test --project=app --project=perf --grep-invert @rollout
+          bunx playwright test --project=app --grep-invert "@rollout|@post-rollout"
 
       - name: Upload traces of a failed signed-in run
         if: ${{ failure() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dashboard-e2e-${{ github.run_id }}
           path: apps/dashboard/test-results
@@ -405,15 +478,9 @@ jobs:
             echo "docs=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Setup Bun
-        if: steps.changed.outputs.docs == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: .bun-version
-
       - name: Install dependencies
         if: steps.changed.outputs.docs == 'true'
-        run: bun install --ignore-scripts --frozen-lockfile
+        uses: ./.github/actions/bun-install
 
       - name: Build docs
         if: steps.changed.outputs.docs == 'true'

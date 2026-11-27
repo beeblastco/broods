@@ -1,11 +1,4 @@
-/**
- * What core does to an agent's configuration on every run before the model is
- * reached: decrypt the stored blob, validate and normalize the shape, and
- * resolve `${NAME}` references against the account's environment. The config
- * plane runs the same substitution at sync time, so the last case is also
- * what `broods dev` costs per agent to inject env.
- */
-
+import { COMPILED_AGENT_CONFIG } from "../../apps/core/src/shared/domain/agent-config.ts";
 import { NODE_CRYPTO } from "../../apps/core/src/shared/node-aead.ts";
 import { normalizeAgentConfig } from "../../packages/convex/model/agentRules.ts";
 import {
@@ -18,9 +11,7 @@ import type { BenchCase } from "../runner.ts";
 const ACCOUNT_ID = "bench_account";
 const ENCRYPTION_SECRETS = ["bench-only-account-config-secret-0000"];
 
-// An agent the way a real project defines one: a custom provider with env
-// refs, session tuning, a channel, hooks and a few tools. Wide enough that
-// every normalizer branch runs.
+// Wide enough that every normalizer branch runs.
 const RAW_CONFIG: Readonly<Record<string, unknown>> = {
   agent: {
     system:
@@ -58,8 +49,6 @@ const RAW_CONFIG: Readonly<Record<string, unknown>> = {
   publicAccess: true,
 };
 
-// The same agent as the config plane holds it: env refs unresolved. Core only
-// ever sees the substituted form, so this one never goes through normalize.
 const PLACEHOLDER_CONFIG: Readonly<Record<string, unknown>> = {
   ...RAW_CONFIG,
   provider: {
@@ -92,7 +81,8 @@ export const coreConfigCases: readonly BenchCase[] = [
   {
     name: "core/config-normalize",
     iterations: 5_000,
-    run: (): unknown => normalizeAgentConfig(RAW_CONFIG),
+    run: (): unknown =>
+      normalizeAgentConfig(RAW_CONFIG, {}, COMPILED_AGENT_CONFIG),
   },
   {
     name: "core/config-encrypt-decrypt",
@@ -105,8 +95,6 @@ export const coreConfigCases: readonly BenchCase[] = [
         { primitive: NODE_CRYPTO },
       );
     },
-    // Write then read under a warm keyring on core's `node:crypto` primitive,
-    // the round trip an agent record makes once the account's key is unwrapped.
     run: async (): Promise<unknown> =>
       cipher.decrypt(
         "agents:encryptedConfig",
