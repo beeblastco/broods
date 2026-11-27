@@ -95,6 +95,20 @@ describe("CLI login collection with PKCE", () => {
     expect((await poll()).status).toBe(400);
   });
 
+  test("a row minted without an Approve click is never collected", async () => {
+    const t = loginTest();
+    const codeId = await seedCode(t, await pkceChallenge(VERIFIER));
+    await t.run(async (ctx) => {
+      await ctx.db.patch(codeId, { codeHash: "hash-of-a-redirect-code" });
+    });
+
+    expect(
+      await t.mutation(internal.cli.auth.exchangeLoginCode, {
+        codeVerifier: VERIFIER,
+      }),
+    ).toBeNull();
+  });
+
   test("an exchange without a verifier is refused", async () => {
     const t = loginTest();
     await seedCode(t, await pkceChallenge(VERIFIER));

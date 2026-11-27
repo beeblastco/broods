@@ -246,7 +246,7 @@ export const accountApiKeysFields = {
 };
 
 export const cliAuthCodesFields = {
-  // Rows from before the approve page carry the hash of a one-time code; nothing reads it.
+  // Only on rows minted without an Approve click; a poll never collects those.
   codeHash: v.optional(v.string()),
   authId: v.string(),
   orgId: v.id("orgs"),

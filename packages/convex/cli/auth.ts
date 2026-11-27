@@ -230,7 +230,8 @@ export const exchangeLoginCode = internalMutation({
       )
       .order("desc")
       .first();
-    if (!row) return null;
+    // A row with a code hash came from a plain page load, not an Approve click.
+    if (!row || row.codeHash) return null;
     const now = Date.now();
     if (row.usedAt || row.expiresAt < now) {
       throw new ClientError("Login is expired or already collected");
